@@ -1,0 +1,1 @@
+- [Python backend on api-server artifact](python-api-server.md) — how to run a Python/FastAPI service in the shared `api-server` artifact (uvicorn, --app-dir, $PORT, restart-after-toml-swap).

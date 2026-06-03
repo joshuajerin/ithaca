@@ -10,6 +10,10 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: terminal
+    description: Agentic terminal orchestration and skills
+  - name: watchlist
+    description: Watchlist operations
 paths:
   /healthz:
     get:
@@ -24,6 +28,143 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /skills:
+    get:
+      operationId: getSkills
+      tags: [terminal]
+      summary: List terminal skills
+      description: Returns the catalog of panel skills, each with its descriptive setup and subskills
+      responses:
+        "200":
+          description: Skill catalog
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillCatalog"
+  /sectors:
+    get:
+      operationId: getSectors
+      tags: [terminal]
+      summary: List sectors
+      description: Returns the sectors available in the mock dataset
+      responses:
+        "200":
+          description: Sector list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SectorList"
+  /suggestions:
+    get:
+      operationId: getSuggestions
+      tags: [terminal]
+      summary: Example prompts
+      description: Returns example natural-language prompts the user can try
+      responses:
+        "200":
+          description: Suggestions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuggestionList"
+  /dashboard/default:
+    get:
+      operationId: getDefaultDashboard
+      tags: [terminal]
+      summary: Default dashboard
+      description: Returns a starter dashboard so the terminal is populated on first load
+      responses:
+        "200":
+          description: Dashboard spec
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSpec"
+  /orchestrate:
+    post:
+      operationId: orchestrate
+      tags: [terminal]
+      summary: Run the agent
+      description: Interprets a natural-language query, selects skills, and returns a full dashboard spec with arranged panels
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrchestrationRequest"
+      responses:
+        "200":
+          description: Dashboard spec
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSpec"
+  /refine:
+    post:
+      operationId: refinePanel
+      tags: [terminal]
+      summary: Refine a single panel
+      description: Updates one panel of an existing dashboard without touching the others
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefineRequest"
+      responses:
+        "200":
+          description: Updated panel
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Panel"
+  /watchlist:
+    get:
+      operationId: getWatchlist
+      tags: [watchlist]
+      summary: Get watchlist
+      responses:
+        "200":
+          description: Watchlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Watchlist"
+    post:
+      operationId: addToWatchlist
+      tags: [watchlist]
+      summary: Add a symbol to the watchlist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WatchlistInput"
+      responses:
+        "200":
+          description: Updated watchlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Watchlist"
+  /watchlist/{symbol}:
+    delete:
+      operationId: removeFromWatchlist
+      tags: [watchlist]
+      summary: Remove a symbol from the watchlist
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Updated watchlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Watchlist"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +174,418 @@ components:
           type: string
       required:
         - status
-
+    PanelType:
+      type: string
+      enum:
+        - price_chart
+        - news
+        - analysis
+        - fundamentals
+        - screener
+        - heatmap
+        - sentiment
+        - comparison
+    PanelStatus:
+      type: string
+      enum:
+        - ok
+        - loading
+        - error
+    PanelLayout:
+      type: object
+      description: Grid placement, 12-column grid. h is in row units.
+      required: [x, y, w, h]
+      properties:
+        x:
+          type: integer
+        y:
+          type: integer
+        w:
+          type: integer
+        h:
+          type: integer
+    PricePoint:
+      type: object
+      required: [t, o, h, l, c, v]
+      properties:
+        t:
+          type: string
+        o:
+          type: number
+        h:
+          type: number
+        l:
+          type: number
+        c:
+          type: number
+        v:
+          type: number
+    PriceChartData:
+      type: object
+      required: [symbol, name, currency, last, change, changePct, range, points]
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+        currency:
+          type: string
+        last:
+          type: number
+        change:
+          type: number
+        changePct:
+          type: number
+        range:
+          type: string
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/PricePoint"
+    NewsItem:
+      type: object
+      required: [id, headline, source, summary, publishedAt, sentiment, tickers]
+      properties:
+        id:
+          type: string
+        headline:
+          type: string
+        source:
+          type: string
+        summary:
+          type: string
+        url:
+          type: ["string", "null"]
+        publishedAt:
+          type: string
+        sentiment:
+          type: string
+          enum: [positive, neutral, negative]
+        tickers:
+          type: array
+          items:
+            type: string
+    NewsData:
+      type: object
+      required: [scope, items]
+      properties:
+        scope:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/NewsItem"
+    AnalysisData:
+      type: object
+      required: [scope, headline, summary, bullets, stance, confidence]
+      properties:
+        scope:
+          type: string
+        headline:
+          type: string
+        summary:
+          type: string
+        bullets:
+          type: array
+          items:
+            type: string
+        stance:
+          type: string
+          enum: [bullish, neutral, bearish]
+        confidence:
+          type: number
+    FundamentalMetric:
+      type: object
+      required: [label, value]
+      properties:
+        label:
+          type: string
+        value:
+          type: string
+        change:
+          type: ["number", "null"]
+        hint:
+          type: ["string", "null"]
+    FundamentalsData:
+      type: object
+      required: [symbol, name, metrics]
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+        metrics:
+          type: array
+          items:
+            $ref: "#/components/schemas/FundamentalMetric"
+    ScreenerRow:
+      type: object
+      required: [symbol, name, price, changePct, marketCap, volume, sector]
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+        price:
+          type: number
+        changePct:
+          type: number
+        marketCap:
+          type: number
+        peRatio:
+          type: ["number", "null"]
+        volume:
+          type: number
+        sector:
+          type: string
+    ScreenerData:
+      type: object
+      required: [title, rows]
+      properties:
+        title:
+          type: string
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScreenerRow"
+    HeatmapCell:
+      type: object
+      required: [symbol, name, changePct, marketCap, sector]
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+        changePct:
+          type: number
+        marketCap:
+          type: number
+        sector:
+          type: string
+    HeatmapData:
+      type: object
+      required: [title, cells]
+      properties:
+        title:
+          type: string
+        cells:
+          type: array
+          items:
+            $ref: "#/components/schemas/HeatmapCell"
+    SentimentSource:
+      type: object
+      required: [channel, score, volume, change]
+      properties:
+        channel:
+          type: string
+        score:
+          type: number
+        volume:
+          type: integer
+        change:
+          type: number
+    SentimentTrendPoint:
+      type: object
+      required: [t, score]
+      properties:
+        t:
+          type: string
+        score:
+          type: number
+    SentimentData:
+      type: object
+      required: [scope, overall, label, sources, trend]
+      properties:
+        scope:
+          type: string
+        overall:
+          type: number
+        label:
+          type: string
+          enum: [very_bearish, bearish, neutral, bullish, very_bullish]
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/SentimentSource"
+        trend:
+          type: array
+          items:
+            $ref: "#/components/schemas/SentimentTrendPoint"
+    ComparisonValue:
+      type: object
+      required: [label, value]
+      properties:
+        label:
+          type: string
+        value:
+          type: string
+    ComparisonCompany:
+      type: object
+      required: [symbol, name, values]
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+        values:
+          type: array
+          items:
+            $ref: "#/components/schemas/ComparisonValue"
+    ComparisonData:
+      type: object
+      required: [title, metricLabels, companies]
+      properties:
+        title:
+          type: string
+        metricLabels:
+          type: array
+          items:
+            type: string
+        companies:
+          type: array
+          items:
+            $ref: "#/components/schemas/ComparisonCompany"
+    PanelData:
+      oneOf:
+        - $ref: "#/components/schemas/PriceChartData"
+        - $ref: "#/components/schemas/NewsData"
+        - $ref: "#/components/schemas/AnalysisData"
+        - $ref: "#/components/schemas/FundamentalsData"
+        - $ref: "#/components/schemas/ScreenerData"
+        - $ref: "#/components/schemas/HeatmapData"
+        - $ref: "#/components/schemas/SentimentData"
+        - $ref: "#/components/schemas/ComparisonData"
+    Panel:
+      type: object
+      required: [id, type, title, layout, status]
+      properties:
+        id:
+          type: string
+        type:
+          $ref: "#/components/schemas/PanelType"
+        title:
+          type: string
+        layout:
+          $ref: "#/components/schemas/PanelLayout"
+        status:
+          $ref: "#/components/schemas/PanelStatus"
+        note:
+          type: ["string", "null"]
+        data:
+          $ref: "#/components/schemas/PanelData"
+    DashboardSpec:
+      type: object
+      required: [sessionId, summary, panels]
+      properties:
+        sessionId:
+          type: string
+        summary:
+          type: string
+        panels:
+          type: array
+          items:
+            $ref: "#/components/schemas/Panel"
+    OrchestrationRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+        sessionId:
+          type: ["string", "null"]
+    RefineRequest:
+      type: object
+      required: [sessionId, panelId, instruction]
+      properties:
+        sessionId:
+          type: string
+        panelId:
+          type: string
+        instruction:
+          type: string
+    Subskill:
+      type: object
+      required: [name, description, expectedOutput]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        expectedOutput:
+          type: string
+    Skill:
+      type: object
+      required: [id, name, panelType, description, subskills]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        panelType:
+          $ref: "#/components/schemas/PanelType"
+        description:
+          type: string
+        subskills:
+          type: array
+          items:
+            $ref: "#/components/schemas/Subskill"
+    SkillCatalog:
+      type: object
+      required: [skills]
+      properties:
+        skills:
+          type: array
+          items:
+            $ref: "#/components/schemas/Skill"
+    Sector:
+      type: object
+      required: [id, name, tickerCount]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        tickerCount:
+          type: integer
+    SectorList:
+      type: object
+      required: [sectors]
+      properties:
+        sectors:
+          type: array
+          items:
+            $ref: "#/components/schemas/Sector"
+    SuggestionList:
+      type: object
+      required: [prompts]
+      properties:
+        prompts:
+          type: array
+          items:
+            type: string
+    WatchlistItem:
+      type: object
+      required: [symbol, name, price, changePct]
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+        price:
+          type: number
+        changePct:
+          type: number
+    Watchlist:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WatchlistItem"
+    WatchlistInput:
+      type: object
+      required: [symbol]
+      properties:
+        symbol:
+          type: string
