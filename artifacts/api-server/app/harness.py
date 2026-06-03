@@ -18,6 +18,9 @@ DATA_MODELS = {
     "heatmap": models.HeatmapData,
     "sentiment": models.SentimentData,
     "comparison": models.ComparisonData,
+    "order_book": models.OrderBookData,
+    "trade_flow": models.TradeFlowData,
+    "tca_report": models.TCARportData,
 }
 
 

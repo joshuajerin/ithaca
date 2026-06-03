@@ -328,6 +328,195 @@ def build_comparison(params: dict) -> dict:
     return {"title": title, "metricLabels": metric_labels, "companies": companies}
 
 
+def build_order_book(params: dict) -> dict:
+    symbol = (params.get("symbol") or "NVDA").upper()
+    company = data.get_company(symbol)
+    if not company:
+        raise ValueError(f"Unknown symbol: {symbol}")
+    last = company["price"]
+    seed = data._seed(symbol)
+
+    def _rnd():
+        nonlocal seed
+        seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
+        return seed / 0x7FFFFFFF
+
+    tick = round(last * 0.0001, 2) or 0.01
+    spread = round(tick * 2, 2)
+    levels = 8
+
+    bids = []
+    for i in range(levels):
+        price = round(last - spread / 2 - tick * i, 2)
+        size = round(500 + _rnd() * 9500, 0)
+        bids.append({"price": price, "size": size, "depth": 0.0})
+
+    asks = []
+    for i in range(levels):
+        price = round(last + spread / 2 + tick * i, 2)
+        size = round(500 + _rnd() * 9500, 0)
+        asks.append({"price": price, "size": size, "depth": 0.0})
+
+    max_bid = max(b["size"] for b in bids)
+    max_ask = max(a["size"] for a in asks)
+    for b in bids:
+        b["depth"] = round(b["size"] / max_bid, 3)
+    for a in asks:
+        a["depth"] = round(a["size"] / max_ask, 3)
+
+    venues = ["NYSE", "NASDAQ", "BATS", "EDGX", "IEX"]
+    tape = []
+    for i in range(20):
+        side = "buy" if _rnd() > 0.45 else "sell"
+        price = round(last + (_rnd() - 0.5) * spread * 4, 2)
+        size = round(100 + _rnd() * 4900, 0)
+        h = 9 + int(_rnd() * 6)
+        m = int(_rnd() * 60)
+        s = int(_rnd() * 60)
+        venue = venues[int(_rnd() * len(venues))]
+        tape.append({"time": f"{h:02d}:{m:02d}:{s:02d}", "price": price, "size": size, "side": side, "venue": venue})
+
+    tape.sort(key=lambda t: t["time"], reverse=True)
+
+    return {
+        "symbol": symbol,
+        "name": company["name"],
+        "lastPrice": last,
+        "spread": spread,
+        "bids": bids,
+        "asks": asks,
+        "tape": tape,
+    }
+
+
+def build_trade_flow(params: dict) -> dict:
+    symbol = (params.get("symbol") or "NVDA").upper()
+    company = data.get_company(symbol)
+    if not company:
+        raise ValueError(f"Unknown symbol: {symbol}")
+    last = company["price"]
+    avg_vol = company["volume"]
+    seed = data._seed(symbol + "flow")
+
+    def _rnd():
+        nonlocal seed
+        seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
+        return seed / 0x7FFFFFFF
+
+    venues = ["NASDAQ", "NYSE", "DARK", "BATS", "IEX", "EDGX"]
+    block_threshold = round(avg_vol * 0.002, 0)
+    prints = []
+    total_buy = 0.0
+    total_sell = 0.0
+    dark_vol = 0.0
+    total_vol = 0.0
+
+    for i in range(40):
+        h = 9 + int(_rnd() * 6.5)
+        if h < 9:
+            h = 9
+        m = int(_rnd() * 60)
+        side = "buy" if _rnd() > 0.44 else "sell"
+        price = round(last * (0.99 + _rnd() * 0.02), 2)
+        base_size = avg_vol * 0.0005
+        is_block = _rnd() > 0.82
+        size = round(base_size * (5 + _rnd() * 15) if is_block else base_size * (0.5 + _rnd() * 2), 0)
+        venue_idx = int(_rnd() * len(venues))
+        venue = venues[venue_idx]
+        is_dark = venue == "DARK" or _rnd() > 0.75
+
+        prints.append({
+            "time": f"{h:02d}:{m:02d}",
+            "price": price,
+            "size": size,
+            "side": side,
+            "venue": venue if not is_dark else "DARK",
+            "isBlock": is_block,
+            "isDark": is_dark,
+        })
+
+        if side == "buy":
+            total_buy += size
+        else:
+            total_sell += size
+        if is_dark:
+            dark_vol += size
+        total_vol += size
+
+    prints.sort(key=lambda p: p["time"])
+    dark_pct = round((dark_vol / total_vol) * 100, 1) if total_vol else 0.0
+    buy_imbalance = round(total_buy / (total_buy + total_sell), 3) if (total_buy + total_sell) else 0.5
+
+    return {
+        "symbol": symbol,
+        "name": company["name"],
+        "darkPoolPct": dark_pct,
+        "buyImbalance": buy_imbalance,
+        "totalVolume": round(total_vol, 0),
+        "blockThreshold": block_threshold,
+        "prints": prints,
+    }
+
+
+def build_tca_report(params: dict) -> dict:
+    symbol = (params.get("symbol") or "NVDA").upper()
+    company = data.get_company(symbol)
+    if not company:
+        raise ValueError(f"Unknown symbol: {symbol}")
+    last = company["price"]
+    seed = data._seed(symbol + "tca")
+
+    def _rnd():
+        nonlocal seed
+        seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
+        return seed / 0x7FFFFFFF
+
+    arrival = round(last * (1 - 0.003 + _rnd() * 0.002), 2)
+    vwap = round(arrival * (1 + (_rnd() - 0.5) * 0.004), 2)
+    twap = round(arrival * (1 + (_rnd() - 0.5) * 0.003), 2)
+
+    buckets = []
+    times = ["09:30", "10:00", "10:30", "11:00", "11:30", "12:00",
+             "12:30", "13:00", "13:30", "14:00", "14:30", "15:00", "15:30"]
+    exec_prices = []
+    bucket_vol = company["volume"] / len(times)
+
+    price_walk = arrival
+    for i, t in enumerate(times):
+        price_walk = round(price_walk * (1 + (_rnd() - 0.49) * 0.003), 2)
+        bvwap = round(vwap * (1 + (_rnd() - 0.5) * 0.002), 2)
+        btwap = round(twap * (1 + (_rnd() - 0.5) * 0.0015), 2)
+        part_rate = round(0.04 + _rnd() * 0.12, 3)
+        vol = round(bucket_vol * (0.7 + _rnd() * 0.6), 0)
+        buckets.append({
+            "time": t,
+            "execPrice": price_walk,
+            "vwap": bvwap,
+            "twap": btwap,
+            "participationRate": part_rate,
+            "volume": vol,
+        })
+        exec_prices.append(price_walk)
+
+    avg_exec = round(sum(exec_prices) / len(exec_prices), 2)
+    impl_shortfall = round(abs(avg_exec - arrival) / arrival * 10000, 2)
+    vwap_slippage = round(abs(avg_exec - vwap) / vwap * 10000, 2)
+    twap_slippage = round(abs(avg_exec - twap) / twap * 10000, 2)
+
+    return {
+        "symbol": symbol,
+        "name": company["name"],
+        "arrivalPrice": arrival,
+        "avgExecPrice": avg_exec,
+        "vwap": vwap,
+        "twap": twap,
+        "implementationShortfall": impl_shortfall,
+        "vwapSlippage": vwap_slippage,
+        "twapSlippage": twap_slippage,
+        "buckets": buckets,
+    }
+
+
 # ----------------------------- registry -----------------------------
 class SkillDef:
     def __init__(self, id, name, panel_type, description, subskills, builder, default_title):
@@ -430,6 +619,41 @@ _reg(SkillDef(
         {"name": "align_metrics", "description": "Compute the same metric set for each company.", "expectedOutput": "Aligned metric rows per company."},
     ],
     build_comparison, "Comparison",
+))
+_reg(SkillDef(
+    "order-book", "Order Book Depth", "order_book",
+    "Renders a two-sided bid/ask depth ladder with proportional size bars and a scrolling tape "
+    "of recent prints. Use when the user asks to see the order book, L2 data, or bid/ask depth.",
+    [
+        {"name": "resolve_symbol", "description": "Map the request to a known ticker.", "expectedOutput": "A valid ticker."},
+        {"name": "generate_ladder", "description": "Generate bid/ask levels with price, size and depth bars.", "expectedOutput": "Sorted bid and ask level lists."},
+        {"name": "generate_tape", "description": "Produce a chronological tape of recent prints with side and venue.", "expectedOutput": "A list of print records."},
+    ],
+    build_order_book, "Order Book",
+))
+_reg(SkillDef(
+    "trade-flow", "Trade Flow & Unusual Activity", "trade_flow",
+    "Shows a timeline of prints sized by trade size, highlights block prints and dark pool flow, "
+    "and displays net buy/sell imbalance. Use when the user asks about unusual activity, block trades, "
+    "dark pool flow, or sweep orders.",
+    [
+        {"name": "resolve_symbol", "description": "Map the request to a known ticker.", "expectedOutput": "A valid ticker."},
+        {"name": "generate_prints", "description": "Generate a timeline of prints with size, side, venue, block and dark flags.", "expectedOutput": "A list of flow print records."},
+        {"name": "compute_imbalance", "description": "Derive buy/sell imbalance and dark pool percentage.", "expectedOutput": "Aggregate flow statistics."},
+    ],
+    build_trade_flow, "Trade Flow",
+))
+_reg(SkillDef(
+    "tca-report", "Transaction Cost Analysis", "tca_report",
+    "Compares execution price to VWAP/TWAP benchmarks and breaks down participation rate across "
+    "intraday 30-minute buckets. Use when the user asks about TCA, execution quality, slippage, "
+    "or implementation shortfall.",
+    [
+        {"name": "resolve_symbol", "description": "Map the request to a known ticker.", "expectedOutput": "A valid ticker."},
+        {"name": "compute_benchmarks", "description": "Derive arrival price, VWAP, TWAP and average execution price.", "expectedOutput": "Benchmark comparison values."},
+        {"name": "build_buckets", "description": "Break execution into 30-minute intraday buckets with participation rate.", "expectedOutput": "A list of bucket records."},
+    ],
+    build_tca_report, "TCA Report",
 ))
 
 

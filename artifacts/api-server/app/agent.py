@@ -89,6 +89,30 @@ def _tools() -> list:
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }, "required": ["symbols"]},
         }},
+        {"type": "function", "function": {
+            "name": "add_order_book",
+            "description": f"Add an order book depth ladder and tape of recent prints for one ticker. Use when the user asks about the order book, bid/ask depth, or level 2 data. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Ticker. One of: {syms}"},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_trade_flow",
+            "description": f"Add a trade flow / unusual activity panel showing block prints, dark pool activity and buy/sell imbalance for one ticker. Use when the user asks about unusual activity, block trades, sweeps, or dark pool flow. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Ticker. One of: {syms}"},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_tca_report",
+            "description": f"Add a Transaction Cost Analysis (TCA) report comparing execution price to VWAP/TWAP benchmarks and showing implementation shortfall for one ticker. Use when the user asks about TCA, execution quality, slippage, or benchmark comparison. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Ticker. One of: {syms}"},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
     ]
 
 
@@ -101,6 +125,9 @@ _TOOL_TO_TYPE = {
     "add_heatmap": "heatmap",
     "add_sentiment": "sentiment",
     "add_comparison": "comparison",
+    "add_order_book": "order_book",
+    "add_trade_flow": "trade_flow",
+    "add_tca_report": "tca_report",
 }
 
 
@@ -220,6 +247,9 @@ _TYPE_LABELS = {
     "heatmap": "a heatmap",
     "sentiment": "a sentiment read",
     "comparison": "a comparison",
+    "order_book": "an order book",
+    "trade_flow": "a trade flow panel",
+    "tca_report": "a TCA report",
 }
 
 
@@ -283,6 +313,29 @@ def _orchestrate_heuristic(query: str, start_y: int = 0):
     wants_sentiment = any(k in q for k in ["sentiment", "buzz", "mood", "social"])
     wants_overview = any(k in q for k in ["overview", "moving", "market", "movers", "heatmap", "today"])
     wants_screen = any(k in q for k in ["screen", "screener", "scan", "list", "top "])
+    wants_order_book = any(k in q for k in ["order book", "orderbook", "bid", "ask", "depth", "level 2", "l2"])
+    wants_trade_flow = any(k in q for k in ["unusual", "block", "sweep", "dark pool", "flow", "activity"])
+    wants_tca = any(k in q for k in ["tca", "transaction cost", "slippage", "vwap", "twap", "execution", "impl"])
+
+    if wants_order_book and symbols:
+        sym = symbols[0]
+        add("order_book", {"symbol": sym}, 6, 5)
+        add("price_chart", {"symbol": sym, "range": "1M"}, 6, 4)
+        name = data.get_company(sym)["name"]
+        return panels, f"{name} order book depth ladder and tape."
+
+    if wants_trade_flow and symbols:
+        sym = symbols[0]
+        add("trade_flow", {"symbol": sym}, 8, 5)
+        add("price_chart", {"symbol": sym, "range": "1M"}, 4, 4)
+        name = data.get_company(sym)["name"]
+        return panels, f"{name} trade flow: block prints, dark pool activity and buy/sell imbalance."
+
+    if wants_tca and symbols:
+        sym = symbols[0]
+        add("tca_report", {"symbol": sym}, 12, 5)
+        name = data.get_company(sym)["name"]
+        return panels, f"TCA report for {name}: arrival price vs VWAP/TWAP benchmarks with intraday participation."
 
     if wants_compare and len(symbols) >= 2:
         add("comparison", {"symbols": symbols}, 12, 4)

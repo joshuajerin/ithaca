@@ -16,6 +16,9 @@ class PanelType(str, Enum):
     heatmap = "heatmap"
     sentiment = "sentiment"
     comparison = "comparison"
+    order_book = "order_book"
+    trade_flow = "trade_flow"
+    tca_report = "tca_report"
 
 
 class PanelStatus(str, Enum):
@@ -163,6 +166,75 @@ class ComparisonData(BaseModel):
     companies: List[ComparisonCompany]
 
 
+# --- order_book ---
+class OrderBookLevel(BaseModel):
+    price: float
+    size: float
+    depth: float  # 0-1, proportion of max size at this side
+
+
+class TapePrint(BaseModel):
+    time: str
+    price: float
+    size: float
+    side: str  # buy | sell
+    venue: str
+
+
+class OrderBookData(BaseModel):
+    symbol: str
+    name: str
+    lastPrice: float
+    spread: float
+    bids: List[OrderBookLevel]
+    asks: List[OrderBookLevel]
+    tape: List[TapePrint]
+
+
+# --- trade_flow ---
+class FlowPrint(BaseModel):
+    time: str
+    price: float
+    size: float
+    side: str  # buy | sell
+    venue: str
+    isBlock: bool
+    isDark: bool
+
+
+class TradeFlowData(BaseModel):
+    symbol: str
+    name: str
+    darkPoolPct: float
+    buyImbalance: float  # 0-1; > 0.5 = net buy pressure
+    totalVolume: float
+    blockThreshold: float
+    prints: List[FlowPrint]
+
+
+# --- tca_report ---
+class TCABucket(BaseModel):
+    time: str
+    execPrice: float
+    vwap: float
+    twap: float
+    participationRate: float
+    volume: float
+
+
+class TCARportData(BaseModel):
+    symbol: str
+    name: str
+    arrivalPrice: float
+    avgExecPrice: float
+    vwap: float
+    twap: float
+    implementationShortfall: float  # bps
+    vwapSlippage: float  # bps
+    twapSlippage: float  # bps
+    buckets: List[TCABucket]
+
+
 PanelData = Union[
     PriceChartData,
     NewsData,
@@ -172,6 +244,9 @@ PanelData = Union[
     HeatmapData,
     SentimentData,
     ComparisonData,
+    OrderBookData,
+    TradeFlowData,
+    TCARportData,
 ]
 
 

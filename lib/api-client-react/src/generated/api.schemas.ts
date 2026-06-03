@@ -21,6 +21,9 @@ export const PanelType = {
   heatmap: 'heatmap',
   sentiment: 'sentiment',
   comparison: 'comparison',
+  order_book: 'order_book',
+  trade_flow: 'trade_flow',
+  tca_report: 'tca_report',
 } as const;
 
 export type PanelStatus = typeof PanelStatus[keyof typeof PanelStatus];
@@ -199,7 +202,73 @@ export interface ComparisonData {
   companies: ComparisonCompany[];
 }
 
-export type PanelData = PriceChartData | NewsData | AnalysisData | FundamentalsData | ScreenerData | HeatmapData | SentimentData | ComparisonData;
+export interface OrderBookLevel {
+  price: number;
+  size: number;
+  depth: number;
+}
+
+export interface TapePrint {
+  time: string;
+  price: number;
+  size: number;
+  side: string;
+  venue: string;
+}
+
+export interface OrderBookData {
+  symbol: string;
+  name: string;
+  lastPrice: number;
+  spread: number;
+  bids: OrderBookLevel[];
+  asks: OrderBookLevel[];
+  tape: TapePrint[];
+}
+
+export interface FlowPrint {
+  time: string;
+  price: number;
+  size: number;
+  side: string;
+  venue: string;
+  isBlock: boolean;
+  isDark: boolean;
+}
+
+export interface TradeFlowData {
+  symbol: string;
+  name: string;
+  darkPoolPct: number;
+  buyImbalance: number;
+  totalVolume: number;
+  blockThreshold: number;
+  prints: FlowPrint[];
+}
+
+export interface TCABucket {
+  time: string;
+  execPrice: number;
+  vwap: number;
+  twap: number;
+  participationRate: number;
+  volume: number;
+}
+
+export interface TCARportData {
+  symbol: string;
+  name: string;
+  arrivalPrice: number;
+  avgExecPrice: number;
+  vwap: number;
+  twap: number;
+  implementationShortfall: number;
+  vwapSlippage: number;
+  twapSlippage: number;
+  buckets: TCABucket[];
+}
+
+export type PanelData = PriceChartData | NewsData | AnalysisData | FundamentalsData | ScreenerData | HeatmapData | SentimentData | ComparisonData | OrderBookData | TradeFlowData | TCARportData;
 
 export interface Panel {
   id: string;

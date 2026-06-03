@@ -10,6 +10,9 @@ import { ScreenerPanel } from "./panels/ScreenerPanel";
 import { HeatmapPanel } from "./panels/HeatmapPanel";
 import { SentimentPanel } from "./panels/SentimentPanel";
 import { ComparisonPanel } from "./panels/ComparisonPanel";
+import { OrderBookPanel } from "./panels/OrderBookPanel";
+import { TradeFlowPanel } from "./panels/TradeFlowPanel";
+import { TCAPanelReport } from "./panels/TCAPanelReport";
 
 interface PanelContainerProps {
   panel: Panel;
@@ -74,6 +77,9 @@ export function PanelContainer({ panel, sessionId, onRefined }: PanelContainerPr
       case "heatmap": return <HeatmapPanel data={panel.data as any} />;
       case "sentiment": return <SentimentPanel data={panel.data as any} />;
       case "comparison": return <ComparisonPanel data={panel.data as any} />;
+      case "order_book": return <OrderBookPanel data={panel.data as any} />;
+      case "trade_flow": return <TradeFlowPanel data={panel.data as any} />;
+      case "tca_report": return <TCAPanelReport data={panel.data as any} />;
       default: return <div className="p-4 text-xs">Unknown panel type: {panel.type}</div>;
     }
   };
