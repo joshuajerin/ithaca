@@ -1,5 +1,5 @@
 import React from "react";
-import type { PriceChartData } from "@workspace/api-client-react/src/generated/api.schemas";
+import type { PriceChartData } from "@workspace/api-client-react";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } from "recharts";
 
 interface PriceChartPanelProps {

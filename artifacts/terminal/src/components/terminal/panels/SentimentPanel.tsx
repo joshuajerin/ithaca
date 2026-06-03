@@ -1,5 +1,5 @@
 import React from "react";
-import type { SentimentData } from "@workspace/api-client-react/src/generated/api.schemas";
+import type { SentimentData } from "@workspace/api-client-react";
 import { ResponsiveContainer, AreaChart, Area, XAxis, Tooltip, CartesianGrid } from "recharts";
 
 export function SentimentPanel({ data }: { data: SentimentData }) {

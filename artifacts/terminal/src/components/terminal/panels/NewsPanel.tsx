@@ -1,5 +1,5 @@
 import React from "react";
-import type { NewsData } from "@workspace/api-client-react/src/generated/api.schemas";
+import type { NewsData } from "@workspace/api-client-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ExternalLink } from "lucide-react";
 

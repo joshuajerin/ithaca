@@ -1,5 +1,5 @@
 import React from "react";
-import type { ScreenerData } from "@workspace/api-client-react/src/generated/api.schemas";
+import type { ScreenerData } from "@workspace/api-client-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 

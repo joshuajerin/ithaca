@@ -1,5 +1,5 @@
 import React from "react";
-import type { HeatmapData, HeatmapCell } from "@workspace/api-client-react/src/generated/api.schemas";
+import type { HeatmapData, HeatmapCell } from "@workspace/api-client-react";
 
 export function HeatmapPanel({ data }: { data: HeatmapData }) {
   // Simple treemap layout approximation for a monochrome heatmap

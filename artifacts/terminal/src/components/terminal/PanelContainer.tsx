@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import type { Panel } from "@workspace/api-client-react/src/generated/api.schemas";
+import type { Panel } from "@workspace/api-client-react";
 import { useRefinePanel } from "@workspace/api-client-react";
 import { Loader2, Maximize2, Minimize2, MoreHorizontal, Settings2, AlertTriangle } from "lucide-react";
 import { PriceChartPanel } from "./panels/PriceChartPanel";

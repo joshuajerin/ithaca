@@ -1,5 +1,5 @@
 import React from "react";
-import type { DashboardSpec } from "@workspace/api-client-react/src/generated/api.schemas";
+import type { DashboardSpec } from "@workspace/api-client-react";
 import { PanelContainer } from "./PanelContainer";
 
 interface DashboardProps {
