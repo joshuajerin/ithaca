@@ -4,6 +4,7 @@ subskills, plus a builder that turns resolved params into panel `data`.
 from __future__ import annotations
 
 import json
+import math
 from datetime import date, timedelta
 from typing import Callable, Dict, List, Optional
 
@@ -545,6 +546,284 @@ def build_macro_dashboard(params: dict) -> dict:
     }
 
 
+# ----------------------------- fixed income builders -----------------------------
+
+_TENORS = ["1M", "3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y"]
+_TENOR_YEARS = [1/12, 3/12, 6/12, 1, 2, 3, 5, 7, 10, 20, 30]
+
+# Base US Treasury spot curve (mock, plausible as of mid-2025)
+_BASE_SPOT = [5.32, 5.28, 5.18, 4.95, 4.62, 4.48, 4.38, 4.42, 4.52, 4.71, 4.68]
+# 1Y ago (higher rates environment)
+_AGO1Y_SPOT = [5.55, 5.52, 5.45, 5.25, 4.90, 4.75, 4.60, 4.65, 4.72, 4.88, 4.84]
+# 2Y ago (early hiking cycle)
+_AGO2Y_SPOT = [3.10, 3.55, 4.02, 4.30, 4.15, 3.98, 3.82, 3.85, 3.80, 3.90, 3.88]
+
+
+def build_yield_curve(params: dict) -> dict:
+    region = (params.get("region") or "US").upper()
+    title = f"{region} Treasury Yield Curve"
+
+    # Apply small per-region shifts for variety
+    shift = {"US": 0.0, "UK": 0.15, "DE": -1.45, "JP": -3.80}.get(region, 0.0)
+
+    points = []
+    for i, tenor in enumerate(_TENORS):
+        points.append({
+            "tenor": tenor,
+            "spot": round(_BASE_SPOT[i] + shift, 3),
+            "ago1y": round(_AGO1Y_SPOT[i] + shift, 3),
+            "ago2y": round(_AGO2Y_SPOT[i] + shift, 3),
+        })
+
+    # Key spreads
+    spot_2y = _BASE_SPOT[4] + shift
+    spot_10y = _BASE_SPOT[8] + shift
+    spot_30y = _BASE_SPOT[10] + shift
+    spot_3m = _BASE_SPOT[1] + shift
+
+    spreads = [
+        {"label": "2Y–10Y", "value": round(spot_10y - spot_2y, 2), "inverted": spot_10y < spot_2y},
+        {"label": "2Y–30Y", "value": round(spot_30y - spot_2y, 2), "inverted": spot_30y < spot_2y},
+        {"label": "3M–10Y", "value": round(spot_10y - spot_3m, 2), "inverted": spot_10y < spot_3m},
+    ]
+
+    inverted = any(s["inverted"] for s in spreads[:2])
+    return {"title": title, "points": points, "spreads": spreads, "inverted": inverted}
+
+
+# Bond peer universe for relative-value comparison
+_BOND_PEERS = [
+    # issuer, ticker, coupon, mat_year, yield, duration, z_spread, oas, asw, rating
+    ("Apple Inc", "AAPL", 3.85, 2031, 4.72, 5.4, 72, 68, 65, "Aaa/AAA"),
+    ("Apple Inc", "AAPL", 4.65, 2034, 4.89, 7.8, 88, 84, 82, "Aaa/AAA"),
+    ("Microsoft Corp", "MSFT", 3.30, 2030, 4.65, 4.9, 63, 60, 58, "Aaa/AAA"),
+    ("Microsoft Corp", "MSFT", 4.20, 2035, 4.82, 8.2, 80, 76, 74, "Aaa/AAA"),
+    ("Amazon.com", "AMZN", 3.10, 2029, 4.70, 4.3, 68, 64, 62, "A1/AA"),
+    ("Amazon.com", "AMZN", 4.10, 2034, 4.95, 7.5, 93, 88, 86, "A1/AA"),
+    ("Alphabet Inc", "GOOGL", 2.25, 2030, 4.68, 5.0, 66, 62, 60, "Aa2/AA+"),
+    ("Alphabet Inc", "GOOGL", 3.95, 2033, 4.85, 7.1, 83, 79, 77, "Aa2/AA+"),
+    ("Meta Platforms", "META", 5.60, 2030, 5.05, 4.5, 103, 98, 96, "A3/A-"),
+    ("Meta Platforms", "META", 5.75, 2033, 5.18, 6.8, 116, 110, 108, "A3/A-"),
+    ("NVIDIA Corp", "NVDA", 3.50, 2040, 5.20, 11.2, 118, 112, 110, "A1/A+"),
+    ("Intel Corp", "INTC", 5.20, 2033, 5.65, 6.5, 163, 155, 153, "Baa1/BBB+"),
+    ("Ford Motor", "F", 6.10, 2032, 6.45, 5.8, 293, 285, 282, "Ba2/BB+"),
+    ("Exxon Mobil", "XOM", 2.99, 2030, 4.74, 5.1, 72, 68, 66, "Aa2/AA-"),
+    ("Chevron Corp", "CVX", 3.08, 2032, 4.88, 6.2, 86, 82, 80, "Aa2/AA"),
+]
+
+
+def build_bond_rv(params: dict) -> dict:
+    ticker = (params.get("ticker") or params.get("symbol") or "AAPL").upper()
+    title = f"Bond Relative Value — {ticker} vs Peers"
+
+    # Filter to show the requested issuer + close peers by rating
+    focus_rows = [r for r in _BOND_PEERS if r[1] == ticker]
+    if not focus_rows:
+        focus_rows = _BOND_PEERS[:2]
+        ticker = focus_rows[0][1]
+        title = f"Bond Relative Value — {ticker} vs Peers"
+
+    focus_rating = focus_rows[0][9]
+    peer_rows = [r for r in _BOND_PEERS if r[1] != ticker and r[9][0] == focus_rating[0]][:6]
+    all_rows = focus_rows + peer_rows
+
+    rows = []
+    for r in all_rows:
+        rows.append({
+            "issuer": r[0],
+            "ticker": r[1],
+            "coupon": r[2],
+            "maturityYear": r[3],
+            "yieldPct": r[4],
+            "duration": r[5],
+            "zSpread": r[6],
+            "oas": r[7],
+            "aswSpread": r[8],
+            "rating": r[9],
+        })
+
+    return {"title": title, "rows": rows, "highlight": ticker}
+
+
+# CDS entity universe
+_CDS_ENTITIES = {
+    "F": ("Ford Motor Co", "F", "Ba2/BB+", 0.40, 285.0),
+    "INTC": ("Intel Corp", "INTC", "Baa1/BBB+", 0.40, 95.0),
+    "AMZN": ("Amazon.com", "AMZN", "A1/AA", 0.40, 38.0),
+    "AAPL": ("Apple Inc", "AAPL", "Aaa/AAA", 0.40, 28.0),
+    "MSFT": ("Microsoft Corp", "MSFT", "Aaa/AAA", 0.40, 25.0),
+    "META": ("Meta Platforms", "META", "A3/A-", 0.40, 58.0),
+    "XOM": ("Exxon Mobil", "XOM", "Aa2/AA-", 0.40, 45.0),
+    "OXY": ("Occidental Petroleum", "OXY", "Ba1/BB+", 0.40, 175.0),
+    "NVDA": ("NVIDIA Corp", "NVDA", "A1/A+", 0.40, 42.0),
+    "GOOGL": ("Alphabet Inc", "GOOGL", "Aa2/AA+", 0.40, 30.0),
+}
+
+_CDS_TENORS = [("1Y", 1), ("2Y", 2), ("3Y", 3), ("5Y", 5), ("7Y", 7), ("10Y", 10)]
+
+
+def _cds_survival(spread_bps: float, recovery: float, t: float) -> float:
+    """Simple flat-hazard survival probability."""
+    lg = spread_bps / 10000.0 / (1.0 - recovery)
+    return round(math.exp(-lg * t), 6)
+
+
+def build_cds_pricer(params: dict) -> dict:
+    ticker = (params.get("ticker") or params.get("symbol") or "F").upper()
+    entity_data = _CDS_ENTITIES.get(ticker, _CDS_ENTITIES["F"])
+    name, ticker, rating, recovery, spread = entity_data
+
+    # Allow tenor override
+    req_tenor = (params.get("tenor") or "5Y").upper()
+
+    survival_curve = []
+    for label, years in _CDS_TENORS:
+        sp = _cds_survival(spread, recovery, years)
+        dp = round(1.0 - sp, 6)
+        hz = round(spread / 10000.0 / (1.0 - recovery), 6)
+        survival_curve.append({
+            "tenor": label,
+            "years": float(years),
+            "survivalProb": sp,
+            "hazardRate": hz,
+            "defaultProb": dp,
+        })
+
+    sp1 = _cds_survival(spread, recovery, 1)
+    sp5 = _cds_survival(spread, recovery, 5)
+    implied_pd1y = round(1.0 - sp1, 4)
+    implied_pd5y = round(1.0 - sp5, 4)
+
+    # Upfront fee approximation (rough risky annuity * (spread - standard 100bps))
+    standard_spread = 100.0
+    risky_annuity = sum(
+        _cds_survival(spread, recovery, t) * t / max(t, 1) for _, t in _CDS_TENORS[:4]
+    ) / 4.0
+    upfront = round((spread - standard_spread) / 10000.0 * risky_annuity * 100, 4)
+
+    return {
+        "entity": name,
+        "ticker": ticker,
+        "rating": rating,
+        "recoveryRate": recovery,
+        "runningSpread": spread,
+        "upfrontFee": upfront,
+        "survivalCurve": survival_curve,
+        "impliedPd1y": implied_pd1y,
+        "impliedPd5y": implied_pd5y,
+    }
+
+
+# Bond universe for cash-flow analysis
+_CF_BONDS = {
+    "UST10Y": ("US 10Y Treasury", 4.25, "2034-05-15", 100.0, 4.52),
+    "UST30Y": ("US 30Y Treasury", 4.375, "2054-05-15", 100.0, 4.68),
+    "UST5Y": ("US 5Y Treasury", 4.50, "2029-05-15", 100.0, 4.38),
+    "UST2Y": ("US 2Y Treasury", 5.00, "2026-05-15", 100.0, 4.62),
+    "AAPL30": ("Apple 3.85% 2031", 3.85, "2031-08-05", 100.0, 4.72),
+    "MSFT10": ("Microsoft 4.20% 2035", 4.20, "2035-11-03", 100.0, 4.82),
+    "F7Y": ("Ford 6.10% 2032", 6.10, "2032-08-19", 100.0, 6.45),
+}
+
+_SCENARIO_SHIFTS = [-200, -100, -50, 0, 50, 100, 200]
+
+
+def _bond_price(coupon_rate: float, ytm: float, years: float, freq: int = 2) -> float:
+    """Price a bond given coupon, ytm, and years to maturity."""
+    n = int(round(years * freq))
+    c = coupon_rate / 100.0 / freq
+    y = ytm / 100.0 / freq
+    if n == 0:
+        return 100.0
+    pv_coupons = c * (1 - (1 + y) ** (-n)) / y if y != 0 else c * n
+    pv_principal = 1.0 / (1 + y) ** n
+    return round((pv_coupons + pv_principal) * 100.0, 4)
+
+
+def build_cashflow_duration(params: dict) -> dict:
+    bond_key = (params.get("bond") or params.get("symbol") or "UST10Y").upper()
+    bond_data = _CF_BONDS.get(bond_key, _CF_BONDS["UST10Y"])
+    issuer, coupon, maturity_str, face, ytm = bond_data
+
+    mat = date.fromisoformat(maturity_str)
+    today = date.today()
+    years_to_mat = max((mat - today).days / 365.25, 0.5)
+
+    freq = 2
+    n_periods = int(round(years_to_mat * freq))
+    c = coupon / 100.0 / freq
+    y = ytm / 100.0 / freq
+
+    # Build cash-flow schedule
+    payments = []
+    price_dirty = _bond_price(coupon, ytm, years_to_mat, freq)
+    total_pv = 0.0
+    weighted_time = 0.0
+
+    for i in range(1, n_periods + 1):
+        t_years = i / freq
+        cf_date = today + timedelta(days=int(t_years * 365.25))
+        cf_coupon = round(face * c, 4)
+        cf_principal = face if i == n_periods else 0.0
+        cf_total = round(cf_coupon + cf_principal, 4)
+        discount = (1 + y) ** i
+        cf_pv = round(cf_total / discount, 4)
+        total_pv += cf_pv
+        weighted_time += cf_pv * t_years
+        payments.append({
+            "date": cf_date.isoformat(),
+            "coupon": cf_coupon,
+            "principal": cf_principal,
+            "total": cf_total,
+            "pv": cf_pv,
+        })
+
+    # Duration metrics
+    macaulay = weighted_time / total_pv if total_pv else 0.0
+    mod_duration = round(macaulay / (1 + y), 4)
+    eff_duration = round(mod_duration, 4)
+
+    # Convexity
+    conv = 0.0
+    for i, pmt in enumerate(payments, 1):
+        t_years = i / freq
+        discount = (1 + y) ** i
+        conv += pmt["total"] / discount * t_years * (t_years + 1 / freq)
+    convexity = round(conv / total_pv / (1 + y) ** 2 if total_pv else 0.0, 4)
+
+    dv01 = round(mod_duration * price_dirty / 10000.0, 6)
+
+    # Scenario table
+    scenarios = []
+    for shift in _SCENARIO_SHIFTS:
+        new_ytm = ytm + shift / 100.0
+        new_price = _bond_price(coupon, new_ytm, years_to_mat, freq)
+        price_chg = round(new_price - price_dirty, 4)
+        price_chg_pct = round(price_chg / price_dirty * 100, 4) if price_dirty else 0.0
+        scenarios.append({
+            "shiftBps": shift,
+            "newYield": round(new_ytm, 4),
+            "newPrice": new_price,
+            "priceChange": price_chg,
+            "priceChangePct": price_chg_pct,
+        })
+
+    return {
+        "issuer": issuer,
+        "coupon": coupon,
+        "maturityDate": maturity_str,
+        "faceValue": face,
+        "price": price_dirty,
+        "yieldPct": ytm,
+        "modifiedDuration": mod_duration,
+        "effectiveDuration": eff_duration,
+        "convexity": convexity,
+        "dv01": dv01,
+        "payments": payments,
+        "scenarios": scenarios,
+    }
+
+
 # ----------------------------- registry -----------------------------
 class SkillDef:
     def __init__(self, id, name, panel_type, description, subskills, builder, default_title):
@@ -694,6 +973,56 @@ _reg(SkillDef(
         {"name": "build_tiles", "description": "Assemble asset tiles for the theme with price, change, and sparkline.", "expectedOutput": "Grouped asset tiles."},
     ],
     build_macro_dashboard, "Macro Dashboard",
+))
+
+
+_reg(SkillDef(
+    "yield-curve", "Yield Curve & Rates", "yield_curve",
+    "Renders the US (or UK/DE/JP) Treasury spot curve across all tenors with historical overlays "
+    "(1Y ago, 2Y ago) and inversion highlights. Use when the user asks about the yield curve, "
+    "interest rates, Treasury rates, or curve shape.",
+    [
+        {"name": "select_region", "description": "Identify the sovereign issuer (US, UK, DE, JP).", "expectedOutput": "A region code."},
+        {"name": "bootstrap_curve", "description": "Produce spot rates for each tenor from short to long.", "expectedOutput": "Ordered tenor/rate points for current and historical curves."},
+        {"name": "compute_spreads", "description": "Calculate 2Y-10Y, 2Y-30Y, and 3M-10Y spreads and flag inversion.", "expectedOutput": "Spread values and inversion flags."},
+    ],
+    build_yield_curve, "Yield Curve",
+))
+_reg(SkillDef(
+    "bond-rv", "Bond Relative Value", "bond_rv",
+    "Shows Z-spread, OAS, and asset-swap spread for a corporate bond issuer vs. a peer set, "
+    "with yield and duration context. Use when the user asks about bond spreads, bond RV, "
+    "bond relative value, Z-spread, OAS, asset-swap, or corporate credit.",
+    [
+        {"name": "resolve_issuer", "description": "Map the request to a known bond issuer.", "expectedOutput": "An issuer ticker."},
+        {"name": "build_peer_set", "description": "Assemble bonds from similar-rated issuers for comparison.", "expectedOutput": "A list of bond rows with spread metrics."},
+    ],
+    build_bond_rv, "Bond Relative Value",
+))
+_reg(SkillDef(
+    "cds-pricer", "CDS Pricer", "cds_pricer",
+    "Prices a credit default swap on a reference entity: shows survival probability curve, "
+    "running spread, upfront fee, and implied default probabilities by tenor. Use when the "
+    "user asks to price a CDS, see credit default swap spreads, or analyze credit risk.",
+    [
+        {"name": "resolve_entity", "description": "Map the reference entity to a known ticker.", "expectedOutput": "An entity ticker."},
+        {"name": "fit_hazard_curve", "description": "Derive flat-hazard survival probabilities from the CDS spread.", "expectedOutput": "Survival probability and hazard rate by tenor."},
+        {"name": "compute_upfront", "description": "Calculate the upfront fee relative to the standard 100bps coupon.", "expectedOutput": "Upfront fee as a percentage of notional."},
+    ],
+    build_cds_pricer, "CDS Pricer",
+))
+_reg(SkillDef(
+    "cashflow-duration", "Cash Flow & Duration", "cashflow_duration",
+    "Renders a full coupon + principal cash-flow schedule for a bond, with modified/effective "
+    "duration, convexity, DV01, and a parallel-shift scenario table. Use when the user asks "
+    "about bond cash flows, duration, convexity, or rate sensitivity.",
+    [
+        {"name": "resolve_bond", "description": "Map the request to a specific bond (e.g. 10Y Treasury, AAPL bond).", "expectedOutput": "A bond key."},
+        {"name": "schedule_cash_flows", "description": "Build the full coupon and principal payment schedule.", "expectedOutput": "Dated payments with present values."},
+        {"name": "compute_duration", "description": "Calculate Macaulay, modified and effective duration, convexity and DV01.", "expectedOutput": "Duration metrics."},
+        {"name": "build_scenarios", "description": "Compute price/yield changes for ±50/100/200bps parallel shifts.", "expectedOutput": "A scenario table."},
+    ],
+    build_cashflow_duration, "Cash Flow & Duration",
 ))
 
 

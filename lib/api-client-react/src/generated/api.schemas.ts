@@ -25,6 +25,10 @@ export const PanelType = {
   trade_flow: 'trade_flow',
   tca_report: 'tca_report',
   macro_dashboard: 'macro_dashboard',
+  yield_curve: 'yield_curve',
+  bond_rv: 'bond_rv',
+  cds_pricer: 'cds_pricer',
+  cashflow_duration: 'cashflow_duration',
 } as const;
 
 export type PanelStatus = typeof PanelStatus[keyof typeof PanelStatus];
@@ -289,7 +293,97 @@ export interface MacroDashboardData {
   groups: MacroGroup[];
 }
 
-export type PanelData = PriceChartData | NewsData | AnalysisData | FundamentalsData | ScreenerData | HeatmapData | SentimentData | ComparisonData | OrderBookData | TradeFlowData | TCARportData | MacroDashboardData;
+export interface YieldCurvePoint {
+  tenor: string;
+  spot: number;
+  ago1y: number;
+  ago2y: number;
+}
+
+export interface YieldCurveSpread {
+  label: string;
+  value: number;
+  inverted: boolean;
+}
+
+export interface YieldCurveData {
+  title: string;
+  points: YieldCurvePoint[];
+  spreads: YieldCurveSpread[];
+  inverted: boolean;
+}
+
+export interface BondRVRow {
+  issuer: string;
+  ticker: string;
+  coupon: number;
+  maturityYear: number;
+  yieldPct: number;
+  duration: number;
+  zSpread: number;
+  oas: number;
+  aswSpread: number;
+  rating: string;
+}
+
+export interface BondRVData {
+  title: string;
+  rows: BondRVRow[];
+  highlight: string;
+}
+
+export interface CDSSurvivalPoint {
+  tenor: string;
+  years: number;
+  survivalProb: number;
+  hazardRate: number;
+  defaultProb: number;
+}
+
+export interface CDSPricerData {
+  entity: string;
+  ticker: string;
+  rating: string;
+  recoveryRate: number;
+  runningSpread: number;
+  upfrontFee: number;
+  survivalCurve: CDSSurvivalPoint[];
+  impliedPd1y: number;
+  impliedPd5y: number;
+}
+
+export interface CashFlowPayment {
+  date: string;
+  coupon: number;
+  principal: number;
+  total: number;
+  pv: number;
+}
+
+export interface ScenarioRow {
+  shiftBps: number;
+  newYield: number;
+  newPrice: number;
+  priceChange: number;
+  priceChangePct: number;
+}
+
+export interface CashFlowDurationData {
+  issuer: string;
+  coupon: number;
+  maturityDate: string;
+  faceValue: number;
+  price: number;
+  yieldPct: number;
+  modifiedDuration: number;
+  effectiveDuration: number;
+  convexity: number;
+  dv01: number;
+  payments: CashFlowPayment[];
+  scenarios: ScenarioRow[];
+}
+
+export type PanelData = PriceChartData | NewsData | AnalysisData | FundamentalsData | ScreenerData | HeatmapData | SentimentData | ComparisonData | OrderBookData | TradeFlowData | TCARportData | MacroDashboardData | YieldCurveData | BondRVData | CDSPricerData | CashFlowDurationData;
 
 export interface Panel {
   id: string;

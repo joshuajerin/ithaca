@@ -129,6 +129,39 @@ def _tools() -> list:
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }},
         }},
+        {"type": "function", "function": {
+            "name": "add_yield_curve",
+            "description": f"Add a yield curve panel (spot + historical overlays, inversion highlights). {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "region": {"type": "string", "enum": ["US", "UK", "DE", "JP"], "description": "Sovereign issuer. Default US."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
+        {"type": "function", "function": {
+            "name": "add_bond_rv",
+            "description": f"Add a bond relative-value panel: Z-spread, OAS and asset-swap vs peers. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "ticker": {"type": "string", "description": "Bond issuer ticker (e.g. AAPL, MSFT, F, INTC, META, XOM, AMZN, GOOGL, NVDA, CVX)."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["ticker"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_cds_pricer",
+            "description": f"Price a credit default swap on a reference entity. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "ticker": {"type": "string", "description": "Reference entity ticker (e.g. F, INTC, OXY, META, AMZN, AAPL, MSFT, XOM, NVDA, GOOGL)."},
+                "tenor": {"type": "string", "enum": ["1Y", "2Y", "3Y", "5Y", "7Y", "10Y"]},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["ticker"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_cashflow_duration",
+            "description": f"Show bond cash flows, duration, convexity, and rate-shock scenario table. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "bond": {"type": "string", "description": "Bond key: UST10Y, UST30Y, UST5Y, UST2Y, AAPL30, MSFT10, F7Y."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
     ]
 
 
@@ -145,6 +178,10 @@ _TOOL_TO_TYPE = {
     "add_trade_flow": "trade_flow",
     "add_tca_report": "tca_report",
     "add_macro_dashboard": "macro_dashboard",
+    "add_yield_curve": "yield_curve",
+    "add_bond_rv": "bond_rv",
+    "add_cds_pricer": "cds_pricer",
+    "add_cashflow_duration": "cashflow_duration",
 }
 
 
@@ -178,6 +215,8 @@ def orchestrate(query: str, session_id: Optional[str]) -> dict:
     else:
         sid = session_id
     base: List[dict] = state.get_dashboard(sid)
+    if reset:
+        base = []
     start_y = _next_row(base)
 
     panels: List[dict] = []
@@ -268,6 +307,10 @@ _TYPE_LABELS = {
     "trade_flow": "a trade flow panel",
     "tca_report": "a TCA report",
     "macro_dashboard": "a macro dashboard",
+    "yield_curve": "a yield curve",
+    "bond_rv": "bond relative value",
+    "cds_pricer": "a CDS pricer",
+    "cashflow_duration": "cash flow & duration",
 }
 
 
@@ -339,6 +382,10 @@ def _orchestrate_heuristic(query: str, start_y: int = 0):
         "risk on", "risk off", "roro", "rates fx", "inflation dashboard", "china macro",
         "global risk", "mosaic",
     ])
+    wants_yield_curve = any(k in q for k in ["yield curve", "treasury curve", "rates curve", "rate curve", "interest rate", "treasury yield", "yield spread", "2s10s", "inversion"])
+    wants_bond_rv = any(k in q for k in ["bond rv", "bond relative value", "z-spread", "z spread", "oas", "asset swap", "asset-swap", "corporate bond", "credit spread"])
+    wants_cds = any(k in q for k in ["cds", "credit default swap", "credit risk", "default swap", "survival prob"])
+    wants_cashflow = any(k in q for k in ["cash flow", "cashflow", "duration", "convexity", "dv01", "rate sensitivity", "bond cash", "modified duration"])
 
     if wants_order_book and symbols:
         sym = symbols[0]
@@ -372,6 +419,64 @@ def _orchestrate_heuristic(query: str, start_y: int = 0):
         add("macro_dashboard", {"theme": theme}, 12, 6)
         theme_labels = {"global": "Global Macro", "inflation": "Inflation", "china": "China Macro", "risk": "Risk-On/Off"}
         return panels, f"{theme_labels.get(theme, 'Macro')} dashboard: rates, FX, commodities, and equity indices in one view."
+
+    # --- Fixed income heuristics ---
+    if wants_yield_curve:
+        region = "US"
+        for r in ["UK", "DE", "JP"]:
+            if r.lower() in q:
+                region = r
+        add("yield_curve", {"region": region}, 8, 5)
+        add("news", {"scope_type": "sector", "scope": "energy"}, 4, 5)
+        return panels, f"{region} Treasury yield curve with historical overlays and spread analysis."
+
+    if wants_cds:
+        cds_entities = {"ford": "F", "intel": "INTC", "occidental": "OXY", "oxy": "OXY",
+                        "meta": "META", "amazon": "AMZN", "apple": "AAPL",
+                        "microsoft": "MSFT", "exxon": "XOM", "nvidia": "NVDA",
+                        "alphabet": "GOOGL", "google": "GOOGL"}
+        ticker = "F"
+        for name, sym in cds_entities.items():
+            if name in q:
+                ticker = sym
+                break
+        if symbols:
+            cds_tickers = {"F", "INTC", "OXY", "META", "AMZN", "AAPL", "MSFT", "XOM", "NVDA", "GOOGL"}
+            for s in symbols:
+                if s in cds_tickers:
+                    ticker = s
+                    break
+        add("cds_pricer", {"ticker": ticker}, 7, 5)
+        add("bond_rv", {"ticker": ticker}, 5, 5)
+        return panels, f"CDS pricer for {ticker} with survival curve, default probabilities, and bond RV context."
+
+    if wants_bond_rv:
+        ticker = "AAPL"
+        bond_tickers = {"AAPL", "MSFT", "META", "AMZN", "GOOGL", "NVDA", "INTC", "F", "XOM", "CVX"}
+        for s in symbols:
+            if s in bond_tickers:
+                ticker = s
+                break
+        add("bond_rv", {"ticker": ticker}, 8, 5)
+        add("yield_curve", {"region": "US"}, 4, 5)
+        return panels, f"Bond relative value for {ticker}: Z-spread, OAS, and asset-swap vs peers."
+
+    if wants_cashflow:
+        bond_map = {"30y": "UST30Y", "30-year": "UST30Y", "30 year": "UST30Y",
+                    "10y": "UST10Y", "10-year": "UST10Y", "10 year": "UST10Y",
+                    "5y": "UST5Y", "5-year": "UST5Y", "5 year": "UST5Y",
+                    "2y": "UST2Y", "2-year": "UST2Y", "2 year": "UST2Y",
+                    "aapl": "AAPL30", "apple": "AAPL30",
+                    "msft": "MSFT10", "microsoft": "MSFT10",
+                    "ford": "F7Y", " f ": "F7Y"}
+        bond_key = "UST10Y"
+        for kw, bk in bond_map.items():
+            if kw in q:
+                bond_key = bk
+                break
+        add("cashflow_duration", {"bond": bond_key}, 8, 6)
+        add("yield_curve", {"region": "US"}, 4, 5)
+        return panels, f"Cash flow schedule, duration/convexity, and rate-shock scenarios for {bond_key}."
 
     if wants_compare and len(symbols) >= 2:
         add("comparison", {"symbols": symbols}, 12, 4)

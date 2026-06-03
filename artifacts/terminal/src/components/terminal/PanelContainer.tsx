@@ -14,6 +14,10 @@ import { OrderBookPanel } from "./panels/OrderBookPanel";
 import { TradeFlowPanel } from "./panels/TradeFlowPanel";
 import { TCAPanelReport } from "./panels/TCAPanelReport";
 import { MacroDashboardPanel } from "./panels/MacroDashboardPanel";
+import { YieldCurvePanel } from "./panels/YieldCurvePanel";
+import { BondRVPanel } from "./panels/BondRVPanel";
+import { CDSPricerPanel } from "./panels/CDSPricerPanel";
+import { CashFlowPanel } from "./panels/CashFlowPanel";
 
 interface PanelContainerProps {
   panel: Panel;
@@ -82,6 +86,10 @@ export function PanelContainer({ panel, sessionId, onRefined }: PanelContainerPr
       case "trade_flow": return <TradeFlowPanel data={panel.data as any} />;
       case "tca_report": return <TCAPanelReport data={panel.data as any} />;
       case "macro_dashboard": return <MacroDashboardPanel data={panel.data as any} />;
+      case "yield_curve": return <YieldCurvePanel data={panel.data as any} />;
+      case "bond_rv": return <BondRVPanel data={panel.data as any} />;
+      case "cds_pricer": return <CDSPricerPanel data={panel.data as any} />;
+      case "cashflow_duration": return <CashFlowPanel data={panel.data as any} />;
       default: return <div className="p-4 text-xs">Unknown panel type: {panel.type}</div>;
     }
   };

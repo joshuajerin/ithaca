@@ -20,6 +20,10 @@ class PanelType(str, Enum):
     trade_flow = "trade_flow"
     tca_report = "tca_report"
     macro_dashboard = "macro_dashboard"
+    yield_curve = "yield_curve"
+    bond_rv = "bond_rv"
+    cds_pricer = "cds_pricer"
+    cashflow_duration = "cashflow_duration"
 
 
 class PanelStatus(str, Enum):
@@ -257,6 +261,100 @@ class MacroDashboardData(BaseModel):
     groups: List[MacroGroup]
 
 
+# --- yield_curve ---
+class YieldCurvePoint(BaseModel):
+    tenor: str
+    spot: float
+    ago1y: float
+    ago2y: float
+
+
+class YieldCurveSpread(BaseModel):
+    label: str
+    value: float
+    inverted: bool
+
+
+class YieldCurveData(BaseModel):
+    title: str
+    points: List[YieldCurvePoint]
+    spreads: List[YieldCurveSpread]
+    inverted: bool
+
+
+# --- bond_rv ---
+class BondRVRow(BaseModel):
+    issuer: str
+    ticker: str
+    coupon: float
+    maturityYear: int
+    yieldPct: float
+    duration: float
+    zSpread: float
+    oas: float
+    aswSpread: float
+    rating: str
+
+
+class BondRVData(BaseModel):
+    title: str
+    rows: List[BondRVRow]
+    highlight: str
+
+
+# --- cds_pricer ---
+class CDSSurvivalPoint(BaseModel):
+    tenor: str
+    years: float
+    survivalProb: float
+    hazardRate: float
+    defaultProb: float
+
+
+class CDSPricerData(BaseModel):
+    entity: str
+    ticker: str
+    rating: str
+    recoveryRate: float
+    runningSpread: float
+    upfrontFee: float
+    survivalCurve: List[CDSSurvivalPoint]
+    impliedPd1y: float
+    impliedPd5y: float
+
+
+# --- cashflow_duration ---
+class CashFlowPayment(BaseModel):
+    date: str
+    coupon: float
+    principal: float
+    total: float
+    pv: float
+
+
+class ScenarioRow(BaseModel):
+    shiftBps: int
+    newYield: float
+    newPrice: float
+    priceChange: float
+    priceChangePct: float
+
+
+class CashFlowDurationData(BaseModel):
+    issuer: str
+    coupon: float
+    maturityDate: str
+    faceValue: float
+    price: float
+    yieldPct: float
+    modifiedDuration: float
+    effectiveDuration: float
+    convexity: float
+    dv01: float
+    payments: List[CashFlowPayment]
+    scenarios: List[ScenarioRow]
+
+
 PanelData = Union[
     PriceChartData,
     NewsData,
@@ -270,6 +368,10 @@ PanelData = Union[
     TradeFlowData,
     TCARportData,
     MacroDashboardData,
+    YieldCurveData,
+    BondRVData,
+    CDSPricerData,
+    CashFlowDurationData,
 ]
 
 
