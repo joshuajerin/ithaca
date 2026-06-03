@@ -1,1 +1,2 @@
 - [Python backend on api-server artifact](python-api-server.md) — how to run a Python/FastAPI service in the shared `api-server` artifact (uvicorn, --app-dir, $PORT, restart-after-toml-swap).
+- [Terminal dashboard orchestration](terminal-orchestration.md) — orchestrate is additive-by-default (append panels), "default"/reset mint a fresh session; panels animate via framer-motion keyed by id.

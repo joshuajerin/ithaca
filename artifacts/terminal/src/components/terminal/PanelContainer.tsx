@@ -79,15 +79,7 @@ export function PanelContainer({ panel, sessionId, onRefined }: PanelContainerPr
   };
 
   return (
-    <div
-      className="bg-black border border-border flex flex-col overflow-hidden relative group"
-      style={{
-        gridColumnStart: panel.layout.x + 1,
-        gridColumnEnd: `span ${panel.layout.w}`,
-        gridRowStart: panel.layout.y + 1,
-        gridRowEnd: `span ${panel.layout.h}`,
-      }}
-    >
+    <div className="bg-black border border-border flex flex-col overflow-hidden relative group h-full">
       <div className="h-8 shrink-0 border-b border-border bg-[#050505] flex items-center justify-between px-3">
         <div className="flex items-center gap-2 overflow-hidden">
           <span className="text-[10px] uppercase tracking-widest text-muted-foreground shrink-0">{panel.type.replace('_', ' ')}</span>

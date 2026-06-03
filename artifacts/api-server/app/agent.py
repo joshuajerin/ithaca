@@ -124,35 +124,76 @@ def _system_prompt() -> str:
 
 
 def orchestrate(query: str, session_id: Optional[str]) -> dict:
-    sid = session_id or uuid.uuid4().hex[:12]
+    # New queries ADD to the existing dashboard for the session rather than
+    # replacing it, so asking a follow-up keeps the panels already on screen.
+    reset = _wants_reset(query)
+    # A reset (or the "default" placeholder) starts a brand-new session so that
+    # BOTH the panels and the prior conversation context start fresh.
+    if reset or not session_id or session_id == "default":
+        sid = uuid.uuid4().hex[:12]
+    else:
+        sid = session_id
+    base: List[dict] = state.get_dashboard(sid)
+    start_y = _next_row(base)
+
     panels: List[dict] = []
     summary = ""
 
     if ai.ai_available():
         try:
-            panels, summary = _orchestrate_llm(query, sid)
+            panels, summary = _orchestrate_llm(query, sid, base, start_y)
         except Exception:
             panels, summary = [], ""
 
     if not panels:
-        panels, summary = _orchestrate_heuristic(query)
+        panels, summary = _orchestrate_heuristic(query, start_y)
 
-    state.set_dashboard(sid, panels)
+    combined = base + panels
+    state.set_dashboard(sid, combined)
     state.append_history(sid, "user", query)
     state.append_history(sid, "assistant", summary)
-    return {"sessionId": sid, "summary": summary, "panels": panels}
+    return {"sessionId": sid, "summary": summary, "panels": combined}
 
 
-def _orchestrate_llm(query: str, sid: str):
+# Phrases that mean "throw away what's there and start a fresh dashboard".
+# Matched on word boundaries to avoid false positives (e.g. "preset", "swipe").
+_RESET_PATTERNS = (
+    r"\breset\b", r"\bwipe\b", r"\bclear the\b", r"\bclear everything\b",
+    r"\bstart over\b", r"\bstart fresh\b", r"\bnew dashboard\b",
+    r"\bclean slate\b", r"\bblank slate\b", r"\bremove everything\b",
+)
+
+
+def _wants_reset(query: str) -> bool:
+    q = query.lower()
+    return any(re.search(p, q) for p in _RESET_PATTERNS)
+
+
+def _next_row(panels: List[dict]) -> int:
+    """Grid row at which new panels should begin (just below existing ones)."""
+    if not panels:
+        return 0
+    return max(p["layout"]["y"] + p["layout"]["h"] for p in panels)
+
+
+def _orchestrate_llm(query: str, sid: str, existing: List[dict], start_y: int):
     messages = [{"role": "system", "content": _system_prompt()}]
     for h in state.get_history(sid)[-4:]:
         messages.append({"role": h["role"], "content": h["content"]})
+    if existing:
+        shown = ", ".join(f'{p.get("title")} ({p["type"]})' for p in existing)
+        messages.append({"role": "system", "content": (
+            "The dashboard ALREADY shows these panels: " + shown + ". "
+            "The user is making a follow-up request — ADD new panels that answer it and "
+            "complement what is already shown. Do NOT recreate panels that already exist. "
+            "Your text summary should describe only what you just added."
+        )})
     messages.append({"role": "user", "content": query})
 
     msg = ai.chat(messages, tools=_tools(), tool_choice="auto")
     tool_calls = getattr(msg, "tool_calls", None) or []
     panels: List[dict] = []
-    cursor = {"x": 0, "y": 0, "rowH": 0}
+    cursor = {"x": 0, "y": start_y, "rowH": 0}
     for tc in tool_calls:
         name = tc.function.name
         panel_type = _TOOL_TO_TYPE.get(name)
@@ -225,9 +266,9 @@ def _extract_symbols(q: str) -> List[str]:
     return found
 
 
-def _orchestrate_heuristic(query: str):
+def _orchestrate_heuristic(query: str, start_y: int = 0):
     q = query.lower()
-    cursor = {"x": 0, "y": 0, "rowH": 0}
+    cursor = {"x": 0, "y": start_y, "rowH": 0}
     panels: List[dict] = []
 
     def add(panel_type, params, w, h, title=None):
