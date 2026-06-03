@@ -44,27 +44,41 @@ export default function Terminal() {
 
   if (isLoadingDefault) {
     return (
-      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center font-mono">
-        <Loader2 className="w-6 h-6 animate-spin mb-4" />
-        <p className="text-muted-foreground uppercase text-xs tracking-widest">Initializing Terminal...</p>
+      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center">
+        <Loader2 className="w-5 h-5 animate-spin mb-5" strokeWidth={1.25} />
+        <p className="editorial-label text-muted-foreground text-[10px]">Initializing Terminal</p>
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen w-full bg-black text-white overflow-hidden font-mono">
+    <div className="flex h-screen w-full bg-black text-white overflow-hidden">
       <main className="flex-1 flex flex-col min-w-0 border-r border-border overflow-y-auto">
-        <header className="h-12 border-b border-border flex items-center px-4 shrink-0 bg-black/50 backdrop-blur-sm z-10 sticky top-0">
-          <div className="flex items-center gap-4">
-            <span className="font-bold tracking-widest text-sm uppercase">SYS.TERMINAL // 01</span>
-            <div className="h-4 w-px bg-border" />
-            <span className="text-xs text-muted-foreground uppercase">
-              {activeDashboard?.sessionId ? `SESSION: ${activeDashboard.sessionId.slice(0, 8)}` : 'READY'}
+        <header className="h-16 border-b border-border flex items-end justify-between px-8 pb-3 shrink-0 bg-black/70 backdrop-blur-sm z-10 sticky top-0">
+          <div className="flex flex-col">
+            <span className="font-serif text-2xl leading-none tracking-tight">Agentic&nbsp;Terminal</span>
+            <span className="editorial-label text-[9px] text-muted-foreground mt-1.5">
+              Synthetic Market Intelligence
             </span>
+          </div>
+          <div className="flex items-center gap-6">
+            <div className="flex flex-col items-end">
+              <span className="editorial-label text-[9px] text-muted-foreground">Session</span>
+              <span className="font-serif text-sm nums-tabular mt-0.5">
+                {activeDashboard?.sessionId ? activeDashboard.sessionId.slice(0, 8) : '—'}
+              </span>
+            </div>
+            <div className="h-7 w-px bg-border" />
+            <div className="flex flex-col items-end">
+              <span className="editorial-label text-[9px] text-muted-foreground">Status</span>
+              <span className="font-serif text-sm mt-0.5">
+                {activeDashboard?.sessionId ? 'Live' : 'Ready'}
+              </span>
+            </div>
           </div>
         </header>
         
-        <div className="flex-1 p-4">
+        <div className="flex-1 px-8 py-7">
           {activeDashboard && (
             <Dashboard 
               dashboard={activeDashboard} 

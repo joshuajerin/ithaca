@@ -7,26 +7,26 @@ export function SentimentPanel({ data }: { data: SentimentData }) {
   
   return (
     <div className="flex flex-col h-full">
-      <div className="flex justify-between items-end mb-4 shrink-0">
+      <div className="flex justify-between items-end mb-5 shrink-0">
         <div>
-          <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">
-            {data.scope} SENTIMENT
+          <div className="editorial-label text-[9px] text-muted-foreground mb-1.5">
+            {data.scope} Sentiment
           </div>
-          <div className="text-2xl font-bold uppercase tracking-widest">
-            {data.label.replace('_', ' ')}
+          <div className="font-serif text-3xl leading-none capitalize">
+            {data.label.replace('_', ' ').toLowerCase()}
           </div>
         </div>
-        <div className={`text-3xl font-mono tracking-tighter ${isPositive ? 'text-white' : 'text-muted-foreground'}`}>
+        <div className={`font-serif text-4xl leading-none nums-oldstyle ${isPositive ? 'text-white' : 'text-muted-foreground'}`}>
           {data.overall > 0 ? '+' : ''}{data.overall.toFixed(2)}
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 mb-4 shrink-0">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-3 mb-5 shrink-0">
         {data.sources.map(source => (
           <div key={source.channel} className="border-t border-border pt-2">
-            <div className="flex justify-between items-center mb-1">
-              <span className="text-[10px] uppercase text-muted-foreground">{source.channel}</span>
-              <span className={`text-xs font-bold ${source.score > 0 ? 'text-white' : 'text-gray-500'}`}>
+            <div className="flex justify-between items-baseline mb-1.5">
+              <span className="editorial-label text-[8.5px] text-muted-foreground">{source.channel}</span>
+              <span className={`font-serif text-sm nums-oldstyle ${source.score > 0 ? 'text-white' : 'text-gray-500'}`}>
                 {source.score > 0 ? '+' : ''}{source.score.toFixed(1)}
               </span>
             </div>
@@ -52,11 +52,12 @@ export function SentimentPanel({ data }: { data: SentimentData }) {
                 <stop offset="95%" stopColor="#fff" stopOpacity={0}/>
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="2 2" stroke="#222" vertical={false} />
-            <XAxis dataKey="t" tick={{ fontSize: 9, fill: '#666' }} tickLine={false} axisLine={false} minTickGap={20} />
+            <CartesianGrid strokeDasharray="1 3" stroke="#222" vertical={false} />
+            <XAxis dataKey="t" tick={{ fontSize: 9, fill: '#777', fontFamily: 'Inter', letterSpacing: '0.08em' }} tickLine={false} axisLine={false} minTickGap={20} />
             <Tooltip 
-              contentStyle={{ backgroundColor: '#000', borderColor: '#333', borderRadius: 0, color: '#fff' }}
+              contentStyle={{ backgroundColor: '#000', borderColor: '#fff', borderRadius: 0, color: '#fff', fontFamily: 'Newsreader' }}
               itemStyle={{ color: '#fff' }}
+              labelStyle={{ color: '#888', fontFamily: 'Inter', textTransform: 'uppercase', letterSpacing: '0.12em', fontSize: 9 }}
               formatter={(value: number) => [value.toFixed(2), 'Score']}
             />
             <Area 

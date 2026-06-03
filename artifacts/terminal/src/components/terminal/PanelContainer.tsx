@@ -50,17 +50,17 @@ export function PanelContainer({ panel, sessionId, onRefined }: PanelContainerPr
     if (panel.status === "loading" || refineMutation.isPending) {
       return (
         <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground gap-3">
-          <Loader2 className="w-5 h-5 animate-spin" />
-          <span className="text-[10px] tracking-widest uppercase animate-pulse">Processing...</span>
+          <Loader2 className="w-4 h-4 animate-spin" strokeWidth={1.25} />
+          <span className="editorial-label text-[9px] animate-pulse">Processing</span>
         </div>
       );
     }
 
     if (panel.status === "error" || !panel.data) {
       return (
-        <div className="w-full h-full flex flex-col items-center justify-center text-destructive gap-3 border border-destructive/20 bg-destructive/5 p-4 text-center">
-          <AlertTriangle className="w-6 h-6" />
-          <span className="text-[10px] tracking-widest uppercase">ERR: Data Acquisition Failed</span>
+        <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground gap-3 p-4 text-center">
+          <AlertTriangle className="w-5 h-5" strokeWidth={1.25} />
+          <span className="editorial-label text-[9px]">Data Acquisition Failed</span>
         </div>
       );
     }
@@ -80,41 +80,41 @@ export function PanelContainer({ panel, sessionId, onRefined }: PanelContainerPr
 
   return (
     <div className="bg-black border border-border flex flex-col overflow-hidden relative group h-full">
-      <div className="h-8 shrink-0 border-b border-border bg-[#050505] flex items-center justify-between px-3">
-        <div className="flex items-center gap-2 overflow-hidden">
-          <span className="text-[10px] uppercase tracking-widest text-muted-foreground shrink-0">{panel.type.replace('_', ' ')}</span>
-          <span className="text-xs font-bold uppercase truncate">{panel.title}</span>
+      <div className="shrink-0 border-b border-border flex items-start justify-between px-4 pt-3 pb-2.5">
+        <div className="flex flex-col gap-1 overflow-hidden min-w-0">
+          <span className="editorial-label text-[8.5px] text-muted-foreground shrink-0">{panel.type.replace('_', ' ')}</span>
+          <span className="font-serif text-base leading-none truncate">{panel.title}</span>
         </div>
-        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5">
           <button 
             onClick={() => setIsRefining(!isRefining)}
             className="text-muted-foreground hover:text-white transition-colors"
           >
-            <Settings2 className="w-3.5 h-3.5" />
+            <Settings2 className="w-3.5 h-3.5" strokeWidth={1.5} />
           </button>
         </div>
       </div>
 
       {isRefining && (
-        <form onSubmit={handleRefine} className="p-2 border-b border-border bg-muted/20">
+        <form onSubmit={handleRefine} className="px-4 py-2 border-b border-border">
           <input
             type="text"
             value={refineText}
             onChange={e => setRefineText(e.target.value)}
-            placeholder="Refine this panel..."
+            placeholder="Refine this panel…"
             autoFocus
-            className="w-full bg-black border border-border px-2 py-1 text-xs text-white focus:outline-none focus:border-white transition-colors"
+            className="w-full bg-transparent border-b border-border px-0 py-1 text-sm font-serif text-white placeholder:text-muted-foreground focus:outline-none focus:border-white transition-colors"
           />
         </form>
       )}
 
       {panel.note && (
-        <div className="bg-white text-black px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider shrink-0 border-b border-white">
+        <div className="bg-white text-black px-4 py-1.5 editorial-label text-[8.5px] shrink-0">
           {panel.note}
         </div>
       )}
 
-      <div className="flex-1 overflow-hidden p-3 relative">
+      <div className="flex-1 overflow-hidden px-4 py-4 relative">
         {renderContent()}
       </div>
     </div>

@@ -11,8 +11,9 @@ interface DashboardProps {
 export function Dashboard({ dashboard, onPanelRefined }: DashboardProps) {
   if (!dashboard.panels || dashboard.panels.length === 0) {
     return (
-      <div className="w-full h-full flex items-center justify-center border border-dashed border-border bg-black/50 text-muted-foreground uppercase text-xs tracking-widest p-4 text-center">
-        No active panels. Enter a command to synthesize data.
+      <div className="w-full h-full flex flex-col items-center justify-center gap-2 py-24 text-center">
+        <span className="font-serif text-xl text-muted-foreground">No active panels</span>
+        <span className="editorial-label text-[9px] text-muted-foreground">Enter a command to synthesize data</span>
       </div>
     );
   }
@@ -20,7 +21,7 @@ export function Dashboard({ dashboard, onPanelRefined }: DashboardProps) {
   // Row height is ~100px. We use CSS Grid where each unit of height represents roughly that.
   return (
     <div 
-      className="grid gap-4 w-full"
+      className="grid gap-6 w-full"
       style={{
         gridTemplateColumns: "repeat(12, minmax(0, 1fr))",
         gridAutoRows: "120px"

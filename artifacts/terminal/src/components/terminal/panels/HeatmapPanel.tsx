@@ -13,7 +13,7 @@ export function HeatmapPanel({ data }: { data: HeatmapData }) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-2 shrink-0">
+      <div className="editorial-label text-[9px] text-muted-foreground mb-3 shrink-0">
         {data.title}
       </div>
       
@@ -64,8 +64,8 @@ export function HeatmapPanel({ data }: { data: HeatmapData }) {
               }}
               title={`${cell.name}: ${cell.changePct}%`}
             >
-              <span className="font-bold text-sm tracking-tight">{cell.symbol}</span>
-              <span className="text-[10px]">{cell.changePct > 0 ? '+' : ''}{cell.changePct}%</span>
+              <span className="font-serif text-base leading-none tracking-tight">{cell.symbol}</span>
+              <span className="font-serif text-[11px] nums-oldstyle mt-0.5">{cell.changePct > 0 ? '+' : ''}{cell.changePct}%</span>
             </div>
           );
         })}

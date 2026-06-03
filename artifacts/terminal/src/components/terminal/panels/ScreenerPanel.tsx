@@ -13,35 +13,35 @@ function formatNumber(num: number) {
 export function ScreenerPanel({ data }: { data: ScreenerData }) {
   return (
     <div className="flex flex-col h-full">
-      <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-2 shrink-0">
-        {data.title} ({data.rows.length} RESULTS)
+      <div className="editorial-label text-[9px] text-muted-foreground mb-3 shrink-0">
+        {data.title} · <span className="nums-tabular">{data.rows.length}</span> Results
       </div>
 
-      <div className="flex-1 min-h-0 border border-border">
+      <div className="flex-1 min-h-0 border-t border-border">
         <ScrollArea className="h-full">
-          <Table className="text-xs">
+          <Table>
             <TableHeader className="bg-black sticky top-0 z-10">
               <TableRow className="border-border hover:bg-transparent">
-                <TableHead className="text-muted-foreground w-20 py-2 h-auto">SYM</TableHead>
-                <TableHead className="text-muted-foreground py-2 h-auto">PRICE</TableHead>
-                <TableHead className="text-muted-foreground py-2 h-auto text-right">CHG%</TableHead>
-                <TableHead className="text-muted-foreground py-2 h-auto text-right">MCAP</TableHead>
-                <TableHead className="text-muted-foreground py-2 h-auto text-right">VOL</TableHead>
-                <TableHead className="text-muted-foreground py-2 h-auto text-right hidden sm:table-cell">P/E</TableHead>
+                <TableHead className="editorial-label text-[8px] text-muted-foreground w-20 py-2.5 h-auto">Sym</TableHead>
+                <TableHead className="editorial-label text-[8px] text-muted-foreground py-2.5 h-auto text-right">Price</TableHead>
+                <TableHead className="editorial-label text-[8px] text-muted-foreground py-2.5 h-auto text-right">Chg%</TableHead>
+                <TableHead className="editorial-label text-[8px] text-muted-foreground py-2.5 h-auto text-right">MCap</TableHead>
+                <TableHead className="editorial-label text-[8px] text-muted-foreground py-2.5 h-auto text-right">Vol</TableHead>
+                <TableHead className="editorial-label text-[8px] text-muted-foreground py-2.5 h-auto text-right hidden sm:table-cell">P/E</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {data.rows.map((row) => (
-                <TableRow key={row.symbol} className="border-border/50 hover:bg-white/5 transition-colors">
-                  <TableCell className="font-bold py-2">{row.symbol}</TableCell>
-                  <TableCell className="py-2">{row.price.toFixed(2)}</TableCell>
-                  <TableCell className={`py-2 text-right ${row.changePct >= 0 ? 'text-white' : 'text-muted-foreground'}`}>
+                <TableRow key={row.symbol} className="border-border hover:bg-white/5 transition-colors">
+                  <TableCell className="font-serif text-base py-2">{row.symbol}</TableCell>
+                  <TableCell className="font-serif text-sm nums-tabular py-2 text-right">{row.price.toFixed(2)}</TableCell>
+                  <TableCell className={`font-serif text-sm nums-tabular py-2 text-right ${row.changePct >= 0 ? 'text-white' : 'text-muted-foreground'}`}>
                     {row.changePct > 0 ? '+' : ''}{row.changePct.toFixed(2)}%
                   </TableCell>
-                  <TableCell className="py-2 text-right text-gray-400">{formatNumber(row.marketCap)}</TableCell>
-                  <TableCell className="py-2 text-right text-gray-400">{formatNumber(row.volume)}</TableCell>
-                  <TableCell className="py-2 text-right text-gray-400 hidden sm:table-cell">
-                    {row.peRatio ? row.peRatio.toFixed(1) : '-'}
+                  <TableCell className="font-serif text-sm nums-tabular py-2 text-right text-gray-400">{formatNumber(row.marketCap)}</TableCell>
+                  <TableCell className="font-serif text-sm nums-tabular py-2 text-right text-gray-400">{formatNumber(row.volume)}</TableCell>
+                  <TableCell className="font-serif text-sm nums-tabular py-2 text-right text-gray-400 hidden sm:table-cell">
+                    {row.peRatio ? row.peRatio.toFixed(1) : '—'}
                   </TableCell>
                 </TableRow>
               ))}

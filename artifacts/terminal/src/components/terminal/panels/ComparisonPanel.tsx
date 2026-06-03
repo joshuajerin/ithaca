@@ -6,35 +6,35 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 export function ComparisonPanel({ data }: { data: ComparisonData }) {
   return (
     <div className="flex flex-col h-full">
-      <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-2 shrink-0">
+      <div className="editorial-label text-[9px] text-muted-foreground mb-3 shrink-0">
         {data.title}
       </div>
 
-      <div className="flex-1 min-h-0 border border-border">
+      <div className="flex-1 min-h-0 border-t border-border">
         <ScrollArea className="h-full">
-          <Table className="text-xs">
+          <Table>
             <TableHeader className="bg-black sticky top-0 z-10">
               <TableRow className="border-border hover:bg-transparent">
-                <TableHead className="text-muted-foreground w-24 py-2">METRIC</TableHead>
+                <TableHead className="editorial-label text-[8px] text-muted-foreground w-24 py-2.5">Metric</TableHead>
                 {data.companies.map(c => (
-                  <TableHead key={c.symbol} className="text-right py-2 text-white font-bold">
-                    {c.symbol}
+                  <TableHead key={c.symbol} className="text-right py-2.5">
+                    <span className="font-serif text-base text-white">{c.symbol}</span>
                   </TableHead>
                 ))}
               </TableRow>
             </TableHeader>
             <TableBody>
               {data.metricLabels.map((label, idx) => (
-                <TableRow key={label} className="border-border/50 hover:bg-white/5 transition-colors">
-                  <TableCell className="font-bold text-muted-foreground py-2 uppercase text-[10px] tracking-wider">
+                <TableRow key={label} className="border-border hover:bg-white/5 transition-colors">
+                  <TableCell className="editorial-label text-[8.5px] text-muted-foreground py-2.5">
                     {label}
                   </TableCell>
                   {data.companies.map(c => {
-                    const val = c.values[idx]?.value || '-';
+                    const val = c.values[idx]?.value || '—';
                     // simple heuristic to see if it's positive/negative
                     const isNeg = val.startsWith('-') || val.includes('(-');
                     return (
-                      <TableCell key={c.symbol} className={`py-2 text-right font-mono ${isNeg ? 'text-muted-foreground' : 'text-white'}`}>
+                      <TableCell key={c.symbol} className={`py-2.5 text-right font-serif text-sm nums-tabular ${isNeg ? 'text-muted-foreground' : 'text-white'}`}>
                         {val}
                       </TableCell>
                     );
