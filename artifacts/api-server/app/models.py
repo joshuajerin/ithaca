@@ -28,6 +28,10 @@ class PanelType(str, Enum):
     backtest = "backtest"
     correlation_matrix = "correlation_matrix"
     factor_analysis = "factor_analysis"
+    iv_surface = "iv_surface"
+    options_strategy = "options_strategy"
+    vol_term_structure = "vol_term_structure"
+    structured_product = "structured_product"
 
 
 class PanelStatus(str, Enum):
@@ -358,6 +362,112 @@ class CashFlowDurationData(BaseModel):
     payments: List[CashFlowPayment]
     scenarios: List[ScenarioRow]
 
+# --- iv_surface ---
+class IVSurfaceCell(BaseModel):
+    strike: float
+    expiry: str
+    iv: float
+
+
+class IVSkewPoint(BaseModel):
+    strike: float
+    iv: float
+    moneyness: float
+
+
+class IVSurfaceData(BaseModel):
+    symbol: str
+    underlyingPrice: float
+    expiries: List[str]
+    strikes: List[float]
+    surface: List[IVSurfaceCell]
+    atmIv: float
+    skew: List[IVSkewPoint]
+
+
+# --- options_strategy ---
+class OptionsLeg(BaseModel):
+    type: str        # call | put
+    action: str      # long | short
+    strike: float
+    expiry: str
+    premium: float
+    delta: float
+    gamma: float
+    theta: float
+    vega: float
+
+
+class NetGreeks(BaseModel):
+    delta: float
+    gamma: float
+    theta: float
+    vega: float
+    cost: float
+
+
+class PayoffPoint(BaseModel):
+    price: float
+    pnl: float
+
+
+class OptionsStrategyData(BaseModel):
+    symbol: str
+    underlyingPrice: float
+    strategyName: str
+    legs: List[OptionsLeg]
+    netGreeks: NetGreeks
+    payoff: List[PayoffPoint]
+    maxProfit: Optional[float] = None
+    maxLoss: Optional[float] = None
+    breakevens: List[float]
+
+
+# --- vol_term_structure ---
+class VolExpiry(BaseModel):
+    label: str
+    daysToExpiry: int
+    iv: float
+    atmPremium: float
+    isContango: bool
+
+
+class VolTermStructureData(BaseModel):
+    symbol: str
+    spotVix: float
+    atmIv: float
+    regime: str   # contango | backwardation | flat
+    expiries: List[VolExpiry]
+
+
+# --- structured_product ---
+class StructuredScenario(BaseModel):
+    label: str
+    spotMove: float
+    finalSpot: float
+    pnl: float
+    returnPct: float
+    probability: float
+
+
+class StructuredProductData(BaseModel):
+    symbol: str
+    productType: str
+    spotPrice: float
+    barrier: float
+    barrierPct: float
+    tenor: float
+    notional: float
+    strike: float
+    bsPrice: float
+    fairValue: float
+    delta: float
+    gamma: float
+    vega: float
+    theta: float
+    impliedVol: float
+    scenarios: List[StructuredScenario]
+
 
 # --- portfolio_risk ---
 class VarBin(BaseModel):
@@ -472,6 +582,10 @@ PanelData = Union[
     BacktestData,
     CorrelationMatrixData,
     FactorAnalysisData,
+    IVSurfaceData,
+    OptionsStrategyData,
+    VolTermStructureData,
+    StructuredProductData,
 ]
 
 

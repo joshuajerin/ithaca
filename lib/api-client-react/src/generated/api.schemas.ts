@@ -33,6 +33,10 @@ export const PanelType = {
   backtest: 'backtest',
   correlation_matrix: 'correlation_matrix',
   factor_analysis: 'factor_analysis',
+  iv_surface: 'iv_surface',
+  options_strategy: 'options_strategy',
+  vol_term_structure: 'vol_term_structure',
+  structured_product: 'structured_product',
 } as const;
 
 export type PanelStatus = typeof PanelStatus[keyof typeof PanelStatus];
@@ -475,7 +479,138 @@ export interface FactorAnalysisData {
   loadings: FactorLoading[];
 }
 
-export type PanelData = PriceChartData | NewsData | AnalysisData | FundamentalsData | ScreenerData | HeatmapData | SentimentData | ComparisonData | OrderBookData | TradeFlowData | TCARportData | MacroDashboardData | YieldCurveData | BondRVData | CDSPricerData | CashFlowDurationData | PortfolioRiskData | BacktestData | CorrelationMatrixData | FactorAnalysisData;
+// --- iv_surface ---
+export interface IVSurfaceCell {
+  strike: number;
+  expiry: string;
+  iv: number;
+}
+
+export interface IVSkewPoint {
+  strike: number;
+  iv: number;
+  moneyness: number;
+}
+
+export interface IVSurfaceData {
+  symbol: string;
+  underlyingPrice: number;
+  expiries: string[];
+  strikes: number[];
+  surface: IVSurfaceCell[];
+  atmIv: number;
+  skew: IVSkewPoint[];
+}
+
+// --- options_strategy ---
+export interface OptionsLeg {
+  type: string;
+  action: string;
+  strike: number;
+  expiry: string;
+  premium: number;
+  delta: number;
+  gamma: number;
+  theta: number;
+  vega: number;
+}
+
+export interface NetGreeks {
+  delta: number;
+  gamma: number;
+  theta: number;
+  vega: number;
+  cost: number;
+}
+
+export interface PayoffPoint {
+  price: number;
+  pnl: number;
+}
+
+export interface OptionsStrategyData {
+  symbol: string;
+  underlyingPrice: number;
+  strategyName: string;
+  legs: OptionsLeg[];
+  netGreeks: NetGreeks;
+  payoff: PayoffPoint[];
+  maxProfit?: number | null;
+  maxLoss?: number | null;
+  breakevens: number[];
+}
+
+// --- vol_term_structure ---
+export interface VolExpiry {
+  label: string;
+  daysToExpiry: number;
+  iv: number;
+  atmPremium: number;
+  isContango: boolean;
+}
+
+export interface VolTermStructureData {
+  symbol: string;
+  spotVix: number;
+  atmIv: number;
+  regime: string;
+  expiries: VolExpiry[];
+}
+
+// --- structured_product ---
+export interface StructuredScenario {
+  label: string;
+  spotMove: number;
+  finalSpot: number;
+  pnl: number;
+  returnPct: number;
+  probability: number;
+}
+
+export interface StructuredProductData {
+  symbol: string;
+  productType: string;
+  spotPrice: number;
+  barrier: number;
+  barrierPct: number;
+  tenor: number;
+  notional: number;
+  strike: number;
+  bsPrice: number;
+  fairValue: number;
+  delta: number;
+  gamma: number;
+  vega: number;
+  theta: number;
+  impliedVol: number;
+  scenarios: StructuredScenario[];
+}
+
+export type PanelData =
+  | PriceChartData
+  | NewsData
+  | AnalysisData
+  | FundamentalsData
+  | ScreenerData
+  | HeatmapData
+  | SentimentData
+  | ComparisonData
+  | OrderBookData
+  | TradeFlowData
+  | TCARportData
+  | MacroDashboardData
+  | YieldCurveData
+  | BondRVData
+  | CDSPricerData
+  | CashFlowDurationData
+  | PortfolioRiskData
+  | BacktestData
+  | CorrelationMatrixData
+  | FactorAnalysisData
+  | IVSurfaceData
+  | OptionsStrategyData
+  | VolTermStructureData
+  | StructuredProductData;
 
 export interface Panel {
   id: string;
@@ -562,4 +697,3 @@ export interface Watchlist {
 export interface WatchlistInput {
   symbol: string;
 }
-

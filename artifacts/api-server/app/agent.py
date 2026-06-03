@@ -20,6 +20,7 @@ def _tools() -> list:
     syms = ", ".join(repo.all_symbols())
     secs = ", ".join(data.SECTORS.keys())
     sizing = "Width is grid columns 3-12 (12 = full row). Height is row units 2-6."
+    strategies = "iron_condor, straddle, strangle, bull_call_spread, bear_put_spread, covered_call, long_call, long_put"
     return [
         {"type": "function", "function": {
             "name": "add_price_chart",
@@ -198,6 +199,43 @@ def _tools() -> list:
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }, "required": ["symbol"]},
         }},
+        {"type": "function", "function": {
+            "name": "add_iv_surface",
+            "description": f"Add an implied volatility surface heatmap for a ticker. {sizing} Use for vol surface, IV surface, or skew requests.",
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Ticker. One of: {syms}"},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_options_strategy",
+            "description": f"Add an options strategy payoff diagram with Greeks. {sizing} Use for options trades, straddles, condors, spreads etc.",
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Underlying ticker. One of: {syms}"},
+                "strategy": {"type": "string", "description": f"Strategy type. One of: {strategies}"},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol", "strategy"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_vol_term_structure",
+            "description": f"Add a volatility term structure chart across expiries. {sizing} Use for VIX curve, vol term structure, contango/backwardation requests.",
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Ticker or 'VIX'. One of: {syms}, VIX"},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_structured_product",
+            "description": f"Add a structured/exotic product pricer (barrier options). {sizing} Use for barrier options, down-and-out, up-and-out, exotic products.",
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Underlying ticker. One of: {syms}"},
+                "productType": {"type": "string", "description": "Product type: down_and_out_call, up_and_out_call, down_and_in_put, up_and_in_call"},
+                "tenor": {"type": "number", "description": "Tenor in years (e.g. 0.5 for 6M)"},
+                "notional": {"type": "number", "description": "Notional in USD"},
+                "barrier_pct": {"type": "number", "description": "Barrier as fraction of spot (e.g. 0.85 for 85%)"},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
     ]
 
 
@@ -222,6 +260,10 @@ _TOOL_TO_TYPE = {
     "add_backtest": "backtest",
     "add_correlation_matrix": "correlation_matrix",
     "add_factor_analysis": "factor_analysis",
+    "add_iv_surface": "iv_surface",
+    "add_options_strategy": "options_strategy",
+    "add_vol_term_structure": "vol_term_structure",
+    "add_structured_product": "structured_product",
 }
 
 
@@ -234,6 +276,12 @@ def _system_prompt() -> str:
         "- Choose panel types that actually answer the request. For a single stock deep-dive, a "
         "price chart + fundamentals + news + analysis works well. For 'what's moving', use a "
         "heatmap + screener. For comparisons, use the comparison tool.\n"
+        "- For derivatives requests: vol surface → add_iv_surface; options strategy → add_options_strategy; "
+        "VIX/vol curve → add_vol_term_structure; barrier/exotic → add_structured_product.\n"
+        "- For macro and fixed income: global view → add_macro_dashboard; yield curve → add_yield_curve; "
+        "bond RV → add_bond_rv; CDS → add_cds_pricer; duration/cash flows → add_cashflow_duration.\n"
+        "- For microstructure/execution requests: order book → add_order_book; trade flow/unusual activity → add_trade_flow; "
+        "TCA/slippage → add_tca_report.\n"
         "- Decide each panel's width (3-12 grid columns) and height (2-6 row units). Make the "
         "primary panel larger; supporting panels narrower. A full-width hero is width 12.\n"
         "- Only use tickers and sectors that exist in the dataset.\n"
@@ -355,6 +403,10 @@ _TYPE_LABELS = {
     "backtest": "a backtest",
     "correlation_matrix": "a correlation matrix",
     "factor_analysis": "a factor analysis",
+    "iv_surface": "an IV surface",
+    "options_strategy": "an options strategy",
+    "vol_term_structure": "a vol term structure",
+    "structured_product": "a structured product pricer",
 }
 
 
@@ -399,6 +451,27 @@ def _extract_symbols(q: str) -> List[str]:
             if len(short) > 3 and re.search(r"\b" + re.escape(short) + r"\b", low):
                 found.append(s)
     return found
+
+
+def _extract_strategy(q: str) -> str:
+    q = q.lower()
+    if "iron condor" in q or "condor" in q:
+        return "iron_condor"
+    if "straddle" in q:
+        return "straddle"
+    if "strangle" in q:
+        return "strangle"
+    if "bull" in q and ("spread" in q or "call" in q):
+        return "bull_call_spread"
+    if "bear" in q and ("spread" in q or "put" in q):
+        return "bear_put_spread"
+    if "covered call" in q or "buy write" in q:
+        return "covered_call"
+    if " put" in q or "put " in q:
+        return "long_put"
+    if " call" in q or "call " in q:
+        return "long_call"
+    return "straddle"
 
 
 def _orchestrate_heuristic(query: str, start_y: int = 0):
@@ -560,6 +633,53 @@ def _orchestrate_heuristic(query: str, start_y: int = 0):
         summary = f"Factor attribution analysis for {name}: momentum, value, size, and quality decomposition."
         return panels, summary
 
+    # --- derivatives / volatility heuristics ---
+    wants_iv_surface = any(k in q for k in ["vol surface", "iv surface", "implied vol", "volatility surface", "skew"])
+    wants_options = any(k in q for k in [
+        "iron condor", "straddle", "strangle", "condor", "options strategy",
+        "bull spread", "bear spread", "covered call", "build a", "long call", "long put",
+    ])
+    wants_vol_ts = any(k in q for k in ["vix", "vol term", "term structure", "contango", "backwardation", "vol curve"])
+    wants_structured = any(k in q for k in [
+        "barrier", "down-and-out", "up-and-out", "knock out", "knock in",
+        "structured", "exotic", "pricer",
+    ])
+
+    if wants_iv_surface and symbols:
+        sym = symbols[0]
+        add("iv_surface", {"symbol": sym}, 8, 5)
+        add("vol_term_structure", {"symbol": sym}, 4, 5)
+        name = data.get_company(sym)["name"]
+        return panels, f"{name} implied vol surface with 1M skew strip and term structure."
+
+    if wants_iv_surface:
+        add("iv_surface", {"symbol": "NVDA"}, 8, 5)
+        add("vol_term_structure", {"symbol": "NVDA"}, 4, 5)
+        return panels, "NVDA implied vol surface and term structure (default)."
+
+    if wants_options and symbols:
+        sym = symbols[0]
+        strategy = _extract_strategy(query)
+        add("options_strategy", {"symbol": sym, "strategy": strategy}, 8, 5)
+        add("price_chart", {"symbol": sym, "range": "1M"}, 4, 5)
+        name = data.get_company(sym)["name"]
+        return panels, f"{name} {strategy.replace('_', ' ').title()} strategy with payoff diagram and Greeks."
+
+    if wants_vol_ts:
+        sym = symbols[0] if symbols else "VIX"
+        add("vol_term_structure", {"symbol": sym}, 8, 5)
+        if symbols:
+            add("iv_surface", {"symbol": sym}, 4, 5)
+        name = sym
+        return panels, f"{name} volatility term structure with contango/backwardation regime."
+
+    if wants_structured and symbols:
+        sym = symbols[0]
+        add("structured_product", {"symbol": sym, "productType": "down_and_out_call"}, 8, 5)
+        add("price_chart", {"symbol": sym, "range": "3M"}, 4, 5)
+        name = data.get_company(sym)["name"]
+        return panels, f"{name} down-and-out barrier option pricer with scenario table."
+
     if wants_compare and len(symbols) >= 2:
         add("comparison", {"symbols": symbols}, 12, 4)
         add("price_chart", {"symbol": symbols[0]}, 6, 4)
@@ -625,7 +745,12 @@ def _refine_params(panel_type: str, panel: dict, instruction: str) -> dict:
 
 
 def _refine_params_llm(panel_type: str, panel: dict, instruction: str) -> dict:
-    tool = next(t for t in _tools() if _TOOL_TO_TYPE[t["function"]["name"]] == panel_type)
+    tool = next(
+        (t for t in _tools() if _TOOL_TO_TYPE.get(t["function"]["name"]) == panel_type),
+        None
+    )
+    if tool is None:
+        raise RuntimeError(f"no tool for panel type {panel_type}")
     current = {"type": panel_type, "title": panel.get("title")}
     sys = (
         "You update a single dashboard panel in a market terminal. Keep the panel the SAME "
@@ -665,8 +790,19 @@ def _refine_params_heuristic(panel_type: str, panel: dict, instruction: str) -> 
             return {"scope_type": "sector", "scope": sector}
     if panel_type in ("screener", "heatmap") and sector:
         return {"sector": sector}
+    if panel_type in ("iv_surface", "vol_term_structure") and syms:
+        return {"symbol": syms[0]}
+    if panel_type == "options_strategy" and syms:
+        return {"symbol": syms[0], "strategy": _extract_strategy(instruction)}
+    if panel_type == "structured_product" and syms:
+        return {"symbol": syms[0]}
     # fall back: rebuild from current data identity
     d = panel.get("data") or {}
     if panel_type in ("price_chart", "fundamentals") and d.get("symbol"):
         return {"symbol": d["symbol"]}
+    if panel_type in ("iv_surface", "vol_term_structure", "options_strategy", "structured_product") and d.get("symbol"):
+        params = {"symbol": d["symbol"]}
+        if panel_type == "options_strategy":
+            params["strategy"] = _extract_strategy(instruction)
+        return params
     return {}

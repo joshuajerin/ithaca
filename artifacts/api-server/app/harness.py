@@ -30,6 +30,10 @@ DATA_MODELS = {
     "backtest": models.BacktestData,
     "correlation_matrix": models.CorrelationMatrixData,
     "factor_analysis": models.FactorAnalysisData,
+    "iv_surface": models.IVSurfaceData,
+    "options_strategy": models.OptionsStrategyData,
+    "vol_term_structure": models.VolTermStructureData,
+    "structured_product": models.StructuredProductData,
 }
 
 
@@ -81,8 +85,15 @@ def _derive_title(skill: "skills.SkillDef", params: dict) -> str:
     sym = params.get("symbol")
     syms = params.get("symbols")
     scope = params.get("scope") or params.get("sector")
+    strategy = params.get("strategy") or params.get("strategyName")
     if skill.panel_type == "comparison" and syms:
         return " vs ".join(s.upper() for s in syms)
+    if skill.panel_type == "options_strategy" and sym:
+        strat = strategy or "Strategy"
+        return f"{sym.upper()} · {strat.replace('_', ' ').title()}"
+    if skill.panel_type == "structured_product" and sym:
+        pt = (params.get("productType") or "Barrier").replace("_", " ").title()
+        return f"{sym.upper()} · {pt}"
     if sym:
         return f"{sym.upper()} · {skill.default_title}"
     if scope:

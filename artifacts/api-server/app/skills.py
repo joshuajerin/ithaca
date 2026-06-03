@@ -37,6 +37,70 @@ def fmt_int(n: Optional[float]) -> str:
     return f"{n:,.0f}"
 
 
+# ----------------------------- Black-Scholes helpers -------------------------
+def _erf(x: float) -> float:
+    """Abramowitz & Stegun approximation of erf."""
+    sign = 1 if x >= 0 else -1
+    x = abs(x)
+    a1, a2, a3, a4, a5 = 0.254829592, -0.284496736, 1.421413741, -1.453152027, 1.061405429
+    p = 0.3275911
+    t = 1.0 / (1.0 + p * x)
+    y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * math.exp(-x * x)
+    return sign * y
+
+
+def _norm_cdf(x: float) -> float:
+    return 0.5 * (1.0 + _erf(x / math.sqrt(2.0)))
+
+
+def _norm_pdf(x: float) -> float:
+    return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
+
+
+def _bs_price(S: float, K: float, T: float, r: float, sigma: float, option_type: str) -> float:
+    """Black-Scholes option price."""
+    if T <= 0 or sigma <= 0:
+        intrinsic = max(S - K, 0) if option_type == "call" else max(K - S, 0)
+        return intrinsic
+    d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+    d2 = d1 - sigma * math.sqrt(T)
+    if option_type == "call":
+        return S * _norm_cdf(d1) - K * math.exp(-r * T) * _norm_cdf(d2)
+    else:
+        return K * math.exp(-r * T) * _norm_cdf(-d2) - S * _norm_cdf(-d1)
+
+
+def _bs_greeks(S: float, K: float, T: float, r: float, sigma: float, option_type: str) -> dict:
+    """Return delta, gamma, theta, vega for a single option."""
+    if T <= 0 or sigma <= 0:
+        delta = (1.0 if S > K else 0.0) if option_type == "call" else (-1.0 if S < K else 0.0)
+        return {"delta": delta, "gamma": 0.0, "theta": 0.0, "vega": 0.0}
+    d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+    d2 = d1 - sigma * math.sqrt(T)
+    pdf_d1 = _norm_pdf(d1)
+    delta = _norm_cdf(d1) if option_type == "call" else _norm_cdf(d1) - 1.0
+    gamma = pdf_d1 / (S * sigma * math.sqrt(T))
+    vega = S * pdf_d1 * math.sqrt(T) / 100.0  # per 1 vol point
+    if option_type == "call":
+        theta = (-S * pdf_d1 * sigma / (2 * math.sqrt(T)) - r * K * math.exp(-r * T) * _norm_cdf(d2)) / 365
+    else:
+        theta = (-S * pdf_d1 * sigma / (2 * math.sqrt(T)) + r * K * math.exp(-r * T) * _norm_cdf(-d2)) / 365
+    return {
+        "delta": round(delta, 4),
+        "gamma": round(gamma, 5),
+        "theta": round(theta, 4),
+        "vega": round(vega, 4),
+    }
+
+
+def _iv_smile(moneyness: float, T_years: float, base_iv: float) -> float:
+    """Generate a realistic IV smile: higher wings, mild skew (put skew typical)."""
+    skew = -0.15 * moneyness            # negative skew: OTM puts costlier
+    smile = 0.35 * moneyness ** 2       # symmetric convexity
+    term = 0.04 * math.log(max(T_years, 1/365) * 12 + 1)  # slight upward slope with time
+    return max(0.05, base_iv + skew + smile + term)
+
+
 # ----------------------------- builders -----------------------------
 def build_price_chart(params: dict) -> dict:
     symbol = (params.get("symbol") or "NVDA").upper()
@@ -1013,6 +1077,457 @@ def build_cashflow_duration(params: dict) -> dict:
     }
 
 
+# ----------------------------- derivatives builders -------------------------
+
+def build_iv_surface(params: dict) -> dict:
+    """Implied volatility surface across strikes and expiries."""
+    symbol = (params.get("symbol") or "NVDA").upper()
+    company = data.get_company(symbol)
+    if not company:
+        # fallback to NVDA
+        symbol = "NVDA"
+        company = data.get_company(symbol)
+
+    S = company["price"]
+    beta = company["beta"]
+    # Base ATM IV derived from beta and recent vol; roughly 20-60% for typical names
+    base_iv = round(0.18 + beta * 0.09 + abs(company["changePct"]) * 0.005, 3)
+    base_iv = max(0.15, min(0.80, base_iv))
+
+    # Expiry ladder: label -> years
+    expiry_labels = ["1W", "2W", "1M", "2M", "3M", "6M", "1Y"]
+    expiry_years = [7/365, 14/365, 30/365, 60/365, 90/365, 180/365, 365/365]
+
+    # Strike grid: 9 strikes from 80% to 120% of spot
+    n_strikes = 9
+    strike_pcts = [0.80, 0.85, 0.90, 0.925, 0.95, 1.0, 1.05, 1.075, 1.10]
+    strikes = [round(S * p, 2) for p in strike_pcts]
+
+    surface = []
+    for exp_label, T in zip(expiry_labels, expiry_years):
+        for i, (K, pct) in enumerate(zip(strikes, strike_pcts)):
+            moneyness = math.log(pct)  # log-moneyness: 0 = ATM
+            iv = _iv_smile(moneyness, T, base_iv)
+            surface.append({
+                "strike": K,
+                "expiry": exp_label,
+                "iv": round(iv * 100, 2),  # percent
+            })
+
+    # Skew strip: 1M slice for the skew indicator
+    T_1m = 30 / 365
+    skew = []
+    for K, pct in zip(strikes, strike_pcts):
+        moneyness = math.log(pct)
+        iv = _iv_smile(moneyness, T_1m, base_iv)
+        skew.append({
+            "strike": K,
+            "iv": round(iv * 100, 2),
+            "moneyness": round(moneyness * 100, 1),  # log-moneyness in pct
+        })
+
+    atm_iv = round(base_iv * 100, 2)
+    return {
+        "symbol": symbol,
+        "underlyingPrice": S,
+        "expiries": expiry_labels,
+        "strikes": strikes,
+        "surface": surface,
+        "atmIv": atm_iv,
+        "skew": skew,
+    }
+
+
+def _parse_strategy(query: str) -> str:
+    """Map natural-language or param to a canonical strategy name."""
+    q = query.lower().replace("-", " ").replace("_", " ")
+    if "iron condor" in q or "condor" in q:
+        return "iron_condor"
+    if "straddle" in q:
+        return "straddle"
+    if "strangle" in q:
+        return "strangle"
+    if "bull" in q and ("spread" in q or "call" in q):
+        return "bull_call_spread"
+    if "bear" in q and ("spread" in q or "put" in q):
+        return "bear_put_spread"
+    if "covered" in q or "buy write" in q:
+        return "covered_call"
+    if "put" in q:
+        return "long_put"
+    if "call" in q:
+        return "long_call"
+    return "straddle"
+
+
+def build_options_strategy(params: dict) -> dict:
+    """Options strategy payoff diagram with Greeks breakdown."""
+    symbol = (params.get("symbol") or "NVDA").upper()
+    company = data.get_company(symbol)
+    if not company:
+        symbol = "NVDA"
+        company = data.get_company(symbol)
+
+    S = company["price"]
+    beta = company["beta"]
+    base_iv = max(0.18, min(0.75, 0.20 + beta * 0.08))
+    r = 0.05
+    T = 45 / 365  # 45 DTE standard
+
+    # Determine strategy
+    strategy_raw = params.get("strategy") or params.get("strategyName") or "straddle"
+    strategy = _parse_strategy(strategy_raw)
+
+    atm = round(round(S / 5) * 5, 0)  # round to nearest $5
+
+    legs = []
+    strategy_name = ""
+
+    if strategy == "iron_condor":
+        strategy_name = "Iron Condor"
+        # Short put spread + short call spread
+        puts_short_k = round(atm * 0.95, 0)
+        puts_long_k = round(atm * 0.90, 0)
+        calls_short_k = round(atm * 1.05, 0)
+        calls_long_k = round(atm * 1.10, 0)
+        iv_mod = _iv_smile(math.log(puts_short_k / S), T, base_iv)
+        legs = [
+            ("put", "short", puts_short_k, iv_mod),
+            ("put", "long", puts_long_k, _iv_smile(math.log(puts_long_k / S), T, base_iv)),
+            ("call", "short", calls_short_k, _iv_smile(math.log(calls_short_k / S), T, base_iv)),
+            ("call", "long", calls_long_k, _iv_smile(math.log(calls_long_k / S), T, base_iv)),
+        ]
+    elif strategy == "straddle":
+        strategy_name = "Long Straddle"
+        iv_atm = _iv_smile(0, T, base_iv)
+        legs = [
+            ("call", "long", atm, iv_atm),
+            ("put", "long", atm, iv_atm),
+        ]
+    elif strategy == "strangle":
+        strategy_name = "Long Strangle"
+        call_k = round(atm * 1.05, 0)
+        put_k = round(atm * 0.95, 0)
+        legs = [
+            ("call", "long", call_k, _iv_smile(math.log(call_k / S), T, base_iv)),
+            ("put", "long", put_k, _iv_smile(math.log(put_k / S), T, base_iv)),
+        ]
+    elif strategy == "bull_call_spread":
+        strategy_name = "Bull Call Spread"
+        call_long_k = round(atm * 0.98, 0)
+        call_short_k = round(atm * 1.05, 0)
+        legs = [
+            ("call", "long", call_long_k, _iv_smile(math.log(call_long_k / S), T, base_iv)),
+            ("call", "short", call_short_k, _iv_smile(math.log(call_short_k / S), T, base_iv)),
+        ]
+    elif strategy == "bear_put_spread":
+        strategy_name = "Bear Put Spread"
+        put_long_k = round(atm * 1.02, 0)
+        put_short_k = round(atm * 0.95, 0)
+        legs = [
+            ("put", "long", put_long_k, _iv_smile(math.log(put_long_k / S), T, base_iv)),
+            ("put", "short", put_short_k, _iv_smile(math.log(put_short_k / S), T, base_iv)),
+        ]
+    elif strategy == "covered_call":
+        strategy_name = "Covered Call"
+        call_short_k = round(atm * 1.05, 0)
+        legs = [
+            ("call", "short", call_short_k, _iv_smile(math.log(call_short_k / S), T, base_iv)),
+        ]
+    elif strategy == "long_put":
+        strategy_name = "Long Put"
+        put_k = round(atm * 0.95, 0)
+        legs = [
+            ("put", "long", put_k, _iv_smile(math.log(put_k / S), T, base_iv)),
+        ]
+    else:  # long_call default
+        strategy_name = "Long Call"
+        call_k = round(atm * 1.05, 0)
+        legs = [
+            ("call", "long", call_k, _iv_smile(math.log(call_k / S), T, base_iv)),
+        ]
+
+    # Build legs with BS prices + greeks
+    expiry_date = (date.today() + timedelta(days=45)).strftime("%b %d '%y")
+    built_legs = []
+    for opt_type, action, K, sigma in legs:
+        price = _bs_price(S, K, T, r, sigma, opt_type)
+        greeks = _bs_greeks(S, K, T, r, sigma, opt_type)
+        sign = 1 if action == "long" else -1
+        built_legs.append({
+            "type": opt_type,
+            "action": action,
+            "strike": float(K),
+            "expiry": expiry_date,
+            "premium": round(price, 2),
+            "delta": round(greeks["delta"] * sign, 4),
+            "gamma": round(greeks["gamma"] * sign, 5),
+            "theta": round(greeks["theta"] * sign, 4),
+            "vega": round(greeks["vega"] * sign, 4),
+        })
+
+    # Net greeks + cost
+    net_delta = sum(l["delta"] for l in built_legs)
+    net_gamma = sum(l["gamma"] for l in built_legs)
+    net_theta = sum(l["theta"] for l in built_legs)
+    net_vega = sum(l["vega"] for l in built_legs)
+    cost_per_share = sum(
+        (l["premium"] if l["action"] == "long" else -l["premium"]) for l in built_legs
+    )
+
+    # Payoff at expiry
+    price_range = [S * p / 100 for p in range(70, 131)]
+    payoff_points = []
+    for spot in price_range:
+        pnl = -cost_per_share  # initial debit/credit
+        for leg, (opt_type, action, K, _) in zip(built_legs, legs):
+            intrinsic = max(spot - K, 0) if opt_type == "call" else max(K - spot, 0)
+            if action == "long":
+                pnl += intrinsic
+            else:
+                pnl -= intrinsic
+        # For covered call: also include stock PnL
+        if strategy == "covered_call":
+            pnl += (spot - S)
+        payoff_points.append({"price": round(spot, 2), "pnl": round(pnl, 2)})
+
+    # Breakevens (where payoff crosses zero)
+    breakevens = []
+    for i in range(1, len(payoff_points)):
+        p0, p1 = payoff_points[i - 1], payoff_points[i]
+        if p0["pnl"] * p1["pnl"] < 0:
+            # linear interpolation
+            frac = -p0["pnl"] / (p1["pnl"] - p0["pnl"])
+            be = round(p0["price"] + frac * (p1["price"] - p0["price"]), 2)
+            breakevens.append(be)
+
+    pnl_values = [p["pnl"] for p in payoff_points]
+    max_profit = max(pnl_values)
+    max_loss = min(pnl_values)
+    # Cap infinite loss/profit labels
+    if max_profit > S * 0.5:
+        max_profit = None  # effectively unlimited
+    if max_loss < -S * 0.5:
+        max_loss = None
+
+    return {
+        "symbol": symbol,
+        "underlyingPrice": S,
+        "strategyName": strategy_name,
+        "legs": built_legs,
+        "netGreeks": {
+            "delta": round(net_delta, 4),
+            "gamma": round(net_gamma, 5),
+            "theta": round(net_theta, 4),
+            "vega": round(net_vega, 4),
+            "cost": round(cost_per_share, 2),
+        },
+        "payoff": payoff_points,
+        "maxProfit": round(max_profit, 2) if max_profit is not None else None,
+        "maxLoss": round(max_loss, 2) if max_loss is not None else None,
+        "breakevens": [round(b, 2) for b in breakevens[:4]],
+    }
+
+
+def build_vol_term_structure(params: dict) -> dict:
+    """Volatility term structure across monthly expiries."""
+    symbol = (params.get("symbol") or params.get("scope") or "VIX").upper()
+
+    # Handle VIX specially
+    is_vix = symbol in ("VIX", "^VIX", "VVIX")
+    if is_vix:
+        symbol = "VIX"
+        spot_vix = 18.4
+        base_iv = 0.22
+        beta = 1.0
+    else:
+        company = data.get_company(symbol)
+        if not company:
+            # Try as a known vol index keyword
+            is_vix = True
+            symbol = "VIX"
+            spot_vix = 18.4
+            base_iv = 0.22
+            beta = 1.0
+        else:
+            beta = company["beta"]
+            base_iv = max(0.15, min(0.75, 0.18 + beta * 0.09))
+            spot_vix = round(base_iv * 100 * 0.9, 1)
+
+    # Determine regime from seed
+    seed = data._seed(symbol)
+    regime_val = (seed % 3)
+    if regime_val == 0:
+        regime = "contango"
+    elif regime_val == 1:
+        regime = "backwardation"
+    else:
+        regime = "flat"
+
+    # Expiry ladder
+    expiry_defs = [
+        ("1W", 7), ("2W", 14), ("1M", 30), ("2M", 60),
+        ("3M", 90), ("4M", 120), ("6M", 180), ("9M", 270), ("1Y", 365),
+    ]
+    r = 0.05
+    expiries = []
+    prev_iv = None
+    for label, days in expiry_defs:
+        T = days / 365
+        if regime == "contango":
+            # IV rises with term (normal term structure)
+            term_bump = 0.03 * math.log(T * 12 + 1)
+        elif regime == "backwardation":
+            # Front months elevated (stress / event risk)
+            term_bump = -0.04 * math.log(T * 12 + 1)
+        else:
+            term_bump = 0.01 * math.sin(T * math.pi)
+
+        # Add small noise seeded by label
+        noise = (data._seed(symbol + label) % 100 - 50) / 1000
+        iv = max(0.08, base_iv + term_bump + noise)
+
+        # ATM premium using BS
+        atm_premium = _bs_price(100, 100, T, r, iv, "call")
+
+        is_contango = prev_iv is None or iv >= prev_iv
+        prev_iv = iv
+
+        expiries.append({
+            "label": label,
+            "daysToExpiry": days,
+            "iv": round(iv * 100, 2),
+            "atmPremium": round(atm_premium, 2),
+            "isContango": is_contango,
+        })
+
+    atm_iv = expiries[2]["iv"]  # 1M as reference ATM IV
+    return {
+        "symbol": symbol,
+        "spotVix": spot_vix,
+        "atmIv": atm_iv,
+        "regime": regime,
+        "expiries": expiries,
+    }
+
+
+def build_structured_product(params: dict) -> dict:
+    """Structured/exotic product pricer — down-and-out barrier option."""
+    symbol = (params.get("symbol") or "NVDA").upper()
+    company = data.get_company(symbol)
+    if not company:
+        symbol = "NVDA"
+        company = data.get_company(symbol)
+
+    S = company["price"]
+    beta = company["beta"]
+    base_iv = max(0.15, min(0.75, 0.20 + beta * 0.09))
+    r = 0.05
+
+    # Parse / default product parameters
+    product_type_raw = (params.get("productType") or params.get("product_type") or "down_and_out_call").lower()
+    if "up" in product_type_raw and "out" in product_type_raw:
+        product_type = "up_and_out_call"
+        product_label = "Up-and-Out Call"
+    elif "down" in product_type_raw and "in" in product_type_raw:
+        product_type = "down_and_in_put"
+        product_label = "Down-and-In Put"
+    elif "up" in product_type_raw and "in" in product_type_raw:
+        product_type = "up_and_in_call"
+        product_label = "Up-and-In Call"
+    else:
+        product_type = "down_and_out_call"
+        product_label = "Down-and-Out Call"
+
+    tenor = float(params.get("tenor") or 0.5)  # years
+    notional = float(params.get("notional") or 100_000)
+    strike_pct = float(params.get("strike_pct") or 1.0)
+    barrier_pct = float(params.get("barrier_pct") or 0.85)
+
+    K = round(S * strike_pct, 2)
+    barrier = round(S * barrier_pct, 2)
+
+    # Vanilla BS price
+    vanilla_price = _bs_price(S, K, tenor, r, base_iv, "call")
+    vanilla_greeks = _bs_greeks(S, K, tenor, r, base_iv, "call")
+
+    # Simple barrier adjustment factor using reflection principle approximation
+    if product_type == "down_and_out_call":
+        # Price = Vanilla - Reflected = C(S) - (H/S)^(2*lambda) * C(H²/S)
+        lam = (r + 0.5 * base_iv ** 2) / base_iv ** 2
+        refl_S = barrier ** 2 / S
+        refl_price = _bs_price(refl_S, K, tenor, r, base_iv, "call")
+        barrier_price = vanilla_price - (barrier / S) ** (2 * lam) * refl_price
+    elif product_type == "up_and_out_call":
+        # Knock out if goes above barrier — reduced value
+        barrier_price = vanilla_price * max(0, 1 - max(0, (S / barrier - 0.9)))
+    else:
+        # Approximate: barrier in = vanilla * knock_in_prob
+        knock_in_prob = math.exp(-2 * math.log(S / barrier) ** 2 / (base_iv ** 2 * tenor))
+        barrier_price = vanilla_price * min(1, knock_in_prob + 0.3)
+
+    barrier_price = max(0.01, round(barrier_price, 2))
+
+    # Greeks: scale vanilla greeks by barrier discount factor
+    ratio = barrier_price / vanilla_price if vanilla_price > 0 else 0.5
+    delta = round(vanilla_greeks["delta"] * ratio, 4)
+    gamma = round(vanilla_greeks["gamma"] * ratio, 5)
+    vega = round(vanilla_greeks["vega"] * ratio, 4)
+    theta = round(vanilla_greeks["theta"] * ratio, 4)
+
+    # Scenario table: 9 spot paths
+    spot_moves = [-0.30, -0.20, -0.15, -0.10, -0.05, 0.0, 0.05, 0.10, 0.20]
+    scenarios = []
+    for move in spot_moves:
+        final_spot = round(S * (1 + move), 2)
+        # Check barrier breach
+        path_min = final_spot if move < 0 else S * 0.99  # simplified path check
+        if product_type == "down_and_out_call" and path_min <= barrier:
+            intrinsic = 0.0  # knocked out
+            prob = 0.5 * math.exp(-abs(move) * 2)
+        elif product_type == "up_and_out_call" and final_spot >= barrier:
+            intrinsic = 0.0
+            prob = 0.3 * math.exp(-abs(move) * 1.5)
+        else:
+            intrinsic = max(final_spot - K, 0)
+            prob = 0.6 * math.exp(-abs(move) * 1.5)
+
+        pnl_per_share = intrinsic - barrier_price
+        pnl_total = round(pnl_per_share * notional / S, 0)
+        return_pct = round((pnl_per_share / barrier_price) * 100, 1) if barrier_price > 0 else 0.0
+
+        label = f"{'+' if move >= 0 else ''}{int(move * 100)}%"
+        scenarios.append({
+            "label": label,
+            "spotMove": round(move * 100, 1),
+            "finalSpot": final_spot,
+            "pnl": pnl_total,
+            "returnPct": return_pct,
+            "probability": round(prob, 3),
+        })
+
+    fair_value = round(barrier_price * notional / S, 2)
+
+    return {
+        "symbol": symbol,
+        "productType": product_label,
+        "spotPrice": S,
+        "barrier": barrier,
+        "barrierPct": round(barrier_pct * 100, 1),
+        "tenor": tenor,
+        "notional": notional,
+        "strike": K,
+        "bsPrice": vanilla_price,
+        "fairValue": fair_value,
+        "delta": delta,
+        "gamma": gamma,
+        "vega": vega,
+        "theta": theta,
+        "impliedVol": round(base_iv * 100, 1),
+        "scenarios": scenarios,
+    }
+
+
 def build_correlation_matrix(params: dict) -> dict:
     symbols = [s.upper() for s in (params.get("symbols") or []) if data.get_company(s.upper())]
     if len(symbols) < 2:
@@ -1354,6 +1869,54 @@ _reg(SkillDef(
         {"name": "build_scenarios", "description": "Compute price/yield changes for ±50/100/200bps parallel shifts.", "expectedOutput": "A scenario table."},
     ],
     build_cashflow_duration, "Cash Flow & Duration",
+))
+_reg(SkillDef(
+    "iv-surface", "Implied Volatility Surface", "iv_surface",
+    "Renders the implied volatility surface as a heatmap grid across strike prices and "
+    "expiries, plus a 1M skew strip. Use when the user asks about the vol surface, IV surface, "
+    "skew, or implied vol.",
+    [
+        {"name": "resolve_symbol", "description": "Map request to a known ticker.", "expectedOutput": "A valid ticker."},
+        {"name": "build_surface", "description": "Generate IV for each (strike, expiry) cell using BS-implied smile.", "expectedOutput": "A grid of IV values."},
+        {"name": "compute_skew", "description": "Extract the 1M skew strip across the strike range.", "expectedOutput": "A list of (strike, IV) skew points."},
+    ],
+    build_iv_surface, "IV Surface",
+))
+_reg(SkillDef(
+    "options-strategy", "Options Strategy Builder", "options_strategy",
+    "Builds an options strategy (straddle, strangle, iron condor, call/put spread, etc.) "
+    "with a payoff diagram at expiry and a per-leg and net Greeks table. Use when the user "
+    "asks to build, price, or analyze an options trade.",
+    [
+        {"name": "resolve_strategy", "description": "Parse the requested structure into named legs.", "expectedOutput": "A list of option legs with strikes and directions."},
+        {"name": "price_legs", "description": "Price each leg using Black-Scholes.", "expectedOutput": "Premiums and Greeks per leg."},
+        {"name": "compute_payoff", "description": "Calculate P&L at expiry across a spot price range.", "expectedOutput": "A payoff curve with breakeven points."},
+    ],
+    build_options_strategy, "Options Strategy",
+))
+_reg(SkillDef(
+    "vol-term-structure", "Volatility Term Structure", "vol_term_structure",
+    "Shows implied vol across monthly expiries as a term structure curve, highlighting "
+    "contango or backwardation regime. Use when the user asks about VIX curve, vol term "
+    "structure, or front-to-back volatility.",
+    [
+        {"name": "resolve_symbol", "description": "Map to a ticker or use VIX as index.", "expectedOutput": "A valid symbol."},
+        {"name": "build_curve", "description": "Generate IV at each expiry with term structure dynamics.", "expectedOutput": "Ordered list of expiry/IV points."},
+        {"name": "classify_regime", "description": "Determine contango, backwardation, or flat regime.", "expectedOutput": "A regime label and per-expiry flags."},
+    ],
+    build_vol_term_structure, "Vol Term Structure",
+))
+_reg(SkillDef(
+    "structured-product", "Structured Product Pricer", "structured_product",
+    "Prices a barrier/exotic option (down-and-out call, up-and-out call, etc.) using "
+    "Black-Scholes with a scenario table showing P&L under various spot paths. Use when "
+    "the user asks about barrier options, exotic products, or structured notes.",
+    [
+        {"name": "resolve_inputs", "description": "Parse barrier, tenor, notional and product type.", "expectedOutput": "Clean pricer inputs."},
+        {"name": "price_barrier", "description": "Apply BS with barrier reflection to price the exotic.", "expectedOutput": "Fair value and Greeks."},
+        {"name": "build_scenarios", "description": "Compute P&L under 9 spot-move scenarios.", "expectedOutput": "A scenario table with knock-out flags."},
+    ],
+    build_structured_product, "Structured Product",
 ))
 
 
