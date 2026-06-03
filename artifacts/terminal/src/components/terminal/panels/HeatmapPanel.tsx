@@ -1,71 +1,78 @@
-import React from "react";
-import type { HeatmapData, HeatmapCell } from "@workspace/api-client-react";
+import type { HeatmapData } from "@workspace/api-client-react";
 
 export function HeatmapPanel({ data }: { data: HeatmapData }) {
-  // Simple treemap layout approximation for a monochrome heatmap
-  // Real treemaps are complex to calculate perfectly in CSS, 
-  // so we'll use flex/wrap sizing based on market cap relative to total
-  
-  const totalCap = data.cells.reduce((sum, cell) => sum + cell.marketCap, 0);
-  
-  // Sort by market cap descending
+  // Sort by market cap descending for a stable "memory map" order
   const sortedCells = [...data.cells].sort((a, b) => b.marketCap - a.marketCap);
+
+  // Deterministic hex byte from a numeric value (0x00–0xFF)
+  const hex = (v: number) =>
+    "0x" +
+    (Math.abs(Math.round(v)) % 256).toString(16).toUpperCase().padStart(2, "0");
 
   return (
     <div className="flex flex-col h-full">
       <div className="editorial-label text-[9px] text-muted-foreground mb-3 shrink-0">
         {data.title}
       </div>
-      
-      <div className="flex-1 w-full flex flex-wrap content-start gap-1 min-h-0 overflow-y-auto">
-        {sortedCells.map((cell) => {
-          // Approximate area
-          const pctOfTotal = cell.marketCap / totalCap;
-          // Scale sizing logic somewhat arbitrarily for a good display
-          const basis = Math.max(10, Math.min(100, Math.sqrt(pctOfTotal) * 150));
-          
-          // Color based on changePct - MONOCHROME RULES
-          // Positive: White background, black text
-          // Negative: Black background, gray border, gray text
-          // Neutral: Gray background
-          
+
+      <div className="flex-1 w-full min-h-0 overflow-y-auto font-mono text-[12px] leading-none border-t border-border">
+        {sortedCells.map((cell, i) => {
           const isPositive = cell.changePct > 0;
           const isNegative = cell.changePct < 0;
-          
-          // The more positive, the brighter white
-          // The more negative, the darker/more opaque gray
-          const absChange = Math.abs(cell.changePct);
-          const intensity = Math.min(1, absChange / 5); // cap at 5%
-          
-          let bgClass = "bg-transparent";
-          let borderClass = "border border-border";
-          let textClass = "text-white";
-          
-          if (isPositive) {
-            bgClass = intensity > 0.6 ? "bg-white" : "bg-white/70";
-            textClass = "text-black";
-            borderClass = "border border-white";
-          } else if (isNegative) {
-            bgClass = intensity > 0.6 ? "bg-black" : "bg-[#111]";
-            textClass = "text-muted-foreground";
-            borderClass = "border border-[#333]";
-          } else {
-            bgClass = "bg-[#222]";
-          }
+
+          const b1 = hex(cell.marketCap / 1e9);
+          const b2 = hex(cell.changePct * 41 + cell.symbol.charCodeAt(0));
+
+          const indicator = isPositive ? "›" : isNegative ? "‹" : ":";
 
           return (
-            <div 
+            <div
               key={cell.symbol}
-              className={`flex flex-col items-center justify-center p-1 overflow-hidden hover:ring-1 hover:ring-white z-10 transition-all ${bgClass} ${borderClass} ${textClass}`}
-              style={{
-                flexBasis: `${basis}%`,
-                flexGrow: pctOfTotal > 0.05 ? 1 : 0,
-                minHeight: '60px'
-              }}
-              title={`${cell.name}: ${cell.changePct}%`}
+              className="group flex items-stretch border-b border-border hover:bg-white/[0.06] transition-colors"
+              title={`${cell.name} · ${cell.sector} · ${cell.changePct}%`}
             >
-              <span className="font-serif text-base leading-none tracking-tight">{cell.symbol}</span>
-              <span className="font-serif text-[11px] nums-oldstyle mt-0.5">{cell.changePct > 0 ? '+' : ''}{cell.changePct}%</span>
+              {/* Row index */}
+              <div className="w-9 shrink-0 flex items-center justify-end pr-2 py-3 text-muted-foreground/60 border-r border-border tabular-nums">
+                {i.toString().padStart(2, "0")}
+              </div>
+
+              {/* Data column */}
+              <div className="flex-1 min-w-0 flex items-center gap-3 px-3 py-3">
+                <span className="text-white font-semibold tracking-wide w-12 shrink-0">
+                  {cell.symbol}
+                </span>
+                <span className="text-muted-foreground/70 tracking-tight">
+                  {b1} {b2}
+                </span>
+                <span
+                  className={`tracking-tight ${
+                    isPositive
+                      ? "text-white/80"
+                      : isNegative
+                      ? "text-muted-foreground/50"
+                      : "text-muted-foreground/60"
+                  }`}
+                >
+                  [ACT]
+                </span>
+                <span
+                  className={`ml-auto tabular-nums ${
+                    isPositive
+                      ? "text-white"
+                      : isNegative
+                      ? "text-muted-foreground"
+                      : "text-muted-foreground/70"
+                  }`}
+                >
+                  {cell.changePct > 0 ? "+" : ""}
+                  {cell.changePct.toFixed(2)}%
+                </span>
+              </div>
+
+              {/* Indicator column */}
+              <div className="w-8 shrink-0 flex items-center justify-center py-3 text-muted-foreground/60 border-l border-border">
+                {indicator}
+              </div>
             </div>
           );
         })}

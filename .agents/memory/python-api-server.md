@@ -28,3 +28,13 @@ Key facts (durable, not obvious):
 - AI access in Python: point the `openai` SDK at the Replit proxy via
   `OpenAI(base_url=os.environ["AI_INTEGRATIONS_OPENAI_BASE_URL"], api_key=os.environ["AI_INTEGRATIONS_OPENAI_API_KEY"])`.
   Model `gpt-5.4`; use `max_completion_tokens` (NOT `max_tokens`); do not set `temperature`.
+
+## Declared deps must be installed into the running env
+The root `pyproject.toml` lists the api-server's Python deps (fastapi, feedparser,
+httpx, openai, psycopg[binary], psycopg-pool, pydantic, uvicorn, yfinance). After a
+rebase/merge that adds a new source module (e.g. `app/sources/*.py` importing
+`yfinance`/`feedparser`), the package may be declared but NOT installed in the
+`.pythonlibs` env, so uvicorn crashes at import with `ModuleNotFoundError` and the
+frontend "just keeps loading" (no data). Fix: `uv pip install <pkgs>` then restart
+the `artifacts/api-server: API Server` workflow. The errors surface one module at a
+time — install the full declared set at once rather than chasing them individually.

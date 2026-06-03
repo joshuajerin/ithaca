@@ -157,7 +157,7 @@ export function PanelContainer({ panel, sessionId, onRefined }: PanelContainerPr
       )}
 
       {panel.note && (
-        <div className="bg-white text-black px-4 py-1.5 editorial-label text-[8.5px] shrink-0">
+        <div className="bg-[#111] text-muted-foreground px-4 py-1.5 editorial-label text-[8.5px] shrink-0 border-b border-border">
           {panel.note}
         </div>
       )}
