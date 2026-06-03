@@ -162,6 +162,42 @@ def _tools() -> list:
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }},
         }},
+        {"type": "function", "function": {
+            "name": "add_portfolio_risk",
+            "description": f"Add a portfolio risk breakdown (VaR histogram, factor exposures, risk summary) for a list of tickers. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Portfolio tickers. Valid: {syms}"},
+                "portfolio_name": {"type": "string", "description": "Optional display name for the portfolio."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbols"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_backtest",
+            "description": f"Add a strategy backtest (equity curve vs benchmark, drawdown chart, Sharpe/CAGR stats) for one ticker. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Ticker. One of: {syms}"},
+                "strategy": {"type": "string", "description": "Strategy name, e.g. 'momentum', 'mean_reversion', 'buy_and_hold'."},
+                "range": {"type": "string", "enum": ["1M", "3M", "6M", "1Y", "YTD"]},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_correlation_matrix",
+            "description": f"Add a pairwise correlation heatmap with beta/hedge-ratio table for a list of tickers. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Tickers. Valid: {syms}"},
+                "window": {"type": "integer", "description": "Rolling window in days: 30 or 90.", "enum": [30, 90]},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbols"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_factor_analysis",
+            "description": f"Add a factor return attribution (momentum, value, size, quality) with monthly breakdown and factor loading table for one ticker. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Ticker. One of: {syms}"},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
     ]
 
 
@@ -182,6 +218,10 @@ _TOOL_TO_TYPE = {
     "add_bond_rv": "bond_rv",
     "add_cds_pricer": "cds_pricer",
     "add_cashflow_duration": "cashflow_duration",
+    "add_portfolio_risk": "portfolio_risk",
+    "add_backtest": "backtest",
+    "add_correlation_matrix": "correlation_matrix",
+    "add_factor_analysis": "factor_analysis",
 }
 
 
@@ -311,6 +351,10 @@ _TYPE_LABELS = {
     "bond_rv": "bond relative value",
     "cds_pricer": "a CDS pricer",
     "cashflow_duration": "cash flow & duration",
+    "portfolio_risk": "a portfolio risk breakdown",
+    "backtest": "a backtest",
+    "correlation_matrix": "a correlation matrix",
+    "factor_analysis": "a factor analysis",
 }
 
 
@@ -386,6 +430,10 @@ def _orchestrate_heuristic(query: str, start_y: int = 0):
     wants_bond_rv = any(k in q for k in ["bond rv", "bond relative value", "z-spread", "z spread", "oas", "asset swap", "asset-swap", "corporate bond", "credit spread"])
     wants_cds = any(k in q for k in ["cds", "credit default swap", "credit risk", "default swap", "survival prob"])
     wants_cashflow = any(k in q for k in ["cash flow", "cashflow", "duration", "convexity", "dv01", "rate sensitivity", "bond cash", "modified duration"])
+    wants_risk = any(k in q for k in ["risk", "var", "value at risk", "tracking error", "factor exposure", "portfolio risk"])
+    wants_backtest = any(k in q for k in ["backtest", "back test", "back-test", "momentum strategy", "strategy", "sharpe", "cagr", "drawdown"])
+    wants_correlation = any(k in q for k in ["correlation", "correlat", "hedge ratio", "co-movement", "diversif", "beta table"])
+    wants_factor = any(k in q for k in ["factor analysis", "factor", "attribution", "alpha", "loading", "momentum factor", "value factor"])
 
     if wants_order_book and symbols:
         sym = symbols[0]
@@ -477,6 +525,40 @@ def _orchestrate_heuristic(query: str, start_y: int = 0):
         add("cashflow_duration", {"bond": bond_key}, 8, 6)
         add("yield_curve", {"region": "US"}, 4, 5)
         return panels, f"Cash flow schedule, duration/convexity, and rate-shock scenarios for {bond_key}."
+
+    if wants_risk:
+        port_syms = symbols if symbols else ["NVDA", "MSFT", "GOOGL", "META", "AMZN"]
+        add("portfolio_risk", {"symbols": port_syms}, 12, 5)
+        summary = f"Portfolio risk breakdown for {', '.join(port_syms[:3])}{'...' if len(port_syms) > 3 else ''}: VaR, factor exposures, and risk metrics."
+        return panels, summary
+
+    if wants_backtest and symbols:
+        sym = symbols[0]
+        strategy = "momentum"
+        if "mean" in q or "reversion" in q:
+            strategy = "mean_reversion"
+        elif "buy" in q and "hold" in q:
+            strategy = "buy_and_hold"
+        add("backtest", {"symbol": sym, "strategy": strategy}, 12, 6)
+        name = data.get_company(sym)["name"]
+        summary = f"Backtest of {strategy.replace('_', ' ')} strategy on {name}: equity curve, drawdown, and performance stats."
+        return panels, summary
+
+    if wants_correlation and (len(symbols) >= 2 or sector):
+        if len(symbols) < 2 and sector:
+            symbols = data.symbols_in_sector(sector)[:5]
+        if len(symbols) < 2:
+            symbols = ["NVDA", "AMD", "MSFT", "GOOGL", "META"]
+        add("correlation_matrix", {"symbols": symbols[:6], "window": 90}, 12, 5)
+        summary = f"Pairwise correlation matrix for {', '.join(symbols[:4])}{'...' if len(symbols) > 4 else ''} with beta/hedge-ratio table."
+        return panels, summary
+
+    if wants_factor and symbols:
+        sym = symbols[0]
+        name = data.get_company(sym)["name"]
+        add("factor_analysis", {"symbol": sym}, 12, 5)
+        summary = f"Factor attribution analysis for {name}: momentum, value, size, and quality decomposition."
+        return panels, summary
 
     if wants_compare and len(symbols) >= 2:
         add("comparison", {"symbols": symbols}, 12, 4)

@@ -26,6 +26,10 @@ DATA_MODELS = {
     "bond_rv": models.BondRVData,
     "cds_pricer": models.CDSPricerData,
     "cashflow_duration": models.CashFlowDurationData,
+    "portfolio_risk": models.PortfolioRiskData,
+    "backtest": models.BacktestData,
+    "correlation_matrix": models.CorrelationMatrixData,
+    "factor_analysis": models.FactorAnalysisData,
 }
 
 

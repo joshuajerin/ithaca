@@ -29,6 +29,10 @@ export const PanelType = {
   bond_rv: 'bond_rv',
   cds_pricer: 'cds_pricer',
   cashflow_duration: 'cashflow_duration',
+  portfolio_risk: 'portfolio_risk',
+  backtest: 'backtest',
+  correlation_matrix: 'correlation_matrix',
+  factor_analysis: 'factor_analysis',
 } as const;
 
 export type PanelStatus = typeof PanelStatus[keyof typeof PanelStatus];
@@ -383,7 +387,95 @@ export interface CashFlowDurationData {
   scenarios: ScenarioRow[];
 }
 
-export type PanelData = PriceChartData | NewsData | AnalysisData | FundamentalsData | ScreenerData | HeatmapData | SentimentData | ComparisonData | OrderBookData | TradeFlowData | TCARportData | MacroDashboardData | YieldCurveData | BondRVData | CDSPricerData | CashFlowDurationData;
+export interface VarBin {
+  bin: number;
+  count: number;
+}
+
+export interface FactorExposure {
+  factor: string;
+  exposure: number;
+}
+
+export interface RiskSummary {
+  var95: number;
+  trackingError: number;
+  beta: number;
+  portfolioName: string;
+}
+
+export interface PortfolioRiskData {
+  portfolioName: string;
+  symbols: string[];
+  varHistogram: VarBin[];
+  factorExposures: FactorExposure[];
+  summary: RiskSummary;
+}
+
+export interface BacktestPoint {
+  t: string;
+  strategy: number;
+  benchmark: number;
+}
+
+export interface DrawdownPoint {
+  t: string;
+  dd: number;
+}
+
+export interface BacktestStats {
+  sharpe: number;
+  sortino: number;
+  cagr: number;
+  maxDD: number;
+  winRate: number;
+}
+
+export interface BacktestData {
+  symbol: string;
+  strategy: string;
+  curve: BacktestPoint[];
+  drawdown: DrawdownPoint[];
+  stats: BacktestStats;
+}
+
+export interface BetaRow {
+  symbol: string;
+  beta: number;
+  hedgeRatio: number;
+}
+
+export interface CorrelationMatrixData {
+  symbols: string[];
+  matrix: number[][];
+  window: number;
+  betas: BetaRow[];
+}
+
+export interface MonthlyAttribution {
+  month: string;
+  momentum: number;
+  value: number;
+  size: number;
+  quality: number;
+  residual: number;
+}
+
+export interface FactorLoading {
+  factor: string;
+  loading: number;
+  tStat: number;
+  contribution: number;
+}
+
+export interface FactorAnalysisData {
+  symbol: string;
+  name: string;
+  monthlyAttribution: MonthlyAttribution[];
+  loadings: FactorLoading[];
+}
+
+export type PanelData = PriceChartData | NewsData | AnalysisData | FundamentalsData | ScreenerData | HeatmapData | SentimentData | ComparisonData | OrderBookData | TradeFlowData | TCARportData | MacroDashboardData | YieldCurveData | BondRVData | CDSPricerData | CashFlowDurationData | PortfolioRiskData | BacktestData | CorrelationMatrixData | FactorAnalysisData;
 
 export interface Panel {
   id: string;

@@ -18,4 +18,8 @@ export const PanelType = {
   heatmap: 'heatmap',
   sentiment: 'sentiment',
   comparison: 'comparison',
+  portfolio_risk: 'portfolio_risk',
+  backtest: 'backtest',
+  correlation_matrix: 'correlation_matrix',
+  factor_analysis: 'factor_analysis',
 } as const;

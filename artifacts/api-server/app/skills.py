@@ -439,6 +439,58 @@ def build_order_book(params: dict) -> dict:
     }
 
 
+def build_portfolio_risk(params: dict) -> dict:
+    symbols = [s.upper() for s in (params.get("symbols") or []) if data.get_company(s.upper())]
+    if not symbols:
+        symbols = ["NVDA", "MSFT", "GOOGL", "META", "AMZN"]
+    portfolio_name = params.get("portfolio_name") or (", ".join(symbols[:3]) + " Portfolio")
+
+    seed = data._seed("_".join(sorted(symbols)))
+
+    def rnd():
+        nonlocal seed
+        seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
+        return seed / 0x7FFFFFFF
+
+    # VaR histogram — simulate 20 bins of a normal-ish P&L distribution
+    bins = []
+    center = -0.02  # slight negative skew
+    for i in range(20):
+        b = round(center - 0.04 + i * 0.004, 4)
+        # bell-shaped count
+        z = (b - center) / 0.012
+        base_count = max(1, int(120 * 2.718 ** (-0.5 * z * z) + rnd() * 20))
+        bins.append({"bin": round(b * 100, 2), "count": base_count})
+
+    # Factor exposures
+    betas = {s: data.get_company(s)["beta"] for s in symbols}
+    avg_beta = round(sum(betas.values()) / len(betas), 2)
+    factor_exposures = [
+        {"factor": "Market", "exposure": round(avg_beta, 2)},
+        {"factor": "Momentum", "exposure": round(0.3 + rnd() * 0.5, 2)},
+        {"factor": "Size", "exposure": round(-0.2 + rnd() * 0.4, 2)},
+        {"factor": "Value", "exposure": round(-0.4 + rnd() * 0.4, 2)},
+        {"factor": "Quality", "exposure": round(0.1 + rnd() * 0.5, 2)},
+        {"factor": "Volatility", "exposure": round(0.2 + rnd() * 0.4, 2)},
+    ]
+
+    var95 = round(1.645 * (0.012 + rnd() * 0.008), 4)
+    tracking_error = round(0.04 + rnd() * 0.06, 4)
+    summary = {
+        "portfolioName": portfolio_name,
+        "var95": round(var95 * 100, 2),
+        "trackingError": round(tracking_error * 100, 2),
+        "beta": avg_beta,
+    }
+    return {
+        "portfolioName": portfolio_name,
+        "symbols": symbols,
+        "varHistogram": bins,
+        "factorExposures": factor_exposures,
+        "summary": summary,
+    }
+
+
 def build_trade_flow(params: dict) -> dict:
     symbol = (params.get("symbol") or "NVDA").upper()
     company = data.get_company(symbol)
@@ -505,6 +557,94 @@ def build_trade_flow(params: dict) -> dict:
         "totalVolume": round(total_vol, 0),
         "blockThreshold": block_threshold,
         "prints": prints,
+    }
+
+
+def build_backtest(params: dict) -> dict:
+    symbol = (params.get("symbol") or "SPY").upper()
+    company = data.get_company(symbol)
+    if not company:
+        symbol = "NVDA"
+        company = data.get_company(symbol)
+    strategy = params.get("strategy") or "momentum"
+    rng_key = params.get("range") or "1Y"
+    days = RANGE_DAYS.get(rng_key.upper(), 250)
+
+    seed = data._seed(symbol + strategy)
+
+    def rnd():
+        nonlocal seed
+        seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
+        return seed / 0x7FFFFFFF
+
+    # Generate equity curves: strategy outperforms benchmark on average
+    start = date.today() - timedelta(days=days - 1)
+    strat_val = 100.0
+    bench_val = 100.0
+    curve = []
+    dd_series = []
+    peak = 100.0
+    wins = 0
+    total_days = 0
+
+    for i in range(days):
+        r = rnd()
+        # benchmark: daily return ~0.04% drift, 1% vol
+        bench_ret = 0.0004 + (r * 2 - 1) * 0.01
+        # strategy: slightly better drift, slightly higher vol
+        strat_ret = 0.0008 + (rnd() * 2 - 1) * 0.012
+
+        bench_val = round(bench_val * (1 + bench_ret), 4)
+        strat_val = round(strat_val * (1 + strat_ret), 4)
+
+        if strat_ret > 0:
+            wins += 1
+        total_days += 1
+
+        if strat_val > peak:
+            peak = strat_val
+        dd = round((strat_val - peak) / peak * 100, 3) if peak > 0 else 0.0
+
+        t = (start + timedelta(days=i)).isoformat()
+        curve.append({"t": t, "strategy": round(strat_val, 2), "benchmark": round(bench_val, 2)})
+        dd_series.append({"t": t, "dd": dd})
+
+    # Compute stats
+    strat_final = curve[-1]["strategy"] / 100
+    bench_final = curve[-1]["benchmark"] / 100
+    years = days / 252
+    cagr = round((strat_final ** (1 / years) - 1) * 100, 2)
+    max_dd = round(min(p["dd"] for p in dd_series), 2)
+    win_rate = round(wins / max(total_days, 1) * 100, 1)
+    # Sharpe: approximate
+    daily_rets = [
+        (curve[i]["strategy"] - curve[i - 1]["strategy"]) / curve[i - 1]["strategy"]
+        for i in range(1, len(curve))
+    ]
+    if daily_rets:
+        avg_r = sum(daily_rets) / len(daily_rets)
+        var_r = sum((r - avg_r) ** 2 for r in daily_rets) / len(daily_rets)
+        std_r = var_r ** 0.5
+        sharpe = round((avg_r / std_r) * (252 ** 0.5), 2) if std_r > 0 else 0.0
+        # Sortino (downside only)
+        neg = [r for r in daily_rets if r < 0]
+        dvar = sum(r ** 2 for r in neg) / max(len(neg), 1)
+        sortino = round((avg_r / (dvar ** 0.5)) * (252 ** 0.5), 2) if dvar > 0 else 0.0
+    else:
+        sharpe = sortino = 0.0
+
+    return {
+        "symbol": symbol,
+        "strategy": strategy,
+        "curve": curve,
+        "drawdown": dd_series,
+        "stats": {
+            "sharpe": sharpe,
+            "sortino": sortino,
+            "cagr": cagr,
+            "maxDD": max_dd,
+            "winRate": win_rate,
+        },
     }
 
 
@@ -873,6 +1013,97 @@ def build_cashflow_duration(params: dict) -> dict:
     }
 
 
+def build_correlation_matrix(params: dict) -> dict:
+    symbols = [s.upper() for s in (params.get("symbols") or []) if data.get_company(s.upper())]
+    if len(symbols) < 2:
+        symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "META"]
+    
+    seed = data._seed("_".join(sorted(symbols)) + "corr")
+
+    def rnd():
+        nonlocal seed
+        seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
+        return seed / 0x7FFFFFFF
+
+    # Symmetric n x n matrix
+    matrix = []
+    for i, s1 in enumerate(symbols):
+        row = []
+        for j, s2 in enumerate(symbols):
+            if i == j:
+                val = 1.0
+            elif i > j:
+                val = matrix[j][i]
+            else:
+                # Base correlation 0.3-0.7
+                val = round(0.3 + rnd() * 0.4, 2)
+                # Boost if same sector
+                c1 = data.get_company(s1)
+                c2 = data.get_company(s2)
+                if c1 and c2 and c1["sector"] == c2["sector"]:
+                    val = min(0.99, val + 0.2)
+            row.append(val)
+        matrix.append(row)
+
+    betas = []
+    for s in symbols:
+        c = data.get_company(s)
+        b = c["beta"] if c else 1.0
+        betas.append({
+            "symbol": s,
+            "beta": b,
+            "hedgeRatio": round(1.0 / b, 2) if b > 0 else 0.0
+        })
+
+    return {
+        "symbols": symbols,
+        "matrix": matrix,
+        "betas": betas
+    }
+
+
+def build_factor_analysis(params: dict) -> dict:
+    symbol = (params.get("symbol") or "AAPL").upper()
+    company = data.get_company(symbol)
+    if not company:
+        symbol = "AAPL"
+        company = data.get_company(symbol)
+    
+    seed = data._seed(symbol + "factor")
+
+    def rnd():
+        nonlocal seed
+        seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
+        return seed / 0x7FFFFFFF
+
+    factors = ["Momentum", "Value", "Size", "Quality", "Residual"]
+    attribution = []
+    today = date.today()
+    for i in range(12):
+        month = (today - timedelta(days=30 * (11 - i))).strftime("%b %y")
+        # Ensure they sum to something reasonable
+        vals = {f: round((rnd() - 0.5) * 4.0, 2) for f in factors}
+        attribution.append({"month": month, **vals})
+
+    loadings = []
+    for f in factors[:-1]: # exclude residual for loadings
+        loading = round(rnd() * 1.5, 2)
+        t_stat = round(1.5 + rnd() * 3.0, 2)
+        loadings.append({
+            "factor": f,
+            "loading": loading,
+            "tStat": t_stat,
+            "contribution": round(loading * 10, 1)
+        })
+
+    return {
+        "symbol": symbol,
+        "name": company["name"],
+        "attribution": attribution,
+        "loadings": loadings
+    }
+
+
 # ----------------------------- registry -----------------------------
 class SkillDef:
     def __init__(self, id, name, panel_type, description, subskills, builder, default_title):
@@ -1022,6 +1253,57 @@ _reg(SkillDef(
         {"name": "build_tiles", "description": "Assemble asset tiles for the theme with price, change, and sparkline.", "expectedOutput": "Grouped asset tiles."},
     ],
     build_macro_dashboard, "Macro Dashboard",
+))
+_reg(SkillDef(
+    "portfolio-risk", "Portfolio Risk & Factor Exposure", "portfolio_risk",
+    "Decomposes a portfolio of tickers into VaR distribution, systematic factor exposures "
+    "(market, momentum, size, value, quality), and a risk summary card (1-day 95% VaR, "
+    "tracking error, beta). Use when the user asks about risk, VaR, factor exposure, or "
+    "portfolio breakdown.",
+    [
+        {"name": "resolve_symbols", "description": "Map the requested portfolio tickers to valid symbols.", "expectedOutput": "A list of tickers."},
+        {"name": "build_var_histogram", "description": "Simulate a P&L distribution and derive VaR bins.", "expectedOutput": "20 histogram bins."},
+        {"name": "compute_factor_exposures", "description": "Estimate portfolio loading on each systematic factor.", "expectedOutput": "Factor exposure list."},
+        {"name": "summarize_risk", "description": "Compute 1-day 95% VaR, tracking error, and portfolio beta.", "expectedOutput": "Risk summary card."},
+    ],
+    build_portfolio_risk, "Portfolio Risk",
+))
+_reg(SkillDef(
+    "backtest", "Strategy Backtester", "backtest",
+    "Backtests a named strategy (e.g. momentum, mean-reversion) on a single ticker, "
+    "returning an equity curve vs benchmark, drawdown chart, and performance statistics "
+    "(Sharpe, Sortino, CAGR, max drawdown, win rate). Use when the user asks to backtest, "
+    "test a strategy, or see historical performance.",
+    [
+        {"name": "resolve_symbol", "description": "Map the ticker for the backtest universe.", "expectedOutput": "A valid ticker."},
+        {"name": "generate_equity_curve", "description": "Simulate daily strategy and benchmark returns.", "expectedOutput": "Equity curve and drawdown series."},
+        {"name": "compute_stats", "description": "Derive Sharpe, Sortino, CAGR, max DD, and win rate.", "expectedOutput": "Performance statistics."},
+    ],
+    build_backtest, "Backtest",
+))
+_reg(SkillDef(
+    "correlation-matrix", "Correlation Matrix & Beta Table", "correlation_matrix",
+    "Builds a pairwise correlation heatmap for a set of tickers, with a rolling 30/90-day "
+    "toggle and a beta/hedge-ratio table. Use when the user asks about correlations, "
+    "co-movement, diversification, or hedge ratios between stocks.",
+    [
+        {"name": "resolve_symbols", "description": "Map the requested tickers to valid symbols.", "expectedOutput": "A list of at least 2 tickers."},
+        {"name": "compute_correlations", "description": "Build the n×n correlation matrix.", "expectedOutput": "Symmetric correlation matrix."},
+        {"name": "compute_betas", "description": "Derive beta and hedge ratio per ticker.", "expectedOutput": "Beta/hedge ratio table."},
+    ],
+    build_correlation_matrix, "Correlation Matrix",
+))
+_reg(SkillDef(
+    "factor-analysis", "Factor Return Attribution", "factor_analysis",
+    "Decomposes a stock's returns into systematic factors (momentum, value, size, quality) "
+    "month by month, with a factor loading table (loading, t-stat, contribution %). Use "
+    "when the user asks about factor analysis, return attribution, or alpha decomposition.",
+    [
+        {"name": "resolve_symbol", "description": "Map the ticker to analyze.", "expectedOutput": "A valid ticker."},
+        {"name": "build_monthly_attribution", "description": "Attribute monthly returns to factors.", "expectedOutput": "12 months of factor attribution."},
+        {"name": "compute_loadings", "description": "Estimate factor loadings and t-statistics.", "expectedOutput": "Factor loading table."},
+    ],
+    build_factor_analysis, "Factor Analysis",
 ))
 
 

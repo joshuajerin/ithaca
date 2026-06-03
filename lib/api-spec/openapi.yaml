@@ -185,6 +185,10 @@ components:
         - heatmap
         - sentiment
         - comparison
+        - portfolio_risk
+        - backtest
+        - correlation_matrix
+        - factor_analysis
     PanelStatus:
       type: string
       enum:
@@ -445,6 +449,178 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ComparisonCompany"
+    VarBin:
+      type: object
+      required: [bin, count]
+      properties:
+        bin:
+          type: number
+        count:
+          type: number
+    FactorExposure:
+      type: object
+      required: [factor, exposure]
+      properties:
+        factor:
+          type: string
+        exposure:
+          type: number
+    RiskSummary:
+      type: object
+      required: [var95, trackingError, beta, portfolioName]
+      properties:
+        var95:
+          type: number
+        trackingError:
+          type: number
+        beta:
+          type: number
+        portfolioName:
+          type: string
+    PortfolioRiskData:
+      type: object
+      required: [portfolioName, symbols, varHistogram, factorExposures, summary]
+      properties:
+        portfolioName:
+          type: string
+        symbols:
+          type: array
+          items:
+            type: string
+        varHistogram:
+          type: array
+          items:
+            $ref: "#/components/schemas/VarBin"
+        factorExposures:
+          type: array
+          items:
+            $ref: "#/components/schemas/FactorExposure"
+        summary:
+          $ref: "#/components/schemas/RiskSummary"
+    BacktestPoint:
+      type: object
+      required: [t, strategy, benchmark]
+      properties:
+        t:
+          type: string
+        strategy:
+          type: number
+        benchmark:
+          type: number
+    DrawdownPoint:
+      type: object
+      required: [t, dd]
+      properties:
+        t:
+          type: string
+        dd:
+          type: number
+    BacktestStats:
+      type: object
+      required: [sharpe, sortino, cagr, maxDD, winRate]
+      properties:
+        sharpe:
+          type: number
+        sortino:
+          type: number
+        cagr:
+          type: number
+        maxDD:
+          type: number
+        winRate:
+          type: number
+    BacktestData:
+      type: object
+      required: [symbol, strategy, curve, drawdown, stats]
+      properties:
+        symbol:
+          type: string
+        strategy:
+          type: string
+        curve:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestPoint"
+        drawdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/DrawdownPoint"
+        stats:
+          $ref: "#/components/schemas/BacktestStats"
+    BetaRow:
+      type: object
+      required: [symbol, beta, hedgeRatio]
+      properties:
+        symbol:
+          type: string
+        beta:
+          type: number
+        hedgeRatio:
+          type: number
+    CorrelationMatrixData:
+      type: object
+      required: [symbols, matrix, window, betas]
+      properties:
+        symbols:
+          type: array
+          items:
+            type: string
+        matrix:
+          type: array
+          items:
+            type: array
+            items:
+              type: number
+        window:
+          type: integer
+        betas:
+          type: array
+          items:
+            $ref: "#/components/schemas/BetaRow"
+    MonthlyAttribution:
+      type: object
+      required: [month, momentum, value, size, quality, residual]
+      properties:
+        month:
+          type: string
+        momentum:
+          type: number
+        value:
+          type: number
+        size:
+          type: number
+        quality:
+          type: number
+        residual:
+          type: number
+    FactorLoading:
+      type: object
+      required: [factor, loading, tStat, contribution]
+      properties:
+        factor:
+          type: string
+        loading:
+          type: number
+        tStat:
+          type: number
+        contribution:
+          type: number
+    FactorAnalysisData:
+      type: object
+      required: [symbol, name, monthlyAttribution, loadings]
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+        monthlyAttribution:
+          type: array
+          items:
+            $ref: "#/components/schemas/MonthlyAttribution"
+        loadings:
+          type: array
+          items:
+            $ref: "#/components/schemas/FactorLoading"
     PanelData:
       oneOf:
         - $ref: "#/components/schemas/PriceChartData"
@@ -455,6 +631,10 @@ components:
         - $ref: "#/components/schemas/HeatmapData"
         - $ref: "#/components/schemas/SentimentData"
         - $ref: "#/components/schemas/ComparisonData"
+        - $ref: "#/components/schemas/PortfolioRiskData"
+        - $ref: "#/components/schemas/BacktestData"
+        - $ref: "#/components/schemas/CorrelationMatrixData"
+        - $ref: "#/components/schemas/FactorAnalysisData"
     Panel:
       type: object
       required: [id, type, title, layout, status]

@@ -25,7 +25,7 @@ export const GetSkillsResponse = zod.object({
   "skills": zod.array(zod.object({
   "id": zod.string(),
   "name": zod.string(),
-  "panelType": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison']),
+  "panelType": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'correlation_matrix', 'factor_analysis']),
   "description": zod.string(),
   "subskills": zod.array(zod.object({
   "name": zod.string(),
@@ -67,7 +67,7 @@ export const GetDefaultDashboardResponse = zod.object({
   "summary": zod.string(),
   "panels": zod.array(zod.object({
   "id": zod.string(),
-  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison']),
+  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'correlation_matrix', 'factor_analysis']),
   "title": zod.string(),
   "layout": zod.object({
   "x": zod.number(),
@@ -168,6 +168,68 @@ export const GetDefaultDashboardResponse = zod.object({
   "label": zod.string(),
   "value": zod.string()
 }))
+}))
+}),zod.object({
+  "portfolioName": zod.string(),
+  "symbols": zod.array(zod.string()),
+  "varHistogram": zod.array(zod.object({
+  "bin": zod.number(),
+  "count": zod.number()
+})),
+  "factorExposures": zod.array(zod.object({
+  "factor": zod.string(),
+  "exposure": zod.number()
+})),
+  "summary": zod.object({
+  "var95": zod.number(),
+  "trackingError": zod.number(),
+  "beta": zod.number(),
+  "portfolioName": zod.string()
+})
+}),zod.object({
+  "symbol": zod.string(),
+  "strategy": zod.string(),
+  "curve": zod.array(zod.object({
+  "t": zod.string(),
+  "strategy": zod.number(),
+  "benchmark": zod.number()
+})),
+  "drawdown": zod.array(zod.object({
+  "t": zod.string(),
+  "dd": zod.number()
+})),
+  "stats": zod.object({
+  "sharpe": zod.number(),
+  "sortino": zod.number(),
+  "cagr": zod.number(),
+  "maxDD": zod.number(),
+  "winRate": zod.number()
+})
+}),zod.object({
+  "symbols": zod.array(zod.string()),
+  "matrix": zod.array(zod.array(zod.number())),
+  "window": zod.number(),
+  "betas": zod.array(zod.object({
+  "symbol": zod.string(),
+  "beta": zod.number(),
+  "hedgeRatio": zod.number()
+}))
+}),zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "monthlyAttribution": zod.array(zod.object({
+  "month": zod.string(),
+  "momentum": zod.number(),
+  "value": zod.number(),
+  "size": zod.number(),
+  "quality": zod.number(),
+  "residual": zod.number()
+})),
+  "loadings": zod.array(zod.object({
+  "factor": zod.string(),
+  "loading": zod.number(),
+  "tStat": zod.number(),
+  "contribution": zod.number()
 }))
 })]).optional()
 }))
@@ -188,7 +250,7 @@ export const OrchestrateResponse = zod.object({
   "summary": zod.string(),
   "panels": zod.array(zod.object({
   "id": zod.string(),
-  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison']),
+  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'correlation_matrix', 'factor_analysis']),
   "title": zod.string(),
   "layout": zod.object({
   "x": zod.number(),
@@ -289,6 +351,68 @@ export const OrchestrateResponse = zod.object({
   "label": zod.string(),
   "value": zod.string()
 }))
+}))
+}),zod.object({
+  "portfolioName": zod.string(),
+  "symbols": zod.array(zod.string()),
+  "varHistogram": zod.array(zod.object({
+  "bin": zod.number(),
+  "count": zod.number()
+})),
+  "factorExposures": zod.array(zod.object({
+  "factor": zod.string(),
+  "exposure": zod.number()
+})),
+  "summary": zod.object({
+  "var95": zod.number(),
+  "trackingError": zod.number(),
+  "beta": zod.number(),
+  "portfolioName": zod.string()
+})
+}),zod.object({
+  "symbol": zod.string(),
+  "strategy": zod.string(),
+  "curve": zod.array(zod.object({
+  "t": zod.string(),
+  "strategy": zod.number(),
+  "benchmark": zod.number()
+})),
+  "drawdown": zod.array(zod.object({
+  "t": zod.string(),
+  "dd": zod.number()
+})),
+  "stats": zod.object({
+  "sharpe": zod.number(),
+  "sortino": zod.number(),
+  "cagr": zod.number(),
+  "maxDD": zod.number(),
+  "winRate": zod.number()
+})
+}),zod.object({
+  "symbols": zod.array(zod.string()),
+  "matrix": zod.array(zod.array(zod.number())),
+  "window": zod.number(),
+  "betas": zod.array(zod.object({
+  "symbol": zod.string(),
+  "beta": zod.number(),
+  "hedgeRatio": zod.number()
+}))
+}),zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "monthlyAttribution": zod.array(zod.object({
+  "month": zod.string(),
+  "momentum": zod.number(),
+  "value": zod.number(),
+  "size": zod.number(),
+  "quality": zod.number(),
+  "residual": zod.number()
+})),
+  "loadings": zod.array(zod.object({
+  "factor": zod.string(),
+  "loading": zod.number(),
+  "tStat": zod.number(),
+  "contribution": zod.number()
 }))
 })]).optional()
 }))
@@ -307,7 +431,7 @@ export const RefinePanelBody = zod.object({
 
 export const RefinePanelResponse = zod.object({
   "id": zod.string(),
-  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison']),
+  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'correlation_matrix', 'factor_analysis']),
   "title": zod.string(),
   "layout": zod.object({
   "x": zod.number(),
@@ -408,6 +532,68 @@ export const RefinePanelResponse = zod.object({
   "label": zod.string(),
   "value": zod.string()
 }))
+}))
+}),zod.object({
+  "portfolioName": zod.string(),
+  "symbols": zod.array(zod.string()),
+  "varHistogram": zod.array(zod.object({
+  "bin": zod.number(),
+  "count": zod.number()
+})),
+  "factorExposures": zod.array(zod.object({
+  "factor": zod.string(),
+  "exposure": zod.number()
+})),
+  "summary": zod.object({
+  "var95": zod.number(),
+  "trackingError": zod.number(),
+  "beta": zod.number(),
+  "portfolioName": zod.string()
+})
+}),zod.object({
+  "symbol": zod.string(),
+  "strategy": zod.string(),
+  "curve": zod.array(zod.object({
+  "t": zod.string(),
+  "strategy": zod.number(),
+  "benchmark": zod.number()
+})),
+  "drawdown": zod.array(zod.object({
+  "t": zod.string(),
+  "dd": zod.number()
+})),
+  "stats": zod.object({
+  "sharpe": zod.number(),
+  "sortino": zod.number(),
+  "cagr": zod.number(),
+  "maxDD": zod.number(),
+  "winRate": zod.number()
+})
+}),zod.object({
+  "symbols": zod.array(zod.string()),
+  "matrix": zod.array(zod.array(zod.number())),
+  "window": zod.number(),
+  "betas": zod.array(zod.object({
+  "symbol": zod.string(),
+  "beta": zod.number(),
+  "hedgeRatio": zod.number()
+}))
+}),zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "monthlyAttribution": zod.array(zod.object({
+  "month": zod.string(),
+  "momentum": zod.number(),
+  "value": zod.number(),
+  "size": zod.number(),
+  "quality": zod.number(),
+  "residual": zod.number()
+})),
+  "loadings": zod.array(zod.object({
+  "factor": zod.string(),
+  "loading": zod.number(),
+  "tStat": zod.number(),
+  "contribution": zod.number()
 }))
 })]).optional()
 })

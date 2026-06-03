@@ -24,6 +24,10 @@ class PanelType(str, Enum):
     bond_rv = "bond_rv"
     cds_pricer = "cds_pricer"
     cashflow_duration = "cashflow_duration"
+    portfolio_risk = "portfolio_risk"
+    backtest = "backtest"
+    correlation_matrix = "correlation_matrix"
+    factor_analysis = "factor_analysis"
 
 
 class PanelStatus(str, Enum):
@@ -355,6 +359,98 @@ class CashFlowDurationData(BaseModel):
     scenarios: List[ScenarioRow]
 
 
+# --- portfolio_risk ---
+class VarBin(BaseModel):
+    bin: float
+    count: float
+
+
+class FactorExposure(BaseModel):
+    factor: str
+    exposure: float
+
+
+class RiskSummary(BaseModel):
+    var95: float
+    trackingError: float
+    beta: float
+    portfolioName: str
+
+
+class PortfolioRiskData(BaseModel):
+    portfolioName: str
+    symbols: List[str]
+    varHistogram: List[VarBin]
+    factorExposures: List[FactorExposure]
+    summary: RiskSummary
+
+
+# --- backtest ---
+class BacktestPoint(BaseModel):
+    t: str
+    strategy: float
+    benchmark: float
+
+
+class DrawdownPoint(BaseModel):
+    t: str
+    dd: float
+
+
+class BacktestStats(BaseModel):
+    sharpe: float
+    sortino: float
+    cagr: float
+    maxDD: float
+    winRate: float
+
+
+class BacktestData(BaseModel):
+    symbol: str
+    strategy: str
+    curve: List[BacktestPoint]
+    drawdown: List[DrawdownPoint]
+    stats: BacktestStats
+
+
+# --- correlation_matrix ---
+class BetaRow(BaseModel):
+    symbol: str
+    beta: float
+    hedgeRatio: float
+
+
+class CorrelationMatrixData(BaseModel):
+    symbols: List[str]
+    matrix: List[List[float]]
+    window: int
+    betas: List[BetaRow]
+
+
+# --- factor_analysis ---
+class MonthlyAttribution(BaseModel):
+    month: str
+    momentum: float
+    value: float
+    size: float
+    quality: float
+    residual: float
+
+
+class FactorLoading(BaseModel):
+    factor: str
+    loading: float
+    tStat: float
+    contribution: float
+
+
+class FactorAnalysisData(BaseModel):
+    symbol: str
+    name: str
+    monthlyAttribution: List[MonthlyAttribution]
+    loadings: List[FactorLoading]
+
+
 PanelData = Union[
     PriceChartData,
     NewsData,
@@ -372,6 +468,10 @@ PanelData = Union[
     BondRVData,
     CDSPricerData,
     CashFlowDurationData,
+    PortfolioRiskData,
+    BacktestData,
+    CorrelationMatrixData,
+    FactorAnalysisData,
 ]
 
 
