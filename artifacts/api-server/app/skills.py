@@ -517,6 +517,34 @@ def build_tca_report(params: dict) -> dict:
     }
 
 
+def build_macro_dashboard(params: dict) -> dict:
+    theme_raw = params.get("theme") or "global"
+    theme_key = data.resolve_macro_theme(theme_raw)
+    theme_def = data.MACRO_THEMES[theme_key]
+    groups = []
+    for label, symbols in theme_def["groups"].items():
+        tiles = []
+        for sym in symbols:
+            asset = data.MACRO_ASSETS.get(sym)
+            if not asset:
+                continue
+            tiles.append({
+                "symbol": sym,
+                "name": asset["name"],
+                "price": float(asset["price"]),
+                "changePct": float(asset["changePct"]),
+                "unit": asset["unit"],
+                "sparkline": data.macro_sparkline(sym),
+            })
+        if tiles:
+            groups.append({"label": label, "tiles": tiles})
+    return {
+        "theme": theme_key,
+        "title": theme_def["title"],
+        "groups": groups,
+    }
+
+
 # ----------------------------- registry -----------------------------
 class SkillDef:
     def __init__(self, id, name, panel_type, description, subskills, builder, default_title):
@@ -654,6 +682,18 @@ _reg(SkillDef(
         {"name": "build_buckets", "description": "Break execution into 30-minute intraday buckets with participation rate.", "expectedOutput": "A list of bucket records."},
     ],
     build_tca_report, "TCA Report",
+))
+_reg(SkillDef(
+    "macro-dashboard", "Macro & Cross-Asset Dashboard", "macro_dashboard",
+    "Renders a multi-tile macro dashboard grouping rates (yields, spreads), FX pairs, commodities "
+    "(oil, gold, copper), and equity indices in a single panel. Each tile shows price, daily Δ%, "
+    "and a sparkline. Use when the user asks for a macro view, global dashboard, or theme-specific "
+    "cross-asset view (e.g. inflation, china, risk-on/off).",
+    [
+        {"name": "resolve_theme", "description": "Map the user's request to a macro theme (global, inflation, china, risk).", "expectedOutput": "A canonical theme key."},
+        {"name": "build_tiles", "description": "Assemble asset tiles for the theme with price, change, and sparkline.", "expectedOutput": "Grouped asset tiles."},
+    ],
+    build_macro_dashboard, "Macro Dashboard",
 ))
 
 

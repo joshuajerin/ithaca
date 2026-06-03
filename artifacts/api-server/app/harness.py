@@ -21,6 +21,7 @@ DATA_MODELS = {
     "order_book": models.OrderBookData,
     "trade_flow": models.TradeFlowData,
     "tca_report": models.TCARportData,
+    "macro_dashboard": models.MacroDashboardData,
 }
 
 

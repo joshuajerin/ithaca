@@ -13,6 +13,7 @@ import { ComparisonPanel } from "./panels/ComparisonPanel";
 import { OrderBookPanel } from "./panels/OrderBookPanel";
 import { TradeFlowPanel } from "./panels/TradeFlowPanel";
 import { TCAPanelReport } from "./panels/TCAPanelReport";
+import { MacroDashboardPanel } from "./panels/MacroDashboardPanel";
 
 interface PanelContainerProps {
   panel: Panel;
@@ -80,6 +81,7 @@ export function PanelContainer({ panel, sessionId, onRefined }: PanelContainerPr
       case "order_book": return <OrderBookPanel data={panel.data as any} />;
       case "trade_flow": return <TradeFlowPanel data={panel.data as any} />;
       case "tca_report": return <TCAPanelReport data={panel.data as any} />;
+      case "macro_dashboard": return <MacroDashboardPanel data={panel.data as any} />;
       default: return <div className="p-4 text-xs">Unknown panel type: {panel.type}</div>;
     }
   };

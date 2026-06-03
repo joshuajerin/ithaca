@@ -24,6 +24,7 @@ export const PanelType = {
   order_book: 'order_book',
   trade_flow: 'trade_flow',
   tca_report: 'tca_report',
+  macro_dashboard: 'macro_dashboard',
 } as const;
 
 export type PanelStatus = typeof PanelStatus[keyof typeof PanelStatus];
@@ -268,7 +269,27 @@ export interface TCARportData {
   buckets: TCABucket[];
 }
 
-export type PanelData = PriceChartData | NewsData | AnalysisData | FundamentalsData | ScreenerData | HeatmapData | SentimentData | ComparisonData | OrderBookData | TradeFlowData | TCARportData;
+export interface MacroTile {
+  symbol: string;
+  name: string;
+  price: number;
+  changePct: number;
+  unit: string;
+  sparkline: number[];
+}
+
+export interface MacroGroup {
+  label: string;
+  tiles: MacroTile[];
+}
+
+export interface MacroDashboardData {
+  theme: string;
+  title: string;
+  groups: MacroGroup[];
+}
+
+export type PanelData = PriceChartData | NewsData | AnalysisData | FundamentalsData | ScreenerData | HeatmapData | SentimentData | ComparisonData | OrderBookData | TradeFlowData | TCARportData | MacroDashboardData;
 
 export interface Panel {
   id: string;

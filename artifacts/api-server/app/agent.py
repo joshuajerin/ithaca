@@ -113,6 +113,22 @@ def _tools() -> list:
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }, "required": ["symbol"]},
         }},
+        {"type": "function", "function": {
+            "name": "add_macro_dashboard",
+            "description": (
+                f"Add a macro/cross-asset dashboard panel. {sizing} "
+                "Use when the user asks for a macro view, global dashboard, risk-on/risk-off view, "
+                "or a theme-specific cross-asset panel. Themes: global (default), inflation, china, risk."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "theme": {"type": "string", "enum": ["global", "inflation", "china", "risk"],
+                          "description": "Macro theme: global (rates/FX/commodities/equities), "
+                                         "inflation (rates/breakevens/commodities), "
+                                         "china (China equities/CNH/iron ore), "
+                                         "risk (risk-on/off: SPX/VIX/gold/dollar)."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
     ]
 
 
@@ -128,6 +144,7 @@ _TOOL_TO_TYPE = {
     "add_order_book": "order_book",
     "add_trade_flow": "trade_flow",
     "add_tca_report": "tca_report",
+    "add_macro_dashboard": "macro_dashboard",
 }
 
 
@@ -250,6 +267,7 @@ _TYPE_LABELS = {
     "order_book": "an order book",
     "trade_flow": "a trade flow panel",
     "tca_report": "a TCA report",
+    "macro_dashboard": "a macro dashboard",
 }
 
 
@@ -316,6 +334,11 @@ def _orchestrate_heuristic(query: str, start_y: int = 0):
     wants_order_book = any(k in q for k in ["order book", "orderbook", "bid", "ask", "depth", "level 2", "l2"])
     wants_trade_flow = any(k in q for k in ["unusual", "block", "sweep", "dark pool", "flow", "activity"])
     wants_tca = any(k in q for k in ["tca", "transaction cost", "slippage", "vwap", "twap", "execution", "impl"])
+    wants_macro = any(k in q for k in [
+        "macro", "cross-asset", "cross asset", "global dashboard", "risk-on", "risk-off",
+        "risk on", "risk off", "roro", "rates fx", "inflation dashboard", "china macro",
+        "global risk", "mosaic",
+    ])
 
     if wants_order_book and symbols:
         sym = symbols[0]
@@ -336,6 +359,19 @@ def _orchestrate_heuristic(query: str, start_y: int = 0):
         add("tca_report", {"symbol": sym}, 12, 5)
         name = data.get_company(sym)["name"]
         return panels, f"TCA report for {name}: arrival price vs VWAP/TWAP benchmarks with intraday participation."
+
+    if wants_macro:
+        # Detect theme from query
+        theme = "global"
+        if any(k in q for k in ["inflation", "breakeven", "tips", "cpi"]):
+            theme = "inflation"
+        elif any(k in q for k in ["china", "chinese", "csi", "hscei", "cnh"]):
+            theme = "china"
+        elif any(k in q for k in ["risk-on", "risk-off", "risk on", "risk off", "roro", "vix"]):
+            theme = "risk"
+        add("macro_dashboard", {"theme": theme}, 12, 6)
+        theme_labels = {"global": "Global Macro", "inflation": "Inflation", "china": "China Macro", "risk": "Risk-On/Off"}
+        return panels, f"{theme_labels.get(theme, 'Macro')} dashboard: rates, FX, commodities, and equity indices in one view."
 
     if wants_compare and len(symbols) >= 2:
         add("comparison", {"symbols": symbols}, 12, 4)

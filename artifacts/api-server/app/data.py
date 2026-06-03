@@ -289,6 +289,121 @@ _NEWS: List[dict] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Macro / cross-asset data
+# ---------------------------------------------------------------------------
+MACRO_ASSETS: Dict[str, dict] = {
+    # --- Rates ---
+    "US10Y":   {"name": "US 10Y Yield",       "group": "rates",       "price": 4.42,    "changePct":  1.15, "unit": "%"},
+    "US2Y10Y": {"name": "2Y-10Y Spread",      "group": "rates",       "price": -0.18,   "changePct": -5.20, "unit": "bps"},
+    "US2Y":    {"name": "US 2Y Yield",         "group": "rates",       "price": 4.85,    "changePct":  0.62, "unit": "%"},
+    "TIPS10Y": {"name": "10Y Breakeven",       "group": "rates",       "price": 2.31,    "changePct":  0.43, "unit": "%"},
+    # --- FX ---
+    "DXY":     {"name": "US Dollar Index",     "group": "fx",          "price": 104.32,  "changePct": -0.21, "unit": "index"},
+    "EURUSD":  {"name": "EUR/USD",             "group": "fx",          "price": 1.0842,  "changePct":  0.18, "unit": "FX"},
+    "USDJPY":  {"name": "USD/JPY",             "group": "fx",          "price": 153.47,  "changePct":  0.32, "unit": "FX"},
+    "USDCNH":  {"name": "USD/CNH",             "group": "fx",          "price": 7.2441,  "changePct":  0.08, "unit": "FX"},
+    # --- Commodities ---
+    "WTI":     {"name": "WTI Crude Oil",       "group": "commodities", "price": 77.84,   "changePct": -0.94, "unit": "USD"},
+    "GOLD":    {"name": "Gold",                "group": "commodities", "price": 2318.50, "changePct":  0.41, "unit": "USD"},
+    "COPPER":  {"name": "Copper",              "group": "commodities", "price": 4.42,    "changePct":  1.05, "unit": "USD"},
+    "IRON":    {"name": "Iron Ore",            "group": "commodities", "price": 104.20,  "changePct": -1.30, "unit": "USD"},
+    # --- Equities ---
+    "SPX":     {"name": "S&P 500",             "group": "equities",    "price": 5248.49, "changePct":  0.57, "unit": "index"},
+    "NDX":     {"name": "Nasdaq 100",          "group": "equities",    "price": 18339.44,"changePct":  0.82, "unit": "index"},
+    "EEM":     {"name": "EM Equities (EEM)",   "group": "equities",    "price": 40.35,   "changePct": -0.31, "unit": "index"},
+    "HSCEI":   {"name": "HK China Ent.",       "group": "equities",    "price": 6742.18, "changePct": -0.84, "unit": "index"},
+    "CSI300":  {"name": "CSI 300",             "group": "equities",    "price": 3521.40, "changePct":  0.23, "unit": "index"},
+    "VIX":     {"name": "VIX",                 "group": "equities",    "price": 14.82,   "changePct": -3.21, "unit": "index"},
+}
+
+MACRO_THEMES: Dict[str, dict] = {
+    "global": {
+        "title": "Global Macro Dashboard",
+        "groups": {
+            "Rates":       ["US10Y", "US2Y10Y"],
+            "FX":          ["DXY", "EURUSD", "USDJPY"],
+            "Commodities": ["WTI", "GOLD"],
+            "Equities":    ["SPX", "NDX", "EEM"],
+        },
+    },
+    "inflation": {
+        "title": "Inflation Dashboard",
+        "groups": {
+            "Rates":       ["US10Y", "US2Y", "TIPS10Y"],
+            "FX":          ["DXY"],
+            "Commodities": ["WTI", "GOLD", "COPPER"],
+            "Equities":    ["SPX"],
+        },
+    },
+    "china": {
+        "title": "China Macro Dashboard",
+        "groups": {
+            "Equities":    ["CSI300", "HSCEI", "EEM"],
+            "FX":          ["USDCNH", "USDJPY"],
+            "Commodities": ["IRON", "COPPER"],
+            "Rates":       ["US10Y"],
+        },
+    },
+    "risk": {
+        "title": "Risk-On / Risk-Off Dashboard",
+        "groups": {
+            "Equities":    ["SPX", "NDX", "VIX"],
+            "Rates":       ["US10Y", "US2Y10Y"],
+            "FX":          ["DXY", "USDJPY"],
+            "Commodities": ["GOLD", "WTI"],
+        },
+    },
+}
+
+# Also allow the theme key "default" and "global risk" / etc.
+MACRO_THEME_ALIASES: Dict[str, str] = {
+    "default": "global",
+    "global risk": "global",
+    "global risk-on/risk-off": "risk",
+    "risk-on": "risk",
+    "risk off": "risk",
+    "risk on": "risk",
+    "risk-off": "risk",
+    "roro": "risk",
+}
+
+
+def resolve_macro_theme(text: str) -> str:
+    """Return a canonical MACRO_THEMES key for a natural-language theme string."""
+    if not text:
+        return "global"
+    t = text.strip().lower()
+    if t in MACRO_THEMES:
+        return t
+    if t in MACRO_THEME_ALIASES:
+        return MACRO_THEME_ALIASES[t]
+    for key in MACRO_THEMES:
+        if key in t or t in key:
+            return key
+    return "global"
+
+
+def macro_sparkline(symbol: str, points: int = 14) -> List[float]:
+    """Deterministic short price series for a macro asset tile."""
+    asset = MACRO_ASSETS.get(symbol)
+    if not asset:
+        return [0.0] * points
+    last = float(asset["price"])
+    seed = _seed(symbol)
+    vals: List[float] = [last]
+    p = last
+    for i in range(points - 1):
+        seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
+        r = (seed / 0x7FFFFFFF) * 2 - 1
+        vol = 0.006 + 0.004 * abs(math.sin(i / 2.5))
+        prev = max(p / (1.0 + r * vol), 0.0001)
+        vals.append(round(prev, 6))
+        p = prev
+    vals.reverse()
+    return [round(v, 6) for v in vals]
+
+
 def news_for(scope_type: str, scope: str, limit: int = 8) -> List[dict]:
     """scope_type: 'symbol' or 'sector'. Returns curated news items."""
     items: List[dict] = []

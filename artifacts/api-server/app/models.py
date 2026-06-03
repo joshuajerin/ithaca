@@ -19,6 +19,7 @@ class PanelType(str, Enum):
     order_book = "order_book"
     trade_flow = "trade_flow"
     tca_report = "tca_report"
+    macro_dashboard = "macro_dashboard"
 
 
 class PanelStatus(str, Enum):
@@ -235,6 +236,27 @@ class TCARportData(BaseModel):
     buckets: List[TCABucket]
 
 
+# --- macro_dashboard ---
+class MacroTile(BaseModel):
+    symbol: str
+    name: str
+    price: float
+    changePct: float
+    unit: str
+    sparkline: List[float]
+
+
+class MacroGroup(BaseModel):
+    label: str
+    tiles: List[MacroTile]
+
+
+class MacroDashboardData(BaseModel):
+    theme: str
+    title: str
+    groups: List[MacroGroup]
+
+
 PanelData = Union[
     PriceChartData,
     NewsData,
@@ -247,6 +269,7 @@ PanelData = Union[
     OrderBookData,
     TradeFlowData,
     TCARportData,
+    MacroDashboardData,
 ]
 
 
