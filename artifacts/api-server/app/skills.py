@@ -8,9 +8,13 @@ import math
 from datetime import date, timedelta
 from typing import Callable, Dict, List, Optional
 
-from . import ai, data
+from . import ai, data, db, repo
 
 RANGE_DAYS = {"1M": 30, "3M": 90, "6M": 180, "1Y": 250, "YTD": 120}
+
+
+def _live_source() -> str:
+    return "live" if db.db_available() else "mock"
 
 
 # ----------------------------- formatting helpers -----------------------------
@@ -36,12 +40,12 @@ def fmt_int(n: Optional[float]) -> str:
 # ----------------------------- builders -----------------------------
 def build_price_chart(params: dict) -> dict:
     symbol = (params.get("symbol") or "NVDA").upper()
-    company = data.get_company(symbol)
+    company = repo.get_company(symbol)
     if not company:
         raise ValueError(f"Unknown symbol: {symbol}")
     rng = (params.get("range") or "3M").upper()
     days = RANGE_DAYS.get(rng, 90)
-    points = data.price_series(symbol, days=days)
+    points = repo.price_series(symbol, days=days)
     first = points[0]["c"] if points else company["price"]
     last = company["price"]
     change = round(last - first, 2)
@@ -55,34 +59,37 @@ def build_price_chart(params: dict) -> dict:
         "changePct": change_pct,
         "range": rng,
         "points": points,
+        "asOf": company.get("_asOf"),
+        "source": company.get("_source"),
     }
 
 
 def build_news(params: dict) -> dict:
     scope_type = params.get("scope_type") or ("symbol" if params.get("symbol") else "sector")
     scope = params.get("scope") or params.get("symbol") or params.get("sector") or "ai_tech"
-    items = data.news_for(scope_type, scope)
+    items = repo.news_for(scope_type, scope)
     if scope_type == "symbol":
-        company = data.get_company(scope.upper())
+        company = repo.get_company(scope.upper())
         label = company["name"] if company else scope.upper()
     else:
-        sid = data.resolve_sector(scope) or scope
-        label = data.sector_name(sid)
-    return {"scope": label, "items": items}
+        sid = repo.resolve_sector(scope) or scope
+        label = repo.sector_name(sid)
+    as_of = max((i["publishedAt"] for i in items if i.get("publishedAt")), default=None)
+    return {"scope": label, "items": items, "asOf": as_of, "source": _live_source()}
 
 
 def _fallback_analysis(scope_type: str, scope: str) -> dict:
     if scope_type == "symbol":
-        company = data.get_company(scope.upper())
+        company = repo.get_company(scope.upper())
         name = company["name"] if company else scope.upper()
         chg = company["changePct"] if company else 0.0
-        news = data.news_for("symbol", scope)
+        news = repo.news_for("symbol", scope)
     else:
-        sid = data.resolve_sector(scope) or scope
-        name = data.sector_name(sid)
-        syms = data.symbols_in_sector(sid)
-        chg = round(sum(data.get_company(s)["changePct"] for s in syms) / max(len(syms), 1), 2) if syms else 0.0
-        news = data.news_for("sector", scope)
+        sid = repo.resolve_sector(scope) or scope
+        name = repo.sector_name(sid)
+        syms = repo.symbols_in_sector(sid)
+        chg = round(sum(repo.get_company(s)["changePct"] for s in syms) / max(len(syms), 1), 2) if syms else 0.0
+        news = repo.news_for("sector", scope)
     pos = sum(1 for n in news if n["sentiment"] == "positive")
     neg = sum(1 for n in news if n["sentiment"] == "negative")
     if chg > 0.5 and pos >= neg:
@@ -96,7 +103,7 @@ def _fallback_analysis(scope_type: str, scope: str) -> dict:
         f"{name} is screening {stance} today. Aggregate price action is "
         f"{'up' if chg >= 0 else 'down'} {abs(chg):.2f}% and recent headlines skew "
         f"{'positive' if pos > neg else 'negative' if neg > pos else 'mixed'}. "
-        f"This is a mock, curated read for demonstration purposes."
+        f"This is a rules-based read over the latest available data."
     )
     return {
         "scope": name,
@@ -105,6 +112,7 @@ def _fallback_analysis(scope_type: str, scope: str) -> dict:
         "bullets": bullets,
         "stance": stance,
         "confidence": conf,
+        "source": _live_source(),
     }
 
 
@@ -114,16 +122,18 @@ def build_analysis(params: dict) -> dict:
     if not ai.ai_available():
         return _fallback_analysis(scope_type, scope)
 
-    # Build grounding context from curated data.
+    # Build grounding context from the latest available data.
+    as_of = None
     if scope_type == "symbol":
-        company = data.get_company(scope.upper())
+        company = repo.get_company(scope.upper())
         if not company:
             return _fallback_analysis(scope_type, scope)
         name = company["name"]
+        as_of = company.get("_asOf")
         ctx = {
             "name": name,
             "symbol": company["symbol"],
-            "sector": data.sector_name(company["sector"]),
+            "sector": repo.sector_name(company["sector"]),
             "price": company["price"],
             "dayChangePct": company["changePct"],
             "peRatio": company["peRatio"],
@@ -131,23 +141,25 @@ def build_analysis(params: dict) -> dict:
             "netMarginPct": company["netMargin"],
             "description": company["description"],
         }
-        news = data.news_for("symbol", scope)
+        news = repo.news_for("symbol", scope)
     else:
-        sid = data.resolve_sector(scope) or scope
-        name = data.sector_name(sid)
-        syms = data.symbols_in_sector(sid)
+        sid = repo.resolve_sector(scope) or scope
+        name = repo.sector_name(sid)
+        syms = repo.symbols_in_sector(sid)
+        companies = [repo.get_company(s) for s in syms]
+        as_of = repo.as_of(*[c for c in companies if c])
         ctx = {
             "sector": name,
             "constituents": [
-                {"symbol": s, "changePct": data.get_company(s)["changePct"]} for s in syms
+                {"symbol": c["symbol"], "changePct": c["changePct"]} for c in companies if c
             ],
         }
-        news = data.news_for("sector", scope)
+        news = repo.news_for("sector", scope)
     ctx["recentHeadlines"] = [{"headline": n["headline"], "sentiment": n["sentiment"]} for n in news[:6]]
 
     prompt = (
         "You are an equity analyst writing for a market terminal. Using ONLY the "
-        "curated mock data provided, write a concise analytic read. Respond with a "
+        "data provided, write a concise analytic read. Respond with a "
         "single JSON object and nothing else, matching exactly this shape: "
         '{"headline": string (max ~8 words), "summary": string (2-3 sentences), '
         '"bullets": array of 3-5 short strings, "stance": one of '
@@ -177,12 +189,14 @@ def build_analysis(params: dict) -> dict:
         parsed["confidence"] = max(0.0, min(1.0, float(parsed.get("confidence", 0.6))))
     except (TypeError, ValueError):
         parsed["confidence"] = 0.6
+    parsed["asOf"] = as_of
+    parsed["source"] = _live_source()
     return parsed
 
 
 def build_fundamentals(params: dict) -> dict:
     symbol = (params.get("symbol") or "NVDA").upper()
-    company = data.get_company(symbol)
+    company = repo.get_company(symbol)
     if not company:
         raise ValueError(f"Unknown symbol: {symbol}")
     metrics = [
@@ -197,21 +211,31 @@ def build_fundamentals(params: dict) -> dict:
         {"label": "52W High", "value": f"${company['week52High']:.2f}", "change": None, "hint": None},
         {"label": "52W Low", "value": f"${company['week52Low']:.2f}", "change": None, "hint": None},
     ]
-    return {"symbol": symbol, "name": company["name"], "metrics": metrics}
+    return {
+        "symbol": symbol,
+        "name": company["name"],
+        "metrics": metrics,
+        "asOf": company.get("_asOf"),
+        "source": company.get("_source"),
+    }
 
 
 def build_screener(params: dict) -> dict:
     sector = params.get("sector")
-    sid = data.resolve_sector(sector) if sector else None
+    sid = repo.resolve_sector(sector) if sector else None
     if sid:
-        syms = data.symbols_in_sector(sid)
-        title = f"{data.sector_name(sid)} Screener"
+        syms = repo.symbols_in_sector(sid)
+        title = f"{repo.sector_name(sid)} Screener"
     else:
-        syms = data.all_symbols()
+        syms = repo.all_symbols()
         title = "Market Screener"
     rows = []
+    companies = []
     for s in syms:
-        c = data.get_company(s)
+        c = repo.get_company(s)
+        if not c:
+            continue
+        companies.append(c)
         rows.append({
             "symbol": s,
             "name": c["name"],
@@ -220,47 +244,68 @@ def build_screener(params: dict) -> dict:
             "marketCap": c["marketCap"],
             "peRatio": c["peRatio"],
             "volume": c["volume"],
-            "sector": data.sector_name(c["sector"]),
+            "sector": repo.sector_name(c["sector"]),
         })
     rows.sort(key=lambda r: r["marketCap"], reverse=True)
-    return {"title": title, "rows": rows}
+    return {"title": title, "rows": rows, "asOf": repo.as_of(*companies), "source": repo.source_of(*companies)}
 
 
 def build_heatmap(params: dict) -> dict:
     sector = params.get("sector") or params.get("scope")
-    sid = data.resolve_sector(sector) if sector else None
+    sid = repo.resolve_sector(sector) if sector else None
     if sid:
-        syms = data.symbols_in_sector(sid)
-        title = f"{data.sector_name(sid)} Heatmap"
+        syms = repo.symbols_in_sector(sid)
+        title = f"{repo.sector_name(sid)} Heatmap"
     else:
-        syms = data.all_symbols()
+        syms = repo.all_symbols()
         title = "Market Overview"
     cells = []
+    companies = []
     for s in syms:
-        c = data.get_company(s)
+        c = repo.get_company(s)
+        if not c:
+            continue
+        companies.append(c)
         cells.append({
             "symbol": s,
             "name": c["name"],
             "changePct": c["changePct"],
             "marketCap": c["marketCap"],
-            "sector": data.sector_name(c["sector"]),
+            "sector": repo.sector_name(c["sector"]),
         })
     cells.sort(key=lambda x: x["marketCap"], reverse=True)
-    return {"title": title, "cells": cells}
+    return {"title": title, "cells": cells, "asOf": repo.as_of(*companies), "source": repo.source_of(*companies)}
 
 
 def build_sentiment(params: dict) -> dict:
     scope_type = params.get("scope_type") or ("symbol" if params.get("symbol") else "sector")
     scope = params.get("scope") or params.get("symbol") or params.get("sector") or "ai_tech"
     if scope_type == "symbol":
-        company = data.get_company(scope.upper())
+        company = repo.get_company(scope.upper())
         name = company["name"] if company else scope.upper()
-        news = data.news_for("symbol", scope)
+    else:
+        sid = repo.resolve_sector(scope) or scope
+        name = repo.sector_name(sid)
+
+    # Prefer the worker-computed, persisted sentiment snapshot when available.
+    stored = repo.get_sentiment(scope_type, scope)
+    if stored:
+        return {
+            "scope": name,
+            "overall": stored["overall"],
+            "label": stored["label"],
+            "sources": stored["sources"],
+            "trend": stored["trend"],
+            "asOf": stored.get("_asOf"),
+            "source": "live",
+        }
+
+    if scope_type == "symbol":
+        news = repo.news_for("symbol", scope)
         seed = data._seed(scope.upper())
     else:
-        sid = data.resolve_sector(scope) or scope
-        name = data.sector_name(sid)
-        news = data.news_for("sector", scope)
+        sid = repo.resolve_sector(scope) or scope
+        news = repo.news_for("sector", scope)
         seed = data._seed(sid)
     pos = sum(1 for n in news if n["sentiment"] == "positive")
     neg = sum(1 for n in news if n["sentiment"] == "negative")
@@ -301,19 +346,22 @@ def build_sentiment(params: dict) -> dict:
         trend.append({"t": d.isoformat(), "score": round(base, 2)})
     # ensure trend ends near overall
     trend[-1]["score"] = overall
-    return {"scope": name, "overall": overall, "label": label, "sources": sources, "trend": trend}
+    return {"scope": name, "overall": overall, "label": label, "sources": sources,
+            "trend": trend, "source": _live_source()}
 
 
 def build_comparison(params: dict) -> dict:
     symbols = params.get("symbols") or []
-    symbols = [s.upper() for s in symbols if data.get_company(s.upper())]
+    symbols = [s.upper() for s in symbols if repo.get_company(s.upper())]
     if len(symbols) < 2:
         # default to top semiconductors if not enough valid symbols
         symbols = ["NVDA", "AMD", "TSM"]
     metric_labels = ["Price", "Mkt Cap", "P/E", "Rev (TTM)", "Net Margin", "EPS", "Div Yield", "Beta"]
     companies = []
+    records = []
     for s in symbols:
-        c = data.get_company(s)
+        c = repo.get_company(s)
+        records.append(c)
         values = [
             {"label": "Price", "value": f"${c['price']:.2f}"},
             {"label": "Mkt Cap", "value": fmt_usd(c["marketCap"])},
@@ -326,7 +374,8 @@ def build_comparison(params: dict) -> dict:
         ]
         companies.append({"symbol": s, "name": c["name"], "values": values})
     title = "Peer Comparison: " + " vs ".join(symbols)
-    return {"title": title, "metricLabels": metric_labels, "companies": companies}
+    return {"title": title, "metricLabels": metric_labels, "companies": companies,
+            "asOf": repo.as_of(*records), "source": repo.source_of(*records)}
 
 
 def build_order_book(params: dict) -> dict:

@@ -77,6 +77,8 @@ export const GetDefaultDashboardResponse = zod.object({
 }).describe('Grid placement, 12-column grid. h is in row units.'),
   "status": zod.enum(['ok', 'loading', 'error']),
   "note": zod.string().nullish(),
+  "asOf": zod.string().nullish().describe('ISO timestamp of the freshest underlying data, when known.'),
+  "source": zod.string().nullish().describe('Data provenance for this panel (\"live\" or \"mock\").'),
   "data": zod.union([zod.object({
   "symbol": zod.string(),
   "name": zod.string(),
@@ -196,6 +198,8 @@ export const OrchestrateResponse = zod.object({
 }).describe('Grid placement, 12-column grid. h is in row units.'),
   "status": zod.enum(['ok', 'loading', 'error']),
   "note": zod.string().nullish(),
+  "asOf": zod.string().nullish().describe('ISO timestamp of the freshest underlying data, when known.'),
+  "source": zod.string().nullish().describe('Data provenance for this panel (\"live\" or \"mock\").'),
   "data": zod.union([zod.object({
   "symbol": zod.string(),
   "name": zod.string(),
@@ -313,6 +317,8 @@ export const RefinePanelResponse = zod.object({
 }).describe('Grid placement, 12-column grid. h is in row units.'),
   "status": zod.enum(['ok', 'loading', 'error']),
   "note": zod.string().nullish(),
+  "asOf": zod.string().nullish().describe('ISO timestamp of the freshest underlying data, when known.'),
+  "source": zod.string().nullish().describe('Data provenance for this panel (\"live\" or \"mock\").'),
   "data": zod.union([zod.object({
   "symbol": zod.string(),
   "name": zod.string(),

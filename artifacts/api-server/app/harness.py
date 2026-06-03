@@ -52,6 +52,9 @@ def run_skill(
     for _ in range(retries + 1):
         try:
             raw = skill.builder(params)
+            # Freshness metadata lives on the panel envelope, not the data model.
+            as_of = raw.pop("asOf", None) if isinstance(raw, dict) else None
+            source = raw.pop("source", None) if isinstance(raw, dict) else None
             validated = model.model_validate(raw)
             return {
                 "id": pid,
@@ -60,6 +63,8 @@ def run_skill(
                 "layout": layout,
                 "status": "ok",
                 "note": None,
+                "asOf": as_of,
+                "source": source,
                 "data": validated.model_dump(),
             }
         except Exception as exc:  # noqa: BLE001 — harness intentionally broad

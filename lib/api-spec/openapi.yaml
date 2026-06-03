@@ -471,6 +471,12 @@ components:
           $ref: "#/components/schemas/PanelStatus"
         note:
           type: ["string", "null"]
+        asOf:
+          type: ["string", "null"]
+          description: ISO timestamp of the freshest underlying data, when known.
+        source:
+          type: ["string", "null"]
+          description: Data provenance for this panel ("live" or "mock").
         data:
           $ref: "#/components/schemas/PanelData"
     DashboardSpec:

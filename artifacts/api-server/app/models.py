@@ -382,6 +382,8 @@ class Panel(BaseModel):
     layout: PanelLayout
     status: PanelStatus
     note: Optional[str] = None
+    asOf: Optional[str] = None
+    source: Optional[str] = None
     data: Optional[PanelData] = None
 
 

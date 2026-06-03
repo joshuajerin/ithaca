@@ -1,12 +1,30 @@
 """FastAPI application for the agentic terminal. Served under the /api prefix."""
 from __future__ import annotations
 
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import agent, data, harness, models, skills, state
+from . import agent, harness, models, repo, skills, state, worker
 
-app = FastAPI(title="Agentic Terminal API")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await worker.start()
+    try:
+        yield
+    finally:
+        await worker.stop()
+
+
+app = FastAPI(title="Agentic Terminal API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,7 +50,7 @@ def get_skills():
 
 @api.get("/sectors", response_model=models.SectorList)
 def get_sectors():
-    return {"sectors": data.list_sectors()}
+    return {"sectors": repo.list_sectors()}
 
 
 @api.get("/suggestions", response_model=models.SuggestionList)
@@ -93,7 +111,7 @@ def refine(req: models.RefineRequest):
 def _watchlist_payload() -> dict:
     items = []
     for s in state.get_watchlist():
-        c = data.get_company(s)
+        c = repo.get_company(s)
         if not c:
             continue
         items.append({
@@ -113,7 +131,7 @@ def get_watchlist():
 @api.post("/watchlist", response_model=models.Watchlist)
 def add_watchlist(req: models.WatchlistInput):
     sym = req.symbol.upper()
-    if not data.get_company(sym):
+    if not repo.get_company(sym):
         raise HTTPException(status_code=400, detail=f"Unknown symbol: {sym}")
     state.add_watchlist(sym)
     return _watchlist_payload()

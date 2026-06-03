@@ -12,12 +12,12 @@ import re
 import uuid
 from typing import List, Optional
 
-from . import ai, data, harness, skills, state
+from . import ai, data, harness, repo, skills, state
 
 
 # ----------------------------- tool schemas -----------------------------
 def _tools() -> list:
-    syms = ", ".join(data.all_symbols())
+    syms = ", ".join(repo.all_symbols())
     secs = ", ".join(data.SECTORS.keys())
     sizing = "Width is grid columns 3-12 (12 = full row). Height is row units 2-6."
     return [
@@ -187,7 +187,7 @@ _TOOL_TO_TYPE = {
 
 def _system_prompt() -> str:
     return (
-        "You are the orchestrator of an agentic market terminal that runs on curated MOCK "
+        "You are the orchestrator of an agentic market terminal that tracks live market "
         "data across three sectors: semiconductors, energy, and AI/tech. When the user sends a "
         "request, you compose a focused dashboard by calling the panel tools. Rules:\n"
         "- Call multiple tools in one turn to build a coherent dashboard (typically 2-5 panels).\n"
@@ -199,7 +199,7 @@ def _system_prompt() -> str:
         "- Only use tickers and sectors that exist in the dataset.\n"
         "- After the tool calls, the panels are rendered for the user; your text content should be "
         "a one or two sentence summary of what you assembled and why. Keep it crisp.\n"
-        f"- Valid tickers: {', '.join(data.all_symbols())}.\n"
+        f"- Valid tickers: {', '.join(repo.all_symbols())}.\n"
         f"- Valid sectors: {', '.join(data.SECTORS.keys())}."
     )
 
@@ -342,7 +342,7 @@ def _extract_symbols(q: str) -> List[str]:
     explicit_upper = set(re.findall(r"\b[A-Z]{2,6}\b", q))  # uppercase in the ORIGINAL text
     dollar = {d.upper() for d in re.findall(r"\$([A-Za-z]{1,6})", q)}
     found: List[str] = []
-    for s in data.all_symbols():
+    for s in repo.all_symbols():
         if s in tokens or s in dollar:
             if s in _AMBIGUOUS_TICKERS and s not in explicit_upper and s not in dollar:
                 continue
@@ -350,7 +350,7 @@ def _extract_symbols(q: str) -> List[str]:
     # also match by leading company-name word (whole word only)
     if not found:
         low = q.lower()
-        for s, c in data.COMPANIES.items():
+        for s, c in repo.get_all_companies().items():
             short = c["name"].split()[0].lower()
             if len(short) > 3 and re.search(r"\b" + re.escape(short) + r"\b", low):
                 found.append(s)
@@ -367,7 +367,7 @@ def _orchestrate_heuristic(query: str, start_y: int = 0):
         panels.append(harness.run_skill(panel_type, params, layout, title=title))
 
     symbols = _extract_symbols(query)
-    sector = data.resolve_sector(query)
+    sector = repo.resolve_sector(query)
 
     wants_compare = any(k in q for k in ["compare", "vs", "versus", "against"]) or len(symbols) >= 2
     wants_news = "news" in q or "headline" in q or "happening" in q
@@ -493,7 +493,7 @@ def _orchestrate_heuristic(query: str, start_y: int = 0):
             add("sentiment", {"scope_type": "symbol", "scope": sym}, 6, 4)
         add("news", {"scope_type": "symbol", "scope": sym}, 6, 4)
         add("analysis", {"scope_type": "symbol", "scope": sym}, 6, 4)
-        name = data.get_company(sym)["name"]
+        name = repo.get_company(sym)["name"]
         return panels, f"Deep-dive on {name}: price, fundamentals, news and an AI read."
 
     if sector:
@@ -502,7 +502,7 @@ def _orchestrate_heuristic(query: str, start_y: int = 0):
         if wants_news or True:
             add("news", {"scope_type": "sector", "scope": sector}, 6, 4)
         add("analysis", {"scope_type": "sector", "scope": sector}, 6, 4)
-        return panels, f"{data.sector_name(sector)} overview: heatmap, screener, news and analysis."
+        return panels, f"{repo.sector_name(sector)} overview: heatmap, screener, news and analysis."
 
     if wants_sentiment:
         add("sentiment", {"scope_type": "sector", "scope": "ai_tech"}, 6, 4)
@@ -549,7 +549,7 @@ def _refine_params_llm(panel_type: str, panel: dict, instruction: str) -> dict:
         "You update a single dashboard panel in a market terminal. Keep the panel the SAME "
         "type. Call the provided tool exactly once with the parameters that satisfy the user's "
         "instruction. Use only valid tickers and sectors.\n"
-        f"Valid tickers: {', '.join(data.all_symbols())}. Valid sectors: {', '.join(data.SECTORS.keys())}."
+        f"Valid tickers: {', '.join(repo.all_symbols())}. Valid sectors: {', '.join(data.SECTORS.keys())}."
     )
     msg = ai.chat(
         [
@@ -567,7 +567,7 @@ def _refine_params_llm(panel_type: str, panel: dict, instruction: str) -> dict:
 
 def _refine_params_heuristic(panel_type: str, panel: dict, instruction: str) -> dict:
     syms = _extract_symbols(instruction)
-    sector = data.resolve_sector(instruction)
+    sector = repo.resolve_sector(instruction)
     if panel_type in ("price_chart", "fundamentals") and syms:
         params = {"symbol": syms[0]}
         for r in ["1M", "3M", "6M", "1Y", "YTD"]:

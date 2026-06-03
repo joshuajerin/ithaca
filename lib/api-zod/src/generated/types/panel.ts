@@ -18,5 +18,15 @@ export interface Panel {
   status: PanelStatus;
   /** @nullable */
   note?: string | null;
+  /**
+     * ISO timestamp of the freshest underlying data, when known.
+     * @nullable
+     */
+  asOf?: string | null;
+  /**
+     * Data provenance for this panel ("live" or "mock").
+     * @nullable
+     */
+  source?: string | null;
   data?: PanelData;
 }
