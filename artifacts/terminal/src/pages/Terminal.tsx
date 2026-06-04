@@ -1,21 +1,15 @@
-import React, { useState, useEffect } from "react";
-import { useGetDefaultDashboard, useOrchestrate } from "@workspace/api-client-react";
+import React, { useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { useOrchestrate } from "@workspace/api-client-react";
 import type { DashboardSpec } from "@workspace/api-client-react";
 import { Dashboard } from "@/components/terminal/Dashboard";
 import { ChatPanel } from "@/components/terminal/ChatPanel";
-import { Loader2, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { DotWaveCanvas } from "@/components/terminal/DotWaveCanvas";
 
 export default function Terminal() {
   const [activeDashboard, setActiveDashboard] = useState<DashboardSpec | null>(null);
   const [chatOpen, setChatOpen] = useState(true);
-  
-  const { data: defaultDashboard, isLoading: isLoadingDefault } = useGetDefaultDashboard();
-  
-  useEffect(() => {
-    if (defaultDashboard && !activeDashboard) {
-      setActiveDashboard(defaultDashboard);
-    }
-  }, [defaultDashboard, activeDashboard]);
 
   const orchestrate = useOrchestrate();
 
@@ -43,25 +37,40 @@ export default function Terminal() {
     });
   };
 
-  if (isLoadingDefault) {
-    return (
-      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center">
-        <Loader2 className="w-5 h-5 animate-spin mb-5" strokeWidth={1.25} />
-        <p className="editorial-label text-muted-foreground text-[10px]">Initializing Terminal</p>
-      </div>
-    );
-  }
+  const hasPanels = !!activeDashboard && activeDashboard.panels.length > 0;
 
   return (
     <div className="flex h-screen w-full bg-black text-white overflow-hidden">
       <main className="flex-1 flex flex-col min-w-0 border-r border-border overflow-y-auto scrollbar-none">
-        <div className="flex-1 px-8 py-7">
-          {activeDashboard && (
-            <Dashboard 
-              dashboard={activeDashboard} 
-              onPanelRefined={handlePanelRefined} 
-            />
-          )}
+        <div className="flex-1 relative">
+          <AnimatePresence mode="wait">
+            {hasPanels ? (
+              <motion.div
+                key={`dashboard-${activeDashboard!.sessionId}`}
+                initial={{ opacity: 0, y: 10, filter: "blur(3px)" }}
+                animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                exit={{ opacity: 0, y: -10, filter: "blur(3px)" }}
+                transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+                className="px-8 py-7"
+              >
+                <Dashboard
+                  dashboard={activeDashboard!}
+                  onPanelRefined={handlePanelRefined}
+                />
+              </motion.div>
+            ) : (
+              <motion.div
+                key="dotwave"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+                className="absolute inset-0"
+              >
+                <DotWaveCanvas />
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </main>
       

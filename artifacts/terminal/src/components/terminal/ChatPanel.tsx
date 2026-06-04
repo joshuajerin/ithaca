@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { useGetSuggestions, useGetSkills, useGetWatchlist } from "@workspace/api-client-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
@@ -70,40 +71,55 @@ export function ChatPanel({ sessionId, onCommand, isProcessing, lastSummary }: C
 
       <ScrollArea className="flex-1 px-5 py-5" ref={scrollRef}>
         <div className="space-y-7">
-          {/* Welcome / Suggestions */}
-          {messages.length === 0 && (
-            <div className="space-y-7 animate-in fade-in duration-500">
-              <div className="border-b border-border pb-5">
-                <div className="editorial-label text-[9px] text-muted-foreground mb-2 flex items-center gap-1.5">
-                  <Activity className="w-3 h-3" strokeWidth={1.5} />
-                  System Ready
-                </div>
-                <p className="font-serif text-base leading-snug text-gray-200">Awaiting commands. Enter a natural-language request to compose a dashboard.</p>
-              </div>
-
-              {suggestions?.prompts && (
-                <div className="space-y-3">
-                  <div className="editorial-label text-[9px] text-muted-foreground">Example queries</div>
-                  <div className="flex flex-col">
-                    {suggestions.prompts.map((prompt, i) => (
-                      <button
-                        key={i}
-                        onClick={() => handleSuggestionClick(prompt)}
-                        className="text-left py-3 border-t border-border first:border-t-0 hover:text-white text-gray-300 transition-colors duration-200 flex items-start gap-2 group"
-                      >
-                        <ChevronRight className="w-3.5 h-3.5 mt-1 shrink-0 text-muted-foreground group-hover:text-white transition-colors" strokeWidth={1.5} />
-                        <span className="font-serif text-base leading-snug">{prompt}</span>
-                      </button>
-                    ))}
+          {/* Welcome / Suggestions — fades out cleanly once a conversation begins */}
+          <AnimatePresence mode="wait">
+            {messages.length === 0 && (
+              <motion.div
+                key="welcome"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8, filter: "blur(2px)" }}
+                transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                className="space-y-7"
+              >
+                <div className="border-b border-border pb-5">
+                  <div className="editorial-label text-[9px] text-muted-foreground mb-2 flex items-center gap-1.5">
+                    <Activity className="w-3 h-3" strokeWidth={1.5} />
+                    System Ready
                   </div>
+                  <p className="font-serif text-base leading-snug text-gray-200">Awaiting commands. Enter a natural-language request to compose a dashboard.</p>
                 </div>
-              )}
-            </div>
-          )}
 
-          {/* Chat History */}
+                {suggestions?.prompts && (
+                  <div className="space-y-3">
+                    <div className="editorial-label text-[9px] text-muted-foreground">Example queries</div>
+                    <div className="flex flex-col">
+                      {suggestions.prompts.map((prompt, i) => (
+                        <button
+                          key={i}
+                          onClick={() => handleSuggestionClick(prompt)}
+                          className="text-left py-3 border-t border-border first:border-t-0 hover:text-white text-gray-300 transition-colors duration-200 flex items-start gap-2 group"
+                        >
+                          <ChevronRight className="w-3.5 h-3.5 mt-1 shrink-0 text-muted-foreground group-hover:text-white transition-colors" strokeWidth={1.5} />
+                          <span className="font-serif text-base leading-snug">{prompt}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Chat History — each message fades/slides in */}
           {messages.map((msg, i) => (
-            <div key={i} className={`flex flex-col gap-1.5 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+            <motion.div
+              key={i}
+              initial={{ opacity: 0, y: 10, filter: "blur(2px)" }}
+              animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+              className={`flex flex-col gap-1.5 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
+            >
               <div className="editorial-label text-[8.5px] text-muted-foreground">
                 {msg.role === 'user' ? 'Operator' : 'Terminal'}
               </div>
@@ -114,22 +130,31 @@ export function ChatPanel({ sessionId, onCommand, isProcessing, lastSummary }: C
               }`}>
                 {msg.content}
               </div>
-            </div>
+            </motion.div>
           ))}
 
-          {isProcessing && (
-            <div className="flex flex-col gap-1.5 items-start">
-              <div className="editorial-label text-[8.5px] text-muted-foreground">Terminal</div>
-              <div className="px-3.5 py-2.5 border-l border-border text-muted-foreground flex items-center gap-3 font-serif text-base italic">
-                <span className="flex gap-0.5">
-                  <span className="animate-bounce">.</span>
-                  <span className="animate-bounce delay-75">.</span>
-                  <span className="animate-bounce delay-150">.</span>
-                </span>
-                Processing command
-              </div>
-            </div>
-          )}
+          <AnimatePresence>
+            {isProcessing && (
+              <motion.div
+                key="processing"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+                className="flex flex-col gap-1.5 items-start"
+              >
+                <div className="editorial-label text-[8.5px] text-muted-foreground">Terminal</div>
+                <div className="px-3.5 py-2.5 border-l border-border text-muted-foreground flex items-center gap-3 font-serif text-base italic">
+                  <span className="flex gap-0.5">
+                    <span className="animate-bounce">.</span>
+                    <span className="animate-bounce delay-75">.</span>
+                    <span className="animate-bounce delay-150">.</span>
+                  </span>
+                  Processing command
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </ScrollArea>
 
