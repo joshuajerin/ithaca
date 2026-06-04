@@ -384,35 +384,39 @@ def _system_prompt() -> str:
 
 
 def orchestrate(query: str, session_id: Optional[str], voice: bool = False) -> dict:
-    # New queries ADD to the existing dashboard for the session rather than
-    # replacing it, so asking a follow-up keeps the panels already on screen.
+    # Each new query is evaluated against the panels already on screen: panels
+    # that still serve the new request are KEPT, panels belonging to an
+    # abandoned subject are dropped, and new panels are added on top.
     reset = _wants_reset(query)
     # A reset (or the "default" placeholder) starts a brand-new session so that
     # BOTH the panels and the prior conversation context start fresh.
     if reset or not session_id or session_id == "default":
         sid = uuid.uuid4().hex[:12]
         base: List[dict] = []
-        start_y = 0
     else:
         sid = session_id
-    base: List[dict] = state.get_dashboard(sid)
+        base = state.get_dashboard(sid)
     if reset:
         base = []
-    start_y = _next_row(base)
+
+    # Decide which existing panels remain relevant to this prompt, then re-pack
+    # the kept panels from the top so removed panels leave no holes in the grid.
+    kept = _decide_kept_panels(query, sid, base) if base else []
+    kept, cursor = _repack(kept)
 
     panels: List[dict] = []
     summary = ""
 
     if ai.ai_available():
         try:
-            panels, summary = _orchestrate_llm(query, sid, base, start_y)
+            panels, summary = _orchestrate_llm(query, sid, kept, dict(cursor))
         except Exception:
             panels, summary = [], ""
 
     if not panels:
-        panels, summary = _orchestrate_heuristic(query, start_y)
+        panels, summary = _orchestrate_heuristic(query, dict(cursor))
 
-    combined = base + panels
+    combined = kept + panels
     state.set_dashboard(sid, combined)
     state.append_history(sid, "user", query)
     state.append_history(sid, "assistant", summary)
@@ -421,6 +425,135 @@ def orchestrate(query: str, session_id: Optional[str], voice: bool = False) -> d
     if voice:
         result["narration"] = _build_narration(query, summary, panels)
     return result
+
+
+# --------------------- context-aware panel relevance ---------------------
+# Panel types that are market-wide rather than tied to a single subject; they
+# can reasonably stay on screen even when the user switches focus.
+_SUBJECT_AGNOSTIC_TYPES = {"macro_dashboard", "yield_curve"}
+
+# Words that signal the new prompt builds on what's already shown (a genuine
+# follow-up) rather than switching to a brand-new subject.
+_CONTINUATION_KEYWORDS = (
+    "add", "also", "too", "more", "another", "alongside", "as well",
+    "compare", "vs", "versus", "against", "include", "plus",
+    "its", "their", "it",
+)
+
+
+def _decide_kept_panels(query: str, sid: str, existing: List[dict]) -> List[dict]:
+    """Return the subset of existing panels still relevant to the new query.
+
+    Uses the AI to judge continuation vs. context switch when available, with a
+    keyword/subject heuristic as a fallback.
+    """
+    if not existing:
+        return []
+    if ai.ai_available():
+        try:
+            kept_ids = _relevance_llm(query, sid, existing)
+            if kept_ids is not None:
+                return [p for p in existing if p.get("id") in kept_ids]
+        except Exception:
+            pass
+    return _relevance_heuristic(query, existing)
+
+
+def _relevance_llm(query: str, sid: str, existing: List[dict]) -> Optional[set]:
+    """Ask the model which existing panel ids to keep for the new request.
+
+    Returns a set of ids to keep, or None if the model output is unusable (so the
+    caller can fall back to the heuristic). An empty set is a valid answer that
+    means "drop everything currently shown".
+    """
+    brief = [
+        {"id": p["id"], "type": p["type"], "title": p.get("title", "")}
+        for p in existing
+    ]
+    sys = (
+        "You curate an agentic market terminal dashboard. You are given the panels "
+        "currently on screen and a NEW user request. Decide which existing panels still "
+        "belong, then return ONLY their ids.\n"
+        "- CONTINUATION: if the new request is a follow-up or deeper look at the SAME "
+        "subject(s) already shown (e.g. a stock is shown and the user asks for its news, "
+        "analysis, supply chain, or to compare it with a peer), KEEP the relevant panels.\n"
+        "- CONTEXT SWITCH: if the new request moves to an UNRELATED subject (e.g. the panels "
+        "are about Samsung and the user now asks about farming/agriculture, or about a "
+        "different company or sector), REMOVE the panels tied to the abandoned subject.\n"
+        "- Broad market-wide panels (macro dashboards, yield curves) may stay if still useful.\n"
+        'Return JSON: {"keep": [<panel ids to keep>]}. Use only ids from the provided list. '
+        "An empty list means keep nothing."
+    )
+    user = json.dumps({"request": query, "panels": brief})
+    msg = ai.chat(
+        [{"role": "system", "content": sys}, {"role": "user", "content": user}],
+        response_format={"type": "json_object"},
+    )
+    content = (msg.content or "").strip()
+    if not content:
+        return None
+    parsed = json.loads(content)
+    keep = parsed.get("keep")
+    if not isinstance(keep, list):
+        return None
+    valid = {p["id"] for p in existing}
+    return {k for k in keep if k in valid}
+
+
+def _panel_subjects(panel: dict) -> dict:
+    """Best-effort subjects (symbols + sector) a panel is about, from its title."""
+    title = panel.get("title") or ""
+    symbols = set(_extract_symbols(title))
+    sectors = set()
+    sec = repo.resolve_sector(title)
+    if sec:
+        sectors.add(sec)
+    return {"symbols": symbols, "sectors": sectors}
+
+
+def _relevance_heuristic(query: str, existing: List[dict]) -> List[dict]:
+    """Fallback relevance judgement when the AI is unavailable.
+
+    Conservative by design: keeps everything unless the prompt clearly introduces
+    a new subject (ticker/sector) that doesn't overlap an existing panel.
+    """
+    q = query.lower()
+    # Explicit follow-up phrasing -> treat as continuation, keep everything.
+    if any(re.search(r"\b" + re.escape(k) + r"\b", q) for k in _CONTINUATION_KEYWORDS):
+        return list(existing)
+
+    new_syms = set(_extract_symbols(query))
+    new_sector = repo.resolve_sector(query)
+    # No detectable new subject -> assume a follow-up, keep everything.
+    if not new_syms and not new_sector:
+        return list(existing)
+
+    kept: List[dict] = []
+    for p in existing:
+        subj = _panel_subjects(p)
+        if new_syms & subj["symbols"]:
+            kept.append(p)
+        elif new_sector and new_sector in subj["sectors"]:
+            kept.append(p)
+        elif p.get("type") in _SUBJECT_AGNOSTIC_TYPES:
+            kept.append(p)
+    return kept
+
+
+def _repack(panels: List[dict]):
+    """Flow-pack the given panels from the top-left of the grid, preserving order
+    and each panel's width/height. Returns (repacked_panels, cursor) where cursor
+    is the live packing position so new panels can continue filling the same row.
+    """
+    cursor = {"x": 0, "y": 0, "rowH": 0}
+    out: List[dict] = []
+    for p in panels:
+        lay = p.get("layout") or {}
+        new_layout = harness.pack_layout(lay.get("w"), lay.get("h"), cursor)
+        repacked = dict(p)
+        repacked["layout"] = new_layout
+        out.append(repacked)
+    return out, cursor
 
 
 # ----------------------------- spoken narration -----------------------------
@@ -508,31 +641,24 @@ def _wants_reset(query: str) -> bool:
     return any(re.search(p, q) for p in _RESET_PATTERNS)
 
 
-def _next_row(panels: List[dict]) -> int:
-    """Grid row at which new panels should begin (just below existing ones)."""
-    if not panels:
-        return 0
-    return max(p["layout"]["y"] + p["layout"]["h"] for p in panels)
-
-
-def _orchestrate_llm(query: str, sid: str, existing: List[dict], start_y: int):
+def _orchestrate_llm(query: str, sid: str, existing: List[dict], cursor: dict):
     messages = [{"role": "system", "content": _system_prompt()}]
     for h in state.get_history(sid)[-4:]:
         messages.append({"role": h["role"], "content": h["content"]})
     if existing:
         shown = ", ".join(f'{p.get("title")} ({p["type"]})' for p in existing)
         messages.append({"role": "system", "content": (
-            "The dashboard ALREADY shows these panels: " + shown + ". "
-            "The user is making a follow-up request — ADD new panels that answer it and "
-            "complement what is already shown. Do NOT recreate panels that already exist. "
-            "Your text summary should describe only what you just added."
+            "These panels are still on screen because they remain relevant to the new "
+            "request: " + shown + ". They have ALREADY been kept; stale panels from any "
+            "abandoned subject were removed before you were called. ADD new panels that "
+            "answer the request and complement what is kept. Do NOT recreate panels that "
+            "are already shown. Your text summary should describe only what you just added."
         )})
     messages.append({"role": "user", "content": query})
 
     msg = ai.chat(messages, tools=_all_tools(), tool_choice="auto")
     tool_calls = getattr(msg, "tool_calls", None) or []
     panels: List[dict] = []
-    cursor = {"x": 0, "y": start_y, "rowH": 0}
     for tc in tool_calls:
         name = tc.function.name
         panel_type = _type_of_tool(name)
@@ -643,9 +769,10 @@ def _extract_strategy(q: str) -> str:
     return "straddle"
 
 
-def _orchestrate_heuristic(query: str, start_y: int = 0):
+def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None):
     q = query.lower()
-    cursor = {"x": 0, "y": start_y, "rowH": 0}
+    if cursor is None:
+        cursor = {"x": 0, "y": 0, "rowH": 0}
     panels: List[dict] = []
 
     def add(panel_type, params, w, h, title=None):

@@ -3,14 +3,24 @@ name: Terminal dashboard orchestration model
 description: How the agentic terminal composes dashboards — additive-by-default, session handling, reset semantics.
 ---
 
-The orchestrator (`artifacts/api-server/app/agent.py::orchestrate`) is **additive by default**:
-a new natural-language query APPENDS panels to the existing session's dashboard rather than
-replacing it. New panels are flow-packed starting just below existing ones
-(`start_y = max(layout.y + layout.h)` over existing panels). The full combined panel list is
-returned and stored, so the frontend renders existing + new together.
+The orchestrator (`artifacts/api-server/app/agent.py::orchestrate`) is **context-aware, not
+blindly additive**. On each query it first judges which existing panels still belong
+(`_decide_kept_panels`): an LLM relevance call (`_relevance_llm`, JSON `{keep:[ids]}`, empty
+list = drop all) with a keyword/subject heuristic fallback (`_relevance_heuristic`). Genuine
+follow-ups on the same subject KEEP the relevant panels; switching to an unrelated subject
+DROPS the abandoned subject's panels. Kept panels are then re-packed from the top
+(`_repack` → live cursor) so removed panels leave NO grid holes, and new panels continue
+flow-packing from that same cursor. Stored/returned dashboard = `kept + new`.
 
-**Why:** users asking a follow-up (e.g. viewing Microsoft, then "get me retail investor
-analysis") expect the new panels added without losing what's already on screen.
+**Why:** asking about Samsung then about agriculture should replace, not stack. But viewing a
+stock then "add retail investor analysis" / "show its news" / "compare to AMD" is a
+continuation and must keep what's shown. The heuristic leans conservative (keeps all unless a
+clearly different in-dataset ticker/sector appears with no continuation keyword like
+add/also/compare/its).
+
+**Gotcha:** api-server runs WITHOUT --reload, so orchestration logic changes only take effect
+after restarting the `artifacts/api-server: API Server` workflow — testing via the live API
+before restart silently runs the old code.
 
 Session rules:
 - The default dashboard uses sessionId `"default"` — a placeholder that must NEVER be
