@@ -14,6 +14,8 @@ interface UseVoiceConductorArgs {
   processQuery: (text: string) => Promise<NarrationSegment[]>;
   synthesize: (text: string) => Promise<{ audio: string; format: string }>;
   onHighlight: (panelId: string | null) => void;
+  /** Fired once a full turn (listen -> think -> speak) finishes successfully. */
+  onComplete?: () => void;
 }
 
 interface UseVoiceConductor {
@@ -23,6 +25,8 @@ interface UseVoiceConductor {
   interim: string;
   error: string | null;
   micDenied: boolean;
+  /** False when the browser has no Web Speech recognition (Safari/Firefox). */
+  supported: boolean;
   retry: () => void;
   startListening: () => void;
 }
@@ -35,7 +39,7 @@ function base64ToArrayBuffer(b64: string): ArrayBuffer {
 }
 
 export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConductor {
-  const { active, processQuery, synthesize, onHighlight } = args;
+  const { active, processQuery, synthesize, onHighlight, onComplete } = args;
 
   const [status, setStatus] = useState<VoiceStatus>("idle");
   const [userLevel, setUserLevel] = useState(0);
@@ -47,10 +51,12 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
   const processRef = useRef(processQuery);
   const synthRef = useRef(synthesize);
   const highlightRef = useRef(onHighlight);
+  const completeRef = useRef(onComplete);
   useEffect(() => {
     processRef.current = processQuery;
     synthRef.current = synthesize;
     highlightRef.current = onHighlight;
+    completeRef.current = onComplete;
   });
 
   const statusRef = useRef<VoiceStatus>("idle");
@@ -59,7 +65,17 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
     setStatus(s);
   }, []);
 
+  const activeRef = useRef(active);
+  useEffect(() => { activeRef.current = active; });
+
   const busyRef = useRef(false);
+  const restartTimerRef = useRef<number | null>(null);
+  // Chrome's Web Speech service throws transient "network" errors; count them so
+  // we can auto-recover a few times before giving up and surfacing the error.
+  const networkRetriesRef = useRef(0);
+  // A couple of retries absorb genuinely transient blips, but surface the error
+  // quickly when it's a persistent block (e.g. running inside the preview iframe).
+  const MAX_NETWORK_RETRIES = 2;
 
   // --- Audio analysis plumbing ---
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -130,7 +146,7 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
       return true;
     } catch {
       setMicDenied(true);
-      setError("Microphone access was denied. Enable it to use voice mode.");
+      setError("Microphone access was denied. Enable it in your browser, then retry.");
       setStatusSafe("error");
       return false;
     }
@@ -149,16 +165,50 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
       void handleUtterance(text);
     },
     onInterim: (text) => {
+      // Getting interim text proves the speech service connected, so clear any
+      // accumulated transient network-error count.
+      networkRetriesRef.current = 0;
       if (statusRef.current === "listening") setInterim(text);
     },
     onError: (kind, message) => {
       if (kind === "permission-denied") {
         setMicDenied(true);
+        setError(message);
         setStatusSafe("error");
-      } else if (kind === "not-supported") {
+        return;
+      }
+      if (kind === "not-supported") {
+        setError(message);
         setStatusSafe("error");
+        return;
+      }
+      if (kind === "network") {
+        // Chrome's Web Speech recognizer frequently emits spurious "network"
+        // errors that recover on the next attempt. Keep status as "listening" so
+        // the onEnd handler auto-restarts the session, retrying a few times
+        // before surfacing a hard error.
+        networkRetriesRef.current += 1;
+        if (networkRetriesRef.current <= MAX_NETWORK_RETRIES) {
+          return;
+        }
+        setError("Speech recognition keeps hitting a network error. Check your connection, then tap retry.");
+        setStatusSafe("error");
+        return;
       }
       setError(message);
+      setStatusSafe("error");
+    },
+    onEnd: (capturedUtterance) => {
+      // The recognition session ended. If we were still listening and nothing
+      // was captured (e.g. a silence/no-speech timeout), resume listening so the
+      // experience stays hands-free instead of getting stuck on "Listening…".
+      if (capturedUtterance) return;
+      if (busyRef.current) return;
+      if (statusRef.current === "listening") {
+        setInterim("");
+        setStatusSafe("idle");
+        scheduleRestart();
+      }
     },
   });
   const recognitionRef = useRef(recognition);
@@ -183,10 +233,43 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
     });
   }, [ensureCtx]);
 
+  // --- startListening: begin a fresh listening session ---
+  const startListening = useCallback(async () => {
+    if (!activeRef.current) return;
+    if (busyRef.current) return;
+    if (statusRef.current === "listening") return;
+    setError(null);
+
+    // Ensure mic access is granted before we start.
+    const ok = await startMicAnalyser();
+    if (!ok) return;
+
+    if (!recognitionRef.current.supported) {
+      setError("Voice Mode needs the Web Speech API. Please use Google Chrome.");
+      setStatusSafe("error");
+      return;
+    }
+    setStatusSafe("listening");
+    recognitionRef.current.start();
+  }, [startMicAnalyser, setStatusSafe]);
+
+  // Resume listening shortly after a turn finishes (hands-free loop).
+  const scheduleRestart = useCallback(() => {
+    if (restartTimerRef.current) window.clearTimeout(restartTimerRef.current);
+    restartTimerRef.current = window.setTimeout(() => {
+      restartTimerRef.current = null;
+      if (!activeRef.current) return;
+      if (busyRef.current) return;
+      if (statusRef.current !== "idle") return;
+      void startListening();
+    }, 900);
+  }, [startListening]);
+
   const handleUtterance = useCallback(async (text: string) => {
     busyRef.current = true;
     setInterim("");
-    // Stop listening immediately — we have what we need.
+    // Stop listening immediately — we have the utterance and don't want the mic
+    // picking up our own synthesized speech (echo / self-trigger).
     recognitionRef.current.stop();
     setStatusSafe("thinking");
     try {
@@ -199,60 +282,43 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
           const audio = await synthRef.current(seg.text);
           await playSegmentAudio(audio.audio);
         } catch {
-          // If one segment fails, keep going.
+          // If one segment fails to synthesize, keep narrating the rest.
         }
       }
-    } catch {
-      setError("Something went wrong. Try again.");
-    } finally {
       highlightRef.current(null);
       busyRef.current = false;
-      // Stay idle — don't auto-restart. User taps the orb to speak again.
-      if (statusRef.current !== "error") {
-        setStatusSafe("idle");
-      }
-    }
-  }, [playSegmentAudio, setStatusSafe]);
-
-  // --- startListening: called by the user tapping the orb ---
-  const startListening = useCallback(async () => {
-    if (busyRef.current) return;
-    if (statusRef.current === "listening") return;
-    setError(null);
-
-    // Ensure mic access is granted before we start.
-    const ok = await startMicAnalyser();
-    if (!ok) return;
-
-    if (!recognitionRef.current.supported) {
-      setError("Speech recognition isn't supported in this browser. Try Chrome.");
+      // Turn complete: announce it, drop to idle, then resume listening.
+      setStatusSafe("idle");
+      completeRef.current?.();
+      scheduleRestart();
+    } catch {
+      highlightRef.current(null);
+      busyRef.current = false;
+      setError("Something went wrong while responding. Tap retry to try again.");
       setStatusSafe("error");
-      return;
     }
-    setStatusSafe("listening");
-    recognitionRef.current.start();
-  }, [startMicAnalyser, setStatusSafe]);
+  }, [playSegmentAudio, scheduleRestart, setStatusSafe]);
 
   // --- Lifecycle: enter / exit voice mode ---
   const startVoice = useCallback(async () => {
     setError(null);
     setMicDenied(false);
-    ensureCtx();
-    // Begin by asking for mic permission; then sit idle.
-    // User taps to speak for the first time.
-    const ok = await startMicAnalyser();
-    if (!ok) return;
+    networkRetriesRef.current = 0;
     if (!recognitionRef.current.supported) {
-      setError("Speech recognition isn't supported in this browser. Try Chrome.");
+      setError("Voice Mode needs the Web Speech API. Please use Google Chrome.");
       setStatusSafe("error");
       return;
     }
+    ensureCtx();
     // Auto-start the first listening session so voice mode feels instant.
-    setStatusSafe("listening");
-    recognitionRef.current.start();
-  }, [ensureCtx, startMicAnalyser, setStatusSafe]);
+    await startListening();
+  }, [ensureCtx, startListening, setStatusSafe]);
 
   const stopVoice = useCallback(() => {
+    if (restartTimerRef.current) {
+      window.clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
     recognitionRef.current.stop();
     stopMicAnalyser();
     playAnalyserRef.current = null;
@@ -274,6 +340,7 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
 
   useEffect(() => {
     return () => {
+      if (restartTimerRef.current) window.clearTimeout(restartTimerRef.current);
       stopMicAnalyser();
       audioCtxRef.current?.close().catch(() => {});
     };
@@ -283,5 +350,15 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
     if (active) void startVoice();
   }, [active, startVoice]);
 
-  return { status, userLevel, agentLevel, interim, error, micDenied, retry, startListening };
+  return {
+    status,
+    userLevel,
+    agentLevel,
+    interim,
+    error,
+    micDenied,
+    supported: recognition.supported,
+    retry,
+    startListening,
+  };
 }

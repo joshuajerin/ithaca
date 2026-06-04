@@ -10,6 +10,8 @@ interface UseSpeechRecognitionOptions {
   onUtterance: (transcript: string) => void;
   onInterim?: (transcript: string) => void;
   onError?: (kind: SpeechRecognitionErrorKind, message: string) => void;
+  /** Fired whenever a recognition session ends, with whether an utterance was captured. */
+  onEnd?: (capturedUtterance: boolean) => void;
 }
 
 interface UseSpeechRecognition {
@@ -38,15 +40,18 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions): UseS
 
   const recognitionRef = useRef<any>(null);
   const firedRef = useRef(false); // prevent duplicate onUtterance per session
+  const capturedRef = useRef(false); // whether this session captured a final utterance
 
   const onUtteranceRef = useRef(options.onUtterance);
   const onInterimRef = useRef(options.onInterim);
   const onErrorRef = useRef(options.onError);
+  const onEndRef = useRef(options.onEnd);
   useEffect(() => {
     onUtteranceRef.current = options.onUtterance;
     onInterimRef.current = options.onInterim;
     onErrorRef.current = options.onError;
-  }, [options.onUtterance, options.onInterim, options.onError]);
+    onEndRef.current = options.onEnd;
+  }, [options.onUtterance, options.onInterim, options.onError, options.onEnd]);
 
   const buildRecognition = useCallback(() => {
     if (!Ctor) return null;
@@ -65,6 +70,7 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions): UseS
           const finalText = text.trim();
           if (finalText && !firedRef.current) {
             firedRef.current = true;
+            capturedRef.current = true;
             onUtteranceRef.current(finalText);
           }
         } else {
@@ -91,6 +97,7 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions): UseS
 
     rec.onend = () => {
       setListening(false);
+      onEndRef.current?.(capturedRef.current);
     };
 
     return rec;
@@ -102,6 +109,7 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions): UseS
       return;
     }
     firedRef.current = false;
+    capturedRef.current = false;
     // Always create a fresh instance — reusing after .stop() is unreliable in Chrome.
     recognitionRef.current = buildRecognition();
     try {

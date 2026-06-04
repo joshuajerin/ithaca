@@ -11,6 +11,7 @@ import { VoicePanel } from "@/components/terminal/VoicePanel";
 import { useVoiceConductor } from "@/hooks/useVoiceConductor";
 import { FeatureRequestModal } from "@/components/terminal/FeatureRequestModal";
 import { DotWaveCanvas } from "@/components/terminal/DotWaveCanvas";
+import { useToast } from "@/hooks/use-toast";
 import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 
 export default function Terminal() {
@@ -22,6 +23,7 @@ export default function Terminal() {
 
   const orchestrate = useOrchestrate();
   const speak = useSpeak();
+  const { toast } = useToast();
 
   // Keep a ref to the latest sessionId for the voice conductor callbacks.
   const sessionIdRef = useRef<string | undefined>(undefined);
@@ -80,6 +82,9 @@ export default function Terminal() {
     processQuery: processVoiceQuery,
     synthesize,
     onHighlight: setHighlightedPanelId,
+    onComplete: useCallback(() => {
+      toast({ title: "complete", duration: 2500 });
+    }, [toast]),
   });
 
   return (
@@ -129,7 +134,7 @@ export default function Terminal() {
           </div>
         </header>
 
-        <div className="flex-1 relative">
+        <div className="flex-1 relative flex flex-col">
           <AnimatePresence mode="wait">
             {hasPanels ? (
               <motion.div
@@ -159,23 +164,25 @@ export default function Terminal() {
               </motion.div>
             )}
           </AnimatePresence>
+
+          {/* Voice Mode is a floating overlay — the terminal stays full-screen behind it. */}
+          {voiceMode && (
+            <VoicePanel
+              status={voice.status}
+              userLevel={voice.userLevel}
+              agentLevel={voice.agentLevel}
+              interim={voice.interim}
+              error={voice.error}
+              micDenied={voice.micDenied}
+              supported={voice.supported}
+              onRetry={voice.retry}
+              onStartListening={voice.startListening}
+            />
+          )}
         </div>
       </main>
 
-      {voiceMode ? (
-        <aside className="w-[400px] flex-shrink-0 flex flex-col bg-black relative">
-          <VoicePanel
-            status={voice.status}
-            userLevel={voice.userLevel}
-            agentLevel={voice.agentLevel}
-            interim={voice.interim}
-            error={voice.error}
-            micDenied={voice.micDenied}
-            onRetry={voice.retry}
-            onStartListening={voice.startListening}
-          />
-        </aside>
-      ) : (
+      {!voiceMode && (
         <div className="relative flex-shrink-0 flex">
           <button
             onClick={() => setChatOpen(o => !o)}
