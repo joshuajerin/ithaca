@@ -32,6 +32,21 @@ JSON-serializable dict) and checks tsx has a default export BEFORE writing anyth
 first, registers in-process, rolls back (deletes py) if registration throws, then writes tsx.
 A failure leaves zero partial files.
 
+## Security guard (code_guard.py)
+- `app/code_guard.py` `validate_python_source(code)` is an AST allow-list audit run BEFORE any
+  execution (subprocess or in-process). Allows stdlib-only roots (math/random/datetime/json/…);
+  rejects all other imports, eval/exec/compile/__import__/open/getattr/setattr, dunder attr/name
+  access (blocks `().__class__.__subclasses__()` escapes), relative imports. Raises `CodeGuardError`.
+- Called in `feature_builder.stream_feature_request` (before `_validate_python`) AND in
+  `dynamic_skills._import_module` (so startup-loaded on-disk files are re-audited before exec).
+- `_validate_python` subprocess is sandboxed: `-I` isolated mode, private temp cwd, minimal env
+  (no inherited secrets, no PYTHONPATH), `preexec_fn` does setsid + RLIMIT_CPU/AS/FSIZE, 10s timeout.
+- **RLIMIT_AS gotcha:** `.pythonlibs/bin/python` is a Go-shim launcher that reserves a large
+  virtual mapping; AS<~1GB makes it die with "failed to reserve page summary memory". Use 2GB.
+- `_validate_tsx` also blocks dangerouslySetInnerHTML/eval/fetch/import()/localStorage and any
+  import whose source != "react".
+- Test: `tests/test_code_guard.py` (no pytest needed; `python tests/test_code_guard.py`).
+
 ## Frontend dynamic rendering (two-path: dev glob + prod runtime compile)
 - `panels/generated/registry.ts` has BOTH: (1) static Vite `import.meta.glob('./*.tsx',{eager})`
   keyed by filename=panel_type (dev HMR + panels bundled at build time); (2) a RUNTIME path —

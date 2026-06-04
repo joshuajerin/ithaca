@@ -18,7 +18,23 @@ import sys
 import tempfile
 from typing import Iterator, Optional, Tuple
 
-from . import ai, dynamic_skills, skills
+from . import ai, code_guard, dynamic_skills, skills
+
+try:
+    import resource  # POSIX-only; used to bound the validation subprocess.
+except ImportError:  # pragma: no cover - non-POSIX fallback
+    resource = None  # type: ignore
+
+# Resource ceilings applied to the validation subprocess (defense in depth on
+# top of the static guard). Generous enough for legitimate synthetic-data
+# builders, tight enough that a runaway generation fails fast.
+_VALIDATE_CPU_SECONDS = 8
+# Generous address-space ceiling: the interpreter launcher reserves a large
+# virtual mapping, so a tighter limit kills legitimate startup. 2 GB still trips
+# on a gross memory bomb while leaving plenty of headroom for real builders.
+_VALIDATE_MEM_BYTES = 2 * 1024 * 1024 * 1024
+_VALIDATE_FSIZE_BYTES = 1 * 1024 * 1024  # 1 MB max file write
+_VALIDATE_TIMEOUT = 10
 
 # Where the generated React panel components live (terminal artifact).
 _THIS_DIR = os.path.dirname(__file__)
@@ -200,8 +216,27 @@ print("OK")
 """
 
 
+def _sandbox_preexec() -> None:  # pragma: no cover - runs only in child process
+    """Constrain the validation child: own session + bounded CPU/memory/file size."""
+    os.setsid()  # isolate into a new process group so we can reap any strays
+    if resource is None:
+        return
+    resource.setrlimit(resource.RLIMIT_CPU, (_VALIDATE_CPU_SECONDS, _VALIDATE_CPU_SECONDS))
+    resource.setrlimit(resource.RLIMIT_AS, (_VALIDATE_MEM_BYTES, _VALIDATE_MEM_BYTES))
+    resource.setrlimit(resource.RLIMIT_FSIZE, (_VALIDATE_FSIZE_BYTES, _VALIDATE_FSIZE_BYTES))
+
+
 def _validate_python(code: str) -> None:
-    """Validate the candidate Python in an isolated subprocess. Raises on failure."""
+    """Validate the candidate Python in a constrained, isolated subprocess.
+
+    The static :func:`code_guard.validate_python_source` audit has already
+    rejected disallowed imports/operations, so this step only confirms the
+    contract holds at runtime (``build({})`` returns a JSON-serializable dict).
+    The child runs in a private temp working directory, with a clean minimal
+    environment (no inherited secrets, no ``PYTHONPATH`` to the app package),
+    bounded CPU/memory/file-size, and a hard wall-clock timeout. Raises on
+    failure.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         mod_path = os.path.join(tmp, "candidate_skill.py")
         with open(mod_path, "w", encoding="utf-8") as fh:
@@ -209,10 +244,18 @@ def _validate_python(code: str) -> None:
         script_path = os.path.join(tmp, "_validate.py")
         with open(script_path, "w", encoding="utf-8") as fh:
             fh.write(_VALIDATE_SCRIPT)
+        # Minimal environment: deny access to inherited secrets/config and keep
+        # the candidate from importing the app package via PYTHONPATH.
+        env = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONNOUSERSITE": "1",
+        }
         try:
             proc = subprocess.run(
-                [sys.executable, script_path, mod_path],
-                capture_output=True, text=True, timeout=20,
+                [sys.executable, "-I", script_path, mod_path],
+                capture_output=True, text=True, timeout=_VALIDATE_TIMEOUT,
+                cwd=tmp, env=env, preexec_fn=_sandbox_preexec,
             )
         except subprocess.TimeoutExpired:
             raise ValueError("Generated skill timed out during validation")
@@ -221,9 +264,33 @@ def _validate_python(code: str) -> None:
             raise ValueError("Generated skill failed validation: " + (err[-1] if err else "unknown"))
 
 
+# Patterns that have no place in a self-contained presentational panel and could
+# be used to exfiltrate data or execute code in the user's browser.
+_TSX_BANNED = (
+    "dangerouslySetInnerHTML",
+    "eval(",
+    "Function(",
+    "fetch(",
+    "XMLHttpRequest",
+    "WebSocket",
+    "import(",
+    "localStorage",
+    "sessionStorage",
+    "document.cookie",
+)
+
+
 def _validate_tsx(code: str) -> None:
     if "export default" not in code:
         raise ValueError("Generated panel must have a default export")
+    for bad in _TSX_BANNED:
+        if bad in code:
+            raise ValueError(f"Generated panel uses a disallowed construct: {bad}")
+    # Only React may be imported; no external libraries or project-relative imports.
+    for m in re.finditer(r"""import\s+[^;]*?\bfrom\s+['"]([^'"]+)['"]""", code):
+        source = m.group(1)
+        if source != "react":
+            raise ValueError(f"Generated panel may only import 'react', not '{source}'")
 
 
 # ----------------------------- SSE event stream -----------------------------
@@ -261,6 +328,13 @@ def stream_feature_request(description: str) -> Iterator[str]:
         tsx_code = payload["tsx_code"]
 
         yield _sse({"stage": "generating_skill", "message": "Writing & validating the data skill…"})
+        # Static safety audit FIRST — reject disallowed imports/operations before
+        # the code is ever executed (even in the isolated validation subprocess).
+        try:
+            code_guard.validate_python_source(python_code)
+        except code_guard.CodeGuardError as exc:
+            yield _sse({"stage": "error", "message": f"Generated skill was blocked for safety: {exc}"})
+            return
         _validate_python(python_code)
 
         yield _sse({"stage": "generating_panel", "message": "Designing the panel component…"})

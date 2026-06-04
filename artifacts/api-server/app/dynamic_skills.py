@@ -20,7 +20,7 @@ import logging
 import os
 from typing import Dict, List
 
-from . import skills
+from . import code_guard, skills
 
 log = logging.getLogger("dynamic_skills")
 
@@ -41,6 +41,11 @@ def _module_path(panel_type: str) -> str:
 
 
 def _import_module(path: str):
+    # Re-run the static safety audit on the on-disk source BEFORE executing it.
+    # This guards files imported at startup as well as freshly generated ones, so
+    # a module that bypassed the build pipeline can never execute in-process.
+    with open(path, "r", encoding="utf-8") as fh:
+        code_guard.validate_python_source(fh.read())
     name = "app.skills_generated." + os.path.splitext(os.path.basename(path))[0]
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
