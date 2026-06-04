@@ -68,6 +68,10 @@ def get_suggestions():
         "Screen the semiconductor sector",
         "What's the sentiment on Palantir?",
         "Fundamentals for Exxon vs Chevron",
+        "Show NVDA supply chain",
+        "DCF model for MSFT",
+        "What did management say on NVDA's last call?",
+        "M&A deals in tech this year",
     ]}
 
 

@@ -99,6 +99,14 @@ def _tools() -> list:
             }, "required": ["symbol"]},
         }},
         {"type": "function", "function": {
+            "name": "add_supply_chain",
+            "description": f"Add a supply-chain graph for one ticker showing suppliers and customers with revenue exposure. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Ticker. One of: {syms}"},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
+        {"type": "function", "function": {
             "name": "add_trade_flow",
             "description": f"Add a trade flow / unusual activity panel showing block prints, dark pool activity and buy/sell imbalance for one ticker. Use when the user asks about unusual activity, block trades, sweeps, or dark pool flow. {sizing}",
             "parameters": {"type": "object", "properties": {
@@ -107,8 +115,24 @@ def _tools() -> list:
             }, "required": ["symbol"]},
         }},
         {"type": "function", "function": {
+            "name": "add_dcf_model",
+            "description": f"Add a DCF valuation model for one ticker with projected FCF, implied price range, and sensitivity grid. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Ticker. One of: {syms}"},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
+        {"type": "function", "function": {
             "name": "add_tca_report",
             "description": f"Add a Transaction Cost Analysis (TCA) report comparing execution price to VWAP/TWAP benchmarks and showing implementation shortfall for one ticker. Use when the user asks about TCA, execution quality, slippage, or benchmark comparison. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Ticker. One of: {syms}"},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_earnings_transcript",
+            "description": f"Add an earnings call transcript panel with sentiment timeline and key quotes for one ticker. {sizing}",
             "parameters": {"type": "object", "properties": {
                 "symbol": {"type": "string", "description": f"Ticker. One of: {syms}"},
                 "width": {"type": "integer"}, "height": {"type": "integer"},
@@ -236,6 +260,15 @@ def _tools() -> list:
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }, "required": ["symbol"]},
         }},
+        {"type": "function", "function": {
+            "name": "add_ma_tracker",
+            "description": f"Add an M&A deal tracker with deal table, arb spreads, and deal statistics. Optionally filter by sector or ticker. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "sector": {"type": "string", "description": f"Sector ({secs}) or omit for all sectors."},
+                "symbol": {"type": "string", "description": "Filter to deals involving this ticker, or omit."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
     ]
 
 
@@ -264,6 +297,10 @@ _TOOL_TO_TYPE = {
     "add_options_strategy": "options_strategy",
     "add_vol_term_structure": "vol_term_structure",
     "add_structured_product": "structured_product",
+    "add_supply_chain": "supply_chain",
+    "add_dcf_model": "dcf_model",
+    "add_earnings_transcript": "earnings_transcript",
+    "add_ma_tracker": "ma_tracker",
 }
 
 
@@ -315,6 +352,10 @@ def _system_prompt() -> str:
         "bond RV → add_bond_rv; CDS → add_cds_pricer; duration/cash flows → add_cashflow_duration.\n"
         "- For microstructure/execution requests: order book → add_order_book; trade flow/unusual activity → add_trade_flow; "
         "TCA/slippage → add_tca_report.\n"
+        "- For supply chain requests ('suppliers', 'supply chain', 'vendors'), use add_supply_chain.\n"
+        "- For DCF / valuation / intrinsic value requests, use add_dcf_model.\n"
+        "- For earnings call / transcript / 'what did management say' requests, use add_earnings_transcript.\n"
+        "- For M&A / deal flow / mergers / acquisitions / arb spread requests, use add_ma_tracker.\n"
         "- Decide each panel's width (3-12 grid columns) and height (2-6 row units). Make the "
         "primary panel larger; supporting panels narrower. A full-width hero is width 12.\n"
         "- Only use tickers and sectors that exist in the dataset.\n"
@@ -517,6 +558,10 @@ _TYPE_LABELS = {
     "options_strategy": "an options strategy",
     "vol_term_structure": "a vol term structure",
     "structured_product": "a structured product pricer",
+    "supply_chain": "a supply chain map",
+    "dcf_model": "a DCF model",
+    "earnings_transcript": "an earnings transcript",
+    "ma_tracker": "an M&A tracker",
 }
 
 
@@ -536,16 +581,13 @@ def _describe(panels: List[dict]) -> str:
 
 
 # ----------------------------- heuristic fallback -----------------------------
-# Tickers that are also common English words; only match these when the user
-# wrote them in uppercase or with a $ prefix (an explicit ticker signal).
 _AMBIGUOUS_TICKERS = {"NOW", "COP"}
 
 
 def _extract_symbols(q: str) -> List[str]:
     up = q.upper()
-    # whole-word uppercase tokens only — avoids substring collisions (e.g. "scope" -> COP)
     tokens = set(re.findall(r"\b[A-Z]{1,6}\b", up))
-    explicit_upper = set(re.findall(r"\b[A-Z]{2,6}\b", q))  # uppercase in the ORIGINAL text
+    explicit_upper = set(re.findall(r"\b[A-Z]{2,6}\b", q))
     dollar = {d.upper() for d in re.findall(r"\$([A-Za-z]{1,6})", q)}
     found: List[str] = []
     for s in repo.all_symbols():
@@ -553,7 +595,6 @@ def _extract_symbols(q: str) -> List[str]:
             if s in _AMBIGUOUS_TICKERS and s not in explicit_upper and s not in dollar:
                 continue
             found.append(s)
-    # also match by leading company-name word (whole word only)
     if not found:
         low = q.lower()
         for s, c in repo.get_all_companies().items():
@@ -662,6 +703,42 @@ def _orchestrate_heuristic(query: str, start_y: int = 0):
         add("macro_dashboard", {"theme": theme}, 12, 6)
         theme_labels = {"global": "Global Macro", "inflation": "Inflation", "china": "China Macro", "risk": "Risk-On/Off"}
         return panels, f"{theme_labels.get(theme, 'Macro')} dashboard: rates, FX, commodities, and equity indices in one view."
+    wants_supply_chain = any(k in q for k in ["supply chain", "supplier", "vendor", "customer", "who makes"])
+    wants_dcf = any(k in q for k in ["dcf", "valuation", "intrinsic value", "fair value", "discounted cash flow"])
+    wants_transcript = any(k in q for k in ["transcript", "earnings call", "what did management", "what did ceo", "call", "said on"])
+    wants_ma = any(k in q for k in ["m&a", "merger", "acquisition", "deal", "arb spread", "takeover", "buyout"])
+
+    if wants_ma:
+        sym = symbols[0] if symbols else None
+        sec = sector
+        ma_params = {}
+        if sym:
+            ma_params["symbol"] = sym
+        elif sec:
+            ma_params["sector"] = sec
+        add("ma_tracker", ma_params, 12, 5)
+        return panels, "M&A deal tracker with arb spreads and deal statistics."
+
+    if wants_transcript and symbols:
+        sym = symbols[0]
+        add("earnings_transcript", {"symbol": sym}, 8, 6)
+        add("analysis", {"scope_type": "symbol", "scope": sym}, 4, 6)
+        name = data.get_company(sym)["name"]
+        return panels, f"Earnings call transcript and AI analysis for {name}."
+
+    if wants_dcf and symbols:
+        sym = symbols[0]
+        add("dcf_model", {"symbol": sym}, 8, 6)
+        add("fundamentals", {"symbol": sym}, 4, 6)
+        name = data.get_company(sym)["name"]
+        return panels, f"DCF valuation model and fundamentals for {name}."
+
+    if wants_supply_chain and symbols:
+        sym = symbols[0]
+        add("supply_chain", {"symbol": sym}, 8, 5)
+        add("news", {"scope_type": "symbol", "scope": sym}, 4, 5)
+        name = data.get_company(sym)["name"]
+        return panels, f"Supply chain map and latest news for {name}."
 
     # --- Fixed income heuristics ---
     if wants_yield_curve:
@@ -857,7 +934,6 @@ def refine(session_id: str, panel_id: str, instruction: str) -> Optional[dict]:
 
 
 def _refine_params(panel_type: str, panel: dict, instruction: str) -> dict:
-    """Decide new builder params for an existing panel given an instruction."""
     if ai.ai_available():
         try:
             return _refine_params_llm(panel_type, panel, instruction)
@@ -897,7 +973,7 @@ def _refine_params_llm(panel_type: str, panel: dict, instruction: str) -> dict:
 def _refine_params_heuristic(panel_type: str, panel: dict, instruction: str) -> dict:
     syms = _extract_symbols(instruction)
     sector = repo.resolve_sector(instruction)
-    if panel_type in ("price_chart", "fundamentals") and syms:
+    if panel_type in ("price_chart", "fundamentals", "supply_chain", "dcf_model", "earnings_transcript") and syms:
         params = {"symbol": syms[0]}
         for r in ["1M", "3M", "6M", "1Y", "YTD"]:
             if r.lower() in instruction.lower():
@@ -910,7 +986,7 @@ def _refine_params_heuristic(panel_type: str, panel: dict, instruction: str) -> 
             return {"scope_type": "symbol", "scope": syms[0]}
         if sector:
             return {"scope_type": "sector", "scope": sector}
-    if panel_type in ("screener", "heatmap") and sector:
+    if panel_type in ("screener", "heatmap", "ma_tracker") and sector:
         return {"sector": sector}
     if panel_type in ("iv_surface", "vol_term_structure") and syms:
         return {"symbol": syms[0]}
@@ -918,9 +994,8 @@ def _refine_params_heuristic(panel_type: str, panel: dict, instruction: str) -> 
         return {"symbol": syms[0], "strategy": _extract_strategy(instruction)}
     if panel_type == "structured_product" and syms:
         return {"symbol": syms[0]}
-    # fall back: rebuild from current data identity
     d = panel.get("data") or {}
-    if panel_type in ("price_chart", "fundamentals") and d.get("symbol"):
+    if panel_type in ("price_chart", "fundamentals", "supply_chain", "dcf_model", "earnings_transcript") and d.get("symbol"):
         return {"symbol": d["symbol"]}
     if panel_type in ("iv_surface", "vol_term_structure", "options_strategy", "structured_product") and d.get("symbol"):
         params = {"symbol": d["symbol"]}

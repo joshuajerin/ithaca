@@ -34,6 +34,10 @@ DATA_MODELS = {
     "options_strategy": models.OptionsStrategyData,
     "vol_term_structure": models.VolTermStructureData,
     "structured_product": models.StructuredProductData,
+    "supply_chain": models.SupplyChainData,
+    "dcf_model": models.DCFData,
+    "earnings_transcript": models.TranscriptData,
+    "ma_tracker": models.MAData,
 }
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import math
+import uuid
 from datetime import date, timedelta
 from typing import Callable, Dict, List, Optional
 
@@ -245,7 +246,6 @@ def build_analysis(params: dict) -> dict:
             content = content[4:]
     parsed = json.loads(content)
     parsed["scope"] = name
-    # clamp/normalize
     parsed["stance"] = parsed.get("stance", "neutral")
     if parsed["stance"] not in ("bullish", "neutral", "bearish"):
         parsed["stance"] = "neutral"
@@ -408,7 +408,6 @@ def build_sentiment(params: dict) -> dict:
         base = max(-1.0, min(1.0, base + (rnd(0) - 0.5) * 0.18))
         d = today - timedelta(days=13 - i)
         trend.append({"t": d.isoformat(), "score": round(base, 2)})
-    # ensure trend ends near overall
     trend[-1]["score"] = overall
     return {"scope": name, "overall": overall, "label": label, "sources": sources,
             "trend": trend, "source": _live_source()}
@@ -418,7 +417,6 @@ def build_comparison(params: dict) -> dict:
     symbols = params.get("symbols") or []
     symbols = [s.upper() for s in symbols if repo.get_company(s.upper())]
     if len(symbols) < 2:
-        # default to top semiconductors if not enough valid symbols
         symbols = ["NVDA", "AMD", "TSM"]
     metric_labels = ["Price", "Mkt Cap", "P/E", "Rev (TTM)", "Net Margin", "EPS", "Div Yield", "Beta"]
     companies = []
@@ -1614,9 +1612,679 @@ def build_factor_analysis(params: dict) -> dict:
     return {
         "symbol": symbol,
         "name": company["name"],
-        "attribution": attribution,
+        "monthlyAttribution": attribution,
         "loadings": loadings
     }
+
+
+# ----------------------------- supply chain builder -----------------------------
+_SUPPLY_CHAIN_DB: dict = {
+    "NVDA": {
+        "suppliers": [
+            {"name": "TSMC", "symbol": "TSM", "exposure": 100.0, "country": "TW", "category": "Foundry (sole source)"},
+            {"name": "SK Hynix", "symbol": None, "exposure": 48.0, "country": "KR", "category": "HBM / DRAM"},
+            {"name": "Samsung Elec.", "symbol": None, "exposure": 30.0, "country": "KR", "category": "DRAM / HBM"},
+            {"name": "ASML", "symbol": "ASML", "exposure": 18.0, "country": "NL", "category": "Litho (via TSMC)"},
+            {"name": "Foxconn", "symbol": None, "exposure": 12.0, "country": "TW", "category": "PCB Assembly"},
+        ],
+        "customers": [
+            {"name": "Microsoft", "symbol": "MSFT", "exposure": 16.0, "country": "US", "category": "Azure AI Cloud"},
+            {"name": "Amazon AWS", "symbol": "AMZN", "exposure": 14.0, "country": "US", "category": "AWS GPU Compute"},
+            {"name": "Alphabet GCP", "symbol": "GOOGL", "exposure": 12.0, "country": "US", "category": "GCP / Gemini Infra"},
+            {"name": "Meta AI", "symbol": "META", "exposure": 11.0, "country": "US", "category": "LLaMA / Ad Ranking"},
+            {"name": "Other OEMs", "symbol": None, "exposure": 35.0, "country": "Global", "category": "Enterprise / OEM"},
+        ],
+    },
+    "TSM": {
+        "suppliers": [
+            {"name": "ASML", "symbol": "ASML", "exposure": 85.0, "country": "NL", "category": "EUV Lithography"},
+            {"name": "Applied Materials", "symbol": None, "exposure": 55.0, "country": "US", "category": "Etch / Deposition"},
+            {"name": "Lam Research", "symbol": None, "exposure": 40.0, "country": "US", "category": "Etch / CVD"},
+            {"name": "Tokyo Electron", "symbol": None, "exposure": 30.0, "country": "JP", "category": "Process Equipment"},
+            {"name": "Air Liquide", "symbol": None, "exposure": 15.0, "country": "FR", "category": "Specialty Gases"},
+        ],
+        "customers": [
+            {"name": "NVIDIA", "symbol": "NVDA", "exposure": 25.0, "country": "US", "category": "GPU / Accelerators"},
+            {"name": "Apple", "symbol": None, "exposure": 22.0, "country": "US", "category": "A-series / M-series SoC"},
+            {"name": "AMD", "symbol": "AMD", "exposure": 10.0, "country": "US", "category": "CPU / GPU"},
+            {"name": "Qualcomm", "symbol": "QCOM", "exposure": 8.0, "country": "US", "category": "Snapdragon Mobile"},
+            {"name": "Broadcom", "symbol": "AVGO", "exposure": 7.0, "country": "US", "category": "Networking ASICs"},
+        ],
+    },
+    "MSFT": {
+        "suppliers": [
+            {"name": "NVIDIA", "symbol": "NVDA", "exposure": 60.0, "country": "US", "category": "AI Accelerators"},
+            {"name": "AMD", "symbol": "AMD", "exposure": 20.0, "country": "US", "category": "EPYC Servers"},
+            {"name": "Broadcom", "symbol": "AVGO", "exposure": 15.0, "country": "US", "category": "Network ASICs"},
+            {"name": "Dell / HP", "symbol": None, "exposure": 10.0, "country": "US", "category": "Server Hardware"},
+            {"name": "OpenAI", "symbol": None, "exposure": 8.0, "country": "US", "category": "Model IP Partner"},
+        ],
+        "customers": [
+            {"name": "Enterprise Software", "symbol": None, "exposure": 45.0, "country": "Global", "category": "M365 / Teams / Copilot"},
+            {"name": "Cloud (Azure)", "symbol": None, "exposure": 30.0, "country": "Global", "category": "IaaS / PaaS / AI API"},
+            {"name": "Gaming (Xbox)", "symbol": None, "exposure": 12.0, "country": "Global", "category": "Console / Game Pass"},
+            {"name": "LinkedIn", "symbol": None, "exposure": 8.0, "country": "Global", "category": "Professional Network"},
+            {"name": "Surface / Devices", "symbol": None, "exposure": 5.0, "country": "Global", "category": "Consumer Hardware"},
+        ],
+    },
+    "ASML": {
+        "suppliers": [
+            {"name": "Carl Zeiss", "symbol": None, "exposure": 70.0, "country": "DE", "category": "EUV Optics (exclusive)"},
+            {"name": "Cymer (ASML sub)", "symbol": None, "exposure": 60.0, "country": "US", "category": "Light Source"},
+            {"name": "Trumpf", "symbol": None, "exposure": 30.0, "country": "DE", "category": "CO2 Laser"},
+            {"name": "VDL", "symbol": None, "exposure": 20.0, "country": "NL", "category": "Mechanical Assembly"},
+            {"name": "Corning", "symbol": None, "exposure": 10.0, "country": "US", "category": "Specialty Glass"},
+        ],
+        "customers": [
+            {"name": "TSMC", "symbol": "TSM", "exposure": 38.0, "country": "TW", "category": "Leading-Edge Foundry"},
+            {"name": "Samsung Foundry", "symbol": None, "exposure": 28.0, "country": "KR", "category": "Advanced Logic"},
+            {"name": "Intel Foundry", "symbol": "INTC", "exposure": 15.0, "country": "US", "category": "IFS 18A / 14A"},
+            {"name": "Micron", "symbol": "MU", "exposure": 8.0, "country": "US", "category": "Advanced DRAM"},
+            {"name": "Other IDMs", "symbol": None, "exposure": 11.0, "country": "Global", "category": "Mature Nodes"},
+        ],
+    },
+    "AMD": {
+        "suppliers": [
+            {"name": "TSMC", "symbol": "TSM", "exposure": 95.0, "country": "TW", "category": "Foundry (primary)"},
+            {"name": "SK Hynix", "symbol": None, "exposure": 35.0, "country": "KR", "category": "HBM / GDDR"},
+            {"name": "ASML", "symbol": "ASML", "exposure": 15.0, "country": "NL", "category": "Litho (via TSMC)"},
+            {"name": "Amkor", "symbol": None, "exposure": 20.0, "country": "KR", "category": "Packaging (CoWoS)"},
+            {"name": "UMC", "symbol": None, "exposure": 10.0, "country": "TW", "category": "Mature Node Foundry"},
+        ],
+        "customers": [
+            {"name": "Microsoft", "symbol": "MSFT", "exposure": 20.0, "country": "US", "category": "Xbox + Azure EPYC"},
+            {"name": "Sony", "symbol": None, "exposure": 15.0, "country": "JP", "category": "PlayStation SoC"},
+            {"name": "HP / Dell", "symbol": None, "exposure": 18.0, "country": "US", "category": "Client CPUs"},
+            {"name": "Meta Platforms", "symbol": "META", "exposure": 10.0, "country": "US", "category": "AI Inference Chips"},
+            {"name": "Cloud OEMs", "symbol": None, "exposure": 25.0, "country": "Global", "category": "EPYC Server CPUs"},
+        ],
+    },
+}
+
+
+def _rng_next(seed: int) -> tuple[int, float]:
+    seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
+    return seed, seed / 0x7FFFFFFF
+
+
+def _generate_supply_chain(symbol: str, company: dict) -> dict:
+    """Generate a plausible supply chain for symbols not in the curated DB."""
+    seed = data._seed(symbol)
+    sector = company["sector"]
+
+    suppliers_raw = []
+    customers_raw = []
+
+    if sector == "semiconductors":
+        suppliers_raw = [
+            ("TSMC", "TSM", "TW", "Foundry"),
+            ("SK Hynix", None, "KR", "Memory"),
+            ("Applied Materials", None, "US", "Fab Equipment"),
+            ("Lam Research", None, "US", "Etch Tools"),
+            ("Corning", None, "US", "Substrates"),
+        ]
+        customers_raw = [
+            ("Enterprise OEM", None, "Global", "Server / Client"),
+            ("Cloud Hyperscalers", None, "Global", "Data Center"),
+            ("Mobile OEMs", None, "Global", "Mobile Devices"),
+            ("Automotive Tier-1", None, "Global", "ADAS / EV"),
+            ("Consumer Electronics", None, "Global", "Consumer"),
+        ]
+    elif sector == "energy":
+        suppliers_raw = [
+            ("Schlumberger", "SLB", "US", "Oilfield Services"),
+            ("Baker Hughes", None, "US", "Well Services"),
+            ("Halliburton", None, "US", "Drilling"),
+            ("Caterpillar", None, "US", "Heavy Equipment"),
+            ("Pipeline Partners", None, "Global", "Midstream"),
+        ]
+        customers_raw = [
+            ("Refineries", None, "Global", "Crude Off-take"),
+            ("LNG Terminals", None, "Global", "Natural Gas"),
+            ("Utilities", None, "Global", "Power Generation"),
+            ("Industrial Buyers", None, "Global", "Petrochemicals"),
+            ("Export Markets", None, "Global", "International"),
+        ]
+    else:
+        suppliers_raw = [
+            ("AWS / Azure", None, "US", "Cloud Infra"),
+            ("NVIDIA", "NVDA", "US", "AI Compute"),
+            ("Accenture", None, "IE", "System Integration"),
+            ("SAP", None, "DE", "Enterprise Software"),
+            ("Telecom Providers", None, "Global", "Connectivity"),
+        ]
+        customers_raw = [
+            ("Enterprise", None, "Global", "Software Licenses"),
+            ("Government", None, "US", "Gov Contracts"),
+            ("SMB", None, "Global", "SaaS"),
+            ("Financial Services", None, "Global", "FinTech"),
+            ("Healthcare", None, "Global", "Health IT"),
+        ]
+
+    nodes = [{"id": symbol, "name": company["name"], "symbol": symbol, "role": "subject", "exposure": 100.0, "country": "US"}]
+    edges = []
+    table = []
+
+    for i, (name, sym, country, cat) in enumerate(suppliers_raw):
+        seed, r = _rng_next(seed)
+        exp = round(20.0 + r * 70.0, 1)
+        nid = f"sup_{i}"
+        nodes.append({"id": nid, "name": name, "symbol": sym, "role": "supplier", "exposure": exp, "country": country})
+        edges.append({"source": nid, "target": symbol, "weight": exp})
+        table.append({"name": name, "symbol": sym, "role": "supplier", "exposure": exp, "country": country, "category": cat})
+
+    for i, (name, sym, country, cat) in enumerate(customers_raw):
+        seed, r = _rng_next(seed)
+        exp = round(5.0 + r * 40.0, 1)
+        nid = f"cust_{i}"
+        nodes.append({"id": nid, "name": name, "symbol": sym, "role": "customer", "exposure": exp, "country": country})
+        edges.append({"source": symbol, "target": nid, "weight": exp})
+        table.append({"name": name, "symbol": sym, "role": "customer", "exposure": exp, "country": country, "category": cat})
+
+    return {"symbol": symbol, "name": company["name"], "nodes": nodes, "edges": edges, "table": table}
+
+
+def build_supply_chain(params: dict) -> dict:
+    symbol = (params.get("symbol") or "NVDA").upper()
+    company = data.get_company(symbol)
+    if not company:
+        raise ValueError(f"Unknown symbol: {symbol}")
+
+    if symbol in _SUPPLY_CHAIN_DB:
+        db = _SUPPLY_CHAIN_DB[symbol]
+        nodes = [{"id": symbol, "name": company["name"], "symbol": symbol, "role": "subject", "exposure": 100.0, "country": "US"}]
+        edges = []
+        table = []
+        for i, s in enumerate(db["suppliers"]):
+            nid = f"sup_{i}"
+            nodes.append({"id": nid, "name": s["name"], "symbol": s.get("symbol"), "role": "supplier", "exposure": s["exposure"], "country": s["country"]})
+            edges.append({"source": nid, "target": symbol, "weight": s["exposure"]})
+            table.append({"name": s["name"], "symbol": s.get("symbol"), "role": "supplier", "exposure": s["exposure"], "country": s["country"], "category": s["category"]})
+        for i, c in enumerate(db["customers"]):
+            nid = f"cust_{i}"
+            nodes.append({"id": nid, "name": c["name"], "symbol": c.get("symbol"), "role": "customer", "exposure": c["exposure"], "country": c["country"]})
+            edges.append({"source": symbol, "target": nid, "weight": c["exposure"]})
+            table.append({"name": c["name"], "symbol": c.get("symbol"), "role": "customer", "exposure": c["exposure"], "country": c["country"], "category": c["category"]})
+        return {"symbol": symbol, "name": company["name"], "nodes": nodes, "edges": edges, "table": table}
+
+    return _generate_supply_chain(symbol, company)
+
+
+# ----------------------------- DCF builder -----------------------------
+def _run_dcf(base_rev: float, shares: float, net_debt: float, assumptions: dict) -> tuple:
+    """Return (projections, implied_price, sensitivity_grid)."""
+    g = assumptions["revenueGrowth"] / 100.0
+    margin = assumptions["ebitdaMargin"] / 100.0
+    wacc = assumptions["wacc"] / 100.0
+    exit_mult = assumptions["exitMultiple"]
+    tax = assumptions["taxRate"] / 100.0
+    capex_pct = assumptions["capexPct"] / 100.0
+
+    projections = []
+    rev = base_rev
+    pv_sum = 0.0
+    base_year = date.today().year
+    for t in range(1, 6):
+        rev = rev * (1 + g)
+        ebitda = rev * margin
+        nopat = ebitda * (1 - tax)
+        capex = rev * capex_pct
+        fcf = nopat - capex
+        pv = fcf / ((1 + wacc) ** t)
+        pv_sum += pv
+        projections.append({
+            "year": base_year + t,
+            "revenue": round(rev, 0),
+            "fcf": round(fcf, 0),
+            "pvFcf": round(pv, 0),
+        })
+
+    # Terminal value
+    fcf_5 = projections[-1]["fcf"]
+    tv = fcf_5 * exit_mult
+    pv_tv = tv / ((1 + wacc) ** 5)
+    enterprise_value = pv_sum + pv_tv
+    equity_value = enterprise_value - net_debt
+    implied_price = equity_value / shares if shares > 0 else 0.0
+
+    # Sensitivity grid: WACC 7-13%, exit multiple 12-28x
+    sensitivity = []
+    for w_pct in [7.0, 8.5, 10.0, 11.5, 13.0]:
+        for em in [12.0, 16.0, 20.0, 24.0, 28.0]:
+            w = w_pct / 100.0
+            pv2 = sum(
+                projections[i]["fcf"] / ((1 + w) ** (i + 1))
+                for i in range(5)
+            )
+            tv2 = projections[-1]["fcf"] * em / ((1 + w) ** 5)
+            ev2 = pv2 + tv2 - net_debt
+            ip2 = ev2 / shares if shares > 0 else 0.0
+            sensitivity.append({"wacc": w_pct, "exitMultiple": em, "impliedPrice": round(ip2, 2)})
+
+    return projections, round(implied_price, 2), sensitivity
+
+
+def build_dcf_model(params: dict) -> dict:
+    symbol = (params.get("symbol") or "MSFT").upper()
+    company = data.get_company(symbol)
+    if not company:
+        raise ValueError(f"Unknown symbol: {symbol}")
+
+    base_rev = company["revenue"]
+    price = company["price"]
+    market_cap = company["marketCap"]
+    shares_out = market_cap  # will divide by price to get shares
+    shares_actual = market_cap / price  # actual share count
+
+    # Estimate net debt: rough heuristic by sector
+    sector = company["sector"]
+    if sector == "energy":
+        net_debt = base_rev * 0.3
+    elif sector == "semiconductors":
+        net_debt = base_rev * 0.05
+    else:
+        net_debt = 0.0
+
+    # Default assumptions derived from company fundamentals
+    seed = data._seed(symbol)
+    seed, r = _rng_next(seed)
+
+    # Revenue growth: derive from recent market momentum + sector
+    rev_growth_base = {"semiconductors": 18.0, "energy": 6.0, "ai_tech": 14.0}.get(sector, 12.0)
+    rev_growth = round(rev_growth_base + (r - 0.5) * 6.0, 1)
+
+    ebitda_margin_base = max(10.0, company["netMargin"] * 1.4)
+    ebitda_margin = round(min(60.0, ebitda_margin_base), 1)
+
+    wacc = round(9.0 + company["beta"] * 1.5, 1)
+    exit_multiple = round(18.0 + (r - 0.5) * 6.0, 1)
+    tax_rate = 21.0
+    capex_pct = {"semiconductors": 8.0, "energy": 12.0, "ai_tech": 4.0}.get(sector, 5.0)
+
+    assumptions = {
+        "revenueGrowth": rev_growth,
+        "ebitdaMargin": ebitda_margin,
+        "wacc": wacc,
+        "exitMultiple": exit_multiple,
+        "taxRate": tax_rate,
+        "capexPct": capex_pct,
+    }
+
+    projections, implied_mid, sensitivity = _run_dcf(base_rev, shares_actual, net_debt, assumptions)
+
+    # Low / high based on bear / bull assumptions
+    bear_assumptions = {**assumptions, "revenueGrowth": rev_growth - 5.0, "wacc": wacc + 2.0, "exitMultiple": exit_multiple - 4.0}
+    bull_assumptions = {**assumptions, "revenueGrowth": rev_growth + 5.0, "wacc": wacc - 1.5, "exitMultiple": exit_multiple + 5.0}
+    _, implied_low, _ = _run_dcf(base_rev, shares_actual, net_debt, bear_assumptions)
+    _, implied_high, _ = _run_dcf(base_rev, shares_actual, net_debt, bull_assumptions)
+
+    return {
+        "symbol": symbol,
+        "name": company["name"],
+        "currentPrice": price,
+        "baseRevenue": base_rev,
+        "sharesOut": round(shares_actual / 1e6, 1),
+        "netDebt": round(net_debt, 0),
+        "assumptions": assumptions,
+        "projections": projections,
+        "impliedPriceLow": implied_low,
+        "impliedPriceMid": implied_mid,
+        "impliedPriceHigh": implied_high,
+        "sensitivity": sensitivity,
+    }
+
+
+# ----------------------------- earnings transcript builder -----------------------------
+_TRANSCRIPT_TEMPLATES = {
+    "NVDA": {
+        "quarter": "Q4 FY2025",
+        "call_date": "2025-02-26",
+        "segments": [
+            ("Jensen Huang", "CEO", "We delivered record revenue of $39.3 billion for Q4, up 78% year-over-year. The AI revolution is in full swing, and NVIDIA is at the center of it.", 0.95, True, "Record Revenue"),
+            ("Colette Kress", "CFO", "Data Center revenue reached $35.6 billion, representing 91% of total revenue. Hopper demand remains robust, and Blackwell ramp is proceeding ahead of schedule.", 0.88, True, "Data Center Growth"),
+            ("Jensen Huang", "CEO", "We are seeing unprecedented demand from hyperscalers, sovereign AI programs, and enterprises. Our pipeline has never been stronger across all geographies.", 0.90, False, ""),
+            ("Colette Kress", "CFO", "Gross margins came in at 73.5%, slightly below guidance due to Blackwell ramp costs. We expect margins to return to the mid-70s range as volumes scale in H1 FY2026.", 0.55, False, ""),
+            ("Vivek Arya", "Analyst", "Can you speak to the competitive dynamics from custom silicon efforts at hyperscalers? Are you seeing any displacement risk?", 0.10, False, ""),
+            ("Jensen Huang", "CEO", "Custom silicon addresses specific use cases, but the breadth of CUDA's ecosystem and software stack represents a multi-decade moat. We welcome the compute expansion — a rising tide lifts all boats.", 0.82, True, "Competitive Moat"),
+            ("Timothy Arcuri", "Analyst", "What's the trajectory for Blackwell GB200 NVL rack shipments in the first half?", 0.20, False, ""),
+            ("Colette Kress", "CFO", "We expect Blackwell to contribute meaningfully more than Hopper did in the comparable period. We're supply-constrained, not demand-constrained.", 0.85, True, "Supply Constraints"),
+            ("Jensen Huang", "CEO", "Looking ahead, we see AI agents, physical AI, and robotics as the next major growth vectors. We're positioning NVIDIA as the computing infrastructure for the age of AI.", 0.92, True, "Future Outlook"),
+            ("Colette Kress", "CFO", "For Q1 FY2026, we guide revenue of approximately $43 billion, plus or minus 2%. Gross margins expected in the 73-74% range.", 0.75, False, ""),
+        ],
+    },
+    "MSFT": {
+        "quarter": "Q2 FY2026",
+        "call_date": "2026-01-29",
+        "segments": [
+            ("Satya Nadella", "CEO", "We had an exceptional quarter with revenue of $69.6 billion, up 17% year-over-year. AI is becoming the defining feature across every product line.", 0.92, True, "Revenue Growth"),
+            ("Amy Hood", "CFO", "Azure and other cloud services grew 31%, with AI services contributing roughly 13 points of that growth — our fastest-growing AI revenue trajectory to date.", 0.89, True, "Azure AI Growth"),
+            ("Satya Nadella", "CEO", "Copilot seat additions accelerated meaningfully. We now have over 400 million commercial users across Microsoft 365, and Copilot conversion continues to expand.", 0.88, True, "Copilot Adoption"),
+            ("Amy Hood", "CFO", "Operating income grew 17% to $31.7 billion. Capital expenditures were $22.6 billion, in line with our investment thesis in AI infrastructure.", 0.62, False, ""),
+            ("Mark Moerdler", "Analyst", "Can you give us more color on the AI capacity situation? Are you able to meet all demand on Azure AI?", 0.25, False, ""),
+            ("Amy Hood", "CFO", "We saw some demand that we weren't able to fully serve in the quarter — we're adding capacity as fast as we can. This should ease materially through the second half of fiscal year.", 0.55, False, ""),
+            ("Satya Nadella", "CEO", "Our infrastructure investments give us a multi-year supply advantage over most competitors. We've been investing ahead of demand, and the returns are showing up.", 0.80, True, "Infrastructure Edge"),
+            ("Brad Sills", "Analyst", "What are you seeing in terms of enterprise willingness to pay for Copilot beyond the initial pilots?", 0.15, False, ""),
+            ("Satya Nadella", "CEO", "Conversion from trial to paid is the best we've seen for any new SKU in Microsoft's history. Customers see 10-30% productivity gains in measured deployments.", 0.90, True, "Copilot ROI"),
+        ],
+    },
+}
+
+_GENERIC_TRANSCRIPT_ROLES = [
+    ("CEO", "positive"), ("CFO", "neutral"), ("Analyst", "neutral"), ("Analyst", "neutral"),
+]
+
+_GENERIC_SEGMENTS = [
+    (0, "We are pleased to report strong results for the quarter. Revenue grew {growth}% year-over-year, driven by continued strength in our core markets.", 0.80, True, "Strong Revenue"),
+    (1, "Operating margins expanded {margin_delta} basis points versus the prior year period. Free cash flow generation remained robust.", 0.70, False, ""),
+    (2, "Can you comment on the demand environment and competitive positioning heading into next quarter?", 0.10, False, ""),
+    (0, "We see continued strong demand from our key customer segments. Our pipeline is healthy and we remain confident in our full-year outlook.", 0.75, True, "Demand Outlook"),
+    (1, "For the next quarter we guide revenue in the range of {guide_low} to {guide_high} billion, representing growth of {guide_growth}% year-over-year at the midpoint.", 0.55, False, ""),
+    (3, "How should we think about capital allocation priorities for the year? Buybacks versus M&A?", 0.10, False, ""),
+    (0, "We remain committed to returning capital to shareholders through our buyback program, while maintaining strategic flexibility for value-accretive acquisitions.", 0.65, True, "Capital Allocation"),
+    (1, "We have $X billion of capacity remaining under our current buyback authorization. Gross margins are expected to remain in the {margin_range} range.", 0.60, False, ""),
+    (0, "In closing, we are executing on our strategic priorities and remain well-positioned to capitalize on the secular growth trends in our industry.", 0.78, False, ""),
+]
+
+_SPEAKERS_BY_ROLE = {
+    "CEO": ["Michael Chen", "Sarah Williams", "David Rodriguez", "Jennifer Park"],
+    "CFO": ["Robert Kim", "Emily Thompson", "James Martinez"],
+    "Analyst": ["Alex Goldman", "Morgan Stanley", "JP Morgan", "BofA Securities", "Citi Research"],
+    "Operator": ["Operator"],
+}
+
+
+def _build_mock_transcript(symbol: str, company: dict) -> dict:
+    seed = data._seed(symbol)
+    seed, r = _rng_next(seed)
+
+    growth = round(8 + r * 25, 1)
+    seed, r = _rng_next(seed)
+    margin_delta = round(30 + r * 120, 0)
+    base_rev_b = company["revenue"] / 1e9
+    guide_low = round(base_rev_b / 4 * 1.05, 1)
+    guide_high = round(base_rev_b / 4 * 1.12, 1)
+
+    seed, r = _rng_next(seed)
+    ceo_idx = int(r * len(_SPEAKERS_BY_ROLE["CEO"]))
+    seed, r = _rng_next(seed)
+    cfo_idx = int(r * len(_SPEAKERS_BY_ROLE["CFO"]))
+
+    speakers = [
+        _SPEAKERS_BY_ROLE["CEO"][ceo_idx % len(_SPEAKERS_BY_ROLE["CEO"])],
+        _SPEAKERS_BY_ROLE["CFO"][cfo_idx % len(_SPEAKERS_BY_ROLE["CFO"])],
+        "Morgan Stanley",
+        "BofA Securities",
+    ]
+
+    today = date.today()
+    call_date = (today - timedelta(days=45)).isoformat()
+    quarter_num = ((today.month - 1) // 3) + 1
+    quarter = f"Q{quarter_num} {today.year}"
+
+    segments = []
+    for idx, (role_idx, tmpl, sent, is_key, topic) in enumerate(_GENERIC_SEGMENTS):
+        text = tmpl.format(
+            growth=growth, margin_delta=int(margin_delta),
+            guide_low=guide_low, guide_high=guide_high,
+            guide_growth=round(growth * 0.9, 1),
+            margin_range="65-70%",
+        )
+        sent_label = "positive" if sent > 0.6 else "negative" if sent < 0.0 else "neutral"
+        segments.append({
+            "index": idx,
+            "speaker": speakers[role_idx],
+            "role": ["CEO", "CFO", "Analyst", "Analyst"][role_idx],
+            "text": text,
+            "sentiment": sent,
+            "sentimentLabel": sent_label,
+            "isKeyQuote": is_key,
+        })
+
+    key_quotes = [
+        {"speaker": s["speaker"], "role": s["role"], "text": s["text"], "topic": topic}
+        for s in segments
+        for seg, _, _, _, topic in _GENERIC_SEGMENTS
+        if s["isKeyQuote"] and s["index"] == _GENERIC_SEGMENTS.index((_GENERIC_SEGMENTS[s["index"]][0], _GENERIC_SEGMENTS[s["index"]][1], _GENERIC_SEGMENTS[s["index"]][2], _GENERIC_SEGMENTS[s["index"]][3], _GENERIC_SEGMENTS[s["index"]][4])) and topic
+    ][:4]
+
+    if not key_quotes:
+        key_quotes = [{"speaker": segments[0]["speaker"], "role": "CEO", "text": segments[0]["text"], "topic": "Revenue Growth"}]
+
+    sentiment_timeline = [
+        {"index": s["index"], "score": s["sentiment"], "label": s["sentimentLabel"]}
+        for s in segments
+    ]
+
+    overall = round(sum(s["sentiment"] for s in segments) / len(segments), 2)
+
+    return {
+        "symbol": symbol,
+        "name": company["name"],
+        "callDate": call_date,
+        "quarter": quarter,
+        "overallSentiment": overall,
+        "segments": segments,
+        "keyQuotes": key_quotes,
+        "sentimentTimeline": sentiment_timeline,
+    }
+
+
+def build_earnings_transcript(params: dict) -> dict:
+    symbol = (params.get("symbol") or "NVDA").upper()
+    company = data.get_company(symbol)
+    if not company:
+        raise ValueError(f"Unknown symbol: {symbol}")
+
+    if symbol in _TRANSCRIPT_TEMPLATES:
+        tmpl = _TRANSCRIPT_TEMPLATES[symbol]
+        segments = []
+        for idx, (speaker, role, text, sent, is_key, topic) in enumerate(tmpl["segments"]):
+            sent_label = "positive" if sent > 0.6 else "negative" if sent < 0.2 else "neutral"
+            segments.append({
+                "index": idx,
+                "speaker": speaker,
+                "role": role,
+                "text": text,
+                "sentiment": sent,
+                "sentimentLabel": sent_label,
+                "isKeyQuote": is_key,
+            })
+
+        key_quotes = []
+        for seg, (speaker, role, text, sent, is_key, topic) in zip(segments, tmpl["segments"]):
+            if is_key and topic:
+                key_quotes.append({"speaker": speaker, "role": role, "text": text, "topic": topic})
+
+        sentiment_timeline = [
+            {"index": s["index"], "score": s["sentiment"], "label": s["sentimentLabel"]}
+            for s in segments
+        ]
+        overall = round(sum(s["sentiment"] for s in segments) / len(segments), 2)
+
+        return {
+            "symbol": symbol,
+            "name": company["name"],
+            "callDate": tmpl["call_date"],
+            "quarter": tmpl["quarter"],
+            "overallSentiment": overall,
+            "segments": segments,
+            "keyQuotes": key_quotes,
+            "sentimentTimeline": sentiment_timeline,
+        }
+
+    if ai.ai_available():
+        try:
+            return _build_ai_transcript(symbol, company)
+        except Exception:
+            pass
+
+    return _build_mock_transcript(symbol, company)
+
+
+def _build_ai_transcript(symbol: str, company: dict) -> dict:
+    prompt = (
+        "You are generating a realistic earnings call transcript summary for a market terminal. "
+        "The company is " + company["name"] + " (" + symbol + "), a " + company["description"] + ". "
+        "Recent price change: " + str(company["changePct"]) + "%. "
+        "Revenue TTM: $" + str(round(company["revenue"] / 1e9, 1)) + "B, Net margin: " + str(company["netMargin"]) + "%. "
+        "Generate a realistic mock earnings call with 8-10 segments. "
+        "Respond with JSON only, shape: "
+        '{"quarter": "Q4 FY2025", "callDate": "2025-02-26", "segments": ['
+        '{"index": 0, "speaker": "CEO name", "role": "CEO", "text": "...", '
+        '"sentiment": 0.85, "sentimentLabel": "positive", "isKeyQuote": true}], '
+        '"keyQuotes": [{"speaker": "...", "role": "CEO", "text": "...", "topic": "Revenue"}]}'
+    )
+    msg = ai.chat(
+        [
+            {"role": "system", "content": "You output only valid JSON. No prose, no code fences."},
+            {"role": "user", "content": prompt},
+        ],
+        response_format={"type": "json_object"},
+    )
+    content = (msg.content or "").strip()
+    if content.startswith("```"):
+        content = content.strip("`")
+        if content.lower().startswith("json"):
+            content = content[4:]
+    parsed = json.loads(content)
+    segments = parsed.get("segments", [])
+    for i, s in enumerate(segments):
+        s["index"] = i
+        s["sentimentLabel"] = "positive" if s.get("sentiment", 0.5) > 0.6 else "negative" if s.get("sentiment", 0.5) < 0.3 else "neutral"
+    overall = round(sum(s.get("sentiment", 0.5) for s in segments) / max(len(segments), 1), 2)
+    sentiment_timeline = [
+        {"index": s["index"], "score": s.get("sentiment", 0.5), "label": s["sentimentLabel"]}
+        for s in segments
+    ]
+    return {
+        "symbol": symbol,
+        "name": company["name"],
+        "callDate": parsed.get("callDate", date.today().isoformat()),
+        "quarter": parsed.get("quarter", "Q4 FY2025"),
+        "overallSentiment": overall,
+        "segments": segments,
+        "keyQuotes": parsed.get("keyQuotes", []),
+        "sentimentTimeline": sentiment_timeline,
+    }
+
+
+# ----------------------------- M&A tracker builder -----------------------------
+_MA_DEALS = [
+    {
+        "target": "Altair Engineering", "targetSymbol": None,
+        "acquirer": "Broadcom Inc.", "acquirerSymbol": "AVGO",
+        "dealValue": 8_700_000_000, "premium": 34.2,
+        "status": "completed", "announced": "2025-01-15", "expectedClose": None,
+        "arbSpread": None, "dealType": "acquisition", "sector": "ai_tech",
+    },
+    {
+        "target": "Synopsys EDA Unit", "targetSymbol": None,
+        "acquirer": "Palantir Technologies", "acquirerSymbol": "PLTR",
+        "dealValue": 2_200_000_000, "premium": 28.5,
+        "status": "pending", "announced": "2025-09-03", "expectedClose": "2026-Q2",
+        "arbSpread": 5.8, "dealType": "acquisition", "sector": "ai_tech",
+    },
+    {
+        "target": "IronSource (reboot)", "targetSymbol": None,
+        "acquirer": "CRM", "acquirerSymbol": "CRM",
+        "dealValue": 4_100_000_000, "premium": 22.0,
+        "status": "pending", "announced": "2025-11-12", "expectedClose": "2026-Q2",
+        "arbSpread": 4.2, "dealType": "merger", "sector": "ai_tech",
+    },
+    {
+        "target": "Vertex Energy", "targetSymbol": None,
+        "acquirer": "Occidental Petroleum", "acquirerSymbol": "OXY",
+        "dealValue": 1_400_000_000, "premium": 41.0,
+        "status": "completed", "announced": "2025-03-20", "expectedClose": None,
+        "arbSpread": None, "dealType": "acquisition", "sector": "energy",
+    },
+    {
+        "target": "Semtech Corp.", "targetSymbol": None,
+        "acquirer": "Qualcomm Inc.", "acquirerSymbol": "QCOM",
+        "dealValue": 5_800_000_000, "premium": 37.5,
+        "status": "pending", "announced": "2025-10-08", "expectedClose": "2026-Q3",
+        "arbSpread": 7.1, "dealType": "acquisition", "sector": "semiconductors",
+    },
+    {
+        "target": "Numerix LLC", "targetSymbol": None,
+        "acquirer": "Snowflake Inc.", "acquirerSymbol": "SNOW",
+        "dealValue": 900_000_000, "premium": 18.0,
+        "status": "completed", "announced": "2025-05-14", "expectedClose": None,
+        "arbSpread": None, "dealType": "acquisition", "sector": "ai_tech",
+    },
+    {
+        "target": "Renesas NA Auto Unit", "targetSymbol": None,
+        "acquirer": "NVIDIA Corp.", "acquirerSymbol": "NVDA",
+        "dealValue": 3_500_000_000, "premium": 25.0,
+        "status": "withdrawn", "announced": "2025-02-01", "expectedClose": None,
+        "arbSpread": None, "dealType": "acquisition", "sector": "semiconductors",
+    },
+    {
+        "target": "Scout Energy Partners", "targetSymbol": None,
+        "acquirer": "ConocoPhillips", "acquirerSymbol": "COP",
+        "dealValue": 2_700_000_000, "premium": 19.8,
+        "status": "completed", "announced": "2025-07-22", "expectedClose": None,
+        "arbSpread": None, "dealType": "acquisition", "sector": "energy",
+    },
+    {
+        "target": "CloudKitchens (IPO target)", "targetSymbol": None,
+        "acquirer": "Amazon.com Inc.", "acquirerSymbol": "AMZN",
+        "dealValue": 6_200_000_000, "premium": 31.0,
+        "status": "pending", "announced": "2026-02-14", "expectedClose": "2026-Q4",
+        "arbSpread": 6.3, "dealType": "acquisition", "sector": "ai_tech",
+    },
+    {
+        "target": "First Solar EPC Div.", "targetSymbol": "FSLR",
+        "acquirer": "NextEra Energy", "acquirerSymbol": "NEE",
+        "dealValue": 4_800_000_000, "premium": 16.4,
+        "status": "pending", "announced": "2026-03-05", "expectedClose": "2026-Q4",
+        "arbSpread": 3.9, "dealType": "merger", "sector": "energy",
+    },
+]
+
+
+def build_ma_tracker(params: dict) -> dict:
+    sector_filter = params.get("sector")
+    if sector_filter:
+        sid = data.resolve_sector(sector_filter)
+        deals = [d for d in _MA_DEALS if d["sector"] == sid] if sid else _MA_DEALS
+        title = f"M&A Tracker — {data.sector_name(sid) if sid else sector_filter}"
+    else:
+        symbol = (params.get("symbol") or "").upper()
+        if symbol:
+            deals = [
+                d for d in _MA_DEALS
+                if d.get("targetSymbol") == symbol or d.get("acquirerSymbol") == symbol
+            ]
+            if not deals:
+                deals = _MA_DEALS
+            company = data.get_company(symbol)
+            title = f"M&A Tracker — {company['name'] if company else symbol}"
+        else:
+            deals = _MA_DEALS
+            title = "M&A Tracker — All Sectors 2025-26"
+
+    deal_list = []
+    for i, d in enumerate(deals):
+        deal_list.append({
+            "id": f"deal-{i}",
+            **{k: v for k, v in d.items()},
+        })
+
+    total_value = sum(d["dealValue"] for d in deal_list)
+    completed = [d for d in deal_list if d["status"] == "completed"]
+    pending = [d for d in deal_list if d["status"] == "pending"]
+    premiums = [d["premium"] for d in deal_list if d["status"] != "withdrawn"]
+    avg_premium = round(sum(premiums) / len(premiums), 1) if premiums else 0.0
+
+    stats = {
+        "totalDeals": len(deal_list),
+        "totalValue": total_value,
+        "avgPremium": avg_premium,
+        "pendingDeals": len(pending),
+    }
+
+    return {"title": title, "deals": deal_list, "stats": stats}
 
 
 # ----------------------------- registry -----------------------------
@@ -1917,6 +2585,56 @@ _reg(SkillDef(
         {"name": "build_scenarios", "description": "Compute P&L under 9 spot-move scenarios.", "expectedOutput": "A scenario table with knock-out flags."},
     ],
     build_structured_product, "Structured Product",
+))
+_reg(SkillDef(
+    "supply-chain", "Supply Chain Mapping", "supply_chain",
+    "Generates an interactive supply-chain graph for a single company, showing key upstream "
+    "suppliers and downstream customers with revenue exposure percentages. Use when the user "
+    "asks about supply chain, vendors, or who buys from a company.",
+    [
+        {"name": "resolve_symbol", "description": "Map the request to a known ticker.", "expectedOutput": "A valid ticker."},
+        {"name": "build_graph", "description": "Construct nodes and edges for suppliers, the subject, and customers.", "expectedOutput": "Nodes and edges with exposure weights."},
+        {"name": "rank_table", "description": "Produce a ranked table of supply-chain relationships.", "expectedOutput": "A sorted table of relationships."},
+    ],
+    build_supply_chain, "Supply Chain",
+))
+_reg(SkillDef(
+    "dcf-model", "DCF Valuation Model", "dcf_model",
+    "Builds a discounted-cash-flow model for a single company with editable assumptions "
+    "(revenue growth, EBITDA margin, WACC, exit multiple), projected FCF waterfall, and "
+    "implied price range with sensitivity grid. Use when the user asks for a DCF, valuation, "
+    "or intrinsic value.",
+    [
+        {"name": "resolve_symbol", "description": "Map the request to a known ticker.", "expectedOutput": "A valid ticker."},
+        {"name": "set_assumptions", "description": "Derive plausible default assumptions from company financials.", "expectedOutput": "Revenue growth, margin, WACC, exit multiple."},
+        {"name": "project_fcf", "description": "Project free cash flow for 5 years and discount to present value.", "expectedOutput": "5-year FCF projection table."},
+        {"name": "build_sensitivity", "description": "Compute implied price across a WACC × exit-multiple grid.", "expectedOutput": "A 5×5 sensitivity heatmap."},
+    ],
+    build_dcf_model, "DCF Model",
+))
+_reg(SkillDef(
+    "earnings-transcript", "Earnings Call Transcript", "earnings_transcript",
+    "Synthesizes a realistic earnings call transcript for a company with sentiment scoring "
+    "per paragraph, a sentiment timeline, and key management quote highlights. Use when the "
+    "user asks what management said, what was discussed on the earnings call, or for transcript.",
+    [
+        {"name": "resolve_symbol", "description": "Map the request to a known ticker.", "expectedOutput": "A valid ticker."},
+        {"name": "synthesize_transcript", "description": "Generate or retrieve curated transcript segments.", "expectedOutput": "Ordered list of speaker segments with sentiment scores."},
+        {"name": "extract_key_quotes", "description": "Surface the highest-impact management statements.", "expectedOutput": "Up to 5 key quote cards."},
+    ],
+    build_earnings_transcript, "Earnings Transcript",
+))
+_reg(SkillDef(
+    "ma-tracker", "M&A Deal Tracker", "ma_tracker",
+    "Returns a deal tracker showing M&A activity with target, acquirer, deal value, premium, "
+    "status, expected close date, and arb spread for pending deals. Use when the user asks "
+    "about mergers, acquisitions, M&A deals, deal flow, or arb spreads.",
+    [
+        {"name": "filter_deals", "description": "Select relevant deals by sector or ticker.", "expectedOutput": "A filtered deal list."},
+        {"name": "compute_arb_spread", "description": "Calculate annualized arb spread for pending deals.", "expectedOutput": "Arb spread percentage for each open deal."},
+        {"name": "aggregate_stats", "description": "Compute summary statistics across the deal set.", "expectedOutput": "Total value, average premium, pending count."},
+    ],
+    build_ma_tracker, "M&A Tracker",
 ))
 
 

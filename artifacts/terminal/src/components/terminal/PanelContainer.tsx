@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import type { Panel } from "@workspace/api-client-react";
 import { useRefinePanel } from "@workspace/api-client-react";
-import { Loader2, Maximize2, Minimize2, MoreHorizontal, Settings2, AlertTriangle } from "lucide-react";
+import { Loader2, AlertTriangle, Settings2 } from "lucide-react";
 import { PriceChartPanel } from "./panels/PriceChartPanel";
 import { NewsPanel } from "./panels/NewsPanel";
 import { AnalysisPanel } from "./panels/AnalysisPanel";
@@ -26,6 +26,10 @@ import { IVSurfacePanel } from "./panels/IVSurfacePanel";
 import { OptionsStrategyPanel } from "./panels/OptionsStrategyPanel";
 import { VolTermStructurePanel } from "./panels/VolTermStructurePanel";
 import { StructuredProductPanel } from "./panels/StructuredProductPanel";
+import { SupplyChainPanel } from "./panels/SupplyChainPanel";
+import { DCFPanel } from "./panels/DCFPanel";
+import { TranscriptPanel } from "./panels/TranscriptPanel";
+import { MACPanel } from "./panels/MACPanel";
 import { DynamicPanel } from "./panels/generated/DynamicPanel";
 
 interface PanelContainerProps {
@@ -121,6 +125,10 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "options_strategy": return <OptionsStrategyPanel data={panel.data as any} />;
       case "vol_term_structure": return <VolTermStructurePanel data={panel.data as any} />;
       case "structured_product": return <StructuredProductPanel data={panel.data as any} />;
+      case "supply_chain": return <SupplyChainPanel data={panel.data as any} />;
+      case "dcf_model": return <DCFPanel data={panel.data as any} />;
+      case "earnings_transcript": return <TranscriptPanel data={panel.data as any} />;
+      case "ma_tracker": return <MACPanel data={panel.data as any} />;
       default: return <DynamicPanel type={panel.type} data={panel.data as any} />;
     }
   };

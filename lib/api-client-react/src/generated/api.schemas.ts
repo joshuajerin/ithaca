@@ -37,6 +37,10 @@ export const PanelType = {
   options_strategy: 'options_strategy',
   vol_term_structure: 'vol_term_structure',
   structured_product: 'structured_product',
+  supply_chain: 'supply_chain',
+  dcf_model: 'dcf_model',
+  earnings_transcript: 'earnings_transcript',
+  ma_tracker: 'ma_tracker',
 } as const;
 
 export type PanelStatus = typeof PanelStatus[keyof typeof PanelStatus];
@@ -303,7 +307,274 @@ export interface FactorAnalysisData {
   loadings: FactorLoading[];
 }
 
-export type PanelData = PriceChartData | NewsData | AnalysisData | FundamentalsData | ScreenerData | HeatmapData | SentimentData | ComparisonData | PortfolioRiskData | BacktestData | CorrelationMatrixData | FactorAnalysisData;
+// --- iv_surface ---
+export interface IVSurfaceCell {
+  strike: number;
+  expiry: string;
+  iv: number;
+}
+
+export interface IVSkewPoint {
+  strike: number;
+  iv: number;
+  moneyness: number;
+}
+
+export interface IVSurfaceData {
+  symbol: string;
+  underlyingPrice: number;
+  expiries: string[];
+  strikes: number[];
+  surface: IVSurfaceCell[];
+  atmIv: number;
+  skew: IVSkewPoint[];
+}
+
+// --- options_strategy ---
+export interface OptionsLeg {
+  type: string;
+  action: string;
+  strike: number;
+  expiry: string;
+  premium: number;
+  delta: number;
+  gamma: number;
+  theta: number;
+  vega: number;
+}
+
+export interface NetGreeks {
+  delta: number;
+  gamma: number;
+  theta: number;
+  vega: number;
+  cost: number;
+}
+
+export interface PayoffPoint {
+  price: number;
+  pnl: number;
+}
+
+export interface OptionsStrategyData {
+  symbol: string;
+  underlyingPrice: number;
+  strategyName: string;
+  legs: OptionsLeg[];
+  netGreeks: NetGreeks;
+  payoff: PayoffPoint[];
+  maxProfit?: number | null;
+  maxLoss?: number | null;
+  breakevens: number[];
+}
+
+// --- vol_term_structure ---
+export interface VolExpiry {
+  label: string;
+  daysToExpiry: number;
+  iv: number;
+  atmPremium: number;
+  isContango: boolean;
+}
+
+export interface VolTermStructureData {
+  symbol: string;
+  spotVix: number;
+  atmIv: number;
+  regime: string;
+  expiries: VolExpiry[];
+}
+
+// --- structured_product ---
+export interface StructuredScenario {
+  label: string;
+  spotMove: number;
+  finalSpot: number;
+  pnl: number;
+  returnPct: number;
+  probability: number;
+}
+
+export interface StructuredProductData {
+  symbol: string;
+  productType: string;
+  spotPrice: number;
+  barrier: number;
+  barrierPct: number;
+  tenor: number;
+  notional: number;
+  strike: number;
+  bsPrice: number;
+  fairValue: number;
+  delta: number;
+  gamma: number;
+  vega: number;
+  theta: number;
+  impliedVol: number;
+  scenarios: StructuredScenario[];
+}
+
+export interface SupplyChainNode {
+  id: string;
+  name: string;
+  symbol?: string | null;
+  role: string;
+  exposure: number;
+  country: string;
+}
+
+export interface SupplyChainEdge {
+  source: string;
+  target: string;
+  weight: number;
+}
+
+export interface SupplyChainTableRow {
+  name: string;
+  symbol?: string | null;
+  role: string;
+  exposure: number;
+  country: string;
+  category: string;
+}
+
+export interface SupplyChainData {
+  symbol: string;
+  name: string;
+  nodes: SupplyChainNode[];
+  edges: SupplyChainEdge[];
+  table: SupplyChainTableRow[];
+}
+
+export interface DCFAssumptions {
+  revenueGrowth: number;
+  ebitdaMargin: number;
+  wacc: number;
+  exitMultiple: number;
+  taxRate: number;
+  capexPct: number;
+}
+
+export interface DCFProjectionYear {
+  year: number;
+  revenue: number;
+  fcf: number;
+  pvFcf: number;
+}
+
+export interface DCFSensCell {
+  wacc: number;
+  exitMultiple: number;
+  impliedPrice: number;
+}
+
+export interface DCFData {
+  symbol: string;
+  name: string;
+  currentPrice: number;
+  baseRevenue: number;
+  sharesOut: number;
+  netDebt: number;
+  assumptions: DCFAssumptions;
+  projections: DCFProjectionYear[];
+  impliedPriceLow: number;
+  impliedPriceMid: number;
+  impliedPriceHigh: number;
+  sensitivity: DCFSensCell[];
+}
+
+export interface TranscriptSegment {
+  index: number;
+  speaker: string;
+  role: string;
+  text: string;
+  sentiment: number;
+  sentimentLabel: string;
+  isKeyQuote: boolean;
+}
+
+export interface TranscriptKeyQuote {
+  speaker: string;
+  role: string;
+  text: string;
+  topic: string;
+}
+
+export interface TranscriptSentPoint {
+  index: number;
+  score: number;
+  label: string;
+}
+
+export interface TranscriptData {
+  symbol: string;
+  name: string;
+  callDate: string;
+  quarter: string;
+  overallSentiment: number;
+  segments: TranscriptSegment[];
+  keyQuotes: TranscriptKeyQuote[];
+  sentimentTimeline: TranscriptSentPoint[];
+}
+
+export interface MADeal {
+  id: string;
+  target: string;
+  targetSymbol?: string | null;
+  acquirer: string;
+  acquirerSymbol?: string | null;
+  dealValue: number;
+  premium: number;
+  status: string;
+  announced: string;
+  expectedClose?: string | null;
+  arbSpread?: number | null;
+  dealType: string;
+  sector: string;
+}
+
+export interface MAStats {
+  totalDeals: number;
+  totalValue: number;
+  avgPremium: number;
+  pendingDeals: number;
+}
+
+export interface MAData {
+  title: string;
+  deals: MADeal[];
+  stats: MAStats;
+}
+
+export type PanelData =
+  | PriceChartData
+  | NewsData
+  | AnalysisData
+  | FundamentalsData
+  | ScreenerData
+  | HeatmapData
+  | SentimentData
+  | ComparisonData
+  | OrderBookData
+  | TradeFlowData
+  | TCARportData
+  | MacroDashboardData
+  | YieldCurveData
+  | BondRVData
+  | CDSPricerData
+  | CashFlowDurationData
+  | PortfolioRiskData
+  | BacktestData
+  | CorrelationMatrixData
+  | FactorAnalysisData
+  | IVSurfaceData
+  | OptionsStrategyData
+  | VolTermStructureData
+  | StructuredProductData
+  | SupplyChainData
+  | DCFData
+  | TranscriptData
+  | MAData;
 
 export interface Panel {
   id: string;

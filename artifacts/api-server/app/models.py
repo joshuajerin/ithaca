@@ -32,6 +32,10 @@ class PanelType(str, Enum):
     options_strategy = "options_strategy"
     vol_term_structure = "vol_term_structure"
     structured_product = "structured_product"
+    supply_chain = "supply_chain"
+    dcf_model = "dcf_model"
+    earnings_transcript = "earnings_transcript"
+    ma_tracker = "ma_tracker"
 
 
 class PanelStatus(str, Enum):
@@ -76,7 +80,7 @@ class NewsItem(BaseModel):
     summary: str
     url: Optional[str] = None
     publishedAt: str
-    sentiment: str  # positive | neutral | negative
+    sentiment: str
     tickers: List[str]
 
 
@@ -91,7 +95,7 @@ class AnalysisData(BaseModel):
     headline: str
     summary: str
     bullets: List[str]
-    stance: str  # bullish | neutral | bearish
+    stance: str
     confidence: float
 
 
@@ -156,7 +160,7 @@ class SentimentTrendPoint(BaseModel):
 class SentimentData(BaseModel):
     scope: str
     overall: float
-    label: str  # very_bearish | bearish | neutral | bullish | very_bullish
+    label: str
     sources: List[SentimentSource]
     trend: List[SentimentTrendPoint]
 
@@ -183,14 +187,14 @@ class ComparisonData(BaseModel):
 class OrderBookLevel(BaseModel):
     price: float
     size: float
-    depth: float  # 0-1, proportion of max size at this side
+    depth: float
 
 
 class TapePrint(BaseModel):
     time: str
     price: float
     size: float
-    side: str  # buy | sell
+    side: str
     venue: str
 
 
@@ -209,7 +213,7 @@ class FlowPrint(BaseModel):
     time: str
     price: float
     size: float
-    side: str  # buy | sell
+    side: str
     venue: str
     isBlock: bool
     isDark: bool
@@ -219,7 +223,7 @@ class TradeFlowData(BaseModel):
     symbol: str
     name: str
     darkPoolPct: float
-    buyImbalance: float  # 0-1; > 0.5 = net buy pressure
+    buyImbalance: float
     totalVolume: float
     blockThreshold: float
     prints: List[FlowPrint]
@@ -242,9 +246,9 @@ class TCARportData(BaseModel):
     avgExecPrice: float
     vwap: float
     twap: float
-    implementationShortfall: float  # bps
-    vwapSlippage: float  # bps
-    twapSlippage: float  # bps
+    implementationShortfall: float
+    vwapSlippage: float
+    twapSlippage: float
     buckets: List[TCABucket]
 
 
@@ -561,6 +565,142 @@ class FactorAnalysisData(BaseModel):
     loadings: List[FactorLoading]
 
 
+# --- supply_chain ---
+class SupplyChainNode(BaseModel):
+    id: str
+    name: str
+    symbol: Optional[str] = None
+    role: str
+    exposure: float
+    country: str
+
+
+class SupplyChainEdge(BaseModel):
+    source: str
+    target: str
+    weight: float
+
+
+class SupplyChainTableRow(BaseModel):
+    name: str
+    symbol: Optional[str] = None
+    role: str
+    exposure: float
+    country: str
+    category: str
+
+
+class SupplyChainData(BaseModel):
+    symbol: str
+    name: str
+    nodes: List[SupplyChainNode]
+    edges: List[SupplyChainEdge]
+    table: List[SupplyChainTableRow]
+
+
+# --- dcf_model ---
+class DCFAssumptions(BaseModel):
+    revenueGrowth: float
+    ebitdaMargin: float
+    wacc: float
+    exitMultiple: float
+    taxRate: float
+    capexPct: float
+
+
+class DCFProjectionYear(BaseModel):
+    year: int
+    revenue: float
+    fcf: float
+    pvFcf: float
+
+
+class DCFSensCell(BaseModel):
+    wacc: float
+    exitMultiple: float
+    impliedPrice: float
+
+
+class DCFData(BaseModel):
+    symbol: str
+    name: str
+    currentPrice: float
+    baseRevenue: float
+    sharesOut: float
+    netDebt: float
+    assumptions: DCFAssumptions
+    projections: List[DCFProjectionYear]
+    impliedPriceLow: float
+    impliedPriceMid: float
+    impliedPriceHigh: float
+    sensitivity: List[DCFSensCell]
+
+
+# --- earnings_transcript ---
+class TranscriptSegment(BaseModel):
+    index: int
+    speaker: str
+    role: str
+    text: str
+    sentiment: float
+    sentimentLabel: str
+    isKeyQuote: bool
+
+
+class TranscriptKeyQuote(BaseModel):
+    speaker: str
+    role: str
+    text: str
+    topic: str
+
+
+class TranscriptSentPoint(BaseModel):
+    index: int
+    score: float
+    label: str
+
+
+class TranscriptData(BaseModel):
+    symbol: str
+    name: str
+    callDate: str
+    quarter: str
+    overallSentiment: float
+    segments: List[TranscriptSegment]
+    keyQuotes: List[TranscriptKeyQuote]
+    sentimentTimeline: List[TranscriptSentPoint]
+
+
+# --- ma_tracker ---
+class MADeal(BaseModel):
+    id: str
+    target: str
+    targetSymbol: Optional[str] = None
+    acquirer: str
+    acquirerSymbol: Optional[str] = None
+    dealValue: float
+    premium: float
+    status: str
+    announced: str
+    expectedClose: Optional[str] = None
+    arbSpread: Optional[float] = None
+    dealType: str
+    sector: str
+
+
+class MAStats(BaseModel):
+    totalDeals: int
+    totalValue: float
+    avgPremium: float
+    pendingDeals: int
+
+
+class MAData(BaseModel):
+    title: str
+    deals: List[MADeal]
+    stats: MAStats
+
+
 PanelData = Union[
     PriceChartData,
     NewsData,
@@ -586,6 +726,10 @@ PanelData = Union[
     OptionsStrategyData,
     VolTermStructureData,
     StructuredProductData,
+    SupplyChainData,
+    DCFData,
+    TranscriptData,
+    MAData,
 ]
 
 
