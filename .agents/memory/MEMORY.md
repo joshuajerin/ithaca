@@ -3,3 +3,4 @@
 - [Free market data sources + quirks](market-data-sources.md) — Yahoo chart/RSS + yfinance: unit gotchas (dividendYield already %, profitMargins fraction), sector lives on universe, asOf/source freshness contract.
 - [Self-building feature pipeline](self-building-features.md) — Build Feature: AI generates skill+panel at runtime, registered in-process (no restart); why api-server runs without --reload; clean-failure + dynamic-panel rendering contract.
 - [AI client timeouts vs preview proxy](ai-client-timeouts.md) — bound the OpenAI client (timeout + max_retries=0) under the ~60s proxy window; callers must fall back on timeout like any failure.
+- [Panel layout collision resolution](panel-layout-collision.md) — dashboard overlap fix uses two-pass reserve-then-reflow (not single-pass greedy) so non-conflicting panels keep AI positions.

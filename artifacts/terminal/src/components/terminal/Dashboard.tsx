@@ -2,6 +2,7 @@ import React from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { DashboardSpec } from "@workspace/api-client-react";
 import { PanelContainer } from "./PanelContainer";
+import { resolvePanelLayouts } from "@/lib/layout";
 
 interface DashboardProps {
   dashboard: DashboardSpec;
@@ -19,6 +20,10 @@ export function Dashboard({ dashboard, onPanelRefined, highlightedPanelId }: Das
     );
   }
 
+  // Resolve any overlapping / off-grid coordinates the AI may have emitted so
+  // no two panels ever stack on top of each other.
+  const panels = resolvePanelLayouts(dashboard.panels);
+
   // Row height is ~100px. We use CSS Grid where each unit of height represents roughly that.
   return (
     <div 
@@ -29,7 +34,7 @@ export function Dashboard({ dashboard, onPanelRefined, highlightedPanelId }: Das
       }}
     >
       <AnimatePresence>
-        {dashboard.panels.map((panel) => (
+        {panels.map((panel) => (
           <motion.div
             key={panel.id}
             layout
