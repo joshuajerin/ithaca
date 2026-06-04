@@ -162,6 +162,31 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
     micAnalyserRef.current = null;
   }, []);
 
+  // Request mic permission up front — on the deliberate "Voice On" tap — then
+  // release the stream. On phones the permission prompt cancels a press-and-hold
+  // gesture (a pointercancel fires mid-hold), so prompting during the hold makes
+  // users deny by accident. Granting here means later holds re-acquire the mic
+  // instantly with no prompt, keeping push-to-talk smooth.
+  const primeMicPermission = useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setMicDenied(true);
+      setError("This browser can't access the microphone. Open the terminal in Google Chrome over https.");
+      setStatusSafe("error");
+      return false;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((t) => t.stop());
+      setMicDenied(false);
+      return true;
+    } catch {
+      setMicDenied(true);
+      setError("Microphone access was blocked. Allow the mic for this site in your browser settings, then tap Retry.");
+      setStatusSafe("error");
+      return false;
+    }
+  }, [setStatusSafe]);
+
   // --- Speech recognition ---
   const recognition = useSpeechRecognition({
     onUtterance: (text) => {
@@ -322,9 +347,14 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
       return;
     }
     ensureCtx();
+    // Prime mic permission now, on this deliberate tap, so the prompt never
+    // collides with a press-and-hold on mobile. If denied, primeMicPermission
+    // surfaces the error/Retry state.
+    const granted = await primeMicPermission();
+    if (!granted) return;
     // Push-to-talk: stay idle until the user holds the orb. Do not auto-listen.
     setStatusSafe("idle");
-  }, [ensureCtx, setStatusSafe]);
+  }, [ensureCtx, primeMicPermission, setStatusSafe]);
 
   const stopVoice = useCallback(() => {
     heldRef.current = false;

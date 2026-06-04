@@ -24,6 +24,14 @@ Mixing these up is the classic bug: aborting on release throws away the user's w
 mic is ready. Guard with a `heldRef` set on press / cleared on release; after the await, bail if no
 longer held so a fast tap never strands an armed session.
 
+**Prime mic permission on the Voice-On gesture, NOT during the hold.** On phones the OS permission
+prompt interrupts a press-and-hold — a `pointercancel` fires mid-hold, the hold is torn down, and the
+user ends up tapping Deny by accident → "mic permission denied." **Fix/contract:** `startVoice` calls
+`primeMicPermission()` (a `getUserMedia({audio:true})` that immediately stops the tracks) so the
+prompt happens on the deliberate Voice-On tap; once granted, later holds re-acquire the mic with no
+prompt. If priming is denied, surface the error + Retry and don't enter idle. Guard
+`navigator.mediaDevices?.getUserMedia` (insecure context / unsupported) with a Chrome+https hint.
+
 **Orb is a pointer hold-target:** use pointer events (`onPointerDown`/`onPointerUp`/`onPointerCancel`)
 — they unify mouse + touch and avoid the double-fire of mixed mouse+touch handlers. Call
 `setPointerCapture` on press so release is received even if the finger slides off. Suppress
