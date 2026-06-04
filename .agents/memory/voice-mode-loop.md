@@ -30,11 +30,18 @@ explicit "needs Chrome" message instead of failing silently. Recognition/synthes
 cross-origin iframes — and the Replit **preview pane is an iframe** — so it throws persistent
 `network` errors there even though the very same app works fine in a normal top-level browser tab.
 This is environmental; no code change makes recognition work inside the preview. **Fix/contract:**
-detect `window.self !== window.top` in VoicePanel and offer an "Open in a new tab" escape hatch
-(`window.open(location.href, "_blank")`) — both in the error state and as a small idle hint. Keep
-network auto-retries low (MAX_NETWORK_RETRIES ~2) so the real guidance surfaces fast instead of
-spinning. **Why:** repeated "Voice unavailable / Speech recognition network error" reports were the
-preview iframe, not a bug in the loop.
+detect the cross-origin iframe **up front** (shared `lib/embed.ts` `isEmbedded()` = cross-origin
+`window.self !== window.top`) and **short-circuit `startVoice` before starting recognition** — set a
+conductor `embedded` flag, never enter the "Listening…" loop. The conductor owns detection (proactive);
+VoicePanel just renders the dedicated embed card off the `embedded` prop with an "Open Voice Mode in a
+new tab" button (`openStandaloneTab()`). Network auto-retries stay low (MAX_NETWORK_RETRIES ~2) as a
+backstop for genuine recognition errors. **Why:** waiting for network-error retries to surface the
+embed guidance felt like a silent hang; detecting immediately is the contract.
+
+**Push-to-talk fallback:** VoicePanel shows a manual "Tap to speak" / "Restart listening" button so
+users aren't dependent solely on the ~900ms auto-relisten timer. `startListening` doubles as the
+manual control: when already listening it aborts the in-flight session under a `manualRestartRef`
+guard so the aborted session's `onEnd` doesn't schedule a competing auto-restart, then re-arms fresh.
 
 **Runtime dep:** the generated-panels registry imports `sucrase` (browser-side TSX transpile). It must
 actually be installed (`pnpm install`) — a missing install surfaces as a Vite "Failed to resolve

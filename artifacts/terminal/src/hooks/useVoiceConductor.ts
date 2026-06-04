@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { NarrationSegment } from "@workspace/api-client-react";
 import { useSpeechRecognition } from "./useSpeechRecognition";
+import { isEmbedded } from "@/lib/embed";
 
 export type VoiceStatus =
   | "idle"
@@ -27,6 +28,8 @@ interface UseVoiceConductor {
   micDenied: boolean;
   /** False when the browser has no Web Speech recognition (Safari/Firefox). */
   supported: boolean;
+  /** True when running inside a cross-origin iframe where the mic is blocked. */
+  embedded: boolean;
   retry: () => void;
   startListening: () => void;
 }
@@ -47,6 +50,7 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
   const [interim, setInterim] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [micDenied, setMicDenied] = useState(false);
+  const [embedded, setEmbedded] = useState(false);
 
   const processRef = useRef(processQuery);
   const synthRef = useRef(synthesize);
@@ -70,6 +74,9 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
 
   const busyRef = useRef(false);
   const restartTimerRef = useRef<number | null>(null);
+  // Set when a manual (push-to-talk) restart aborts an in-flight session so the
+  // old session's onEnd doesn't schedule a competing auto-restart.
+  const manualRestartRef = useRef(false);
   // Chrome's Web Speech service throws transient "network" errors; count them so
   // we can auto-recover a few times before giving up and surfacing the error.
   const networkRetriesRef = useRef(0);
@@ -199,6 +206,12 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
       setStatusSafe("error");
     },
     onEnd: (capturedUtterance) => {
+      // A manual push-to-talk restart aborted this session on purpose; the fresh
+      // session has already (re)started, so ignore this end event entirely.
+      if (manualRestartRef.current) {
+        manualRestartRef.current = false;
+        return;
+      }
       // The recognition session ended. If we were still listening and nothing
       // was captured (e.g. a silence/no-speech timeout), resume listening so the
       // experience stays hands-free instead of getting stuck on "Listening…".
@@ -234,11 +247,19 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
   }, [ensureCtx]);
 
   // --- startListening: begin a fresh listening session ---
+  // Works both as the hands-free auto-restart and as the manual push-to-talk
+  // control: when already listening, it cleanly re-arms a fresh session.
   const startListening = useCallback(async () => {
     if (!activeRef.current) return;
     if (busyRef.current) return;
-    if (statusRef.current === "listening") return;
     setError(null);
+
+    // Manual re-arm while a session is already in flight: abort it, flagging the
+    // abort so its onEnd doesn't schedule a competing auto-restart.
+    if (statusRef.current === "listening") {
+      manualRestartRef.current = true;
+      recognitionRef.current.stop();
+    }
 
     // Ensure mic access is granted before we start.
     const ok = await startMicAnalyser();
@@ -249,6 +270,7 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
       setStatusSafe("error");
       return;
     }
+    networkRetriesRef.current = 0;
     setStatusSafe("listening");
     recognitionRef.current.start();
   }, [startMicAnalyser, setStatusSafe]);
@@ -303,7 +325,18 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
   const startVoice = useCallback(async () => {
     setError(null);
     setMicDenied(false);
+    setEmbedded(false);
     networkRetriesRef.current = 0;
+    // Web Speech recognition and mic capture are blocked inside cross-origin
+    // iframes (the Replit preview pane / canvas). Detect that up front and
+    // short-circuit before starting recognition, so we surface a clear
+    // "open in a new tab" state instead of silently looping on "Listening…".
+    if (isEmbedded()) {
+      setEmbedded(true);
+      setError("Live voice recognition is blocked inside the embedded preview.");
+      setStatusSafe("error");
+      return;
+    }
     if (!recognitionRef.current.supported) {
       setError("Voice Mode needs the Web Speech API. Please use Google Chrome.");
       setStatusSafe("error");
@@ -358,6 +391,7 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
     error,
     micDenied,
     supported: recognition.supported,
+    embedded,
     retry,
     startListening,
   };

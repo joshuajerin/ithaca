@@ -1,6 +1,7 @@
 import React from "react";
 import { Mic, Loader2, Volume2, AlertTriangle, RefreshCw, MonitorX, ExternalLink } from "lucide-react";
 import type { VoiceStatus } from "@/hooks/useVoiceConductor";
+import { openStandaloneTab } from "@/lib/embed";
 import { VoiceOrb } from "./VoiceOrb";
 
 interface VoicePanelProps {
@@ -11,6 +12,7 @@ interface VoicePanelProps {
   error: string | null;
   micDenied: boolean;
   supported: boolean;
+  embedded: boolean;
   onRetry: () => void;
   onStartListening: () => void;
 }
@@ -46,16 +48,40 @@ export function VoicePanel({
   error,
   micDenied,
   supported,
+  embedded,
   onRetry,
   onStartListening,
 }: VoicePanelProps) {
   const canTap = status === "idle";
-  // Chrome's Web Speech recognizer is blocked inside cross-origin iframes (the
-  // Replit preview), where it throws persistent "network" errors. Detect that so
-  // we can offer an "open in a new tab" escape hatch where voice actually works.
-  const inIframe = typeof window !== "undefined" && window.self !== window.top;
-  const openInNewTab = () =>
-    window.open(window.location.href, "_blank", "noopener,noreferrer");
+  // Push-to-talk is available whenever the mic could be (re)armed on demand:
+  // at rest (idle) or to interrupt/re-arm an active listening session.
+  const canPushToTalk = status === "idle" || status === "listening";
+
+  // Embedded = running inside a cross-origin iframe (the Replit preview pane /
+  // canvas) where Web Speech + mic capture are blocked. The conductor detects
+  // this up front and surfaces an "open in a new tab" escape hatch.
+  if (supported && embedded) {
+    return (
+      <div className="pointer-events-none fixed inset-x-0 bottom-6 z-30 flex justify-center px-4">
+        <div className="pointer-events-auto flex flex-col items-center gap-4 rounded-2xl border border-border bg-black/70 backdrop-blur-md px-6 py-5 shadow-2xl max-w-md w-full sm:w-auto text-center">
+          <MonitorX className="w-8 h-8 text-muted-foreground" strokeWidth={1.25} />
+          <h2 className="font-serif text-xl tracking-tight">Voice needs its own tab</h2>
+          <p className="text-xs text-muted-foreground leading-relaxed max-w-sm">
+            Microphone access isn't available inside the embedded preview. Open
+            Voice Mode in its own browser tab (Chrome) to talk to the terminal
+            hands-free.
+          </p>
+          <button
+            onClick={() => openStandaloneTab()}
+            className="flex items-center gap-2 bg-white text-black px-4 py-2 text-[11px] uppercase tracking-[0.2em] hover:bg-white/90 transition-colors"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            Open Voice Mode in a new tab
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-6 z-30 flex justify-center px-4">
@@ -97,36 +123,18 @@ export function VoicePanel({
             {status === "error" ? (
               <div className="flex flex-col items-center gap-3 max-w-sm text-center">
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  {inIframe
-                    ? "Live voice recognition is blocked inside the embedded preview. Open the terminal in its own browser tab (Chrome) to talk to it hands-free."
-                    : error ||
-                      (micDenied
-                        ? "Microphone access is blocked. Allow it in your browser, then retry."
-                        : "Voice mode couldn't start.")}
+                  {error ||
+                    (micDenied
+                      ? "Microphone access is blocked. Allow it in your browser, then retry."
+                      : "Voice mode couldn't start.")}
                 </p>
-                {inIframe && error && (
-                  <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/60">
-                    {error}
-                  </p>
-                )}
-                <div className="flex items-center gap-2">
-                  {inIframe && (
-                    <button
-                      onClick={openInNewTab}
-                      className="flex items-center gap-2 bg-white text-black px-4 py-2 text-[11px] uppercase tracking-[0.2em] hover:bg-white/90 transition-colors"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      Open in new tab
-                    </button>
-                  )}
-                  <button
-                    onClick={onRetry}
-                    className="flex items-center gap-2 border border-border px-4 py-2 text-[11px] uppercase tracking-[0.2em] hover:bg-white hover:text-black transition-colors"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    Retry
-                  </button>
-                </div>
+                <button
+                  onClick={onRetry}
+                  className="flex items-center gap-2 border border-border px-4 py-2 text-[11px] uppercase tracking-[0.2em] hover:bg-white hover:text-black transition-colors"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Retry
+                </button>
               </div>
             ) : (
               <div className="flex flex-col items-center gap-2 max-w-xs text-center">
@@ -136,13 +144,13 @@ export function VoicePanel({
                   {status === "thinking" && "Interpreting your request…"}
                   {status === "speaking" && "Walking you through the dashboard."}
                 </p>
-                {inIframe && (
+                {canPushToTalk && (
                   <button
-                    onClick={openInNewTab}
-                    className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-muted-foreground/70 hover:text-white transition-colors"
+                    onClick={onStartListening}
+                    className="inline-flex items-center gap-2 border border-border px-4 py-2 text-[11px] uppercase tracking-[0.2em] hover:bg-white hover:text-black transition-colors"
                   >
-                    <ExternalLink className="w-3 h-3" />
-                    Not responding? Open in a new tab
+                    <Mic className="w-3.5 h-3.5" />
+                    {status === "listening" ? "Restart listening" : "Tap to speak"}
                   </button>
                 )}
               </div>

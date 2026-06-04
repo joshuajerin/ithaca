@@ -175,6 +175,7 @@ export default function Terminal() {
               error={voice.error}
               micDenied={voice.micDenied}
               supported={voice.supported}
+              embedded={voice.embedded}
               onRetry={voice.retry}
               onStartListening={voice.startListening}
             />
