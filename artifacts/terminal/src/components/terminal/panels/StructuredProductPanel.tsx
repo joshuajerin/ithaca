@@ -1,8 +1,6 @@
 import React from "react";
-import type { StructuredProductData } from "@workspace/api-client-react";
-
 interface StructuredProductPanelProps {
-  data: StructuredProductData;
+  data: any;
 }
 
 function MetricRow({ label, value, sub }: { label: string; value: string; sub?: string }) {
@@ -112,7 +110,7 @@ export function StructuredProductPanel({ data }: StructuredProductPanelProps) {
               </tr>
             </thead>
             <tbody>
-              {data.scenarios.map((s, i) => {
+              {data.scenarios.map((s: any, i: number) => {
                 const knocked = barrierBreached(s.spotMove);
                 const positive = s.pnl > 0;
                 return (

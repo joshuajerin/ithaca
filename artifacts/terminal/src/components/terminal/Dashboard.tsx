@@ -6,9 +6,10 @@ import { PanelContainer } from "./PanelContainer";
 interface DashboardProps {
   dashboard: DashboardSpec;
   onPanelRefined: (updatedPanel: any) => void;
+  highlightedPanelId?: string | null;
 }
 
-export function Dashboard({ dashboard, onPanelRefined }: DashboardProps) {
+export function Dashboard({ dashboard, onPanelRefined, highlightedPanelId }: DashboardProps) {
   if (!dashboard.panels || dashboard.panels.length === 0) {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center gap-2 py-24 text-center">
@@ -47,6 +48,7 @@ export function Dashboard({ dashboard, onPanelRefined }: DashboardProps) {
               panel={panel}
               sessionId={dashboard.sessionId}
               onRefined={onPanelRefined}
+              highlighted={highlightedPanelId === panel.id}
             />
           </motion.div>
         ))}

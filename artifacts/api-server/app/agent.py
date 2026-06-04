@@ -292,7 +292,7 @@ def _system_prompt() -> str:
     )
 
 
-def orchestrate(query: str, session_id: Optional[str]) -> dict:
+def orchestrate(query: str, session_id: Optional[str], voice: bool = False) -> dict:
     # New queries ADD to the existing dashboard for the session rather than
     # replacing it, so asking a follow-up keeps the panels already on screen.
     reset = _wants_reset(query)
@@ -300,6 +300,8 @@ def orchestrate(query: str, session_id: Optional[str]) -> dict:
     # BOTH the panels and the prior conversation context start fresh.
     if reset or not session_id or session_id == "default":
         sid = uuid.uuid4().hex[:12]
+        base: List[dict] = []
+        start_y = 0
     else:
         sid = session_id
     base: List[dict] = state.get_dashboard(sid)
@@ -323,7 +325,82 @@ def orchestrate(query: str, session_id: Optional[str]) -> dict:
     state.set_dashboard(sid, combined)
     state.append_history(sid, "user", query)
     state.append_history(sid, "assistant", summary)
-    return {"sessionId": sid, "summary": summary, "panels": combined}
+
+    result: dict = {"sessionId": sid, "summary": summary, "panels": combined}
+    if voice:
+        result["narration"] = _build_narration(query, summary, panels)
+    return result
+
+
+# ----------------------------- spoken narration -----------------------------
+def _build_narration(query: str, summary: str, panels: List[dict]) -> List[dict]:
+    """Produce ordered spoken narration segments, each optionally tied to a panel.
+
+    The first segment is a short lead-in (no panel), then one segment per panel
+    in layout order so the UI can highlight panels as they are described.
+    """
+    if ai.ai_available():
+        try:
+            segs = _narration_llm(query, summary, panels)
+            if segs:
+                return segs
+        except Exception:
+            pass
+    return _narration_heuristic(summary, panels)
+
+
+def _narration_llm(query: str, summary: str, panels: List[dict]) -> List[dict]:
+    panel_brief = [
+        {"id": p["id"], "type": p["type"], "title": p.get("title", "")}
+        for p in panels
+    ]
+    sys = (
+        "You narrate a market terminal out loud for a hands-free user. You are given the "
+        "user's request and the panels just assembled. Produce a short spoken walkthrough as "
+        "JSON: {\"segments\": [{\"panelId\": <id or null>, \"text\": <one spoken sentence>}]}.\n"
+        "- Start with ONE brief lead-in segment with panelId null (e.g. acknowledge the request).\n"
+        "- Then ONE segment per panel, in the given order. Put the panel's id in the panelId "
+        "field ONLY.\n"
+        "- CRITICAL: the `text` is read aloud by a voice. NEVER speak the id, panel type code, "
+        "or any technical token. Refer to panels naturally by what they show (e.g. 'the price "
+        "chart', 'the fundamentals', 'the latest news') and the tickers/sectors involved.\n"
+        "- Keep each sentence short and conversational (suitable for text-to-speech). Do not "
+        "invent panels or ids. Only use ids from the provided list."
+    )
+    user = json.dumps({"request": query, "summary": summary, "panels": panel_brief})
+    msg = ai.chat(
+        [{"role": "system", "content": sys}, {"role": "user", "content": user}],
+        response_format={"type": "json_object"},
+    )
+    content = (msg.content or "").strip()
+    if not content:
+        return []
+    parsed = json.loads(content)
+    raw = parsed.get("segments") or []
+    valid_ids = {p["id"] for p in panels}
+    segs: List[dict] = []
+    for s in raw:
+        if not isinstance(s, dict):
+            continue
+        text = (s.get("text") or "").strip()
+        if not text:
+            continue
+        pid = s.get("panelId")
+        if pid is not None and pid not in valid_ids:
+            pid = None
+        segs.append({"text": text, "panelId": pid})
+    return segs
+
+
+def _narration_heuristic(summary: str, panels: List[dict]) -> List[dict]:
+    segs: List[dict] = []
+    lead = (summary or "Here is your dashboard.").strip()
+    segs.append({"text": lead, "panelId": None})
+    for p in panels:
+        label = _TYPE_LABELS.get(p["type"], p["type"]).lstrip("a ").lstrip("an ")
+        title = p.get("title") or label
+        segs.append({"text": f"This panel shows {title}.", "panelId": p["id"]})
+    return segs
 
 
 # Phrases that mean "throw away what's there and start a fresh dashboard".

@@ -1,5 +1,5 @@
 import React from "react";
-import type { OptionsStrategyData } from "@workspace/api-client-react";
+
 import {
   ResponsiveContainer,
   LineChart,
@@ -12,7 +12,7 @@ import {
 } from "recharts";
 
 interface OptionsStrategyPanelProps {
-  data: OptionsStrategyData;
+  data: any;
 }
 
 function greek(val: number, decimals = 4) {
@@ -40,7 +40,7 @@ export function OptionsStrategyPanel({ data }: OptionsStrategyPanelProps) {
   };
 
   // Domain for chart Y axis
-  const pnlValues = data.payoff.map((p) => p.pnl);
+  const pnlValues = data.payoff.map((p: any) => p.pnl);
   const yMin = Math.min(...pnlValues);
   const yMax = Math.max(...pnlValues);
   const yPad = (yMax - yMin) * 0.1 || 1;
@@ -82,7 +82,7 @@ export function OptionsStrategyPanel({ data }: OptionsStrategyPanelProps) {
               : "Unlimited"}
           </span>
         </div>
-        {data.breakevens.map((be, i) => (
+        {data.breakevens.map((be: any, i: number) => (
           <div key={i}>
             <span className="text-muted-foreground uppercase">B/E{data.breakevens.length > 1 ? i + 1 : ""} </span>
             <span className="font-bold font-mono">${be.toFixed(2)}</span>
@@ -118,7 +118,7 @@ export function OptionsStrategyPanel({ data }: OptionsStrategyPanelProps) {
               strokeDasharray="3 3"
               label={{ value: "Spot", position: "top", fontSize: 9, fill: "#666" }}
             />
-            {data.breakevens.map((be, i) => (
+            {data.breakevens.map((be: any, i: number) => (
               <ReferenceLine
                 key={i}
                 x={be}
@@ -153,7 +153,7 @@ export function OptionsStrategyPanel({ data }: OptionsStrategyPanelProps) {
             </tr>
           </thead>
           <tbody>
-            {data.legs.map((leg, i) => (
+            {data.legs.map((leg: any, i: number) => (
               <tr key={i} className="border-t border-border/40">
                 <td className="py-0.5 font-bold uppercase">
                   {leg.action === "long" ? "+" : "−"}{leg.type[0].toUpperCase()}

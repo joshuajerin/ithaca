@@ -31,6 +31,7 @@ interface PanelContainerProps {
   panel: Panel;
   sessionId: string;
   onRefined: (updatedPanel: Panel) => void;
+  highlighted?: boolean;
 }
 
 function formatAsOf(asOf?: string | null): string {
@@ -46,7 +47,7 @@ function formatAsOf(asOf?: string | null): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-export function PanelContainer({ panel, sessionId, onRefined }: PanelContainerProps) {
+export function PanelContainer({ panel, sessionId, onRefined, highlighted }: PanelContainerProps) {
   const [isRefining, setIsRefining] = useState(false);
   const [refineText, setRefineText] = useState("");
   
@@ -124,7 +125,13 @@ export function PanelContainer({ panel, sessionId, onRefined }: PanelContainerPr
   };
 
   return (
-    <div className="bg-black border border-border flex flex-col overflow-hidden relative group h-full">
+    <div
+      className={`bg-black border flex flex-col overflow-hidden relative group h-full transition-[box-shadow,border-color] duration-300 ${
+        highlighted
+          ? "border-white shadow-[0_0_0_1px_rgba(255,255,255,0.8),0_0_36px_rgba(255,255,255,0.45)] z-10"
+          : "border-border"
+      }`}
+    >
       <div className="shrink-0 border-b border-border flex items-start justify-between px-4 pt-3 pb-2.5">
         <div className="flex flex-col gap-1 overflow-hidden min-w-0">
           <span className="editorial-label text-[8.5px] text-muted-foreground shrink-0">{panel.type.replace('_', ' ')}</span>

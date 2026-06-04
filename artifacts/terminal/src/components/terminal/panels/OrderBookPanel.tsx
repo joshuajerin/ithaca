@@ -1,8 +1,7 @@
 import React from "react";
-import type { OrderBookData } from "@workspace/api-client-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
-export function OrderBookPanel({ data }: { data: OrderBookData }) {
+export function OrderBookPanel({ data }: { data: any }) {
   return (
     <div className="flex flex-col h-full gap-3">
       <div className="flex items-center justify-between shrink-0">
@@ -22,7 +21,7 @@ export function OrderBookPanel({ data }: { data: OrderBookData }) {
         <div className="flex flex-col min-h-0">
           <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1 shrink-0">Bids</div>
           <div className="flex-1 min-h-0 overflow-hidden space-y-0.5">
-            {data.bids.map((level, i) => (
+            {data.bids.map((level: any, i: any) => (
               <div key={i} className="relative flex items-center justify-between px-1.5 py-0.5 text-[11px] font-mono overflow-hidden">
                 <div
                   className="absolute inset-0 bg-white/8"
@@ -38,7 +37,7 @@ export function OrderBookPanel({ data }: { data: OrderBookData }) {
         <div className="flex flex-col min-h-0">
           <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1 shrink-0">Asks</div>
           <div className="flex-1 min-h-0 overflow-hidden space-y-0.5">
-            {data.asks.map((level, i) => (
+            {data.asks.map((level: any, i: any) => (
               <div key={i} className="relative flex items-center justify-between px-1.5 py-0.5 text-[11px] font-mono overflow-hidden">
                 <div
                   className="absolute right-0 top-0 bottom-0 bg-white/5"
@@ -56,7 +55,7 @@ export function OrderBookPanel({ data }: { data: OrderBookData }) {
         <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Recent Tape</div>
         <ScrollArea className="h-[80px]">
           <div className="space-y-0.5">
-            {data.tape.map((print, i) => (
+            {data.tape.map((print: any, i: any) => (
               <div key={i} className="flex items-center justify-between text-[10px] font-mono gap-2">
                 <span className="text-muted-foreground w-16 shrink-0">{print.time}</span>
                 <span className={`font-bold w-14 shrink-0 ${print.side === "buy" ? "text-white" : "text-gray-500"}`}>

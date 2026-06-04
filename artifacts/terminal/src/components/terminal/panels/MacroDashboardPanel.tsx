@@ -1,5 +1,4 @@
 import React from "react";
-import type { MacroDashboardData, MacroTile } from "@workspace/api-client-react";
 import { LineChart, Line, ResponsiveContainer } from "recharts";
 
 const GROUP_COLORS: Record<string, string> = {
@@ -36,7 +35,7 @@ function Sparkline({ data, positive }: { data: number[]; positive: boolean }) {
   );
 }
 
-function AssetTile({ tile }: { tile: MacroTile }) {
+function AssetTile({ tile }: { tile: any }) {
   const isPositive = tile.changePct >= 0;
   const absChg = Math.abs(tile.changePct);
 
@@ -81,10 +80,10 @@ function AssetTile({ tile }: { tile: MacroTile }) {
   );
 }
 
-export function MacroDashboardPanel({ data }: { data: MacroDashboardData }) {
+export function MacroDashboardPanel({ data }: { data: any }) {
   return (
     <div className="flex flex-col h-full gap-3 overflow-y-auto">
-      {data.groups.map((group) => (
+      {data.groups.map((group: any) => (
         <div key={group.label} className="shrink-0">
           <div
             className="text-[9px] font-bold uppercase tracking-[0.2em] mb-1.5 pb-1 border-b"
@@ -103,7 +102,7 @@ export function MacroDashboardPanel({ data }: { data: MacroDashboardData }) {
               gridTemplateColumns: `repeat(${Math.min(group.tiles.length, 5)}, minmax(0, 1fr))`,
             }}
           >
-            {group.tiles.map((tile) => (
+            {group.tiles.map((tile: any) => (
               <AssetTile key={tile.symbol} tile={tile} />
             ))}
           </div>

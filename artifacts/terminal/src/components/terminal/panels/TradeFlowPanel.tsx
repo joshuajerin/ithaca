@@ -1,5 +1,4 @@
 import React from "react";
-import type { TradeFlowData } from "@workspace/api-client-react";
 import {
   ResponsiveContainer,
   ScatterChart,
@@ -23,11 +22,11 @@ function DarkPoolGauge({ pct }: { pct: number }) {
   );
 }
 
-export function TradeFlowPanel({ data }: { data: TradeFlowData }) {
+export function TradeFlowPanel({ data }: { data: any }) {
   const imbalancePct = Math.round(data.buyImbalance * 100);
   const netBuy = data.buyImbalance >= 0.5;
 
-  const scatterData = data.prints.map((p) => ({
+  const scatterData = data.prints.map((p: any) => ({
     x: p.time,
     y: p.price,
     z: Math.sqrt(p.size) * 0.4,
@@ -68,7 +67,7 @@ export function TradeFlowPanel({ data }: { data: TradeFlowData }) {
         </div>
         <div className="text-right text-[10px] text-muted-foreground uppercase tracking-widest">
           <div>{(data.totalVolume / 1_000_000).toFixed(1)}M vol</div>
-          <div>{data.prints.filter((p) => p.isBlock).length} blocks</div>
+          <div>{data.prints.filter((p: any) => p.isBlock).length} blocks</div>
         </div>
       </div>
 
@@ -114,7 +113,7 @@ export function TradeFlowPanel({ data }: { data: TradeFlowData }) {
             />
             <Tooltip content={<CustomTooltip />} />
             <Scatter data={scatterData}>
-              {scatterData.map((entry, idx) => (
+              {scatterData.map((entry: any, idx: any) => (
                 <Cell
                   key={idx}
                   fill={entry.isBlock ? "#ffffff" : entry.side === "buy" ? "#888888" : "#333333"}

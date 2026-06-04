@@ -1,6 +1,7 @@
 """Thin wrapper around the OpenAI SDK pointed at the Replit AI Integrations proxy."""
 from __future__ import annotations
 
+import base64
 import os
 from typing import Any, Optional
 
@@ -10,6 +11,11 @@ except Exception:  # pragma: no cover
     OpenAI = None  # type: ignore
 
 MODEL = "gpt-5.4"
+# Speech-to-speech / audio-output model. The proxy does not support the dedicated
+# /audio/speech TTS endpoint, but gpt-audio chat-completions with an audio modality
+# produces natural spoken audio, which we use for narration.
+AUDIO_MODEL = "gpt-audio"
+DEFAULT_VOICE = "alloy"
 
 _BASE_URL = os.environ.get("AI_INTEGRATIONS_OPENAI_BASE_URL")
 _API_KEY = os.environ.get("AI_INTEGRATIONS_OPENAI_API_KEY")
@@ -48,3 +54,34 @@ def chat(messages: list, tools: Optional[list] = None, tool_choice: Optional[Any
         kwargs["response_format"] = response_format
     resp = client.chat.completions.create(**kwargs)
     return resp.choices[0].message
+
+
+def speak(text: str, voice: Optional[str] = None, fmt: str = "mp3") -> bytes:
+    """Synthesize spoken audio for the given text using the gpt-audio model.
+
+    Returns raw audio bytes (mp3 by default). Raises if the AI client is
+    unavailable or the model returns no audio.
+    """
+    client = get_client()
+    if client is None:
+        raise RuntimeError("AI client unavailable")
+    resp = client.chat.completions.create(
+        model=AUDIO_MODEL,
+        modalities=["text", "audio"],
+        audio={"voice": voice or DEFAULT_VOICE, "format": fmt},
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a text-to-speech narrator. Read the user's text aloud "
+                    "verbatim in a calm, natural, professional voice. Do not add, "
+                    "remove, or comment on anything."
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
+    )
+    audio = getattr(resp.choices[0].message, "audio", None)
+    if not audio or not getattr(audio, "data", None):
+        raise RuntimeError("no audio returned")
+    return base64.b64decode(audio.data)

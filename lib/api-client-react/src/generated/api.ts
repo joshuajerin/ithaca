@@ -27,6 +27,8 @@ import type {
   RefineRequest,
   SectorList,
   SkillCatalog,
+  SpeakRequest,
+  SpeechAudio,
   SuggestionList,
   Watchlist,
   WatchlistInput
@@ -504,6 +506,78 @@ export const useOrchestrate = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getOrchestrateMutationOptions(options));
+    }
+
+export const getSpeakUrl = () => {
+
+
+
+
+  return `/api/speak`
+}
+
+/**
+ * Converts a short narration string into natural-sounding speech audio (base64-encoded mp3)
+ * @summary Synthesize narration audio
+ */
+export const speak = async (speakRequest: SpeakRequest, options?: RequestInit): Promise<SpeechAudio> => {
+
+  return customFetch<SpeechAudio>(getSpeakUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      speakRequest,)
+  }
+);}
+
+
+
+
+export const getSpeakMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof speak>>, TError,{data: BodyType<SpeakRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof speak>>, TError,{data: BodyType<SpeakRequest>}, TContext> => {
+
+const mutationKey = ['speak'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof speak>>, {data: BodyType<SpeakRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  speak(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SpeakMutationResult = NonNullable<Awaited<ReturnType<typeof speak>>>
+    export type SpeakMutationBody = BodyType<SpeakRequest>
+    export type SpeakMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Synthesize narration audio
+ */
+export const useSpeak = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof speak>>, TError,{data: BodyType<SpeakRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof speak>>,
+        TError,
+        {data: BodyType<SpeakRequest>},
+        TContext
+      > => {
+      return useMutation(getSpeakMutationOptions(options));
     }
 
 export const getRefinePanelUrl = () => {

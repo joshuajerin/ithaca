@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import type { IVSurfaceData } from "@workspace/api-client-react";
+
 import {
   ResponsiveContainer,
   LineChart,
@@ -12,7 +12,7 @@ import {
 } from "recharts";
 
 interface IVSurfacePanelProps {
-  data: IVSurfaceData;
+  data: any;
 }
 
 function ivColor(iv: number, minIv: number, maxIv: number): string {
@@ -34,7 +34,7 @@ function ivColor(iv: number, minIv: number, maxIv: number): string {
 }
 
 export function IVSurfacePanel({ data }: IVSurfacePanelProps) {
-  const ivValues = data.surface.map((c) => c.iv);
+  const ivValues = data.surface.map((c: any) => c.iv);
   const minIv = Math.min(...ivValues);
   const maxIv = Math.max(...ivValues);
 
@@ -48,7 +48,7 @@ export function IVSurfacePanel({ data }: IVSurfacePanelProps) {
     return m;
   }, [data.surface]);
 
-  const atmStrike = data.strikes.reduce((closest, s) =>
+  const atmStrike = data.strikes.reduce((closest: any, s: any) =>
     Math.abs(s - data.underlyingPrice) < Math.abs(closest - data.underlyingPrice) ? s : closest
   );
 
@@ -76,7 +76,7 @@ export function IVSurfacePanel({ data }: IVSurfacePanelProps) {
           <thead>
             <tr>
               <th className="text-left text-muted-foreground py-1 pr-2 font-normal w-10">Strike</th>
-              {data.expiries.map((exp) => (
+              {data.expiries.map((exp: any) => (
                 <th key={exp} className="text-center text-muted-foreground py-1 font-normal px-0.5">
                   {exp}
                 </th>
@@ -84,7 +84,7 @@ export function IVSurfacePanel({ data }: IVSurfacePanelProps) {
             </tr>
           </thead>
           <tbody>
-            {data.strikes.map((strike) => {
+            {data.strikes.map((strike: any) => {
               const isAtm = strike === atmStrike;
               return (
                 <tr key={strike} className={isAtm ? "outline outline-1 outline-white/40" : ""}>
@@ -92,7 +92,7 @@ export function IVSurfacePanel({ data }: IVSurfacePanelProps) {
                     {strike.toFixed(0)}
                     {isAtm && <span className="ml-1 text-[8px] text-white/60">ATM</span>}
                   </td>
-                  {data.expiries.map((exp) => {
+                  {data.expiries.map((exp: any) => {
                     const iv = cellMap[exp]?.[strike];
                     if (iv === undefined) return <td key={exp} className="px-0.5" />;
                     const bg = ivColor(iv, minIv, maxIv);

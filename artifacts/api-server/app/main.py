@@ -97,7 +97,25 @@ def default_dashboard():
 def orchestrate(req: models.OrchestrationRequest):
     if not req.query or not req.query.strip():
         raise HTTPException(status_code=400, detail="query is required")
-    return agent.orchestrate(req.query.strip(), req.sessionId)
+    return agent.orchestrate(req.query.strip(), req.sessionId, voice=bool(req.voice))
+
+
+@api.post("/speak", response_model=models.SpeechAudio)
+def speak(req: models.SpeakRequest):
+    import base64
+
+    from . import ai
+
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    if not ai.ai_available():
+        raise HTTPException(status_code=503, detail="speech synthesis unavailable")
+    try:
+        audio = ai.speak(text, voice=req.voice)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"speech synthesis failed: {exc}")
+    return {"audio": base64.b64encode(audio).decode("ascii"), "format": "mp3"}
 
 
 @api.post("/refine", response_model=models.Panel)

@@ -25,7 +25,7 @@ export const GetSkillsResponse = zod.object({
   "skills": zod.array(zod.object({
   "id": zod.string(),
   "name": zod.string(),
-  "panelType": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'correlation_matrix', 'factor_analysis']),
+  "panelType": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'correlation_matrix', 'factor_analysis', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
   "description": zod.string(),
   "subskills": zod.array(zod.object({
   "name": zod.string(),
@@ -67,7 +67,7 @@ export const GetDefaultDashboardResponse = zod.object({
   "summary": zod.string(),
   "panels": zod.array(zod.object({
   "id": zod.string(),
-  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'correlation_matrix', 'factor_analysis']),
+  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'correlation_matrix', 'factor_analysis', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
   "title": zod.string(),
   "layout": zod.object({
   "x": zod.number(),
@@ -232,7 +232,11 @@ export const GetDefaultDashboardResponse = zod.object({
   "contribution": zod.number()
 }))
 })]).optional()
-}))
+})),
+  "narration": zod.array(zod.object({
+  "text": zod.string(),
+  "panelId": zod.string().nullish()
+}).describe('A spoken narration chunk, optionally tied to a panel to highlight while it is read.')).nullish().describe('Ordered spoken narration segments for voice mode; null\/omitted for text requests.')
 })
 
 
@@ -242,7 +246,8 @@ export const GetDefaultDashboardResponse = zod.object({
  */
 export const OrchestrateBody = zod.object({
   "query": zod.string(),
-  "sessionId": zod.string().nullish()
+  "sessionId": zod.string().nullish(),
+  "voice": zod.boolean().nullish().describe('When true, the agent also returns spoken narration segments.')
 })
 
 export const OrchestrateResponse = zod.object({
@@ -250,7 +255,7 @@ export const OrchestrateResponse = zod.object({
   "summary": zod.string(),
   "panels": zod.array(zod.object({
   "id": zod.string(),
-  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'correlation_matrix', 'factor_analysis']),
+  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'correlation_matrix', 'factor_analysis', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
   "title": zod.string(),
   "layout": zod.object({
   "x": zod.number(),
@@ -415,7 +420,26 @@ export const OrchestrateResponse = zod.object({
   "contribution": zod.number()
 }))
 })]).optional()
-}))
+})),
+  "narration": zod.array(zod.object({
+  "text": zod.string(),
+  "panelId": zod.string().nullish()
+}).describe('A spoken narration chunk, optionally tied to a panel to highlight while it is read.')).nullish().describe('Ordered spoken narration segments for voice mode; null\/omitted for text requests.')
+})
+
+
+/**
+ * Converts a short narration string into natural-sounding speech audio (base64-encoded mp3)
+ * @summary Synthesize narration audio
+ */
+export const SpeakBody = zod.object({
+  "text": zod.string(),
+  "voice": zod.string().nullish().describe('Optional named voice for synthesis.')
+})
+
+export const SpeakResponse = zod.object({
+  "audio": zod.string().describe('Base64-encoded audio data.'),
+  "format": zod.string().describe('Audio container\/codec, e.g. mp3.')
 })
 
 
@@ -431,7 +455,7 @@ export const RefinePanelBody = zod.object({
 
 export const RefinePanelResponse = zod.object({
   "id": zod.string(),
-  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'correlation_matrix', 'factor_analysis']),
+  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'correlation_matrix', 'factor_analysis', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
   "title": zod.string(),
   "layout": zod.object({
   "x": zod.number(),

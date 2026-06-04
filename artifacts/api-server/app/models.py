@@ -601,15 +601,32 @@ class Panel(BaseModel):
     data: Optional[PanelData] = None
 
 
+class NarrationSegment(BaseModel):
+    text: str
+    panelId: Optional[str] = None
+
+
 class DashboardSpec(BaseModel):
     sessionId: str
     summary: str
     panels: List[Panel]
+    narration: Optional[List[NarrationSegment]] = None
 
 
 class OrchestrationRequest(BaseModel):
     query: str
     sessionId: Optional[str] = None
+    voice: Optional[bool] = None
+
+
+class SpeakRequest(BaseModel):
+    text: str
+    voice: Optional[str] = None
+
+
+class SpeechAudio(BaseModel):
+    audio: str
+    format: str
 
 
 class RefineRequest(BaseModel):

@@ -1,5 +1,4 @@
 import React from "react";
-import type { CashFlowDurationData } from "@workspace/api-client-react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -13,7 +12,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface CashFlowPanelProps {
-  data: CashFlowDurationData;
+  data: any;
 }
 
 const CustomBarTooltip = ({ active, payload, label }: any) => {
@@ -34,19 +33,19 @@ const CustomBarTooltip = ({ active, payload, label }: any) => {
 };
 
 export function CashFlowPanel({ data }: CashFlowPanelProps) {
-  const yearLabels = data.payments.map((p) => p.date.slice(0, 4));
+  const yearLabels = data.payments.map((p: any) => p.date.slice(0, 4));
   const uniqueYears = Array.from(new Set(yearLabels));
-  const annualPayments = uniqueYears.map((yr) => {
-    const pts = data.payments.filter((p) => p.date.startsWith(yr));
+  const annualPayments = uniqueYears.map((yr: any) => {
+    const pts = data.payments.filter((p: any) => p.date.startsWith(yr));
     return {
       year: yr,
-      coupon: parseFloat(pts.reduce((s, p) => s + p.coupon, 0).toFixed(2)),
-      principal: parseFloat(pts.reduce((s, p) => s + p.principal, 0).toFixed(2)),
-      pv: parseFloat(pts.reduce((s, p) => s + p.pv, 0).toFixed(2)),
+      coupon: parseFloat(pts.reduce((s: any, p: any) => s + p.coupon, 0).toFixed(2)),
+      principal: parseFloat(pts.reduce((s: any, p: any) => s + p.principal, 0).toFixed(2)),
+      pv: parseFloat(pts.reduce((s: any, p: any) => s + p.pv, 0).toFixed(2)),
     };
   });
 
-  const scenarioZero = data.scenarios.find((s) => s.shiftBps === 0);
+  const scenarioZero = data.scenarios.find((s: any) => s.shiftBps === 0);
   const basePrice = scenarioZero?.newPrice ?? data.price;
 
   return (
@@ -124,7 +123,7 @@ export function CashFlowPanel({ data }: CashFlowPanelProps) {
               </tr>
             </thead>
             <tbody>
-              {data.scenarios.map((s) => {
+              {data.scenarios.map((s: any) => {
                 const isBase = s.shiftBps === 0;
                 const isPos = s.priceChange > 0;
                 return (

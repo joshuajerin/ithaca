@@ -1,5 +1,4 @@
 import React from "react";
-import type { CDSPricerData } from "@workspace/api-client-react";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -13,7 +12,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface CDSPricerPanelProps {
-  data: CDSPricerData;
+  data: any;
 }
 
 const CustomTooltip = ({ active, payload, label }: any) => {
@@ -41,7 +40,7 @@ export function CDSPricerPanel({ data }: CDSPricerPanelProps) {
   const upfrontSign = data.upfrontFee >= 0 ? "+" : "";
   const isHighRisk = data.runningSpread > 200;
 
-  const chartData = data.survivalCurve.map((pt) => ({
+  const chartData = data.survivalCurve.map((pt: any) => ({
     ...pt,
     survivalPct: parseFloat((pt.survivalProb * 100).toFixed(2)),
     defaultPct: parseFloat((pt.defaultProb * 100).toFixed(2)),
@@ -148,7 +147,7 @@ export function CDSPricerPanel({ data }: CDSPricerPanelProps) {
               </tr>
             </thead>
             <tbody>
-              {data.survivalCurve.map((pt) => (
+              {data.survivalCurve.map((pt: any) => (
                 <tr key={pt.tenor} className="border-b border-border/40 hover:bg-white/5">
                   <td className="py-1 px-2 font-bold">{pt.tenor}</td>
                   <td className="py-1 px-2 text-right font-mono">{(pt.survivalProb * 100).toFixed(2)}%</td>

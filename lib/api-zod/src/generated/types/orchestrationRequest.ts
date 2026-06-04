@@ -10,4 +10,9 @@ export interface OrchestrationRequest {
   query: string;
   /** @nullable */
   sessionId?: string | null;
+  /**
+     * When true, the agent also returns spoken narration segments.
+     * @nullable
+     */
+  voice?: boolean | null;
 }

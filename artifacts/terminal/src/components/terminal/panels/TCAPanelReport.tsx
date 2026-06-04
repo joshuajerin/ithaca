@@ -1,5 +1,4 @@
 import React from "react";
-import type { TCARportData } from "@workspace/api-client-react";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -49,7 +48,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   );
 };
 
-export function TCAPanelReport({ data }: { data: TCARportData }) {
+export function TCAPanelReport({ data }: { data: any }) {
   const better = data.avgExecPrice <= data.vwap;
 
   return (

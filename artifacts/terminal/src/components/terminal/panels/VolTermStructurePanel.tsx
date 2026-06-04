@@ -1,5 +1,5 @@
 import React from "react";
-import type { VolTermStructureData } from "@workspace/api-client-react";
+
 import {
   ResponsiveContainer,
   LineChart,
@@ -15,7 +15,7 @@ import {
 } from "recharts";
 
 interface VolTermStructurePanelProps {
-  data: VolTermStructureData;
+  data: any;
 }
 
 function regimeColor(regime: string) {
@@ -37,13 +37,13 @@ const CustomDot = (props: any) => {
 };
 
 export function VolTermStructurePanel({ data }: VolTermStructurePanelProps) {
-  const ivValues = data.expiries.map((e) => e.iv);
+  const ivValues = data.expiries.map((e: any) => e.iv);
   const yMin = Math.max(0, Math.min(...ivValues) - 3);
   const yMax = Math.max(...ivValues) + 3;
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
-      const exp = data.expiries.find((e) => e.label === label);
+      const exp = data.expiries.find((e: any) => e.label === label);
       return (
         <div className="bg-black border border-border p-2 text-xs">
           <div className="text-muted-foreground">{label} · {exp?.daysToExpiry}d</div>
@@ -138,7 +138,7 @@ export function VolTermStructurePanel({ data }: VolTermStructurePanelProps) {
         <table className="w-full text-[10px]">
           <thead>
             <tr className="text-muted-foreground uppercase">
-              {data.expiries.map((e) => (
+              {data.expiries.map((e: any) => (
                 <th key={e.label} className="text-center font-normal pb-1 px-1">
                   {e.label}
                 </th>
@@ -147,7 +147,7 @@ export function VolTermStructurePanel({ data }: VolTermStructurePanelProps) {
           </thead>
           <tbody>
             <tr>
-              {data.expiries.map((e) => (
+              {data.expiries.map((e: any) => (
                 <td
                   key={e.label}
                   className={`text-center font-bold font-mono px-1 py-0.5 border-t border-border/40 ${e.isContango ? "text-white" : "text-gray-500"}`}
@@ -157,14 +157,14 @@ export function VolTermStructurePanel({ data }: VolTermStructurePanelProps) {
               ))}
             </tr>
             <tr>
-              {data.expiries.map((e) => (
+              {data.expiries.map((e: any) => (
                 <td key={e.label} className="text-center font-mono text-muted-foreground px-1 py-0.5">
                   ${e.atmPremium.toFixed(1)}
                 </td>
               ))}
             </tr>
             <tr>
-              {data.expiries.map((e) => (
+              {data.expiries.map((e: any) => (
                 <td key={e.label} className="text-center px-1 py-0.5">
                   <span className={`text-[8px] ${e.isContango ? "text-white/60" : "text-gray-600"}`}>
                     {e.isContango ? "↗" : "↘"}

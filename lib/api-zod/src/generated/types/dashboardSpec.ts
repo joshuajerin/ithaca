@@ -5,10 +5,16 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { NarrationSegment } from './narrationSegment';
 import type { Panel } from './panel';
 
 export interface DashboardSpec {
   sessionId: string;
   summary: string;
   panels: Panel[];
+  /**
+     * Ordered spoken narration segments for voice mode; null/omitted for text requests.
+     * @nullable
+     */
+  narration?: NarrationSegment[] | null;
 }

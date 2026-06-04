@@ -21,6 +21,10 @@ export const PanelType = {
   heatmap: 'heatmap',
   sentiment: 'sentiment',
   comparison: 'comparison',
+  portfolio_risk: 'portfolio_risk',
+  backtest: 'backtest',
+  correlation_matrix: 'correlation_matrix',
+  factor_analysis: 'factor_analysis',
   order_book: 'order_book',
   trade_flow: 'trade_flow',
   tca_report: 'tca_report',
@@ -29,10 +33,6 @@ export const PanelType = {
   bond_rv: 'bond_rv',
   cds_pricer: 'cds_pricer',
   cashflow_duration: 'cashflow_duration',
-  portfolio_risk: 'portfolio_risk',
-  backtest: 'backtest',
-  correlation_matrix: 'correlation_matrix',
-  factor_analysis: 'factor_analysis',
   iv_surface: 'iv_surface',
   options_strategy: 'options_strategy',
   vol_term_structure: 'vol_term_structure',
@@ -215,182 +215,6 @@ export interface ComparisonData {
   companies: ComparisonCompany[];
 }
 
-export interface OrderBookLevel {
-  price: number;
-  size: number;
-  depth: number;
-}
-
-export interface TapePrint {
-  time: string;
-  price: number;
-  size: number;
-  side: string;
-  venue: string;
-}
-
-export interface OrderBookData {
-  symbol: string;
-  name: string;
-  lastPrice: number;
-  spread: number;
-  bids: OrderBookLevel[];
-  asks: OrderBookLevel[];
-  tape: TapePrint[];
-}
-
-export interface FlowPrint {
-  time: string;
-  price: number;
-  size: number;
-  side: string;
-  venue: string;
-  isBlock: boolean;
-  isDark: boolean;
-}
-
-export interface TradeFlowData {
-  symbol: string;
-  name: string;
-  darkPoolPct: number;
-  buyImbalance: number;
-  totalVolume: number;
-  blockThreshold: number;
-  prints: FlowPrint[];
-}
-
-export interface TCABucket {
-  time: string;
-  execPrice: number;
-  vwap: number;
-  twap: number;
-  participationRate: number;
-  volume: number;
-}
-
-export interface TCARportData {
-  symbol: string;
-  name: string;
-  arrivalPrice: number;
-  avgExecPrice: number;
-  vwap: number;
-  twap: number;
-  implementationShortfall: number;
-  vwapSlippage: number;
-  twapSlippage: number;
-  buckets: TCABucket[];
-}
-
-export interface MacroTile {
-  symbol: string;
-  name: string;
-  price: number;
-  changePct: number;
-  unit: string;
-  sparkline: number[];
-}
-
-export interface MacroGroup {
-  label: string;
-  tiles: MacroTile[];
-}
-
-export interface MacroDashboardData {
-  theme: string;
-  title: string;
-  groups: MacroGroup[];
-}
-
-export interface YieldCurvePoint {
-  tenor: string;
-  spot: number;
-  ago1y: number;
-  ago2y: number;
-}
-
-export interface YieldCurveSpread {
-  label: string;
-  value: number;
-  inverted: boolean;
-}
-
-export interface YieldCurveData {
-  title: string;
-  points: YieldCurvePoint[];
-  spreads: YieldCurveSpread[];
-  inverted: boolean;
-}
-
-export interface BondRVRow {
-  issuer: string;
-  ticker: string;
-  coupon: number;
-  maturityYear: number;
-  yieldPct: number;
-  duration: number;
-  zSpread: number;
-  oas: number;
-  aswSpread: number;
-  rating: string;
-}
-
-export interface BondRVData {
-  title: string;
-  rows: BondRVRow[];
-  highlight: string;
-}
-
-export interface CDSSurvivalPoint {
-  tenor: string;
-  years: number;
-  survivalProb: number;
-  hazardRate: number;
-  defaultProb: number;
-}
-
-export interface CDSPricerData {
-  entity: string;
-  ticker: string;
-  rating: string;
-  recoveryRate: number;
-  runningSpread: number;
-  upfrontFee: number;
-  survivalCurve: CDSSurvivalPoint[];
-  impliedPd1y: number;
-  impliedPd5y: number;
-}
-
-export interface CashFlowPayment {
-  date: string;
-  coupon: number;
-  principal: number;
-  total: number;
-  pv: number;
-}
-
-export interface ScenarioRow {
-  shiftBps: number;
-  newYield: number;
-  newPrice: number;
-  priceChange: number;
-  priceChangePct: number;
-}
-
-export interface CashFlowDurationData {
-  issuer: string;
-  coupon: number;
-  maturityDate: string;
-  faceValue: number;
-  price: number;
-  yieldPct: number;
-  modifiedDuration: number;
-  effectiveDuration: number;
-  convexity: number;
-  dv01: number;
-  payments: CashFlowPayment[];
-  scenarios: ScenarioRow[];
-}
-
 export interface VarBin {
   bin: number;
   count: number;
@@ -479,138 +303,7 @@ export interface FactorAnalysisData {
   loadings: FactorLoading[];
 }
 
-// --- iv_surface ---
-export interface IVSurfaceCell {
-  strike: number;
-  expiry: string;
-  iv: number;
-}
-
-export interface IVSkewPoint {
-  strike: number;
-  iv: number;
-  moneyness: number;
-}
-
-export interface IVSurfaceData {
-  symbol: string;
-  underlyingPrice: number;
-  expiries: string[];
-  strikes: number[];
-  surface: IVSurfaceCell[];
-  atmIv: number;
-  skew: IVSkewPoint[];
-}
-
-// --- options_strategy ---
-export interface OptionsLeg {
-  type: string;
-  action: string;
-  strike: number;
-  expiry: string;
-  premium: number;
-  delta: number;
-  gamma: number;
-  theta: number;
-  vega: number;
-}
-
-export interface NetGreeks {
-  delta: number;
-  gamma: number;
-  theta: number;
-  vega: number;
-  cost: number;
-}
-
-export interface PayoffPoint {
-  price: number;
-  pnl: number;
-}
-
-export interface OptionsStrategyData {
-  symbol: string;
-  underlyingPrice: number;
-  strategyName: string;
-  legs: OptionsLeg[];
-  netGreeks: NetGreeks;
-  payoff: PayoffPoint[];
-  maxProfit?: number | null;
-  maxLoss?: number | null;
-  breakevens: number[];
-}
-
-// --- vol_term_structure ---
-export interface VolExpiry {
-  label: string;
-  daysToExpiry: number;
-  iv: number;
-  atmPremium: number;
-  isContango: boolean;
-}
-
-export interface VolTermStructureData {
-  symbol: string;
-  spotVix: number;
-  atmIv: number;
-  regime: string;
-  expiries: VolExpiry[];
-}
-
-// --- structured_product ---
-export interface StructuredScenario {
-  label: string;
-  spotMove: number;
-  finalSpot: number;
-  pnl: number;
-  returnPct: number;
-  probability: number;
-}
-
-export interface StructuredProductData {
-  symbol: string;
-  productType: string;
-  spotPrice: number;
-  barrier: number;
-  barrierPct: number;
-  tenor: number;
-  notional: number;
-  strike: number;
-  bsPrice: number;
-  fairValue: number;
-  delta: number;
-  gamma: number;
-  vega: number;
-  theta: number;
-  impliedVol: number;
-  scenarios: StructuredScenario[];
-}
-
-export type PanelData =
-  | PriceChartData
-  | NewsData
-  | AnalysisData
-  | FundamentalsData
-  | ScreenerData
-  | HeatmapData
-  | SentimentData
-  | ComparisonData
-  | OrderBookData
-  | TradeFlowData
-  | TCARportData
-  | MacroDashboardData
-  | YieldCurveData
-  | BondRVData
-  | CDSPricerData
-  | CashFlowDurationData
-  | PortfolioRiskData
-  | BacktestData
-  | CorrelationMatrixData
-  | FactorAnalysisData
-  | IVSurfaceData
-  | OptionsStrategyData
-  | VolTermStructureData
-  | StructuredProductData;
+export type PanelData = PriceChartData | NewsData | AnalysisData | FundamentalsData | ScreenerData | HeatmapData | SentimentData | ComparisonData | PortfolioRiskData | BacktestData | CorrelationMatrixData | FactorAnalysisData;
 
 export interface Panel {
   id: string;
@@ -633,16 +326,51 @@ export interface Panel {
   data?: PanelData;
 }
 
+/**
+ * A spoken narration chunk, optionally tied to a panel to highlight while it is read.
+ */
+export interface NarrationSegment {
+  text: string;
+  /** @nullable */
+  panelId?: string | null;
+}
+
 export interface DashboardSpec {
   sessionId: string;
   summary: string;
   panels: Panel[];
+  /**
+     * Ordered spoken narration segments for voice mode; null/omitted for text requests.
+     * @nullable
+     */
+  narration?: NarrationSegment[] | null;
 }
 
 export interface OrchestrationRequest {
   query: string;
   /** @nullable */
   sessionId?: string | null;
+  /**
+     * When true, the agent also returns spoken narration segments.
+     * @nullable
+     */
+  voice?: boolean | null;
+}
+
+export interface SpeakRequest {
+  text: string;
+  /**
+     * Optional named voice for synthesis.
+     * @nullable
+     */
+  voice?: string | null;
+}
+
+export interface SpeechAudio {
+  /** Base64-encoded audio data. */
+  audio: string;
+  /** Audio container/codec, e.g. mp3. */
+  format: string;
 }
 
 export interface RefineRequest {
@@ -697,3 +425,4 @@ export interface Watchlist {
 export interface WatchlistInput {
   symbol: string;
 }
+

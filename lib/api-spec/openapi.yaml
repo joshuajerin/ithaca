@@ -99,6 +99,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DashboardSpec"
+  /speak:
+    post:
+      operationId: speak
+      tags: [terminal]
+      summary: Synthesize narration audio
+      description: Converts a short narration string into natural-sounding speech audio (base64-encoded mp3)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SpeakRequest"
+      responses:
+        "200":
+          description: Synthesized audio
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpeechAudio"
   /refine:
     post:
       operationId: refinePanel
@@ -189,6 +208,18 @@ components:
         - backtest
         - correlation_matrix
         - factor_analysis
+        - order_book
+        - trade_flow
+        - tca_report
+        - macro_dashboard
+        - yield_curve
+        - bond_rv
+        - cds_pricer
+        - cashflow_duration
+        - iv_surface
+        - options_strategy
+        - vol_term_structure
+        - structured_product
     PanelStatus:
       type: string
       enum:
@@ -659,6 +690,15 @@ components:
           description: Data provenance for this panel ("live" or "mock").
         data:
           $ref: "#/components/schemas/PanelData"
+    NarrationSegment:
+      type: object
+      description: A spoken narration chunk, optionally tied to a panel to highlight while it is read.
+      required: [text]
+      properties:
+        text:
+          type: string
+        panelId:
+          type: ["string", "null"]
     DashboardSpec:
       type: object
       required: [sessionId, summary, panels]
@@ -671,6 +711,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Panel"
+        narration:
+          type: ["array", "null"]
+          description: Ordered spoken narration segments for voice mode; null/omitted for text requests.
+          items:
+            $ref: "#/components/schemas/NarrationSegment"
     OrchestrationRequest:
       type: object
       required: [query]
@@ -679,6 +724,28 @@ components:
           type: string
         sessionId:
           type: ["string", "null"]
+        voice:
+          type: ["boolean", "null"]
+          description: When true, the agent also returns spoken narration segments.
+    SpeakRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+        voice:
+          type: ["string", "null"]
+          description: Optional named voice for synthesis.
+    SpeechAudio:
+      type: object
+      required: [audio, format]
+      properties:
+        audio:
+          type: string
+          description: Base64-encoded audio data.
+        format:
+          type: string
+          description: Audio container/codec, e.g. mp3.
     RefineRequest:
       type: object
       required: [sessionId, panelId, instruction]

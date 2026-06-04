@@ -1,5 +1,4 @@
 import React, { useState } from "react";
-import type { BondRVData, BondRVRow } from "@workspace/api-client-react";
 import {
   ResponsiveContainer,
   ScatterChart,
@@ -13,7 +12,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface BondRVPanelProps {
-  data: BondRVData;
+  data: any;
 }
 
 type SortKey = "yieldPct" | "duration" | "zSpread" | "oas" | "aswSpread";
@@ -33,7 +32,7 @@ const SCATTER_COLORS: Record<string, string> = {
 
 const CustomScatterTooltip = ({ active, payload }: any) => {
   if (active && payload && payload.length) {
-    const row: BondRVRow = payload[0].payload;
+    const row: any = payload[0].payload;
     return (
       <div className="bg-black border border-white/20 p-2 shadow-xl text-xs">
         <p className="font-bold text-white mb-1">{row.issuer}</p>
@@ -106,7 +105,7 @@ export function BondRVPanel({ data }: BondRVPanelProps) {
             />
             <Tooltip content={<CustomScatterTooltip />} />
             <Scatter data={data.rows} name="Bonds">
-              {data.rows.map((row, i) => (
+              {data.rows.map((row: any, i: any) => (
                 <Cell
                   key={i}
                   fill={row.ticker === data.highlight ? "#ffffff" : "#4b5563"}

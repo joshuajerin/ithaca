@@ -1,5 +1,5 @@
 import React from "react";
-import type { YieldCurveData } from "@workspace/api-client-react";
+
 import {
   ResponsiveContainer,
   LineChart,
@@ -14,7 +14,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface YieldCurvePanelProps {
-  data: YieldCurveData;
+  data: any;
 }
 
 const CustomTooltip = ({ active, payload, label }: any) => {
@@ -34,7 +34,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 export function YieldCurvePanel({ data }: YieldCurvePanelProps) {
-  const inversionZone = data.spreads.find(s => s.label === "2Y–10Y");
+  const inversionZone = data.spreads.find((s: any) => s.label === "2Y–10Y");
   const isInverted = inversionZone?.inverted ?? false;
 
   return (
@@ -51,7 +51,7 @@ export function YieldCurvePanel({ data }: YieldCurvePanelProps) {
           )}
         </div>
         <div className="flex gap-3 shrink-0">
-          {data.spreads.map((s) => (
+          {data.spreads.map((s: { label: string; value: number; inverted: boolean }) => (
             <div key={s.label} className="text-right">
               <div className="text-[9px] text-muted-foreground uppercase tracking-widest">{s.label}</div>
               <div className={`text-sm font-bold font-mono ${s.inverted ? "text-yellow-400" : "text-white"}`}>
@@ -82,7 +82,7 @@ export function YieldCurvePanel({ data }: YieldCurvePanelProps) {
             <Tooltip content={<CustomTooltip />} />
             {isInverted && (
               <ReferenceLine
-                y={data.points.find(p => p.tenor === "2Y")?.spot ?? 0}
+                y={data.points.find((p: { tenor: string; spot: number }) => p.tenor === "2Y")?.spot ?? 0}
                 stroke="#fbbf24"
                 strokeDasharray="3 3"
                 strokeOpacity={0.4}
