@@ -32,12 +32,20 @@ JSON-serializable dict) and checks tsx has a default export BEFORE writing anyth
 first, registers in-process, rolls back (deletes py) if registration throws, then writes tsx.
 A failure leaves zero partial files.
 
-## Frontend dynamic rendering
-- `panels/generated/registry.ts` uses Vite `import.meta.glob('./*.tsx', {eager:true})`, keyed by
-  filename = panel_type. New files are picked up by dev HMR.
-- `DynamicPanel.tsx` (rendered from `PanelContainer` default case) prefers the dedicated
-  component, falls back to generic `GeneratedPanel.tsx`, wrapped in an ErrorBoundary so a bad
-  generated component can't crash the dashboard.
+## Frontend dynamic rendering (two-path: dev glob + prod runtime compile)
+- `panels/generated/registry.ts` has BOTH: (1) static Vite `import.meta.glob('./*.tsx',{eager})`
+  keyed by filename=panel_type (dev HMR + panels bundled at build time); (2) a RUNTIME path —
+  `loadGeneratedComponent(type)` fetches source from `GET /api/generated-panels`, transpiles TSX
+  in-browser with **sucrase** (`transforms: typescript,jsx,imports`), evals via `new Function`
+  with a require shim that only allows `"react"`, caches the component. Needed because a built/
+  deployed app has no HMR and can't bundle a `.tsx` written after build.
+- Endpoint `GET /api/generated-panels` (main.py) reads PANEL_DIR `*.tsx`, EXCLUDES infra files
+  `DynamicPanel.tsx`/`GeneratedPanel.tsx` and `_`-prefixed. Returns `{panels:[{panelType,source}]}`.
+- `DynamicPanel.tsx` `useGeneratedComponent` hook: static component used immediately, else async
+  runtime-load; generic `GeneratedPanel.tsx` shown while loading / on any failure; whole thing in
+  an ErrorBoundary so a bad generated component can't crash the dashboard.
+- **Why:** generated tsx contract = only `import React from "react"` + default export, so the
+  require shim + sucrase imports-transform interop (`_interopRequireDefault`) is sufficient.
 - Endpoint `POST /api/feature-request` is SSE (StreamingResponse over a sync generator) with
   stages planning→generating_skill→generating_panel→activating→done|error. `FeatureRequestModal`
   reads it via `fetch` + `ReadableStream` (relative `/api/...`, proxy-routed; no base URL set).

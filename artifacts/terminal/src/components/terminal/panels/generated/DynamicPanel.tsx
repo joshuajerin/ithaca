@@ -1,6 +1,6 @@
 import React from "react";
 import { AlertTriangle } from "lucide-react";
-import { getGeneratedComponent } from "./registry";
+import { getGeneratedComponent, loadGeneratedComponent, type GeneratedComponent } from "./registry";
 import { GeneratedPanel } from "./GeneratedPanel";
 
 class PanelErrorBoundary extends React.Component<
@@ -26,11 +26,39 @@ class PanelErrorBoundary extends React.Component<
   }
 }
 
-// Renders an AI-generated panel: prefers its dedicated component, falls back to
-// the generic renderer, and never lets a faulty generated component take down
-// the whole dashboard (ErrorBoundary -> generic renderer -> static error).
+// Resolve a generated component for `type`. Returns a statically-registered
+// component immediately (dev/HMR or build-time bundle); otherwise attempts a
+// runtime fetch+compile (production), returning undefined until it resolves.
+function useGeneratedComponent(type: string): GeneratedComponent | undefined {
+  const [component, setComponent] = React.useState<GeneratedComponent | undefined>(
+    () => getGeneratedComponent(type),
+  );
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const immediate = getGeneratedComponent(type);
+    if (immediate) {
+      setComponent(() => immediate);
+      return;
+    }
+    // Not statically available — try loading it at runtime (production path).
+    setComponent(undefined);
+    loadGeneratedComponent(type).then((loaded) => {
+      if (!cancelled && loaded) setComponent(() => loaded);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [type]);
+
+  return component;
+}
+
+// Renders an AI-generated panel: prefers its dedicated component (static or
+// runtime-loaded), falls back to the generic renderer, and never lets a faulty
+// generated component take down the dashboard (ErrorBoundary -> generic -> error).
 export function DynamicPanel({ type, data }: { type: string; data: any }) {
-  const Component = getGeneratedComponent(type);
+  const Component = useGeneratedComponent(type);
 
   const genericFallback = <GeneratedPanel data={data} />;
 

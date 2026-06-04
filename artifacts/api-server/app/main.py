@@ -139,6 +139,36 @@ def refine(req: models.RefineRequest):
     return updated
 
 
+@api.get("/generated-panels")
+def get_generated_panels():
+    """Return the source of every AI-generated panel component.
+
+    A production (built) frontend has no Vite HMR / ``import.meta.glob`` to pick
+    up panels authored after the build, so it fetches their TSX source here and
+    compiles them at runtime. ``panelType`` matches the file name (minus ``.tsx``).
+    """
+    import os
+
+    # Infrastructure components that live alongside generated panels but are not
+    # themselves AI-generated panel renderers.
+    infra = {"DynamicPanel.tsx", "GeneratedPanel.tsx"}
+
+    panels = []
+    panel_dir = feature_builder.PANEL_DIR
+    if os.path.isdir(panel_dir):
+        for fname in sorted(os.listdir(panel_dir)):
+            if not fname.endswith(".tsx") or fname.startswith("_") or fname in infra:
+                continue
+            panel_type = fname[: -len(".tsx")]
+            try:
+                with open(os.path.join(panel_dir, fname), encoding="utf-8") as fh:
+                    source = fh.read()
+            except OSError:
+                continue
+            panels.append({"panelType": panel_type, "source": source})
+    return {"panels": panels}
+
+
 class FeatureRequestInput(BaseModel):
     description: str
 
