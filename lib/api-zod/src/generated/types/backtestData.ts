@@ -8,6 +8,7 @@
 import type { BacktestPoint } from './backtestPoint';
 import type { BacktestStats } from './backtestStats';
 import type { DrawdownPoint } from './drawdownPoint';
+import type { TradeLogEntry } from './tradeLogEntry';
 
 export interface BacktestData {
   symbol: string;
@@ -15,4 +16,5 @@ export interface BacktestData {
   curve: BacktestPoint[];
   drawdown: DrawdownPoint[];
   stats: BacktestStats;
+  tradeLog?: TradeLogEntry[];
 }

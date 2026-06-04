@@ -207,6 +207,17 @@ def _tools() -> list:
             }, "required": ["symbol"]},
         }},
         {"type": "function", "function": {
+            "name": "add_monte_carlo",
+            "description": f"Add a Monte Carlo forward simulation for one ticker (percentile fan p5-p95, sample paths, expected/median terminal value, probability of loss, terminal VaR/CVaR) fitted to real historical returns. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Ticker. One of: {syms}"},
+                "method": {"type": "string", "description": "Simulation method.", "enum": ["bootstrap", "gbm"]},
+                "horizon": {"type": "integer", "description": "Forward horizon in trading days, e.g. 252 for one year."},
+                "paths": {"type": "integer", "description": "Number of simulated paths, e.g. 1000."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
+        {"type": "function", "function": {
             "name": "add_correlation_matrix",
             "description": f"Add a pairwise correlation heatmap with beta/hedge-ratio table for a list of tickers. {sizing}",
             "parameters": {"type": "object", "properties": {
@@ -305,6 +316,7 @@ _TOOL_TO_TYPE = {
     "add_cashflow_duration": "cashflow_duration",
     "add_portfolio_risk": "portfolio_risk",
     "add_backtest": "backtest",
+    "add_monte_carlo": "monte_carlo",
     "add_correlation_matrix": "correlation_matrix",
     "add_factor_analysis": "factor_analysis",
     "add_iv_surface": "iv_surface",
@@ -371,6 +383,8 @@ def _system_prompt() -> str:
         "- For DCF / valuation / intrinsic value requests, use add_dcf_model.\n"
         "- For earnings call / transcript / 'what did management say' requests, use add_earnings_transcript.\n"
         "- For M&A / deal flow / mergers / acquisitions / arb spread requests, use add_ma_tracker.\n"
+        "- For backtest / strategy / Sharpe / drawdown requests, use add_backtest. For Monte Carlo / "
+        "simulation / forward projection / 'probability of loss' / scenario forecast requests, use add_monte_carlo.\n"
         "- For company analytics requests ('why is X up/down', 'what drives X', 'analyze X vs competitors', "
         "'company analytics for X', 'competition for X', 'price drivers for X'), use add_company_analytics.\n"
         "- Decide each panel's width (3-12 grid columns) and height (2-6 row units). Make the "
@@ -695,6 +709,7 @@ _TYPE_LABELS = {
     "cashflow_duration": "cash flow & duration",
     "portfolio_risk": "a portfolio risk breakdown",
     "backtest": "a backtest",
+    "monte_carlo": "a Monte Carlo simulation",
     "correlation_matrix": "a correlation matrix",
     "factor_analysis": "a factor analysis",
     "iv_surface": "an IV surface",
@@ -813,6 +828,7 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None):
     wants_cashflow = any(k in q for k in ["cash flow", "cashflow", "duration", "convexity", "dv01", "rate sensitivity", "bond cash", "modified duration"])
     wants_risk = any(k in q for k in ["risk", "var", "value at risk", "tracking error", "factor exposure", "portfolio risk"])
     wants_backtest = any(k in q for k in ["backtest", "back test", "back-test", "momentum strategy", "strategy", "sharpe", "cagr", "drawdown"])
+    wants_montecarlo = any(k in q for k in ["monte carlo", "montecarlo", "monte-carlo", "simulate", "simulation", "forward project", "project price", "scenario analysis", "probability of loss", "forecast price", "gbm", "geometric brownian", "bootstrap"])
     wants_correlation = any(k in q for k in ["correlation", "correlat", "hedge ratio", "co-movement", "diversif", "beta table"])
     wants_factor = any(k in q for k in ["factor analysis", "factor", "attribution", "alpha", "loading", "momentum factor", "value factor"])
 
@@ -958,6 +974,14 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None):
         port_syms = symbols if symbols else ["NVDA", "MSFT", "GOOGL", "META", "AMZN"]
         add("portfolio_risk", {"symbols": port_syms}, 12, 5)
         summary = f"Portfolio risk breakdown for {', '.join(port_syms[:3])}{'...' if len(port_syms) > 3 else ''}: VaR, factor exposures, and risk metrics."
+        return panels, summary
+
+    if wants_montecarlo and symbols:
+        sym = symbols[0]
+        method = "gbm" if any(k in q for k in ["gbm", "geometric brownian", "lognormal", "parametric"]) else "bootstrap"
+        add("monte_carlo", {"symbol": sym, "method": method}, 12, 6)
+        name = data.get_company(sym)["name"]
+        summary = f"Monte Carlo simulation of {name}: percentile fan, probability of loss, and terminal VaR/CVaR."
         return panels, summary
 
     if wants_backtest and symbols:

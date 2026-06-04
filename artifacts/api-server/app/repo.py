@@ -221,6 +221,45 @@ def price_series(symbol: str, days: int = 90) -> List[dict]:
     return data.price_series(sym, days=days)
 
 
+def price_series_meta(symbol: str, days: int = 90) -> dict:
+    """Like `price_series` but reports provenance for freshness metadata.
+
+    Returns {"points": [...], "source": "live"|"mock", "asOf": iso|None}. The
+    series is "live" only when it came from real OHLCV rows in the DB; otherwise
+    it falls back to the deterministic curated mock series.
+    """
+    sym = (symbol or "").upper()
+    if db.db_available():
+        try:
+            rows = db.query(
+                """
+                SELECT d, o, h, l, c, v, updated_at FROM (
+                    SELECT d, o, h, l, c, v, updated_at FROM ohlcv
+                    WHERE symbol = %s ORDER BY d DESC LIMIT %s
+                ) sub ORDER BY d ASC
+                """,
+                (sym, days),
+            )
+            if len(rows) >= 2:
+                points = [
+                    {
+                        "t": r["d"].isoformat() if hasattr(r["d"], "isoformat") else str(r["d"]),
+                        "o": _num(r.get("o")),
+                        "h": _num(r.get("h")),
+                        "l": _num(r.get("l")),
+                        "c": _num(r.get("c")),
+                        "v": _num(r.get("v")),
+                    }
+                    for r in rows
+                ]
+                as_of = max((_iso(r.get("updated_at")) for r in rows if r.get("updated_at")), default=None)
+                return {"points": points, "source": "live", "asOf": as_of}
+        except Exception as exc:  # noqa: BLE001
+            log.warning("price_series_meta DB error for %s: %s", sym, exc)
+    note_symbol(sym)
+    return {"points": data.price_series(sym, days=days), "source": "mock", "asOf": None}
+
+
 # ----------------------------- news -----------------------------
 def _news_item(r: dict) -> dict:
     return {

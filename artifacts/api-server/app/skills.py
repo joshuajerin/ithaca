@@ -9,7 +9,7 @@ import uuid
 from datetime import date, timedelta
 from typing import Callable, Dict, List, Optional
 
-from . import ai, data, db, repo
+from . import ai, data, db, engine, repo
 
 RANGE_DAYS = {"1M": 30, "3M": 90, "6M": 180, "1Y": 250, "YTD": 120}
 
@@ -502,11 +502,56 @@ def build_order_book(params: dict) -> dict:
 
 
 def build_portfolio_risk(params: dict) -> dict:
-    symbols = [s.upper() for s in (params.get("symbols") or []) if data.get_company(s.upper())]
+    import numpy as np
+
+    symbols = [s.upper() for s in (params.get("symbols") or []) if repo.get_company(s.upper())]
     if not symbols:
         symbols = ["NVDA", "MSFT", "GOOGL", "META", "AMZN"]
     portfolio_name = params.get("portfolio_name") or (", ".join(symbols[:3]) + " Portfolio")
 
+    # Pull real daily returns per holding and equal-weight them into a single
+    # portfolio P&L series; VaR/CVaR come straight from that real distribution.
+    return_cols: List[np.ndarray] = []
+    sources: List[str] = []
+    as_ofs: List[str] = []
+    for s in symbols:
+        meta = repo.price_series_meta(s, days=250)
+        sources.append(meta.get("source", "mock"))
+        if meta.get("asOf"):
+            as_ofs.append(meta["asOf"])
+        closes = np.asarray(
+            [float(p["c"]) for p in meta["points"] if p.get("c")], dtype=float
+        )
+        if closes.size >= 3:
+            return_cols.append(closes[1:] / closes[:-1] - 1.0)
+
+    if return_cols:
+        min_len = min(len(c) for c in return_cols)
+        matrix = np.vstack([c[-min_len:] for c in return_cols])
+        port_rets = matrix.mean(axis=0)  # equal-weighted daily returns
+    else:
+        port_rets = np.array([], dtype=float)
+
+    var95 = engine.var_historical(port_rets, 0.95) if port_rets.size else 0.02
+    cvar95 = engine.cvar_historical(port_rets, 0.95) if port_rets.size else 0.03
+    ann_vol = (
+        float(port_rets.std(ddof=0) * np.sqrt(252)) if port_rets.size >= 2 else 0.10
+    )
+
+    # P&L histogram from the real return distribution (20 bins, in %).
+    if port_rets.size >= 5:
+        counts, edges = np.histogram(port_rets * 100.0, bins=20)
+        bins = [
+            {"bin": round(float((edges[i] + edges[i + 1]) / 2.0), 2), "count": int(counts[i])}
+            for i in range(len(counts))
+        ]
+    else:
+        bins = [{"bin": round(-4.0 + i * 0.4, 2), "count": 1} for i in range(20)]
+
+    # Factor exposures: Market beta is the real cap-weighted-ish average beta of
+    # the holdings; the remaining style tilts are deterministic approximations.
+    betas = {s: repo.get_company(s)["beta"] for s in symbols}
+    avg_beta = round(sum(betas.values()) / len(betas), 2)
     seed = data._seed("_".join(sorted(symbols)))
 
     def rnd():
@@ -514,19 +559,6 @@ def build_portfolio_risk(params: dict) -> dict:
         seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
         return seed / 0x7FFFFFFF
 
-    # VaR histogram — simulate 20 bins of a normal-ish P&L distribution
-    bins = []
-    center = -0.02  # slight negative skew
-    for i in range(20):
-        b = round(center - 0.04 + i * 0.004, 4)
-        # bell-shaped count
-        z = (b - center) / 0.012
-        base_count = max(1, int(120 * 2.718 ** (-0.5 * z * z) + rnd() * 20))
-        bins.append({"bin": round(b * 100, 2), "count": base_count})
-
-    # Factor exposures
-    betas = {s: data.get_company(s)["beta"] for s in symbols}
-    avg_beta = round(sum(betas.values()) / len(betas), 2)
     factor_exposures = [
         {"factor": "Market", "exposure": round(avg_beta, 2)},
         {"factor": "Momentum", "exposure": round(0.3 + rnd() * 0.5, 2)},
@@ -536,20 +568,23 @@ def build_portfolio_risk(params: dict) -> dict:
         {"factor": "Volatility", "exposure": round(0.2 + rnd() * 0.4, 2)},
     ]
 
-    var95 = round(1.645 * (0.012 + rnd() * 0.008), 4)
-    tracking_error = round(0.04 + rnd() * 0.06, 4)
     summary = {
         "portfolioName": portfolio_name,
         "var95": round(var95 * 100, 2),
-        "trackingError": round(tracking_error * 100, 2),
+        "cvar95": round(cvar95 * 100, 2),
+        "trackingError": round(ann_vol * 100, 2),
         "beta": avg_beta,
     }
+    source = "live" if any(s == "live" for s in sources) else "mock"
+    as_of = max(as_ofs) if as_ofs else None
     return {
         "portfolioName": portfolio_name,
         "symbols": symbols,
         "varHistogram": bins,
         "factorExposures": factor_exposures,
         "summary": summary,
+        "asOf": as_of,
+        "source": source,
     }
 
 
@@ -623,90 +658,88 @@ def build_trade_flow(params: dict) -> dict:
 
 
 def build_backtest(params: dict) -> dict:
-    symbol = (params.get("symbol") or "SPY").upper()
-    company = data.get_company(symbol)
+    symbol = (params.get("symbol") or "NVDA").upper()
+    company = repo.get_company(symbol)
     if not company:
         symbol = "NVDA"
-        company = data.get_company(symbol)
-    strategy = params.get("strategy") or "momentum"
-    rng_key = params.get("range") or "1Y"
-    days = RANGE_DAYS.get(rng_key.upper(), 250)
+        company = repo.get_company(symbol)
+    strategy = engine.normalize_strategy(params.get("strategy") or "momentum")
+    rng_key = (params.get("range") or "1Y").upper()
+    days = RANGE_DAYS.get(rng_key, 250)
 
-    seed = data._seed(symbol + strategy)
+    # Pull real OHLCV history (falls back to the curated mock series when the DB
+    # has insufficient history, so the panel always renders).
+    meta = repo.price_series_meta(symbol, days=days)
+    points = meta["points"]
+    strat_params = {
+        k: params[k]
+        for k in ("fast", "slow", "lookback", "threshold")
+        if params.get(k) is not None
+    }
 
-    def rnd():
-        nonlocal seed
-        seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
-        return seed / 0x7FFFFFFF
-
-    # Generate equity curves: strategy outperforms benchmark on average
-    start = date.today() - timedelta(days=days - 1)
-    strat_val = 100.0
-    bench_val = 100.0
-    curve = []
-    dd_series = []
-    peak = 100.0
-    wins = 0
-    total_days = 0
-
-    for i in range(days):
-        r = rnd()
-        # benchmark: daily return ~0.04% drift, 1% vol
-        bench_ret = 0.0004 + (r * 2 - 1) * 0.01
-        # strategy: slightly better drift, slightly higher vol
-        strat_ret = 0.0008 + (rnd() * 2 - 1) * 0.012
-
-        bench_val = round(bench_val * (1 + bench_ret), 4)
-        strat_val = round(strat_val * (1 + strat_ret), 4)
-
-        if strat_ret > 0:
-            wins += 1
-        total_days += 1
-
-        if strat_val > peak:
-            peak = strat_val
-        dd = round((strat_val - peak) / peak * 100, 3) if peak > 0 else 0.0
-
-        t = (start + timedelta(days=i)).isoformat()
-        curve.append({"t": t, "strategy": round(strat_val, 2), "benchmark": round(bench_val, 2)})
-        dd_series.append({"t": t, "dd": dd})
-
-    # Compute stats
-    strat_final = curve[-1]["strategy"] / 100
-    bench_final = curve[-1]["benchmark"] / 100
-    years = days / 252
-    cagr = round((strat_final ** (1 / years) - 1) * 100, 2)
-    max_dd = round(min(p["dd"] for p in dd_series), 2)
-    win_rate = round(wins / max(total_days, 1) * 100, 1)
-    # Sharpe: approximate
-    daily_rets = [
-        (curve[i]["strategy"] - curve[i - 1]["strategy"]) / curve[i - 1]["strategy"]
-        for i in range(1, len(curve))
-    ]
-    if daily_rets:
-        avg_r = sum(daily_rets) / len(daily_rets)
-        var_r = sum((r - avg_r) ** 2 for r in daily_rets) / len(daily_rets)
-        std_r = var_r ** 0.5
-        sharpe = round((avg_r / std_r) * (252 ** 0.5), 2) if std_r > 0 else 0.0
-        # Sortino (downside only)
-        neg = [r for r in daily_rets if r < 0]
-        dvar = sum(r ** 2 for r in neg) / max(len(neg), 1)
-        sortino = round((avg_r / (dvar ** 0.5)) * (252 ** 0.5), 2) if dvar > 0 else 0.0
-    else:
-        sharpe = sortino = 0.0
+    try:
+        result = engine.run_backtest(points, strategy, strat_params)
+    except ValueError:
+        # Last-resort fallback: synthesize a deterministic series so the panel
+        # still has something to show when history is genuinely missing.
+        points = data.price_series(symbol, days=max(days, 60))
+        meta = {"points": points, "source": "mock", "asOf": None}
+        result = engine.run_backtest(points, strategy, strat_params)
 
     return {
         "symbol": symbol,
-        "strategy": strategy,
-        "curve": curve,
-        "drawdown": dd_series,
-        "stats": {
-            "sharpe": sharpe,
-            "sortino": sortino,
-            "cagr": cagr,
-            "maxDD": max_dd,
-            "winRate": win_rate,
-        },
+        "strategy": result["strategy"],
+        "curve": result["curve"],
+        "drawdown": result["drawdown"],
+        "tradeLog": result["tradeLog"][:50],
+        "stats": result["stats"],
+        "asOf": meta.get("asOf") or company.get("_asOf"),
+        "source": meta.get("source", "mock"),
+    }
+
+
+def build_monte_carlo(params: dict) -> dict:
+    import numpy as np
+
+    symbol = (params.get("symbol") or "NVDA").upper()
+    company = repo.get_company(symbol)
+    if not company:
+        symbol = "NVDA"
+        company = repo.get_company(symbol)
+
+    method = (params.get("method") or "bootstrap").lower()
+    horizon = int(params.get("horizon") or 252)
+    n_paths = int(params.get("paths") or 1000)
+
+    # Real historical daily returns drive the simulation; fall back to the
+    # curated mock series if the DB has too little history.
+    meta = repo.price_series_meta(symbol, days=250)
+    closes = np.asarray([float(p["c"]) for p in meta["points"] if p.get("c")], dtype=float)
+    if closes.size < 6:
+        points = data.price_series(symbol, days=180)
+        closes = np.asarray([float(p["c"]) for p in points if p.get("c")], dtype=float)
+        meta = {"source": "mock", "asOf": None}
+    returns = closes[1:] / closes[:-1] - 1.0 if closes.size >= 2 else np.array([])
+
+    last_price = float(closes[-1]) if closes.size else 100.0
+    sim = engine.monte_carlo(
+        returns,
+        start_value=last_price,
+        horizon=horizon,
+        n_paths=n_paths,
+        method=method,
+    )
+
+    return {
+        "symbol": symbol,
+        "method": sim["method"],
+        "horizon": sim["horizon"],
+        "startValue": sim["startValue"],
+        "fan": sim["fan"],
+        "samplePaths": sim["samplePaths"],
+        "summary": sim["summary"],
+        "asOf": meta.get("asOf") or company.get("_asOf"),
+        "source": meta.get("source", "mock"),
     }
 
 
@@ -2463,6 +2496,20 @@ _reg(SkillDef(
         {"name": "compute_stats", "description": "Derive Sharpe, Sortino, CAGR, max DD, and win rate.", "expectedOutput": "Performance statistics."},
     ],
     build_backtest, "Backtest",
+))
+_reg(SkillDef(
+    "monte-carlo", "Monte Carlo Simulator", "monte_carlo",
+    "Projects forward price paths for a single ticker using a Monte Carlo simulation "
+    "fitted to its real historical daily returns (bootstrap resampling or geometric "
+    "Brownian motion). Returns a percentile fan (p5-p95), sample paths, expected/median "
+    "terminal value, probability of loss, and terminal VaR/CVaR. Use when the user asks "
+    "to simulate, project, forecast, or run Monte Carlo / scenario analysis on a stock.",
+    [
+        {"name": "resolve_symbol", "description": "Map the ticker to simulate.", "expectedOutput": "A valid ticker."},
+        {"name": "fit_returns", "description": "Estimate the return distribution from real history.", "expectedOutput": "Daily return statistics."},
+        {"name": "simulate_paths", "description": "Run the Monte Carlo paths and aggregate percentiles.", "expectedOutput": "Percentile fan and terminal summary."},
+    ],
+    build_monte_carlo, "Monte Carlo",
 ))
 _reg(SkillDef(
     "correlation-matrix", "Correlation Matrix & Beta Table", "correlation_matrix",

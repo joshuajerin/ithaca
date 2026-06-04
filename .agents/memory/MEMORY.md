@@ -5,3 +5,4 @@
 - [AI client timeouts vs preview proxy](ai-client-timeouts.md) — bound the OpenAI client (timeout + max_retries=0) under the ~60s proxy window; callers must fall back on timeout like any failure.
 - [Panel layout collision resolution](panel-layout-collision.md) — dashboard overlap fix uses two-pass reserve-then-reflow (not single-pass greedy) so non-conflicting panels keep AI positions.
 - [Voice Mode hands-free loop](voice-mode-loop.md) — Chrome recognition ends silently on no-speech (onend not onerror); conductor must transition state or UI hangs; mic off during TTS; full-terminal layout + Chrome fallback.
+- [Backtesting & simulation engine](backtest-engine.md) — pure numpy engine in app/engine/; no-lookahead position lag, real OHLCV via price_series_meta (live/mock+asOf), Monte Carlo bootstrap/GBM.

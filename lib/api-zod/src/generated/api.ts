@@ -25,7 +25,7 @@ export const GetSkillsResponse = zod.object({
   "skills": zod.array(zod.object({
   "id": zod.string(),
   "name": zod.string(),
-  "panelType": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'correlation_matrix', 'factor_analysis', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
+  "panelType": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
   "description": zod.string(),
   "subskills": zod.array(zod.object({
   "name": zod.string(),
@@ -67,7 +67,7 @@ export const GetDefaultDashboardResponse = zod.object({
   "summary": zod.string(),
   "panels": zod.array(zod.object({
   "id": zod.string(),
-  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'correlation_matrix', 'factor_analysis', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
+  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
   "title": zod.string(),
   "layout": zod.object({
   "x": zod.number(),
@@ -184,7 +184,8 @@ export const GetDefaultDashboardResponse = zod.object({
   "var95": zod.number(),
   "trackingError": zod.number(),
   "beta": zod.number(),
-  "portfolioName": zod.string()
+  "portfolioName": zod.string(),
+  "cvar95": zod.number().optional()
 })
 }),zod.object({
   "symbol": zod.string(),
@@ -203,7 +204,50 @@ export const GetDefaultDashboardResponse = zod.object({
   "sortino": zod.number(),
   "cagr": zod.number(),
   "maxDD": zod.number(),
-  "winRate": zod.number()
+  "winRate": zod.number(),
+  "totalReturn": zod.number().optional(),
+  "vol": zod.number().optional(),
+  "turnover": zod.number().optional(),
+  "var95": zod.number().optional(),
+  "cvar95": zod.number().optional()
+}),
+  "tradeLog": zod.array(zod.object({
+  "t": zod.string(),
+  "action": zod.string(),
+  "price": zod.number(),
+  "fromPos": zod.number(),
+  "toPos": zod.number()
+})).optional()
+}),zod.object({
+  "symbol": zod.string(),
+  "method": zod.string(),
+  "horizon": zod.number(),
+  "startValue": zod.number(),
+  "fan": zod.array(zod.object({
+  "step": zod.number(),
+  "p5": zod.number(),
+  "p25": zod.number(),
+  "p50": zod.number(),
+  "p75": zod.number(),
+  "p95": zod.number()
+})),
+  "samplePaths": zod.array(zod.object({
+  "id": zod.number(),
+  "values": zod.array(zod.number())
+})),
+  "summary": zod.object({
+  "method": zod.string(),
+  "startValue": zod.number(),
+  "horizon": zod.number(),
+  "paths": zod.number(),
+  "expectedTerminal": zod.number(),
+  "medianTerminal": zod.number(),
+  "p5Terminal": zod.number(),
+  "p95Terminal": zod.number(),
+  "expectedReturn": zod.number(),
+  "probLoss": zod.number(),
+  "var95": zod.number(),
+  "cvar95": zod.number()
 })
 }),zod.object({
   "symbols": zod.array(zod.string()),
@@ -255,7 +299,7 @@ export const OrchestrateResponse = zod.object({
   "summary": zod.string(),
   "panels": zod.array(zod.object({
   "id": zod.string(),
-  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'correlation_matrix', 'factor_analysis', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
+  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
   "title": zod.string(),
   "layout": zod.object({
   "x": zod.number(),
@@ -372,7 +416,8 @@ export const OrchestrateResponse = zod.object({
   "var95": zod.number(),
   "trackingError": zod.number(),
   "beta": zod.number(),
-  "portfolioName": zod.string()
+  "portfolioName": zod.string(),
+  "cvar95": zod.number().optional()
 })
 }),zod.object({
   "symbol": zod.string(),
@@ -391,7 +436,50 @@ export const OrchestrateResponse = zod.object({
   "sortino": zod.number(),
   "cagr": zod.number(),
   "maxDD": zod.number(),
-  "winRate": zod.number()
+  "winRate": zod.number(),
+  "totalReturn": zod.number().optional(),
+  "vol": zod.number().optional(),
+  "turnover": zod.number().optional(),
+  "var95": zod.number().optional(),
+  "cvar95": zod.number().optional()
+}),
+  "tradeLog": zod.array(zod.object({
+  "t": zod.string(),
+  "action": zod.string(),
+  "price": zod.number(),
+  "fromPos": zod.number(),
+  "toPos": zod.number()
+})).optional()
+}),zod.object({
+  "symbol": zod.string(),
+  "method": zod.string(),
+  "horizon": zod.number(),
+  "startValue": zod.number(),
+  "fan": zod.array(zod.object({
+  "step": zod.number(),
+  "p5": zod.number(),
+  "p25": zod.number(),
+  "p50": zod.number(),
+  "p75": zod.number(),
+  "p95": zod.number()
+})),
+  "samplePaths": zod.array(zod.object({
+  "id": zod.number(),
+  "values": zod.array(zod.number())
+})),
+  "summary": zod.object({
+  "method": zod.string(),
+  "startValue": zod.number(),
+  "horizon": zod.number(),
+  "paths": zod.number(),
+  "expectedTerminal": zod.number(),
+  "medianTerminal": zod.number(),
+  "p5Terminal": zod.number(),
+  "p95Terminal": zod.number(),
+  "expectedReturn": zod.number(),
+  "probLoss": zod.number(),
+  "var95": zod.number(),
+  "cvar95": zod.number()
 })
 }),zod.object({
   "symbols": zod.array(zod.string()),
@@ -455,7 +543,7 @@ export const RefinePanelBody = zod.object({
 
 export const RefinePanelResponse = zod.object({
   "id": zod.string(),
-  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'correlation_matrix', 'factor_analysis', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
+  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
   "title": zod.string(),
   "layout": zod.object({
   "x": zod.number(),
@@ -572,7 +660,8 @@ export const RefinePanelResponse = zod.object({
   "var95": zod.number(),
   "trackingError": zod.number(),
   "beta": zod.number(),
-  "portfolioName": zod.string()
+  "portfolioName": zod.string(),
+  "cvar95": zod.number().optional()
 })
 }),zod.object({
   "symbol": zod.string(),
@@ -591,7 +680,50 @@ export const RefinePanelResponse = zod.object({
   "sortino": zod.number(),
   "cagr": zod.number(),
   "maxDD": zod.number(),
-  "winRate": zod.number()
+  "winRate": zod.number(),
+  "totalReturn": zod.number().optional(),
+  "vol": zod.number().optional(),
+  "turnover": zod.number().optional(),
+  "var95": zod.number().optional(),
+  "cvar95": zod.number().optional()
+}),
+  "tradeLog": zod.array(zod.object({
+  "t": zod.string(),
+  "action": zod.string(),
+  "price": zod.number(),
+  "fromPos": zod.number(),
+  "toPos": zod.number()
+})).optional()
+}),zod.object({
+  "symbol": zod.string(),
+  "method": zod.string(),
+  "horizon": zod.number(),
+  "startValue": zod.number(),
+  "fan": zod.array(zod.object({
+  "step": zod.number(),
+  "p5": zod.number(),
+  "p25": zod.number(),
+  "p50": zod.number(),
+  "p75": zod.number(),
+  "p95": zod.number()
+})),
+  "samplePaths": zod.array(zod.object({
+  "id": zod.number(),
+  "values": zod.array(zod.number())
+})),
+  "summary": zod.object({
+  "method": zod.string(),
+  "startValue": zod.number(),
+  "horizon": zod.number(),
+  "paths": zod.number(),
+  "expectedTerminal": zod.number(),
+  "medianTerminal": zod.number(),
+  "p5Terminal": zod.number(),
+  "p95Terminal": zod.number(),
+  "expectedReturn": zod.number(),
+  "probLoss": zod.number(),
+  "var95": zod.number(),
+  "cvar95": zod.number()
 })
 }),zod.object({
   "symbols": zod.array(zod.string()),

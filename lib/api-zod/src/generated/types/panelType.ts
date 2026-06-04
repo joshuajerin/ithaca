@@ -20,6 +20,7 @@ export const PanelType = {
   comparison: 'comparison',
   portfolio_risk: 'portfolio_risk',
   backtest: 'backtest',
+  monte_carlo: 'monte_carlo',
   correlation_matrix: 'correlation_matrix',
   factor_analysis: 'factor_analysis',
   order_book: 'order_book',

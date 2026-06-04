@@ -206,6 +206,7 @@ components:
         - comparison
         - portfolio_risk
         - backtest
+        - monte_carlo
         - correlation_matrix
         - factor_analysis
         - order_book
@@ -508,6 +509,8 @@ components:
           type: number
         portfolioName:
           type: string
+        cvar95:
+          type: number
     PortfolioRiskData:
       type: object
       required: [portfolioName, symbols, varHistogram, factorExposures, summary]
@@ -560,6 +563,30 @@ components:
           type: number
         winRate:
           type: number
+        totalReturn:
+          type: number
+        vol:
+          type: number
+        turnover:
+          type: number
+        var95:
+          type: number
+        cvar95:
+          type: number
+    TradeLogEntry:
+      type: object
+      required: [t, action, price, fromPos, toPos]
+      properties:
+        t:
+          type: string
+        action:
+          type: string
+        price:
+          type: number
+        fromPos:
+          type: number
+        toPos:
+          type: number
     BacktestData:
       type: object
       required: [symbol, strategy, curve, drawdown, stats]
@@ -578,6 +605,86 @@ components:
             $ref: "#/components/schemas/DrawdownPoint"
         stats:
           $ref: "#/components/schemas/BacktestStats"
+        tradeLog:
+          type: array
+          items:
+            $ref: "#/components/schemas/TradeLogEntry"
+    MonteCarloFanPoint:
+      type: object
+      required: [step, p5, p25, p50, p75, p95]
+      properties:
+        step:
+          type: integer
+        p5:
+          type: number
+        p25:
+          type: number
+        p50:
+          type: number
+        p75:
+          type: number
+        p95:
+          type: number
+    MonteCarloPath:
+      type: object
+      required: [id, values]
+      properties:
+        id:
+          type: integer
+        values:
+          type: array
+          items:
+            type: number
+    MonteCarloSummary:
+      type: object
+      required: [method, startValue, horizon, paths, expectedTerminal, medianTerminal, p5Terminal, p95Terminal, expectedReturn, probLoss, var95, cvar95]
+      properties:
+        method:
+          type: string
+        startValue:
+          type: number
+        horizon:
+          type: integer
+        paths:
+          type: integer
+        expectedTerminal:
+          type: number
+        medianTerminal:
+          type: number
+        p5Terminal:
+          type: number
+        p95Terminal:
+          type: number
+        expectedReturn:
+          type: number
+        probLoss:
+          type: number
+        var95:
+          type: number
+        cvar95:
+          type: number
+    MonteCarloData:
+      type: object
+      required: [symbol, method, horizon, startValue, fan, samplePaths, summary]
+      properties:
+        symbol:
+          type: string
+        method:
+          type: string
+        horizon:
+          type: integer
+        startValue:
+          type: number
+        fan:
+          type: array
+          items:
+            $ref: "#/components/schemas/MonteCarloFanPoint"
+        samplePaths:
+          type: array
+          items:
+            $ref: "#/components/schemas/MonteCarloPath"
+        summary:
+          $ref: "#/components/schemas/MonteCarloSummary"
     BetaRow:
       type: object
       required: [symbol, beta, hedgeRatio]
@@ -664,6 +771,7 @@ components:
         - $ref: "#/components/schemas/ComparisonData"
         - $ref: "#/components/schemas/PortfolioRiskData"
         - $ref: "#/components/schemas/BacktestData"
+        - $ref: "#/components/schemas/MonteCarloData"
         - $ref: "#/components/schemas/CorrelationMatrixData"
         - $ref: "#/components/schemas/FactorAnalysisData"
     Panel:

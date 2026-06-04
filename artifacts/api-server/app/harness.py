@@ -28,6 +28,7 @@ DATA_MODELS = {
     "cashflow_duration": models.CashFlowDurationData,
     "portfolio_risk": models.PortfolioRiskData,
     "backtest": models.BacktestData,
+    "monte_carlo": models.MonteCarloData,
     "correlation_matrix": models.CorrelationMatrixData,
     "factor_analysis": models.FactorAnalysisData,
     "iv_surface": models.IVSurfaceData,

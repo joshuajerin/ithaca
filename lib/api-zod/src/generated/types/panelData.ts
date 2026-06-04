@@ -12,10 +12,11 @@ import type { CorrelationMatrixData } from './correlationMatrixData';
 import type { FactorAnalysisData } from './factorAnalysisData';
 import type { FundamentalsData } from './fundamentalsData';
 import type { HeatmapData } from './heatmapData';
+import type { MonteCarloData } from './monteCarloData';
 import type { NewsData } from './newsData';
 import type { PortfolioRiskData } from './portfolioRiskData';
 import type { PriceChartData } from './priceChartData';
 import type { ScreenerData } from './screenerData';
 import type { SentimentData } from './sentimentData';
 
-export type PanelData = PriceChartData | NewsData | AnalysisData | FundamentalsData | ScreenerData | HeatmapData | SentimentData | ComparisonData | PortfolioRiskData | BacktestData | CorrelationMatrixData | FactorAnalysisData;
+export type PanelData = PriceChartData | NewsData | AnalysisData | FundamentalsData | ScreenerData | HeatmapData | SentimentData | ComparisonData | PortfolioRiskData | BacktestData | MonteCarloData | CorrelationMatrixData | FactorAnalysisData;

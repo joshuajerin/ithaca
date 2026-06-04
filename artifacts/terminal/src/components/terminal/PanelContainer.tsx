@@ -20,6 +20,7 @@ import { CDSPricerPanel } from "./panels/CDSPricerPanel";
 import { CashFlowPanel } from "./panels/CashFlowPanel";
 import { PortfolioRiskPanel } from "./panels/PortfolioRiskPanel";
 import { BacktestPanel } from "./panels/BacktestPanel";
+import { MonteCarloPanel } from "./panels/MonteCarloPanel";
 import { CorrelationMatrixPanel } from "./panels/CorrelationMatrixPanel";
 import { FactorAnalysisPanel } from "./panels/FactorAnalysisPanel";
 import { IVSurfacePanel } from "./panels/IVSurfacePanel";
@@ -120,6 +121,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "cashflow_duration": return <CashFlowPanel data={panel.data as any} />;
       case "portfolio_risk": return <PortfolioRiskPanel data={panel.data as any} />;
       case "backtest": return <BacktestPanel data={panel.data as any} />;
+      case "monte_carlo": return <MonteCarloPanel data={panel.data as any} />;
       case "correlation_matrix": return <CorrelationMatrixPanel data={panel.data as any} />;
       case "factor_analysis": return <FactorAnalysisPanel data={panel.data as any} />;
       case "iv_surface": return <IVSurfacePanel data={panel.data as any} />;

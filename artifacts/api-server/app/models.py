@@ -489,6 +489,7 @@ class RiskSummary(BaseModel):
     trackingError: float
     beta: float
     portfolioName: str
+    cvar95: Optional[float] = None
 
 
 class PortfolioRiskData(BaseModel):
@@ -517,6 +518,19 @@ class BacktestStats(BaseModel):
     cagr: float
     maxDD: float
     winRate: float
+    totalReturn: Optional[float] = None
+    vol: Optional[float] = None
+    turnover: Optional[float] = None
+    var95: Optional[float] = None
+    cvar95: Optional[float] = None
+
+
+class TradeLogEntry(BaseModel):
+    t: str
+    action: str
+    price: float
+    fromPos: float
+    toPos: float
 
 
 class BacktestData(BaseModel):
@@ -525,6 +539,7 @@ class BacktestData(BaseModel):
     curve: List[BacktestPoint]
     drawdown: List[DrawdownPoint]
     stats: BacktestStats
+    tradeLog: Optional[List[TradeLogEntry]] = None
 
 
 # --- correlation_matrix ---
@@ -701,6 +716,46 @@ class MAData(BaseModel):
     stats: MAStats
 
 
+# --- monte_carlo ---
+class MonteCarloFanPoint(BaseModel):
+    step: int
+    p5: float
+    p25: float
+    p50: float
+    p75: float
+    p95: float
+
+
+class MonteCarloPath(BaseModel):
+    id: int
+    values: List[float]
+
+
+class MonteCarloSummary(BaseModel):
+    method: str
+    startValue: float
+    horizon: int
+    paths: int
+    expectedTerminal: float
+    medianTerminal: float
+    p5Terminal: float
+    p95Terminal: float
+    expectedReturn: float
+    probLoss: float
+    var95: float
+    cvar95: float
+
+
+class MonteCarloData(BaseModel):
+    symbol: str
+    method: str
+    horizon: int
+    startValue: float
+    fan: List[MonteCarloFanPoint]
+    samplePaths: List[MonteCarloPath]
+    summary: MonteCarloSummary
+
+
 PanelData = Union[
     PriceChartData,
     NewsData,
@@ -730,6 +785,7 @@ PanelData = Union[
     DCFData,
     TranscriptData,
     MAData,
+    MonteCarloData,
 ]
 
 

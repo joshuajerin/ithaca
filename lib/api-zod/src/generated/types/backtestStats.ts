@@ -12,4 +12,9 @@ export interface BacktestStats {
   cagr: number;
   maxDD: number;
   winRate: number;
+  totalReturn?: number;
+  vol?: number;
+  turnover?: number;
+  var95?: number;
+  cvar95?: number;
 }

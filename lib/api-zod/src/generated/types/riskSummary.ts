@@ -11,4 +11,5 @@ export interface RiskSummary {
   trackingError: number;
   beta: number;
   portfolioName: string;
+  cvar95?: number;
 }
