@@ -2624,6 +2624,155 @@ _reg(SkillDef(
     ],
     build_earnings_transcript, "Earnings Transcript",
 ))
+
+
+def _company_analytics_fallback(symbol: str, company: dict) -> dict:
+    """Rules-based price drivers when AI is unavailable."""
+    chg = company["changePct"]
+    news = data.news_for("symbol", symbol)
+    pos = sum(1 for n in news if n["sentiment"] == "positive")
+    neg = sum(1 for n in news if n["sentiment"] == "negative")
+
+    drivers = []
+    if chg > 1.0:
+        drivers.append({"title": "Positive price momentum", "tag": "bullish",
+                        "explanation": f"{company['name']} is up {chg:.1f}% today, outperforming the market on strong near-term flow."})
+    elif chg < -1.0:
+        drivers.append({"title": "Negative price momentum", "tag": "bearish",
+                        "explanation": f"{company['name']} is down {abs(chg):.1f}% today, underperforming on soft sentiment."})
+    else:
+        drivers.append({"title": "Flat price action", "tag": "neutral",
+                        "explanation": f"{company['name']} is trading near flat, with no dominant directional catalyst."})
+
+    if pos > neg:
+        drivers.append({"title": "Positive news sentiment", "tag": "bullish",
+                        "explanation": f"Recent headlines skew positive ({pos} positive vs {neg} negative), supporting near-term upside."})
+    elif neg > pos:
+        drivers.append({"title": "Negative news overhang", "tag": "bearish",
+                        "explanation": f"Recent headlines skew negative ({neg} negative vs {pos} positive), creating a headwind."})
+
+    if company["netMargin"] > 20:
+        drivers.append({"title": "Strong margin profile", "tag": "bullish",
+                        "explanation": f"Net margin of {company['netMargin']:.1f}% is well above sector norms, supporting valuation premium."})
+    elif company["netMargin"] < 0:
+        drivers.append({"title": "Unprofitable on a net basis", "tag": "bearish",
+                        "explanation": f"Negative net margin of {company['netMargin']:.1f}% raises cash-burn concerns."})
+
+    rev_growth = data.get_revenue_growth(symbol) or 0.0
+    if rev_growth > 20:
+        drivers.append({"title": "High revenue growth", "tag": "bullish",
+                        "explanation": f"Revenue growing {rev_growth:.1f}% YoY — well above average, justifying a growth premium."})
+    elif rev_growth < -5:
+        drivers.append({"title": "Revenue contraction", "tag": "bearish",
+                        "explanation": f"Revenue declining {abs(rev_growth):.1f}% YoY — top-line headwinds weigh on sentiment."})
+
+    if company.get("beta", 1.0) > 1.5:
+        drivers.append({"title": "High-beta macro sensitivity", "tag": "neutral",
+                        "explanation": f"Beta of {company['beta']:.2f} means outsized moves with the broader market."})
+
+    return drivers[:5]
+
+
+def build_company_analytics(params: dict) -> dict:
+    symbol = (params.get("symbol") or "NVDA").upper()
+    company = repo.get_company(symbol)
+    if not company:
+        raise ValueError(f"Unknown symbol: {symbol}")
+
+    name = company["name"]
+    chg_pct = company["changePct"]
+
+    # --- Peers & competitive comparison ---
+    peer_syms = data.get_peers(symbol)
+    all_syms = [symbol] + peer_syms
+    rev_growth = data.get_revenue_growth(symbol)
+    peers_table = []
+    for sym in all_syms:
+        c = repo.get_company(sym)
+        if not c:
+            continue
+        rg = data.get_revenue_growth(sym)
+        mc_b = round(c["marketCap"] / 1_000_000_000, 1)
+        peers_table.append({
+            "symbol": sym,
+            "name": c["name"],
+            "isSubject": sym == symbol,
+            "revenueGrowth": rg,
+            "opMargin": c["netMargin"],
+            "pe": c["peRatio"],
+            "marketCapB": mc_b,
+        })
+
+    # --- KPI correlations ---
+    correlations = data.get_kpi_correlations(symbol)
+
+    # --- Catalysts ---
+    catalysts = data.get_catalysts(symbol)
+
+    # --- Price drivers (AI preferred, rules fallback) ---
+    if ai.ai_available():
+        try:
+            news = repo.news_for("symbol", symbol)
+            ctx = {
+                "symbol": symbol,
+                "name": name,
+                "price": company["price"],
+                "changePct": chg_pct,
+                "peRatio": company["peRatio"],
+                "netMargin": company["netMargin"],
+                "revenueGrowthPct": rev_growth,
+                "beta": company["beta"],
+                "description": company["description"],
+                "recentHeadlines": [{"headline": n["headline"], "sentiment": n["sentiment"]} for n in news[:5]],
+            }
+            prompt = (
+                "You are an equity analyst. Using ONLY the data below, identify 3-5 specific "
+                "reasons this stock is moving today (could be up or down). "
+                "Respond with a single JSON object and nothing else: "
+                '{"drivers": [{"title": string (max 6 words), "tag": "bullish"|"bearish"|"neutral", '
+                '"explanation": string (1-2 sentences)}]}. '
+                "Do not invent precise figures beyond what is provided.\n\nDATA:\n"
+                + json.dumps(ctx)
+            )
+            msg = ai.chat(
+                [
+                    {"role": "system", "content": "You output only valid JSON. No prose, no code fences."},
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+            )
+            content = (msg.content or "").strip()
+            if content.startswith("```"):
+                content = content.strip("`")
+                if content.lower().startswith("json"):
+                    content = content[4:]
+            parsed = json.loads(content)
+            drivers = parsed.get("drivers") or []
+            if not drivers:
+                raise ValueError("empty drivers")
+            # Validate tags
+            for d in drivers:
+                if d.get("tag") not in ("bullish", "bearish", "neutral"):
+                    d["tag"] = "neutral"
+            drivers = drivers[:5]
+        except Exception:
+            drivers = _company_analytics_fallback(symbol, company)
+    else:
+        drivers = _company_analytics_fallback(symbol, company)
+
+    return {
+        "symbol": symbol,
+        "name": name,
+        "priceTrendPct": chg_pct,
+        "drivers": drivers,
+        "peers": peers_table,
+        "correlations": correlations,
+        "catalysts": catalysts,
+        "asOf": company.get("_asOf"),
+        "source": company.get("_source") or _live_source(),
+    }
+
+
 _reg(SkillDef(
     "ma-tracker", "M&A Deal Tracker", "ma_tracker",
     "Returns a deal tracker showing M&A activity with target, acquirer, deal value, premium, "
@@ -2635,6 +2784,24 @@ _reg(SkillDef(
         {"name": "aggregate_stats", "description": "Compute summary statistics across the deal set.", "expectedOutput": "Total value, average premium, pending count."},
     ],
     build_ma_tracker, "M&A Tracker",
+))
+_reg(SkillDef(
+    "company-analytics", "Company Analytics", "company_analytics",
+    "Produces a deep-dive company analytics panel with four sections: Price Drivers (why the "
+    "stock is moving, with bullish/bearish/neutral tags), Competitive Landscape (table comparing "
+    "the company vs 2-3 peers across Revenue Growth, Operating Margin, P/E, and Market Cap), "
+    "Metric Correlations (which KPIs most closely track this stock's price), and Catalyst Watch "
+    "(upcoming events with High/Medium/Low impact labels). Use when the user asks 'why is X up', "
+    "'why is X down', 'what drives X stock', 'analyze X vs competitors', 'company analytics for X', "
+    "or 'competition for X'.",
+    [
+        {"name": "resolve_symbol", "description": "Map the request to a known ticker.", "expectedOutput": "A valid ticker."},
+        {"name": "generate_price_drivers", "description": "Use the LLM to produce 3-5 price-driver bullets with tags from company fundamentals and news.", "expectedOutput": "A list of driver objects with title, tag, and explanation."},
+        {"name": "build_competitive_table", "description": "Assemble peer comparison across revenue growth, operating margin, P/E, and market cap.", "expectedOutput": "A list of peer rows."},
+        {"name": "rank_correlations", "description": "Return KPI-to-price correlations ranked by magnitude.", "expectedOutput": "Ordered list of metric/correlation pairs."},
+        {"name": "list_catalysts", "description": "Return upcoming events with dates and High/Medium/Low impact labels.", "expectedOutput": "A catalyst list."},
+    ],
+    build_company_analytics, "Company Analytics",
 ))
 
 

@@ -269,6 +269,20 @@ def _tools() -> list:
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }},
         }},
+        {"type": "function", "function": {
+            "name": "add_company_analytics",
+            "description": (
+                f"Add a company analytics panel with four sections: Price Drivers (why the stock is moving), "
+                f"Competitive Landscape (vs 2-3 peers), Metric Correlations (which KPIs drive price), and "
+                f"Catalyst Watch (upcoming events). {sizing} "
+                "Use when the user asks 'why is X up/down', 'what drives X stock', 'analyze X vs competitors', "
+                "'company analytics for X', 'competition for X', or 'price drivers for X'."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Ticker. One of: {syms}"},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
     ]
 
 
@@ -301,6 +315,7 @@ _TOOL_TO_TYPE = {
     "add_dcf_model": "dcf_model",
     "add_earnings_transcript": "earnings_transcript",
     "add_ma_tracker": "ma_tracker",
+    "add_company_analytics": "company_analytics",
 }
 
 
@@ -356,6 +371,8 @@ def _system_prompt() -> str:
         "- For DCF / valuation / intrinsic value requests, use add_dcf_model.\n"
         "- For earnings call / transcript / 'what did management say' requests, use add_earnings_transcript.\n"
         "- For M&A / deal flow / mergers / acquisitions / arb spread requests, use add_ma_tracker.\n"
+        "- For company analytics requests ('why is X up/down', 'what drives X', 'analyze X vs competitors', "
+        "'company analytics for X', 'competition for X', 'price drivers for X'), use add_company_analytics.\n"
         "- Decide each panel's width (3-12 grid columns) and height (2-6 row units). Make the "
         "primary panel larger; supporting panels narrower. A full-width hero is width 12.\n"
         "- Only use tickers and sectors that exist in the dataset.\n"
@@ -562,6 +579,7 @@ _TYPE_LABELS = {
     "dcf_model": "a DCF model",
     "earnings_transcript": "an earnings transcript",
     "ma_tracker": "an M&A tracker",
+    "company_analytics": "a company analytics panel",
 }
 
 
@@ -707,6 +725,17 @@ def _orchestrate_heuristic(query: str, start_y: int = 0):
     wants_dcf = any(k in q for k in ["dcf", "valuation", "intrinsic value", "fair value", "discounted cash flow"])
     wants_transcript = any(k in q for k in ["transcript", "earnings call", "what did management", "what did ceo", "call", "said on"])
     wants_ma = any(k in q for k in ["m&a", "merger", "acquisition", "deal", "arb spread", "takeover", "buyout"])
+    wants_company_analytics = any(k in q for k in [
+        "why is", "why is it", "what drives", "price driver", "company analytics",
+        "compete", "competition for", "competitors", "analyze", "vs competitor",
+    ])
+
+    if wants_company_analytics and symbols:
+        sym = symbols[0]
+        add("company_analytics", {"symbol": sym}, 8, 6)
+        add("price_chart", {"symbol": sym, "range": "3M"}, 4, 6)
+        name = data.get_company(sym)["name"]
+        return panels, f"Company analytics for {name}: price drivers, competitive landscape, metric correlations, and catalyst watch."
 
     if wants_ma:
         sym = symbols[0] if symbols else None

@@ -30,6 +30,7 @@ import { SupplyChainPanel } from "./panels/SupplyChainPanel";
 import { DCFPanel } from "./panels/DCFPanel";
 import { TranscriptPanel } from "./panels/TranscriptPanel";
 import { MACPanel } from "./panels/MACPanel";
+import { CompanyAnalyticsPanel } from "./panels/CompanyAnalyticsPanel";
 import { DynamicPanel } from "./panels/generated/DynamicPanel";
 
 interface PanelContainerProps {
@@ -129,6 +130,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "dcf_model": return <DCFPanel data={panel.data as any} />;
       case "earnings_transcript": return <TranscriptPanel data={panel.data as any} />;
       case "ma_tracker": return <MACPanel data={panel.data as any} />;
+      case "company_analytics": return <CompanyAnalyticsPanel data={panel.data as any} />;
       default: return <DynamicPanel type={panel.type} data={panel.data as any} />;
     }
   };
