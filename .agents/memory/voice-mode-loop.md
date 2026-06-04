@@ -1,59 +1,65 @@
 ---
-name: Voice Mode hands-free loop
-description: Web Speech recognition quirks and the conductor turn-loop contract for the terminal's Voice Mode.
+name: Voice Mode push-to-talk
+description: Web Speech recognition quirks and the conductor turn contract for the terminal's push-to-talk Voice Mode.
 ---
 
 Voice Mode = mic (Web Speech `SpeechRecognition`) → orchestrate → TTS narration, driven by
 `useVoiceConductor` over `useSpeechRecognition`.
 
-**Quirk that breaks the loop:** with `continuous=false`, Chrome ends a session **silently on a
-no-speech / silence timeout** — it fires `onend`, NOT `onerror` (`no-speech`/`aborted` are treated
-as non-fatal). If the conductor only flips local `listening` state on `onend` and leaves its own
-status on `"listening"`, the UI hangs forever and the orb (tappable only when idle) becomes a dead
-end. **Fix/contract:** `useSpeechRecognition` exposes `onEnd(capturedUtterance)`; the conductor must
-treat an end-without-utterance as a real state transition (drop to idle, then resume listening).
+**Interaction model = push-to-talk (NOT hands-free).** The user presses-and-holds the orb to
+listen and releases to send. The mic NEVER re-arms on its own — after a turn finishes it stays
+idle until the user holds again. **Why:** the user explicitly rejected the auto re-arm loop. So
+there is no `scheduleRestart`/restart timer and no network-retry auto-recovery loop anymore.
+
+**Recognition config for push-to-talk:** `continuous=true` so a session keeps accumulating speech
+for as long as held (it does NOT auto-finalize on a pause). Final fragments are accumulated and the
+full utterance is emitted from `onend`, not per-`isFinal`. Two stop paths matter:
+- **graceful `.stop()`** on release — Chrome finalizes the captured audio so `onend` can emit the
+  accumulated utterance. Use this for hold-release.
+- **`.abort()`** — discards the session without firing an utterance (sets a `discard` flag so
+  `onend` skips emitting). Use this for leaving Voice Mode / cleanup.
+Mixing these up is the classic bug: aborting on release throws away the user's words.
+
+**Async mic-setup race:** `startListening` awaits `getUserMedia`. A quick tap can release before the
+mic is ready. Guard with a `heldRef` set on press / cleared on release; after the await, bail if no
+longer held so a fast tap never strands an armed session.
+
+**Orb is a pointer hold-target:** use pointer events (`onPointerDown`/`onPointerUp`/`onPointerCancel`)
+— they unify mouse + touch and avoid the double-fire of mixed mouse+touch handlers. Call
+`setPointerCapture` on press so release is received even if the finger slides off. Suppress
+`onContextMenu` and set `touch-action:none` + `user-select:none` so a long-press doesn't select text
+or open the mobile context menu.
+
+**no-speech end:** with `continuous=true`, releasing after silence (or a Chrome silence timeout) fires
+`onend` with nothing captured (`no-speech`/`aborted` are non-fatal, not surfaced as errors). The
+conductor treats end-without-utterance as a transition back to **idle** — it does NOT re-arm.
 
 **Echo / self-trigger:** the mic MUST stop the instant an utterance finalizes and stay off through
-thinking + speaking, or the recognizer picks up the synthesized TTS and re-triggers. Conductor stops
-recognition in `handleUtterance` before going to "thinking", and only re-arms after playback resolves
-(`source.onended`).
-
-**Hands-free turn:** speak → utterance finalizes → "thinking" → narrate segments → fire `onComplete`
-(Terminal shows a bottom-right `toast({title:"complete", duration})`) → idle → `scheduleRestart`
-(~900ms) re-arms listening. Toggling Voice Off / `active=false` cancels the restart timer.
+thinking + speaking, or the recognizer picks up the synthesized TTS and re-triggers. `handleUtterance`
+stops recognition before "thinking"; `startListening` refuses to arm unless status is idle/error, so
+pressing the orb during thinking/speaking is a no-op.
 
 **Cross-browser:** Safari/Firefox lack the API. Conductor returns `supported`; VoicePanel renders an
 explicit "needs Chrome" message instead of failing silently. Recognition/synthesis errors set status
-"error" with a visible Retry.
+"error" with a visible Retry. A single `network` error now surfaces as an error (hold to retry) rather
+than feeding a retry loop.
 
 **Iframe blocks Web Speech (the big one):** Chrome's `SpeechRecognition` is blocked inside
 cross-origin iframes — and the Replit **preview pane is an iframe** — so it throws persistent
-`network` errors there even though the very same app works fine in a normal top-level browser tab.
-This is environmental; no code change makes recognition work inside the preview. **Fix/contract:**
-detect the cross-origin iframe **up front** (shared `lib/embed.ts` `isEmbedded()` = cross-origin
-`window.self !== window.top`) and **short-circuit `startVoice` before starting recognition** — set a
-conductor `embedded` flag, never enter the "Listening…" loop. The conductor owns detection (proactive);
-VoicePanel just renders the dedicated embed card off the `embedded` prop with an "Open Voice Mode in a
-new tab" button (`openStandaloneTab()`). Network auto-retries stay low (MAX_NETWORK_RETRIES ~2) as a
-backstop for genuine recognition errors. **Why:** waiting for network-error retries to surface the
-embed guidance felt like a silent hang; detecting immediately is the contract.
-
-**Push-to-talk fallback:** VoicePanel shows a manual "Tap to speak" / "Restart listening" button so
-users aren't dependent solely on the ~900ms auto-relisten timer. `startListening` doubles as the
-manual control: when already listening it aborts the in-flight session under a `manualRestartRef`
-guard so the aborted session's `onEnd` doesn't schedule a competing auto-restart, then re-arms fresh.
+`network` errors there even though the same app works in a normal top-level tab. This is
+environmental; no code change makes recognition work inside the preview. **Fix/contract:** detect the
+cross-origin iframe **up front** (shared `lib/embed.ts` `isEmbedded()`) and **short-circuit
+`startVoice` before starting recognition** — set a conductor `embedded` flag and render the dedicated
+"Open Voice Mode in a new tab" card (`openStandaloneTab()`). The conductor owns detection; VoicePanel
+just reads the `embedded` prop.
 
 **Runtime dep:** the generated-panels registry imports `sucrase` (browser-side TSX transpile). It must
 actually be installed (`pnpm install`) — a missing install surfaces as a Vite "Failed to resolve
 import 'sucrase'" that blanks the whole terminal, easy to mistake for a Voice Mode bug.
 
-**Transient "network" errors:** Chrome's Web Speech recognizer routinely emits spurious `network`
-errors that recover on the next attempt. Do NOT hard-fail on the first one — count them and keep
-status on "listening" so the `onEnd` auto-restart re-arms (effectively backoff via `scheduleRestart`).
-Only surface a hard error + Retry after a few consecutive failures (MAX_NETWORK_RETRIES). Reset the
-counter on `onInterim` (proves the service connected), on a captured utterance, and on `startVoice`.
-
 **Layout:** Voice Mode is a **floating overlay**, NOT a takeover. The dashboard/dotwave stays
-full-screen (chat aside hidden while `voiceMode`); VoicePanel is a compact `fixed` bottom-center card
-with a small orb (~132px) + status. **Why:** user explicitly rejected the orb filling the screen —
-"full screen should just be the terminal, orb should be somewhere." Header/toggle stays for exit.
+full-screen; VoicePanel is a compact `fixed` bottom-center card. **Why:** user rejected the orb
+filling the screen — "full screen should just be the terminal, orb should be somewhere." On phones
+(`useIsMobile()`, breakpoint 768) the chat aside is not rendered at all (no typed fallback), the
+dashboard takes full width, and VoicePanel renders in `compact` mode with a smaller orb (~84px vs
+132px) docked at the bottom.

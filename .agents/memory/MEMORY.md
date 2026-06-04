@@ -4,5 +4,5 @@
 - [Self-building feature pipeline](self-building-features.md) — Build Feature: AI generates skill+panel at runtime, registered in-process (no restart); why api-server runs without --reload; clean-failure + dynamic-panel rendering contract.
 - [AI client timeouts vs preview proxy](ai-client-timeouts.md) — bound the OpenAI client (timeout + max_retries=0) under the ~60s proxy window; callers must fall back on timeout like any failure.
 - [Panel layout collision resolution](panel-layout-collision.md) — dashboard overlap fix uses two-pass reserve-then-reflow (not single-pass greedy) so non-conflicting panels keep AI positions.
-- [Voice Mode hands-free loop](voice-mode-loop.md) — Chrome recognition ends silently on no-speech (onend not onerror); conductor must transition state or UI hangs; mic off during TTS; full-terminal layout + Chrome fallback.
+- [Voice Mode push-to-talk](voice-mode-loop.md) — hold orb to listen / release to send (no auto re-arm); continuous=true + graceful stop() vs abort(); mic off during TTS; iframe blocks Web Speech; compact mobile layout.
 - [Backtesting & simulation engine](backtest-engine.md) — pure numpy engine in app/engine/; no-lookahead position lag, real OHLCV via price_series_meta (live/mock+asOf), Monte Carlo bootstrap/GBM.

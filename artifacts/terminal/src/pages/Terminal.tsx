@@ -12,6 +12,7 @@ import { useVoiceConductor } from "@/hooks/useVoiceConductor";
 import { FeatureRequestModal } from "@/components/terminal/FeatureRequestModal";
 import { DotWaveCanvas } from "@/components/terminal/DotWaveCanvas";
 import { useToast } from "@/hooks/use-toast";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 
 export default function Terminal() {
@@ -24,6 +25,7 @@ export default function Terminal() {
   const orchestrate = useOrchestrate();
   const speak = useSpeak();
   const { toast } = useToast();
+  const isMobile = useIsMobile();
 
   // Keep a ref to the latest sessionId for the voice conductor callbacks.
   const sessionIdRef = useRef<string | undefined>(undefined);
@@ -90,28 +92,28 @@ export default function Terminal() {
   return (
     <div className="flex h-screen w-full bg-black text-white overflow-hidden">
       <main className="flex-1 flex flex-col min-w-0 border-r border-border overflow-y-auto scrollbar-none">
-        <header className="h-16 border-b border-border flex items-end justify-between px-8 pb-3 shrink-0 bg-black/70 backdrop-blur-sm z-10 sticky top-0">
+        <header className="h-16 border-b border-border flex items-end justify-between px-4 sm:px-8 pb-3 shrink-0 bg-black/70 backdrop-blur-sm z-10 sticky top-0">
           <div className="flex flex-col">
-            <span className="font-serif text-2xl leading-none tracking-tight">Agentic&nbsp;Terminal</span>
+            <span className="font-serif text-xl sm:text-2xl leading-none tracking-tight">Agentic&nbsp;Terminal</span>
             <span className="editorial-label text-[9px] text-muted-foreground mt-1.5">
               Synthetic Market Intelligence
             </span>
           </div>
-          <div className="flex items-center gap-6">
-            <div className="flex flex-col items-end">
+          <div className="flex items-center gap-3 sm:gap-6">
+            <div className="hidden sm:flex flex-col items-end">
               <span className="editorial-label text-[9px] text-muted-foreground">Session</span>
               <span className="font-serif text-sm nums-tabular mt-0.5">
                 {activeDashboard?.sessionId ? activeDashboard.sessionId.slice(0, 8) : '—'}
               </span>
             </div>
-            <div className="h-7 w-px bg-border" />
-            <div className="flex flex-col items-end">
+            <div className="hidden sm:block h-7 w-px bg-border" />
+            <div className="hidden sm:flex flex-col items-end">
               <span className="editorial-label text-[9px] text-muted-foreground">Status</span>
               <span className="font-serif text-sm mt-0.5">
                 {activeDashboard?.sessionId ? 'Live' : 'Ready'}
               </span>
             </div>
-            <div className="h-7 w-px bg-border" />
+            <div className="hidden sm:block h-7 w-px bg-border" />
             <button
               onClick={() => setShowFeatureModal(true)}
               className="flex items-center gap-2 px-3 py-2 editorial-label text-[9px] border border-border bg-black text-white hover:border-white transition-colors group/btn"
@@ -143,7 +145,7 @@ export default function Terminal() {
                 animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
                 exit={{ opacity: 0, y: -10, filter: "blur(3px)" }}
                 transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
-                className="px-8 py-7"
+                className="px-4 sm:px-8 py-5 sm:py-7"
               >
                 <Dashboard
                   dashboard={activeDashboard!}
@@ -176,14 +178,16 @@ export default function Terminal() {
               micDenied={voice.micDenied}
               supported={voice.supported}
               embedded={voice.embedded}
+              compact={isMobile}
               onRetry={voice.retry}
               onStartListening={voice.startListening}
+              onStopListening={voice.stopListening}
             />
           )}
         </div>
       </main>
 
-      {!voiceMode && (
+      {!voiceMode && !isMobile && (
         <div className="relative flex-shrink-0 flex">
           <button
             onClick={() => setChatOpen(o => !o)}

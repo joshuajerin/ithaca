@@ -31,7 +31,10 @@ interface UseVoiceConductor {
   /** True when running inside a cross-origin iframe where the mic is blocked. */
   embedded: boolean;
   retry: () => void;
+  /** Begin listening — call on press/hold-start. */
   startListening: () => void;
+  /** Stop listening and process whatever was captured — call on release. */
+  stopListening: () => void;
 }
 
 function base64ToArrayBuffer(b64: string): ArrayBuffer {
@@ -73,16 +76,10 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
   useEffect(() => { activeRef.current = active; });
 
   const busyRef = useRef(false);
-  const restartTimerRef = useRef<number | null>(null);
-  // Set when a manual (push-to-talk) restart aborts an in-flight session so the
-  // old session's onEnd doesn't schedule a competing auto-restart.
-  const manualRestartRef = useRef(false);
-  // Chrome's Web Speech service throws transient "network" errors; count them so
-  // we can auto-recover a few times before giving up and surfacing the error.
-  const networkRetriesRef = useRef(0);
-  // A couple of retries absorb genuinely transient blips, but surface the error
-  // quickly when it's a persistent block (e.g. running inside the preview iframe).
-  const MAX_NETWORK_RETRIES = 2;
+  // True while the user is physically holding the orb (push-to-talk). Guards the
+  // async mic-setup race: if the user releases before the mic is ready, we never
+  // actually arm recognition.
+  const heldRef = useRef(false);
 
   // --- Audio analysis plumbing ---
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -172,12 +169,10 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
       void handleUtterance(text);
     },
     onInterim: (text) => {
-      // Getting interim text proves the speech service connected, so clear any
-      // accumulated transient network-error count.
-      networkRetriesRef.current = 0;
       if (statusRef.current === "listening") setInterim(text);
     },
     onError: (kind, message) => {
+      heldRef.current = false;
       if (kind === "permission-denied") {
         setMicDenied(true);
         setError(message);
@@ -190,15 +185,7 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
         return;
       }
       if (kind === "network") {
-        // Chrome's Web Speech recognizer frequently emits spurious "network"
-        // errors that recover on the next attempt. Keep status as "listening" so
-        // the onEnd handler auto-restarts the session, retrying a few times
-        // before surfacing a hard error.
-        networkRetriesRef.current += 1;
-        if (networkRetriesRef.current <= MAX_NETWORK_RETRIES) {
-          return;
-        }
-        setError("Speech recognition keeps hitting a network error. Check your connection, then tap retry.");
+        setError("Speech recognition hit a network error. Hold the orb to try again.");
         setStatusSafe("error");
         return;
       }
@@ -206,21 +193,16 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
       setStatusSafe("error");
     },
     onEnd: (capturedUtterance) => {
-      // A manual push-to-talk restart aborted this session on purpose; the fresh
-      // session has already (re)started, so ignore this end event entirely.
-      if (manualRestartRef.current) {
-        manualRestartRef.current = false;
-        return;
-      }
-      // The recognition session ended. If we were still listening and nothing
-      // was captured (e.g. a silence/no-speech timeout), resume listening so the
-      // experience stays hands-free instead of getting stuck on "Listening…".
+      // If an utterance was captured, handleUtterance has already taken over the
+      // think -> speak turn, so there's nothing to do here.
       if (capturedUtterance) return;
       if (busyRef.current) return;
+      // The session ended with nothing captured (user released without speaking,
+      // or a silence timeout). Drop back to idle — push-to-talk never re-arms on
+      // its own; the user holds the orb again to speak.
       if (statusRef.current === "listening") {
         setInterim("");
         setStatusSafe("idle");
-        scheduleRestart();
       }
     },
   });
@@ -246,46 +228,43 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
     });
   }, [ensureCtx]);
 
-  // --- startListening: begin a fresh listening session ---
-  // Works both as the hands-free auto-restart and as the manual push-to-talk
-  // control: when already listening, it cleanly re-arms a fresh session.
+  // --- startListening: begin a listening session on hold-start (push-to-talk) ---
   const startListening = useCallback(async () => {
     if (!activeRef.current) return;
     if (busyRef.current) return;
+    // Only arm from a resting state — never interrupt thinking/speaking.
+    if (statusRef.current !== "idle" && statusRef.current !== "error") return;
+    heldRef.current = true;
     setError(null);
-
-    // Manual re-arm while a session is already in flight: abort it, flagging the
-    // abort so its onEnd doesn't schedule a competing auto-restart.
-    if (statusRef.current === "listening") {
-      manualRestartRef.current = true;
-      recognitionRef.current.stop();
-    }
 
     // Ensure mic access is granted before we start.
     const ok = await startMicAnalyser();
-    if (!ok) return;
+    if (!ok) {
+      heldRef.current = false;
+      return;
+    }
 
     if (!recognitionRef.current.supported) {
+      heldRef.current = false;
       setError("Voice Mode needs the Web Speech API. Please use Google Chrome.");
       setStatusSafe("error");
       return;
     }
-    networkRetriesRef.current = 0;
+    // The user may have released during async mic setup — don't start if so.
+    if (!heldRef.current) return;
     setStatusSafe("listening");
     recognitionRef.current.start();
   }, [startMicAnalyser, setStatusSafe]);
 
-  // Resume listening shortly after a turn finishes (hands-free loop).
-  const scheduleRestart = useCallback(() => {
-    if (restartTimerRef.current) window.clearTimeout(restartTimerRef.current);
-    restartTimerRef.current = window.setTimeout(() => {
-      restartTimerRef.current = null;
-      if (!activeRef.current) return;
-      if (busyRef.current) return;
-      if (statusRef.current !== "idle") return;
-      void startListening();
-    }, 900);
-  }, [startListening]);
+  // --- stopListening: end the session on release and finalize the utterance ---
+  const stopListening = useCallback(() => {
+    heldRef.current = false;
+    if (statusRef.current === "listening") {
+      // Graceful stop — Chrome finalizes the captured audio and the recognition
+      // onEnd handler emits the full utterance (or drops to idle if empty).
+      recognitionRef.current.stop();
+    }
+  }, []);
 
   const handleUtterance = useCallback(async (text: string) => {
     busyRef.current = true;
@@ -309,24 +288,24 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
       }
       highlightRef.current(null);
       busyRef.current = false;
-      // Turn complete: announce it, drop to idle, then resume listening.
+      // Turn complete: drop to idle and wait. Push-to-talk never re-arms on its
+      // own — the user holds the orb again to ask the next question.
       setStatusSafe("idle");
       completeRef.current?.();
-      scheduleRestart();
     } catch {
       highlightRef.current(null);
       busyRef.current = false;
       setError("Something went wrong while responding. Tap retry to try again.");
       setStatusSafe("error");
     }
-  }, [playSegmentAudio, scheduleRestart, setStatusSafe]);
+  }, [playSegmentAudio, setStatusSafe]);
 
   // --- Lifecycle: enter / exit voice mode ---
   const startVoice = useCallback(async () => {
     setError(null);
     setMicDenied(false);
     setEmbedded(false);
-    networkRetriesRef.current = 0;
+    heldRef.current = false;
     // Web Speech recognition and mic capture are blocked inside cross-origin
     // iframes (the Replit preview pane / canvas). Detect that up front and
     // short-circuit before starting recognition, so we surface a clear
@@ -343,16 +322,13 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
       return;
     }
     ensureCtx();
-    // Auto-start the first listening session so voice mode feels instant.
-    await startListening();
-  }, [ensureCtx, startListening, setStatusSafe]);
+    // Push-to-talk: stay idle until the user holds the orb. Do not auto-listen.
+    setStatusSafe("idle");
+  }, [ensureCtx, setStatusSafe]);
 
   const stopVoice = useCallback(() => {
-    if (restartTimerRef.current) {
-      window.clearTimeout(restartTimerRef.current);
-      restartTimerRef.current = null;
-    }
-    recognitionRef.current.stop();
+    heldRef.current = false;
+    recognitionRef.current.abort();
     stopMicAnalyser();
     playAnalyserRef.current = null;
     busyRef.current = false;
@@ -373,7 +349,6 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
 
   useEffect(() => {
     return () => {
-      if (restartTimerRef.current) window.clearTimeout(restartTimerRef.current);
       stopMicAnalyser();
       audioCtxRef.current?.close().catch(() => {});
     };
@@ -394,5 +369,6 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
     embedded,
     retry,
     startListening,
+    stopListening,
   };
 }

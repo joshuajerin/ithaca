@@ -18,7 +18,10 @@ interface UseSpeechRecognition {
   supported: boolean;
   listening: boolean;
   start: () => void;
+  /** Gracefully end the session, finalizing whatever was captured. */
   stop: () => void;
+  /** Discard the session immediately without firing an utterance. */
+  abort: () => void;
 }
 
 function getRecognitionCtor(): any {
@@ -27,10 +30,10 @@ function getRecognitionCtor(): any {
 }
 
 /**
- * Single-shot speech recognition: starts, captures one utterance, fires
- * onUtterance, then stops. Call start() again to listen for the next one.
- * Uses continuous=false so the browser automatically finalises when the user
- * stops speaking — much more reliable than manual silence detection.
+ * Push-to-talk speech recognition. Uses continuous=true so the session keeps
+ * listening (accumulating speech) for as long as the user holds the control,
+ * and only resolves the full utterance once stop() is called on release. Final
+ * fragments are accumulated and emitted together via onUtterance on session end.
  */
 export function useSpeechRecognition(options: UseSpeechRecognitionOptions): UseSpeechRecognition {
   const Ctor = getRecognitionCtor();
@@ -40,7 +43,8 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions): UseS
 
   const recognitionRef = useRef<any>(null);
   const firedRef = useRef(false); // prevent duplicate onUtterance per session
-  const capturedRef = useRef(false); // whether this session captured a final utterance
+  const finalRef = useRef("");    // accumulated final transcript for this session
+  const discardRef = useRef(false); // true when aborting — skip firing utterance/end
 
   const onUtteranceRef = useRef(options.onUtterance);
   const onInterimRef = useRef(options.onInterim);
@@ -56,7 +60,7 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions): UseS
   const buildRecognition = useCallback(() => {
     if (!Ctor) return null;
     const rec = new Ctor();
-    rec.continuous = false;      // stop automatically after the user pauses
+    rec.continuous = true;       // keep listening until we explicitly stop (push-to-talk)
     rec.interimResults = true;
     rec.lang = "en-US";
     rec.maxAlternatives = 1;
@@ -67,17 +71,13 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions): UseS
         const result = event.results[i];
         const text = result[0]?.transcript ?? "";
         if (result.isFinal) {
-          const finalText = text.trim();
-          if (finalText && !firedRef.current) {
-            firedRef.current = true;
-            capturedRef.current = true;
-            onUtteranceRef.current(finalText);
-          }
+          finalRef.current = `${finalRef.current} ${text}`.trim();
         } else {
           interim += text;
         }
       }
-      if (interim && onInterimRef.current) onInterimRef.current(interim.trim());
+      const combined = `${finalRef.current} ${interim}`.trim();
+      if (combined && onInterimRef.current) onInterimRef.current(combined);
     };
 
     rec.onerror = (event: any) => {
@@ -97,7 +97,16 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions): UseS
 
     rec.onend = () => {
       setListening(false);
-      onEndRef.current?.(capturedRef.current);
+      if (discardRef.current) {
+        discardRef.current = false;
+        return;
+      }
+      const finalText = finalRef.current.trim();
+      if (finalText && !firedRef.current) {
+        firedRef.current = true;
+        onUtteranceRef.current(finalText);
+      }
+      onEndRef.current?.(!!finalText);
     };
 
     return rec;
@@ -109,7 +118,8 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions): UseS
       return;
     }
     firedRef.current = false;
-    capturedRef.current = false;
+    finalRef.current = "";
+    discardRef.current = false;
     // Always create a fresh instance — reusing after .stop() is unreliable in Chrome.
     recognitionRef.current = buildRecognition();
     try {
@@ -122,6 +132,17 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions): UseS
 
   const stop = useCallback(() => {
     try {
+      // Graceful stop finalizes the current audio so onend can emit the utterance.
+      recognitionRef.current?.stop();
+    } catch {
+      /* noop */
+    }
+    setListening(false);
+  }, []);
+
+  const abort = useCallback(() => {
+    try {
+      discardRef.current = true;
       recognitionRef.current?.abort();
     } catch {
       /* noop */
@@ -135,5 +156,5 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions): UseS
     };
   }, []);
 
-  return { supported, listening, start, stop };
+  return { supported, listening, start, stop, abort };
 }
