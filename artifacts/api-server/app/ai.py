@@ -20,6 +20,12 @@ DEFAULT_VOICE = "alloy"
 _BASE_URL = os.environ.get("AI_INTEGRATIONS_OPENAI_BASE_URL")
 _API_KEY = os.environ.get("AI_INTEGRATIONS_OPENAI_API_KEY")
 
+# Client-side timeouts (seconds) kept comfortably under the preview proxy's
+# ~60s ceiling so a slow/unavailable upstream raises promptly and the caller can
+# fall back to its heuristic builder instead of hanging until a 502.
+CHAT_TIMEOUT = 30.0
+AUDIO_TIMEOUT = 45.0
+
 _client: Optional[Any] = None
 
 
@@ -32,7 +38,14 @@ def get_client() -> Optional[Any]:
     if not ai_available():
         return None
     if _client is None:
-        _client = OpenAI(base_url=_BASE_URL, api_key=_API_KEY)
+        # max_retries=0 so a timeout is not silently multiplied by retry
+        # attempts (which would blow past the proxy window).
+        _client = OpenAI(
+            base_url=_BASE_URL,
+            api_key=_API_KEY,
+            timeout=CHAT_TIMEOUT,
+            max_retries=0,
+        )
     return _client
 
 
@@ -65,7 +78,7 @@ def speak(text: str, voice: Optional[str] = None, fmt: str = "mp3") -> bytes:
     client = get_client()
     if client is None:
         raise RuntimeError("AI client unavailable")
-    resp = client.chat.completions.create(
+    resp = client.with_options(timeout=AUDIO_TIMEOUT).chat.completions.create(
         model=AUDIO_MODEL,
         modalities=["text", "audio"],
         audio={"voice": voice or DEFAULT_VOICE, "format": fmt},
