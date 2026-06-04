@@ -35,6 +35,12 @@ httpx, openai, psycopg[binary], psycopg-pool, pydantic, uvicorn, yfinance). Afte
 rebase/merge that adds a new source module (e.g. `app/sources/*.py` importing
 `yfinance`/`feedparser`), the package may be declared but NOT installed in the
 `.pythonlibs` env, so uvicorn crashes at import with `ModuleNotFoundError` and the
-frontend "just keeps loading" (no data). Fix: `uv pip install <pkgs>` then restart
-the `artifacts/api-server: API Server` workflow. The errors surface one module at a
-time — install the full declared set at once rather than chasing them individually.
+frontend "just keeps loading" (no data). Fix: `uv sync --frozen` (installs the full
+declared/locked set into `.pythonlibs` since `UV_PROJECT_ENVIRONMENT` points there),
+then restart the `artifacts/api-server: API Server` workflow. Install the full set at
+once — errors surface one module at a time, don't chase them individually.
+
+**Durable fix for the recurrence:** isolated-task `uv` installs do NOT survive merge
+to main. `scripts/post-merge.sh` is what runs after every merge — it now includes
+`uv sync --frozen` (alongside `pnpm install` / `db push`). If you ever add a Python
+dep, update `pyproject.toml` AND `uv.lock` together or `--frozen` will fail post-merge.

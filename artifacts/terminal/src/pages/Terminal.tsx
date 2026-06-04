@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  useGetDefaultDashboard,
   useOrchestrate,
   useSpeak,
 } from "@workspace/api-client-react";
@@ -12,7 +11,7 @@ import { VoicePanel } from "@/components/terminal/VoicePanel";
 import { useVoiceConductor } from "@/hooks/useVoiceConductor";
 import { FeatureRequestModal } from "@/components/terminal/FeatureRequestModal";
 import { DotWaveCanvas } from "@/components/terminal/DotWaveCanvas";
-import { Loader2, Mic, MicOff, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
+import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 
 export default function Terminal() {
   const [activeDashboard, setActiveDashboard] = useState<DashboardSpec | null>(null);
@@ -20,14 +19,6 @@ export default function Terminal() {
   const [highlightedPanelId, setHighlightedPanelId] = useState<string | null>(null);
   const [chatOpen, setChatOpen] = useState(true);
   const [showFeatureModal, setShowFeatureModal] = useState(false);
-
-  const { data: defaultDashboard, isLoading: isLoadingDefault } = useGetDefaultDashboard();
-
-  useEffect(() => {
-    if (defaultDashboard && !activeDashboard) {
-      setActiveDashboard(defaultDashboard);
-    }
-  }, [defaultDashboard, activeDashboard]);
 
   const orchestrate = useOrchestrate();
   const speak = useSpeak();
@@ -90,15 +81,6 @@ export default function Terminal() {
     synthesize,
     onHighlight: setHighlightedPanelId,
   });
-
-  if (isLoadingDefault) {
-    return (
-      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center">
-        <Loader2 className="w-5 h-5 animate-spin mb-5" strokeWidth={1.25} />
-        <p className="editorial-label text-muted-foreground text-[10px]">Initializing Terminal</p>
-      </div>
-    );
-  }
 
   return (
     <div className="flex h-screen w-full bg-black text-white overflow-hidden">
