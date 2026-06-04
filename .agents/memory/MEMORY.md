@@ -1,3 +1,4 @@
 - [Python backend on api-server artifact](python-api-server.md) — how to run a Python/FastAPI service in the shared `api-server` artifact (uvicorn, --app-dir, $PORT, restart-after-toml-swap).
 - [Terminal dashboard orchestration](terminal-orchestration.md) — orchestrate is additive-by-default (append panels), "default"/reset mint a fresh session; panels animate via framer-motion keyed by id.
 - [Free market data sources + quirks](market-data-sources.md) — Yahoo chart/RSS + yfinance: unit gotchas (dividendYield already %, profitMargins fraction), sector lives on universe, asOf/source freshness contract.
+- [Self-building feature pipeline](self-building-features.md) — Build Feature: AI generates skill+panel at runtime, registered in-process (no restart); why api-server runs without --reload; clean-failure + dynamic-panel rendering contract.

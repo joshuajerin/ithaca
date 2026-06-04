@@ -26,6 +26,7 @@ import { IVSurfacePanel } from "./panels/IVSurfacePanel";
 import { OptionsStrategyPanel } from "./panels/OptionsStrategyPanel";
 import { VolTermStructurePanel } from "./panels/VolTermStructurePanel";
 import { StructuredProductPanel } from "./panels/StructuredProductPanel";
+import { DynamicPanel } from "./panels/generated/DynamicPanel";
 
 interface PanelContainerProps {
   panel: Panel;
@@ -120,7 +121,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "options_strategy": return <OptionsStrategyPanel data={panel.data as any} />;
       case "vol_term_structure": return <VolTermStructurePanel data={panel.data as any} />;
       case "structured_product": return <StructuredProductPanel data={panel.data as any} />;
-      default: return <div className="p-4 text-xs">Unknown panel type: {panel.type}</div>;
+      default: return <DynamicPanel type={panel.type} data={panel.data as any} />;
     }
   };
 

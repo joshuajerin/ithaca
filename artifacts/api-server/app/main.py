@@ -6,8 +6,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
-from . import agent, harness, models, repo, skills, state, worker
+from . import agent, dynamic_skills, feature_builder, harness, models, repo, skills, state, worker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -17,6 +19,8 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # Register any AI-generated skills authored in previous sessions before serving.
+    dynamic_skills.load_generated_skills()
     await worker.start()
     try:
         yield
@@ -124,6 +128,23 @@ def refine(req: models.RefineRequest):
     if updated is None:
         raise HTTPException(status_code=404, detail="panel not found for session")
     return updated
+
+
+class FeatureRequestInput(BaseModel):
+    description: str
+
+
+@api.post("/feature-request")
+def feature_request(req: FeatureRequestInput):
+    """Stream the self-building feature pipeline as Server-Sent Events.
+
+    The sync generator runs in a threadpool; each stage is emitted as it completes.
+    """
+    return StreamingResponse(
+        feature_builder.stream_feature_request(req.description),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 def _watchlist_payload() -> dict:

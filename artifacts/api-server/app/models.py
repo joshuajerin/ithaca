@@ -590,15 +590,18 @@ PanelData = Union[
 
 
 class Panel(BaseModel):
+    # `type` is a plain string (not the PanelType enum) so AI-generated dynamic
+    # panel types serialize without being rejected. `data` is a free-form dict
+    # for the same reason — built-in panels still produce their validated shape.
     id: str
-    type: PanelType
+    type: str
     title: str
     layout: PanelLayout
     status: PanelStatus
     note: Optional[str] = None
     asOf: Optional[str] = None
     source: Optional[str] = None
-    data: Optional[PanelData] = None
+    data: Optional[dict] = None
 
 
 class NarrationSegment(BaseModel):
@@ -645,7 +648,7 @@ class Subskill(BaseModel):
 class Skill(BaseModel):
     id: str
     name: str
-    panelType: PanelType
+    panelType: str  # plain string so AI-generated dynamic skills are accepted
     description: str
     subskills: List[Subskill]
 

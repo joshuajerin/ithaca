@@ -55,7 +55,9 @@ def run_skill(
     if skill is None:
         return _error_panel(pid, panel_type, layout, title or panel_type, "Unknown panel type")
 
-    model = DATA_MODELS[panel_type]
+    # Built-in panels validate against a pydantic model; AI-generated (dynamic)
+    # panels have no model, so their data dict is passed through untouched.
+    model = DATA_MODELS.get(panel_type)
     last_err = ""
     for _ in range(retries + 1):
         try:
@@ -63,7 +65,12 @@ def run_skill(
             # Freshness metadata lives on the panel envelope, not the data model.
             as_of = raw.pop("asOf", None) if isinstance(raw, dict) else None
             source = raw.pop("source", None) if isinstance(raw, dict) else None
-            validated = model.model_validate(raw)
+            if model is not None:
+                data = model.model_validate(raw).model_dump()
+            else:
+                if not isinstance(raw, dict):
+                    raise ValueError("generated builder must return a dict")
+                data = raw
             return {
                 "id": pid,
                 "type": panel_type,
@@ -73,7 +80,7 @@ def run_skill(
                 "note": None,
                 "asOf": as_of,
                 "source": source,
-                "data": validated.model_dump(),
+                "data": data,
             }
         except Exception as exc:  # noqa: BLE001 — harness intentionally broad
             last_err = str(exc)

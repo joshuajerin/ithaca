@@ -10,14 +10,16 @@ import { Dashboard } from "@/components/terminal/Dashboard";
 import { ChatPanel } from "@/components/terminal/ChatPanel";
 import { VoicePanel } from "@/components/terminal/VoicePanel";
 import { useVoiceConductor } from "@/hooks/useVoiceConductor";
+import { FeatureRequestModal } from "@/components/terminal/FeatureRequestModal";
 import { DotWaveCanvas } from "@/components/terminal/DotWaveCanvas";
-import { Loader2, Mic, MicOff, ChevronLeft, ChevronRight } from "lucide-react";
+import { Loader2, Mic, MicOff, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 
 export default function Terminal() {
   const [activeDashboard, setActiveDashboard] = useState<DashboardSpec | null>(null);
   const [voiceMode, setVoiceMode] = useState(false);
   const [highlightedPanelId, setHighlightedPanelId] = useState<string | null>(null);
   const [chatOpen, setChatOpen] = useState(true);
+  const [showFeatureModal, setShowFeatureModal] = useState(false);
 
   const { data: defaultDashboard, isLoading: isLoadingDefault } = useGetDefaultDashboard();
 
@@ -124,6 +126,13 @@ export default function Terminal() {
             </div>
             <div className="h-7 w-px bg-border" />
             <button
+              onClick={() => setShowFeatureModal(true)}
+              className="flex items-center gap-2 px-3 py-2 editorial-label text-[9px] border border-border bg-black text-white hover:border-white transition-colors group/btn"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-muted-foreground group-hover/btn:text-white transition-colors" strokeWidth={1.5} />
+              Build Feature
+            </button>
+            <button
               onClick={() => setVoiceMode((v) => !v)}
               aria-pressed={voiceMode}
               className={`flex items-center gap-2 px-3 py-2 editorial-label text-[9px] border transition-colors ${
@@ -209,6 +218,8 @@ export default function Terminal() {
           </aside>
         </div>
       )}
+
+      <FeatureRequestModal open={showFeatureModal} onClose={() => setShowFeatureModal(false)} />
     </div>
   );
 }

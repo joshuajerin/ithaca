@@ -12,7 +12,7 @@ import re
 import uuid
 from typing import List, Optional
 
-from . import ai, data, harness, repo, skills, state
+from . import ai, data, dynamic_skills, harness, repo, skills, state
 
 
 # ----------------------------- tool schemas -----------------------------
@@ -267,6 +267,39 @@ _TOOL_TO_TYPE = {
 }
 
 
+_SIZING = "Width is grid columns 3-12 (12 = full row). Height is row units 2-6."
+
+
+def _dynamic_tools() -> list:
+    """Tool schemas for AI-generated (dynamic) skills, so the LLM can dispatch them."""
+    tools = []
+    for d in dynamic_skills.get_definitions():
+        props = dict(d.get("parameters") or {})
+        props.setdefault("width", {"type": "integer"})
+        props.setdefault("height", {"type": "integer"})
+        tools.append({"type": "function", "function": {
+            "name": f"add_{d['panel_type']}",
+            "description": f"{d['description']} {_SIZING}",
+            "parameters": {"type": "object", "properties": props},
+        }})
+    return tools
+
+
+def _all_tools() -> list:
+    return _tools() + _dynamic_tools()
+
+
+def _type_of_tool(name: str) -> Optional[str]:
+    """Map a tool name to a panel type, supporting both built-in and dynamic skills."""
+    if name in _TOOL_TO_TYPE:
+        return _TOOL_TO_TYPE[name]
+    if name.startswith("add_"):
+        cand = name[4:]
+        if cand in skills.SKILLS:
+            return cand
+    return None
+
+
 def _system_prompt() -> str:
     return (
         "You are the orchestrator of an agentic market terminal that tracks live market "
@@ -438,13 +471,13 @@ def _orchestrate_llm(query: str, sid: str, existing: List[dict], start_y: int):
         )})
     messages.append({"role": "user", "content": query})
 
-    msg = ai.chat(messages, tools=_tools(), tool_choice="auto")
+    msg = ai.chat(messages, tools=_all_tools(), tool_choice="auto")
     tool_calls = getattr(msg, "tool_calls", None) or []
     panels: List[dict] = []
     cursor = {"x": 0, "y": start_y, "rowH": 0}
     for tc in tool_calls:
         name = tc.function.name
-        panel_type = _TOOL_TO_TYPE.get(name)
+        panel_type = _type_of_tool(name)
         if not panel_type:
             continue
         try:
@@ -562,6 +595,18 @@ def _orchestrate_heuristic(query: str, start_y: int = 0):
 
     symbols = _extract_symbols(query)
     sector = repo.resolve_sector(query)
+
+    # AI-generated (dynamic) skills get first crack when their invoke phrases match,
+    # so a feature works in the keyword fallback even when the LLM is unavailable.
+    for d in dynamic_skills.get_definitions():
+        phrases = d.get("invoke_phrases") or [d["panel_type"].replace("_", " ")]
+        if any(str(p).lower() in q for p in phrases):
+            params: dict = {}
+            prop_names = set((d.get("parameters") or {}).keys())
+            if symbols and ({"symbol", "ticker"} & prop_names):
+                params["symbol" if "symbol" in prop_names else "ticker"] = symbols[0]
+            add(d["panel_type"], params, 12, 5)
+            return panels, f"Added the {d['name']} panel."
 
     wants_compare = any(k in q for k in ["compare", "vs", "versus", "against"]) or len(symbols) >= 2
     wants_news = "news" in q or "headline" in q or "happening" in q
@@ -823,7 +868,7 @@ def _refine_params(panel_type: str, panel: dict, instruction: str) -> dict:
 
 def _refine_params_llm(panel_type: str, panel: dict, instruction: str) -> dict:
     tool = next(
-        (t for t in _tools() if _TOOL_TO_TYPE.get(t["function"]["name"]) == panel_type),
+        (t for t in _all_tools() if _type_of_tool(t["function"]["name"]) == panel_type),
         None
     )
     if tool is None:
