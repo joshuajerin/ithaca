@@ -63,7 +63,9 @@ export function VoicePanel({
   onStopListening,
 }: VoicePanelProps) {
   // Push-to-talk: arm on press when at rest, release to finalize while listening.
-  const canHoldStart = status === "idle" || status === "error";
+  // Holding while the AI is thinking/speaking barges in — only an in-progress
+  // "listening" session blocks a fresh hold-start.
+  const canHoldStart = status !== "listening";
   const orbSize = compact ? 84 : 132;
 
   const handlePointerDown = (e: React.PointerEvent) => {
@@ -216,8 +218,8 @@ export function VoicePanel({
                 <p className="text-xs text-muted-foreground leading-relaxed min-h-[2rem]">
                   {status === "idle" && "Hold the orb and speak. Release when you're done."}
                   {status === "listening" && (interim || "Listening — release when you're done.")}
-                  {status === "thinking" && "Interpreting your request…"}
-                  {status === "speaking" && "Walking you through the dashboard."}
+                  {status === "thinking" && "Interpreting your request… hold to jump in."}
+                  {status === "speaking" && "Walking you through it — hold the orb to interrupt."}
                 </p>
               </div>
             )}

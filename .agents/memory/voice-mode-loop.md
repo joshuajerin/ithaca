@@ -42,6 +42,17 @@ or open the mobile context menu.
 `onend` with nothing captured (`no-speech`/`aborted` are non-fatal, not surfaced as errors). The
 conductor treats end-without-utterance as a transition back to **idle** — it does NOT re-arm.
 
+**Barge-in (interrupt the AI while it talks):** holding the orb during `thinking`/`speaking`
+interrupts the current turn and immediately starts the next listen. Implemented with a monotonic
+`turnIdRef`: each `handleUtterance` claims `++turnIdRef.current`; a barge-in (`interruptTurn`) bumps
+it, `.stop()`s the current `AudioBufferSourceNode` (`playSourceRef`), and resets `busyRef`/highlight.
+The in-flight turn re-checks `myTurn === turnIdRef.current` after every await (post-processQuery,
+each segment, post-synth) and **returns without touching status/busyRef/onComplete** if superseded —
+otherwise it stomps the new listening session (stray idle + toast). `source.onended` guards
+`playSourceRef.current === source` before nulling so a stop() doesn't clobber a newer source.
+VoicePanel gates hold-start on `status !== "listening"` (was idle/error) so only an active listen
+blocks a fresh hold. **Why:** user asked to interject mid-narration to ask the next thing.
+
 **Echo / self-trigger:** the mic MUST stop the instant an utterance finalizes and stay off through
 thinking + speaking, or the recognizer picks up the synthesized TTS and re-triggers. `handleUtterance`
 stops recognition before "thinking"; `startListening` refuses to arm unless status is idle/error, so

@@ -80,12 +80,18 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
   // async mic-setup race: if the user releases before the mic is ready, we never
   // actually arm recognition.
   const heldRef = useRef(false);
+  // Monotonic turn id. Each AI turn (think -> speak) claims an id; a barge-in
+  // bumps it so the in-flight turn bails at its next checkpoint instead of
+  // stomping the freshly-started listening session.
+  const turnIdRef = useRef(0);
 
   // --- Audio analysis plumbing ---
   const audioCtxRef = useRef<AudioContext | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const micAnalyserRef = useRef<AnalyserNode | null>(null);
   const playAnalyserRef = useRef<AnalyserNode | null>(null);
+  // The currently-playing narration source, kept so a barge-in can stop it.
+  const playSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const rafRef = useRef<number | null>(null);
 
   const ensureCtx = useCallback(() => {
@@ -245,20 +251,53 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
       source.connect(analyser);
       analyser.connect(ctx.destination);
       playAnalyserRef.current = analyser;
+      playSourceRef.current = source;
       source.onended = () => {
-        playAnalyserRef.current = null;
+        // Guard against clobbering a newer source (after a barge-in).
+        if (playSourceRef.current === source) {
+          playSourceRef.current = null;
+          playAnalyserRef.current = null;
+        }
         resolve();
       };
       source.start();
     });
   }, [ensureCtx]);
 
+  // Barge-in: invalidate the in-flight turn and silence any narration in
+  // progress so the user can immediately start the next prompt while the AI is
+  // still thinking or speaking. The in-flight handleUtterance sees the bumped
+  // turn id and bails without touching the new session's state.
+  const interruptTurn = useCallback(() => {
+    turnIdRef.current++;
+    try {
+      playSourceRef.current?.stop();
+    } catch {
+      /* already stopped */
+    }
+    playSourceRef.current = null;
+    playAnalyserRef.current = null;
+    busyRef.current = false;
+    highlightRef.current(null);
+    setAgentLevel(0);
+  }, []);
+
   // --- startListening: begin a listening session on hold-start (push-to-talk) ---
   const startListening = useCallback(async () => {
     if (!activeRef.current) return;
-    if (busyRef.current) return;
-    // Only arm from a resting state — never interrupt thinking/speaking.
-    if (statusRef.current !== "idle" && statusRef.current !== "error") return;
+    const phase = statusRef.current;
+    // Barge-in: if the AI is thinking or speaking, interrupt it so the user can
+    // immediately ask the next thing. Otherwise only arm from a resting state —
+    // don't restart an already-active listening session.
+    if (phase === "thinking" || phase === "speaking") {
+      interruptTurn();
+      // Drop to idle right away so a quick release during the async mic setup
+      // below (the `!heldRef.current` early-return) can't strand a stale
+      // thinking/speaking status with nothing actually running.
+      setStatusSafe("idle");
+    } else if (phase !== "idle" && phase !== "error") {
+      return;
+    }
     heldRef.current = true;
     setError(null);
 
@@ -279,7 +318,7 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
     if (!heldRef.current) return;
     setStatusSafe("listening");
     recognitionRef.current.start();
-  }, [startMicAnalyser, setStatusSafe]);
+  }, [startMicAnalyser, setStatusSafe, interruptTurn]);
 
   // --- stopListening: end the session on release and finalize the utterance ---
   const stopListening = useCallback(() => {
@@ -292,6 +331,10 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
   }, []);
 
   const handleUtterance = useCallback(async (text: string) => {
+    // Claim this turn. If a barge-in (or a later utterance) bumps turnIdRef,
+    // this invocation bails at the next checkpoint instead of stomping the new
+    // session's state.
+    const myTurn = ++turnIdRef.current;
     busyRef.current = true;
     setInterim("");
     // Stop listening immediately — we have the utterance and don't want the mic
@@ -300,17 +343,21 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
     setStatusSafe("thinking");
     try {
       const segments = await processRef.current(text);
+      if (myTurn !== turnIdRef.current) return; // interrupted while thinking
       setStatusSafe("speaking");
       for (const seg of segments) {
+        if (myTurn !== turnIdRef.current) break; // barged in mid-narration
         if (!seg?.text) continue;
         highlightRef.current(seg.panelId ?? null);
         try {
           const audio = await synthRef.current(seg.text);
+          if (myTurn !== turnIdRef.current) break;
           await playSegmentAudio(audio.audio);
         } catch {
           // If one segment fails to synthesize, keep narrating the rest.
         }
       }
+      if (myTurn !== turnIdRef.current) return; // a new turn already owns state
       highlightRef.current(null);
       busyRef.current = false;
       // Turn complete: drop to idle and wait. Push-to-talk never re-arms on its
@@ -318,6 +365,7 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
       setStatusSafe("idle");
       completeRef.current?.();
     } catch {
+      if (myTurn !== turnIdRef.current) return;
       highlightRef.current(null);
       busyRef.current = false;
       setError("Something went wrong while responding. Tap retry to try again.");
@@ -358,8 +406,15 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
 
   const stopVoice = useCallback(() => {
     heldRef.current = false;
+    turnIdRef.current++;
     recognitionRef.current.abort();
     stopMicAnalyser();
+    try {
+      playSourceRef.current?.stop();
+    } catch {
+      /* already stopped */
+    }
+    playSourceRef.current = null;
     playAnalyserRef.current = null;
     busyRef.current = false;
     setInterim("");
