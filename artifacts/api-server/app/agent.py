@@ -130,11 +130,27 @@ def _tools() -> list:
         }},
         {"type": "function", "function": {
             "name": "add_tca_report",
-            "description": f"Add a Transaction Cost Analysis (TCA) report comparing execution price to VWAP/TWAP benchmarks and showing implementation shortfall for one ticker. Use when the user asks about TCA, execution quality, slippage, or benchmark comparison. {sizing}",
+            "description": (
+                f"Add an Execution Simulation & Transaction Cost Analysis (TCA) panel. Generates "
+                f"orders, simulates VWAP/TWAP/POV executions against REAL intraday volume, applies a "
+                f"square-root market-impact model, and reports implementation shortfall vs arrival, "
+                f"slippage vs interval VWAP, and cost in bps per name + aggregate. Use when the user "
+                f"asks about TCA, execution quality, slippage, market impact, VWAP/TWAP/POV, or "
+                f"'how much would it cost to trade into a portfolio'. {sizing}"
+            ),
             "parameters": {"type": "object", "properties": {
-                "symbol": {"type": "string", "description": f"Ticker. One of: {syms}"},
+                "symbol": {"type": "string", "description": f"Single-name execution. Ticker, one of: {syms}"},
+                "side": {"type": "string", "enum": ["buy", "sell"], "description": "Order side for the single-symbol case (default buy)."},
+                "notional": {"type": "number", "description": "Order size in USD for the single-symbol case."},
+                "shares": {"type": "number", "description": "Order size in shares for the single-symbol case."},
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": "Portfolio tickers to trade into (pair with target_weights)."},
+                "target_weights": {"type": "array", "items": {"type": "number"}, "description": "Target weights aligned with symbols (fractions or %)."},
+                "current_weights": {"type": "array", "items": {"type": "number"}, "description": "Optional current book weights aligned with symbols (default flat / all-cash)."},
+                "capital": {"type": "number", "description": "Book NAV in USD used to size the weight-diff orders (default 10,000,000)."},
+                "algo": {"type": "string", "enum": ["vwap", "twap", "pov"], "description": "Headline execution algo (default vwap; all three are simulated and compared)."},
+                "pov_rate": {"type": "number", "description": "Participation rate for the POV algo as a fraction (default 0.10)."},
                 "width": {"type": "integer"}, "height": {"type": "integer"},
-            }, "required": ["symbol"]},
+            }},
         }},
         {"type": "function", "function": {
             "name": "add_earnings_transcript",
@@ -556,7 +572,8 @@ def _system_prompt() -> str:
         "- For macro and fixed income: global view → add_macro_dashboard; yield curve → add_yield_curve; "
         "bond RV → add_bond_rv; CDS → add_cds_pricer; duration/cash flows → add_cashflow_duration.\n"
         "- For microstructure/execution requests: order book → add_order_book; trade flow/unusual activity → add_trade_flow; "
-        "TCA/slippage → add_tca_report.\n"
+        "TCA / execution simulation / slippage / market impact / VWAP-TWAP-POV / 'cost to trade into a portfolio' → add_tca_report "
+        "(pass symbols+target_weights for a portfolio, or symbol+side+notional for one name).\n"
         "- For supply chain requests ('suppliers', 'supply chain', 'vendors'), use add_supply_chain.\n"
         "- For DCF / valuation / intrinsic value requests, use add_dcf_model.\n"
         "- For earnings call / transcript / 'what did management say' requests, use add_earnings_transcript.\n"
@@ -1377,7 +1394,9 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
     wants_screen = any(k in q for k in ["screen", "screener", "scan", "list", "top "])
     wants_order_book = any(k in q for k in ["order book", "orderbook", "bid", "ask", "depth", "level 2", "l2"])
     wants_trade_flow = any(k in q for k in ["unusual", "block", "sweep", "dark pool", "flow", "activity"])
-    wants_tca = any(k in q for k in ["tca", "transaction cost", "slippage", "vwap", "twap", "execution", "impl"])
+    wants_tca = any(k in q for k in ["tca", "transaction cost", "slippage", "vwap", "twap", "pov",
+                                     "execution", "impl", "market impact", "participation rate",
+                                     "execution cost", "cost to trade", "trade into"])
     wants_macro = any(k in q for k in [
         "macro", "cross-asset", "cross asset", "global dashboard", "risk-on", "risk-off",
         "risk on", "risk off", "roro", "rates fx", "inflation dashboard", "china macro",
@@ -1459,11 +1478,28 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         name = data.get_company(sym)["name"]
         return panels, f"{name} trade flow: block prints, dark pool activity and buy/sell imbalance."
 
-    if wants_tca and symbols:
-        sym = symbols[0]
-        add("tca_report", {"symbol": sym}, 12, 5)
-        name = data.get_company(sym)["name"]
-        return panels, f"TCA report for {name}: arrival price vs VWAP/TWAP benchmarks with intraday participation."
+    if wants_tca:
+        params: dict = {}
+        if "sell" in q:
+            params["side"] = "sell"
+        if len(symbols) >= 2:
+            # Treat a multi-name request as a portfolio to trade into equally.
+            params["symbols"] = symbols
+            params["target_weights"] = [round(1.0 / len(symbols), 4)] * len(symbols)
+            add("tca_report", params, 12, 6)
+            return panels, (
+                f"Execution TCA across {len(symbols)} names: VWAP/TWAP/POV simulated on real "
+                "intraday volume, with square-root impact and per-name + aggregate cost in bps."
+            )
+        sym = symbols[0] if symbols else "NVDA"
+        params["symbol"] = sym
+        add("tca_report", params, 12, 6)
+        name = data.get_company(sym)["name"] if data.get_company(sym) else sym
+        side = params.get("side", "buy")
+        return panels, (
+            f"Execution TCA for a {side} in {name}: VWAP/TWAP/POV simulated on real intraday "
+            "volume, with implementation shortfall vs arrival and square-root market impact."
+        )
 
     if wants_macro:
         # Detect theme from query

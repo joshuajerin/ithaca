@@ -10,8 +10,15 @@ points and for the live/mock fallback decision.
 """
 from __future__ import annotations
 
-from . import optimize, riskmodel
+from . import execution, optimize, riskmodel
 from .backtest import run_backtest
+from .execution import (
+    aggregate_tca,
+    daily_vol_from_closes,
+    generate_orders,
+    simulate_all,
+    square_root_impact,
+)
 from .montecarlo import monte_carlo
 from .optimize import (
     Constraints,
@@ -85,4 +92,10 @@ __all__ = [
     "normalize_signal",
     "signal_label",
     "spearman_ic",
+    "execution",
+    "generate_orders",
+    "simulate_all",
+    "square_root_impact",
+    "daily_vol_from_closes",
+    "aggregate_tca",
 ]

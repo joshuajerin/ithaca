@@ -243,26 +243,85 @@ class TradeFlowData(BaseModel):
 
 
 # --- tca_report ---
-class TCABucket(BaseModel):
+class TCAAlgoFill(BaseModel):
+    avgFill: float
+    fillRate: float
+    isBps: float
+    vwapSlipBps: float
+
+
+class TCAScheduleBucket(BaseModel):
     time: str
-    execPrice: float
-    vwap: float
-    twap: float
-    participationRate: float
-    volume: float
+    price: float
+    marketVolume: float
+    childShares: float
+    participation: float
+    cumPct: float
+
+
+class TCAOrder(BaseModel):
+    symbol: str
+    name: str
+    side: str
+    shares: float
+    notional: float
+    price: Optional[float] = None
+    supported: bool
+    reason: Optional[str] = None
+    targetWeight: Optional[float] = None
+    currentWeight: Optional[float] = None
+    deltaWeight: Optional[float] = None
+    arrivalPrice: Optional[float] = None
+    intervalVwap: Optional[float] = None
+    chosenAlgo: Optional[str] = None
+    algos: Optional[Dict[str, TCAAlgoFill]] = None
+    schedule: Optional[List[TCAScheduleBucket]] = None
+    isBps: Optional[float] = None
+    vwapSlipBps: Optional[float] = None
+    impactBps: Optional[float] = None
+    allInBps: Optional[float] = None
+    costUsd: Optional[float] = None
+    fillRate: Optional[float] = None
+    adv: Optional[float] = None
+    dailyVol: Optional[float] = None
+    asOf: Optional[str] = None
+
+
+class TCAModel(BaseModel):
+    name: str
+    formula: str
+    coef: float
+    assumptions: List[str]
+
+
+class TCAAggregate(BaseModel):
+    orderCount: int
+    supportedCount: int
+    unsupportedCount: int
+    grossNotional: float
+    buyNotional: float
+    sellNotional: float
+    isBps: float
+    vwapSlipBps: float
+    impactBps: float
+    allInBps: float
+    totalCostUsd: float
 
 
 class TCARportData(BaseModel):
-    symbol: str
-    name: str
-    arrivalPrice: float
-    avgExecPrice: float
-    vwap: float
-    twap: float
-    implementationShortfall: float
-    vwapSlippage: float
-    twapSlippage: float
-    buckets: List[TCABucket]
+    title: str
+    interval: str
+    intervalLabel: str
+    range: str
+    rangeLabel: str
+    chosenAlgo: str
+    povRate: float
+    benchmarkNote: str
+    model: TCAModel
+    orders: List[TCAOrder]
+    aggregate: TCAAggregate
+    asOf: Optional[str] = None
+    source: Optional[str] = None
 
 
 # --- macro_dashboard ---

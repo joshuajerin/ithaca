@@ -775,62 +775,305 @@ def build_monte_carlo(params: dict) -> dict:
     }
 
 
-def build_tca_report(params: dict) -> dict:
+# ----------------------------- execution simulation & TCA -----------------------------
+# A book NAV used to translate weight deltas into traded notional when the caller
+# does not state one. The execution desk diffs current vs target weights into
+# orders, simulates VWAP/TWAP/POV against REAL intraday volume, applies a
+# transparent square-root impact model, and reports TCA per name + aggregate.
+_TCA_DEFAULT_CAPITAL = 10_000_000.0
+# When only a single symbol is given with no size, simulate a realistic
+# institutional clip: this fraction of the name's average daily volume.
+_TCA_DEFAULT_PARTICIPATION = 0.05
+_TCA_DEFAULT_INTERVAL = "30m"
+_TCA_DEFAULT_RANGE = "1d"
+_TCA_MAX_ORDERS = 12
+_TCA_VOL_DAYS = 90
+
+
+def _tca_resolve_orders(params: dict) -> List[dict]:
+    """Resolve the order list from one of three input shapes (explicit orders,
+    a current-vs-target weight diff, or a single sized/defaulted symbol)."""
+    capital = params.get("capital")
+    try:
+        capital = float(capital) if capital else _TCA_DEFAULT_CAPITAL
+    except (TypeError, ValueError):
+        capital = _TCA_DEFAULT_CAPITAL
+
+    # 1) Explicit orders: [{symbol, side, shares|notional}]
+    raw_orders = params.get("orders")
+    if isinstance(raw_orders, list) and raw_orders:
+        out: List[dict] = []
+        for o in raw_orders:
+            if not isinstance(o, dict):
+                continue
+            sym = (o.get("symbol") or o.get("ticker") or "").upper()
+            c = repo.get_company(sym)
+            if not c:
+                continue
+            px = c["price"]
+            side = (o.get("side") or "buy").lower()
+            shares = o.get("shares")
+            notional = o.get("notional")
+            if shares:
+                shares = abs(float(shares))
+                notional = shares * px
+            elif notional:
+                notional = abs(float(notional))
+                shares = notional / px if px else 0.0
+            else:
+                shares = _TCA_DEFAULT_PARTICIPATION * (c.get("volume") or 0.0)
+                notional = shares * px
+            if shares < 1:
+                continue
+            out.append({"symbol": sym, "name": c["name"], "side": side,
+                        "shares": shares, "notional": notional, "price": px})
+        return out[:_TCA_MAX_ORDERS]
+
+    # 2) Current-vs-target weight diff.
+    syms = [s.upper() for s in (params.get("symbols") or []) if s]
+    tgt = params.get("target_weights") or params.get("weights")
+    if syms and isinstance(tgt, list) and len(tgt) == len(syms):
+        cur = params.get("current_weights") or params.get("current")
+        prices: Dict[str, float] = {}
+        names: Dict[str, str] = {}
+        for s in syms:
+            c = repo.get_company(s)
+            if c:
+                prices[s] = c["price"]
+                names[s] = c["name"]
+        # Auto-normalize weights to fractions if they look like percentages.
+        def _norm(ws):
+            vals = [float(w) for w in ws]
+            tot = sum(abs(v) for v in vals)
+            if tot > 1.5:  # given as percents
+                vals = [v / 100.0 for v in vals]
+            return vals
+        targets = dict(zip(syms, _norm(tgt)))
+        currents = {}
+        if isinstance(cur, list) and len(cur) == len(syms):
+            currents = dict(zip(syms, _norm(cur)))
+        gen = engine.generate_orders(targets, currents, prices, capital)
+        for g in gen:
+            g["name"] = names.get(g["symbol"], g["symbol"])
+        return gen[:_TCA_MAX_ORDERS]
+
+    # 3) Single symbol — default to a realistic clip sized off ADV.
     symbol = (params.get("symbol") or "NVDA").upper()
-    company = data.get_company(symbol)
-    if not company:
+    c = repo.get_company(symbol)
+    if not c:
         raise ValueError(f"Unknown symbol: {symbol}")
-    last = company["price"]
-    seed = data._seed(symbol + "tca")
+    px = c["price"]
+    side = (params.get("side") or "buy").lower()
+    shares = params.get("shares")
+    notional = params.get("notional")
+    participation = params.get("participation")
+    if shares:
+        shares = abs(float(shares))
+        notional = shares * px
+    elif notional:
+        notional = abs(float(notional))
+        shares = notional / px if px else 0.0
+    else:
+        part = float(participation) if participation else _TCA_DEFAULT_PARTICIPATION
+        shares = part * (c.get("volume") or 0.0)
+        notional = shares * px
+    return [{"symbol": symbol, "name": c["name"], "side": side,
+             "shares": shares, "notional": notional, "price": px}]
 
-    def _rnd():
-        nonlocal seed
-        seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
-        return seed / 0x7FFFFFFF
 
-    arrival = round(last * (1 - 0.003 + _rnd() * 0.002), 2)
-    vwap = round(arrival * (1 + (_rnd() - 0.5) * 0.004), 2)
-    twap = round(arrival * (1 + (_rnd() - 0.5) * 0.003), 2)
+def _tca_simulate_order(order: dict, interval: str, rng: str,
+                        pov_rate: float, chosen: str) -> dict:
+    """Simulate one order against real intraday volume and compute TCA.
 
-    buckets = []
-    times = ["09:30", "10:00", "10:30", "11:00", "11:30", "12:00",
-             "12:30", "13:00", "13:30", "14:00", "14:30", "15:00", "15:30"]
-    exec_prices = []
-    bucket_vol = company["volume"] / len(times)
+    Returns a per-order record. If real intraday data is unavailable for the
+    name/window the order is marked ``supported: False`` with a reason rather
+    than being simulated on fabricated volume.
+    """
+    sym = order["symbol"]
+    base = {
+        "symbol": sym, "name": order.get("name", sym), "side": order["side"],
+        "shares": order["shares"], "notional": order["notional"],
+        "price": order.get("price"),
+    }
+    for k in ("targetWeight", "currentWeight", "deltaWeight"):
+        if k in order:
+            base[k] = order[k]
 
-    price_walk = arrival
-    for i, t in enumerate(times):
-        price_walk = round(price_walk * (1 + (_rnd() - 0.49) * 0.003), 2)
-        bvwap = round(vwap * (1 + (_rnd() - 0.5) * 0.002), 2)
-        btwap = round(twap * (1 + (_rnd() - 0.5) * 0.0015), 2)
-        part_rate = round(0.04 + _rnd() * 0.12, 3)
-        vol = round(bucket_vol * (0.7 + _rnd() * 0.6), 0)
-        buckets.append({
-            "time": t,
-            "execPrice": price_walk,
-            "vwap": bvwap,
-            "twap": btwap,
-            "participationRate": part_rate,
-            "volume": vol,
-        })
-        exec_prices.append(price_walk)
+    ysym = data.yahoo_symbol(sym)
+    cache_key = f"intraday:{ysym}:{interval}:{rng}"
+    try:
+        res = cache.cached(cache_key, 60.0,
+                           lambda: p_src.fetch_intraday(ysym, interval, rng))
+        bars = res.get("points") or []
+        sim = engine.simulate_all(bars, order["shares"], order["side"], pov_rate)
+    except p_src.IntradayUnavailable as exc:
+        return {**base, "supported": False,
+                "reason": f"No real intraday volume: {exc}"}
+    except ValueError as exc:
+        return {**base, "supported": False,
+                "reason": f"No real intraday volume: {exc}"}
+    except Exception as exc:  # noqa: BLE001 - any upstream failure -> unsupported
+        return {**base, "supported": False,
+                "reason": f"Intraday fetch failed: {exc}"}
 
-    avg_exec = round(sum(exec_prices) / len(exec_prices), 2)
-    impl_shortfall = round(abs(avg_exec - arrival) / arrival * 10000, 2)
-    vwap_slippage = round(abs(avg_exec - vwap) / vwap * 10000, 2)
-    twap_slippage = round(abs(avg_exec - twap) / twap * 10000, 2)
+    # Real daily volatility (fraction) and ADV for the modeled impact.
+    meta = repo.price_series_meta(sym, days=_TCA_VOL_DAYS)
+    closes = [p.get("c") for p in meta.get("points", [])]
+    daily_vol = engine.daily_vol_from_closes(closes)
+    company = repo.get_company(sym) or {}
+    adv = float(company.get("volume") or 0.0)
+    impact_bps = engine.square_root_impact(order["shares"], adv, daily_vol)
+
+    algos = sim["algos"]
+    chosen_algo = chosen if chosen in algos else "vwap"
+    ch = algos[chosen_algo]
+    is_bps = ch["isBps"]
+    vwap_slip = ch["vwapSlipBps"]
+    all_in = is_bps + impact_bps
 
     return {
-        "symbol": symbol,
-        "name": company["name"],
-        "arrivalPrice": arrival,
-        "avgExecPrice": avg_exec,
-        "vwap": vwap,
-        "twap": twap,
-        "implementationShortfall": impl_shortfall,
-        "vwapSlippage": vwap_slippage,
-        "twapSlippage": twap_slippage,
-        "buckets": buckets,
+        **base,
+        "supported": True,
+        "arrivalPrice": sim["arrival"],
+        "intervalVwap": sim["intervalVwap"],
+        "chosenAlgo": chosen_algo,
+        "algos": {
+            k: {"avgFill": v["avgFill"], "fillRate": v["fillRate"],
+                "isBps": v["isBps"], "vwapSlipBps": v["vwapSlipBps"]}
+            for k, v in algos.items()
+        },
+        "schedule": ch["schedule"],
+        "isBps": is_bps,
+        "vwapSlipBps": vwap_slip,
+        "impactBps": impact_bps,
+        "allInBps": all_in,
+        "costUsd": all_in / 1e4 * order["notional"],
+        "fillRate": ch["fillRate"],
+        "adv": adv,
+        "dailyVol": daily_vol,
+        "asOf": res.get("asOf"),
+    }
+
+
+def _tca_round(order: dict) -> dict:
+    """Round numeric fields of a per-order record for display."""
+    out = dict(order)
+    for k in ("shares", "notional", "adv"):
+        if isinstance(out.get(k), (int, float)):
+            out[k] = round(float(out[k]), 0)
+    for k in ("price", "arrivalPrice", "intervalVwap"):
+        if isinstance(out.get(k), (int, float)):
+            out[k] = round(float(out[k]), 2)
+    for k in ("isBps", "vwapSlipBps", "impactBps", "allInBps", "costUsd"):
+        if isinstance(out.get(k), (int, float)):
+            out[k] = round(float(out[k]), 2)
+    if isinstance(out.get("dailyVol"), (int, float)):
+        out["dailyVol"] = round(float(out["dailyVol"]) * 100.0, 2)  # as %
+    if isinstance(out.get("fillRate"), (int, float)):
+        out["fillRate"] = round(float(out["fillRate"]), 4)
+    if isinstance(out.get("algos"), dict):
+        out["algos"] = {
+            k: {"avgFill": round(v["avgFill"], 2),
+                "fillRate": round(v["fillRate"], 4),
+                "isBps": round(v["isBps"], 2),
+                "vwapSlipBps": round(v["vwapSlipBps"], 2)}
+            for k, v in out["algos"].items()
+        }
+    if isinstance(out.get("schedule"), list):
+        out["schedule"] = [
+            {"time": s["time"], "price": round(s["price"], 2),
+             "marketVolume": round(s["marketVolume"], 0),
+             "childShares": round(s["childShares"], 0),
+             "participation": round(s["participation"], 4),
+             "cumPct": round(s["cumPct"], 4)}
+            for s in out["schedule"]
+        ]
+    return out
+
+
+def build_tca_report(params: dict) -> dict:
+    """Execution simulation + transaction-cost analysis.
+
+    Generates orders (from explicit input, a current-vs-target weight diff, or a
+    single defaulted symbol), simulates VWAP / TWAP / POV executions against the
+    data layer's REAL intraday volume profile, applies a transparent square-root
+    market-impact model, and reports implementation shortfall vs arrival, slippage
+    vs the interval VWAP, and cost in bps per name + aggregate. Real benchmarks
+    (arrival, interval VWAP, bucket prices) are clearly separated from the modeled
+    impact estimate; orders without real intraday data are marked unsupported.
+    """
+    interval = (params.get("interval") or _TCA_DEFAULT_INTERVAL).lower()
+    rng = (params.get("range") or _TCA_DEFAULT_RANGE).lower()
+    chosen = (params.get("algo") or "vwap").lower()
+    try:
+        pov_rate = float(params.get("pov_rate") or engine.execution.DEFAULT_POV_RATE)
+    except (TypeError, ValueError):
+        pov_rate = engine.execution.DEFAULT_POV_RATE
+
+    orders_in = _tca_resolve_orders(params)
+    if not orders_in:
+        raise ValueError("No tradable orders could be generated from the request")
+
+    sim_orders = [_tca_simulate_order(o, interval, rng, pov_rate, chosen)
+                  for o in orders_in]
+    agg = engine.aggregate_tca(sim_orders)
+
+    supported = [o for o in sim_orders if o.get("supported")]
+    as_ofs = [o["asOf"] for o in supported if o.get("asOf")]
+    if supported:
+        source = "live" if len(supported) == len(sim_orders) else "mixed"
+    else:
+        source = "unavailable"
+
+    # Title reflects the workflow scope.
+    if len(sim_orders) == 1:
+        o0 = sim_orders[0]
+        title = f"Execution TCA — {o0['side'].upper()} {o0['symbol']}"
+    else:
+        title = f"Execution TCA — {len(sim_orders)} orders"
+
+    rounded = [_tca_round(o) for o in sim_orders]
+    agg_round = {
+        "orderCount": agg["orderCount"],
+        "supportedCount": agg["supportedCount"],
+        "unsupportedCount": agg["unsupportedCount"],
+        "grossNotional": round(agg["grossNotional"], 0),
+        "buyNotional": round(agg["buyNotional"], 0),
+        "sellNotional": round(agg["sellNotional"], 0),
+        "isBps": round(agg["isBps"], 2),
+        "vwapSlipBps": round(agg["vwapSlipBps"], 2),
+        "impactBps": round(agg["impactBps"], 2),
+        "allInBps": round(agg["allInBps"], 2),
+        "totalCostUsd": round(agg["totalCostUsd"], 0),
+    }
+
+    return {
+        "title": title,
+        "interval": interval,
+        "intervalLabel": _INTERVAL_LABELS.get(interval, interval),
+        "range": rng,
+        "rangeLabel": _RANGE_LABELS.get(rng, rng),
+        "chosenAlgo": chosen if chosen in engine.execution.ALGOS else "vwap",
+        "povRate": round(pov_rate, 3),
+        "benchmarkNote": (
+            "Arrival price, interval VWAP and bucket prices are realized from real "
+            "intraday bars. Market impact is a square-root model estimate, shown "
+            "separately from the real-data benchmarks."
+        ),
+        "model": {
+            "name": "Square-root market impact (Almgren-style)",
+            "formula": "cost(bps) = Y · σ_daily · √(Q / ADV) · 1e4",
+            "coef": engine.execution.DEFAULT_IMPACT_COEF,
+            "assumptions": [
+                f"σ_daily from real daily returns ({_TCA_VOL_DAYS}d)",
+                "ADV ≈ latest real daily volume",
+                f"Y = {engine.execution.DEFAULT_IMPACT_COEF}",
+            ],
+        },
+        "orders": rounded,
+        "aggregate": agg_round,
+        "asOf": max(as_ofs) if as_ofs else None,
+        "source": source,
     }
 
 
@@ -3387,16 +3630,21 @@ _reg(SkillDef(
     build_trade_flow, "Trade Flow",
 ))
 _reg(SkillDef(
-    "tca-report", "Transaction Cost Analysis", "tca_report",
-    "Compares execution price to VWAP/TWAP benchmarks and breaks down participation rate across "
-    "intraday 30-minute buckets. Use when the user asks about TCA, execution quality, slippage, "
-    "or implementation shortfall.",
+    "tca-report", "Execution Simulation & TCA", "tca_report",
+    "Runs the execution desk: turns a current-vs-target book (or an explicit order / single name) "
+    "into orders, simulates VWAP/TWAP/POV executions against REAL intraday volume, applies a "
+    "transparent square-root market-impact model, and reports implementation shortfall vs arrival, "
+    "slippage vs interval VWAP, and cost in bps per name and aggregate — clearly separating "
+    "real-data benchmarks from the modeled impact, and marking orders without real intraday data "
+    "as unsupported. Use when the user asks about TCA, execution quality, slippage, market impact, "
+    "VWAP/TWAP/POV, or the cost of trading into a portfolio.",
     [
-        {"name": "resolve_symbol", "description": "Map the request to a known ticker.", "expectedOutput": "A valid ticker."},
-        {"name": "compute_benchmarks", "description": "Derive arrival price, VWAP, TWAP and average execution price.", "expectedOutput": "Benchmark comparison values."},
-        {"name": "build_buckets", "description": "Break execution into 30-minute intraday buckets with participation rate.", "expectedOutput": "A list of bucket records."},
+        {"name": "generate_orders", "description": "Diff the current book against target weights (or take explicit orders) into buys/sells with side and size.", "expectedOutput": "A list of orders with side, shares and notional."},
+        {"name": "simulate_algos", "description": "Simulate VWAP/TWAP/POV executions against real intraday volume, returning fill price, schedule and fill rate; mark unsupported when no real intraday data.", "expectedOutput": "Per-order algo fills and schedules."},
+        {"name": "model_impact", "description": "Apply the square-root market-impact model to real volume + real daily vol as a labeled estimate.", "expectedOutput": "Modeled impact in bps per order."},
+        {"name": "report_tca", "description": "Compute implementation shortfall vs arrival, slippage vs interval VWAP, and per-name + aggregate cost in bps.", "expectedOutput": "A TCA payload with realized and modeled components."},
     ],
-    build_tca_report, "TCA Report",
+    build_tca_report, "Execution TCA",
 ))
 _reg(SkillDef(
     "macro-dashboard", "Macro & Cross-Asset Dashboard", "macro_dashboard",
