@@ -31,6 +31,8 @@ DATA_MODELS = {
     "monte_carlo": models.MonteCarloData,
     "correlation_matrix": models.CorrelationMatrixData,
     "factor_analysis": models.FactorAnalysisData,
+    "risk_model": models.RiskModelData,
+    "factor_exposures": models.FactorExposureData,
     "iv_surface": models.IVSurfaceData,
     "options_strategy": models.OptionsStrategyData,
     "vol_term_structure": models.VolTermStructureData,

@@ -28,6 +28,8 @@ class PanelType(str, Enum):
     backtest = "backtest"
     correlation_matrix = "correlation_matrix"
     factor_analysis = "factor_analysis"
+    risk_model = "risk_model"
+    factor_exposures = "factor_exposures"
     iv_surface = "iv_surface"
     options_strategy = "options_strategy"
     vol_term_structure = "vol_term_structure"
@@ -588,6 +590,78 @@ class FactorAnalysisData(BaseModel):
     loadings: List[FactorLoading]
 
 
+# --- risk_model ---
+class ExcludedName(BaseModel):
+    symbol: str
+    reason: str
+
+
+class RiskCoverage(BaseModel):
+    included: int
+    excluded: int
+    excludedNames: List[ExcludedName]
+    days: int
+    source: str
+    pcaVarExplained: List[float]
+
+
+class FactorContribution(BaseModel):
+    factor: str
+    exposure: float
+    volContribution: float
+    pctOfRisk: float
+
+
+class RiskHolding(BaseModel):
+    symbol: str
+    name: str
+    weight: float
+    mctr: float
+    pctOfRisk: float
+    specificVol: float
+
+
+class RiskModelData(BaseModel):
+    portfolioName: str
+    totalVol: float
+    factorVol: float
+    specificVol: float
+    factorVarPct: float
+    specificVarPct: float
+    diversificationRatio: float
+    rSquared: float
+    factorContributions: List[FactorContribution]
+    holdings: List[RiskHolding]
+    coverage: RiskCoverage
+
+
+# --- factor_exposures ---
+class FactorPremium(BaseModel):
+    factor: str
+    exposure: float
+    factorReturn: float
+    tStat: float
+
+
+class HoldingExposure(BaseModel):
+    symbol: str
+    name: str
+    weight: float
+    market: float
+    size: float
+    value: float
+    momentum: float
+    volatility: float
+    quality: float
+
+
+class FactorExposureData(BaseModel):
+    portfolioName: str
+    exposures: List[FactorPremium]
+    holdings: List[HoldingExposure]
+    coverage: RiskCoverage
+
+
 # --- supply_chain ---
 class SupplyChainNode(BaseModel):
     id: str
@@ -785,6 +859,8 @@ PanelData = Union[
     BacktestData,
     CorrelationMatrixData,
     FactorAnalysisData,
+    RiskModelData,
+    FactorExposureData,
     IVSurfaceData,
     OptionsStrategyData,
     VolTermStructureData,

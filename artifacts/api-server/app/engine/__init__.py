@@ -10,8 +10,16 @@ points and for the live/mock fallback decision.
 """
 from __future__ import annotations
 
+from . import riskmodel
 from .backtest import run_backtest
 from .montecarlo import monte_carlo
+from .riskmodel import (
+    FactorModel,
+    PortfolioRisk,
+    build_model,
+    decompose_portfolio,
+    pca_variance,
+)
 from .scenario import combine_returns, project_scenario
 from .stats import (
     cagr,
@@ -37,4 +45,10 @@ __all__ = [
     "STRATEGIES",
     "available_strategies",
     "normalize_strategy",
+    "riskmodel",
+    "FactorModel",
+    "PortfolioRisk",
+    "build_model",
+    "decompose_portfolio",
+    "pca_variance",
 ]

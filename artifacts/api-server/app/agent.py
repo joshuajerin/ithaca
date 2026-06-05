@@ -241,6 +241,26 @@ def _tools() -> list:
             }, "required": ["symbol"]},
         }},
         {"type": "function", "function": {
+            "name": "add_risk_model",
+            "description": f"Add a Barra-style multi-factor risk decomposition for a portfolio: splits predicted volatility into common-factor vs stock-specific risk, shows each factor's share of risk, the marginal contribution to risk (MCTR) of every holding, the diversification ratio, and an honest coverage block. Use for risk decomposition, factor vs specific risk, MCTR, or risk-model requests. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Portfolio tickers. Valid: {syms}"},
+                "weights": {"type": "array", "items": {"type": "number"}, "description": "Optional portfolio weights aligned with symbols (auto-normalized; equal-weight if omitted)."},
+                "portfolio_name": {"type": "string", "description": "Optional display name for the portfolio."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbols"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_factor_exposures",
+            "description": f"Add a portfolio factor-tilt panel: weighted-average standardized exposures to Market, Size, Value, Momentum, Volatility, and Quality, with realized factor premia (annualized return + t-stat) and a per-holding exposure breakdown. Use for factor tilts, style exposures, or how a portfolio is positioned across factors. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Portfolio tickers. Valid: {syms}"},
+                "weights": {"type": "array", "items": {"type": "number"}, "description": "Optional portfolio weights aligned with symbols (auto-normalized; equal-weight if omitted)."},
+                "portfolio_name": {"type": "string", "description": "Optional display name for the portfolio."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbols"]},
+        }},
+        {"type": "function", "function": {
             "name": "add_iv_surface",
             "description": f"Add an implied volatility surface heatmap for a ticker. {sizing} Use for vol surface, IV surface, or skew requests.",
             "parameters": {"type": "object", "properties": {
@@ -402,6 +422,8 @@ _TOOL_TO_TYPE = {
     "add_monte_carlo": "monte_carlo",
     "add_correlation_matrix": "correlation_matrix",
     "add_factor_analysis": "factor_analysis",
+    "add_risk_model": "risk_model",
+    "add_factor_exposures": "factor_exposures",
     "add_iv_surface": "iv_surface",
     "add_options_strategy": "options_strategy",
     "add_vol_term_structure": "vol_term_structure",
@@ -473,6 +495,10 @@ def _system_prompt() -> str:
         "- For M&A / deal flow / mergers / acquisitions / arb spread requests, use add_ma_tracker.\n"
         "- For backtest / strategy / Sharpe / drawdown requests, use add_backtest. For Monte Carlo / "
         "simulation / forward projection / 'probability of loss' / scenario forecast requests, use add_monte_carlo.\n"
+        "- For portfolio risk requests, pick the right panel: risk decomposition / factor vs specific risk / "
+        "MCTR / 'where is my risk coming from' / risk model → add_risk_model; factor tilts / style exposures / "
+        "'how is my portfolio positioned across factors' → add_factor_exposures; simple VaR / tracking error → "
+        "add_portfolio_risk. A risk model + factor exposures pair makes a strong portfolio-risk dashboard.\n"
         "- For company analytics requests ('why is X up/down', 'what drives X', 'analyze X vs competitors', "
         "'company analytics for X', 'competition for X', 'price drivers for X'), use add_company_analytics.\n"
         "- For data-layer requests: universe/coverage/'what's tracked'/'live vs mock' → add_data_universe; "
@@ -954,6 +980,8 @@ _TYPE_LABELS = {
     "monte_carlo": "a Monte Carlo simulation",
     "correlation_matrix": "a correlation matrix",
     "factor_analysis": "a factor analysis",
+    "risk_model": "a multi-factor risk model",
+    "factor_exposures": "a factor exposure panel",
     "iv_surface": "an IV surface",
     "options_strategy": "an options strategy",
     "vol_term_structure": "a vol term structure",
@@ -1080,6 +1108,8 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
     wants_cds = any(k in q for k in ["cds", "credit default swap", "credit risk", "default swap", "survival prob"])
     wants_cashflow = any(k in q for k in ["cash flow", "cashflow", "duration", "convexity", "dv01", "rate sensitivity", "bond cash", "modified duration"])
     wants_risk = any(k in q for k in ["risk", "var", "value at risk", "tracking error", "factor exposure", "portfolio risk"])
+    wants_riskmodel = any(k in q for k in ["risk model", "risk decomp", "decompose risk", "factor vs specific", "specific risk", "mctr", "marginal contribution", "where is my risk", "risk contribution", "factor risk"])
+    wants_factor_exposures = any(k in q for k in ["factor exposure", "factor tilt", "style exposure", "style tilt", "factor loading", "factor premia", "positioned across factors"])
     wants_backtest = any(k in q for k in ["backtest", "back test", "back-test", "momentum strategy", "strategy", "sharpe", "cagr", "drawdown"])
     wants_montecarlo = any(k in q for k in ["monte carlo", "montecarlo", "monte-carlo", "simulate", "simulation", "forward project", "project price", "scenario analysis", "probability of loss", "forecast price", "gbm", "geometric brownian", "bootstrap"])
     wants_correlation = any(k in q for k in ["correlation", "correlat", "hedge ratio", "co-movement", "diversif", "beta table"])
@@ -1272,6 +1302,19 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         add("cashflow_duration", {"bond": bond_key}, 8, 6)
         add("yield_curve", {"region": "US"}, 4, 5)
         return panels, f"Cash flow schedule, duration/convexity, and rate-shock scenarios for {bond_key}."
+
+    if wants_riskmodel or wants_factor_exposures:
+        port_syms = symbols if symbols else ["NVDA", "MSFT", "GOOGL", "META", "AMZN"]
+        label = ", ".join(port_syms[:3]) + ("..." if len(port_syms) > 3 else "")
+        if wants_riskmodel:
+            add("risk_model", {"symbols": port_syms}, 7, 6)
+            add("factor_exposures", {"symbols": port_syms}, 5, 6)
+            summary = f"Multi-factor risk model for {label}: factor vs specific risk, per-factor contributions, and MCTR per holding."
+        else:
+            add("factor_exposures", {"symbols": port_syms}, 7, 6)
+            add("risk_model", {"symbols": port_syms}, 5, 6)
+            summary = f"Factor exposures for {label}: style tilts, factor premia, and per-holding loadings."
+        return panels, summary
 
     if wants_risk:
         port_syms = symbols if symbols else ["NVDA", "MSFT", "GOOGL", "META", "AMZN"]

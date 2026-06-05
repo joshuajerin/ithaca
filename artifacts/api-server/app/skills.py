@@ -9,7 +9,7 @@ import uuid
 from datetime import date, timedelta
 from typing import Callable, Dict, List, Optional
 
-from . import ai, cache, data, db, engine, quality, repo
+from . import ai, cache, data, db, engine, factor_model, quality, repo
 from .sources import prices as p_src
 
 RANGE_DAYS = {"1M": 30, "3M": 90, "6M": 180, "1Y": 250, "YTD": 120}
@@ -580,25 +580,25 @@ def build_portfolio_risk(params: dict) -> dict:
     else:
         bins = [{"bin": round(-4.0 + i * 0.4, 2), "count": 1} for i in range(20)]
 
-    # Factor exposures: Market beta is the real cap-weighted-ish average beta of
-    # the holdings; the remaining style tilts are deterministic approximations.
+    # Factor exposures: the portfolio's REAL tilts from the multi-factor model
+    # (weighted-average exposure to each factor). Market beta is the average beta
+    # of the holdings. If the model can't be estimated we fall back to Market beta
+    # alone rather than inventing style tilts.
     betas = {s: repo.get_company(s)["beta"] for s in symbols}
     avg_beta = round(sum(betas.values()) / len(betas), 2)
-    seed = data._seed("_".join(sorted(symbols)))
-
-    def rnd():
-        nonlocal seed
-        seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
-        return seed / 0x7FFFFFFF
-
-    factor_exposures = [
-        {"factor": "Market", "exposure": round(avg_beta, 2)},
-        {"factor": "Momentum", "exposure": round(0.3 + rnd() * 0.5, 2)},
-        {"factor": "Size", "exposure": round(-0.2 + rnd() * 0.4, 2)},
-        {"factor": "Value", "exposure": round(-0.4 + rnd() * 0.4, 2)},
-        {"factor": "Quality", "exposure": round(0.1 + rnd() * 0.5, 2)},
-        {"factor": "Volatility", "exposure": round(0.2 + rnd() * 0.4, 2)},
-    ]
+    try:
+        _res = factor_model.build(symbols)
+        _idx, _w, _ = factor_model.portfolio_indices(
+            _res, symbols, [1.0 / len(symbols)] * len(symbols)
+        )
+        _pr = engine.decompose_portfolio(_res.model, _idx, _w)
+        factor_exposures = [
+            {"factor": fn, "exposure": round(float(_pr.factor_exposures[kk]), 2)}
+            for kk, fn in enumerate(_res.model.factor_names)
+        ]
+        avg_beta = round(float(_pr.factor_exposures[0]), 2)
+    except Exception:  # noqa: BLE001 — keep the VaR panel even if the model fails
+        factor_exposures = [{"factor": "Market", "exposure": avg_beta}]
 
     summary = {
         "portfolioName": portfolio_name,
@@ -1641,44 +1641,219 @@ def build_correlation_matrix(params: dict) -> dict:
 
 
 def build_factor_analysis(params: dict) -> dict:
+    """Single-stock factor return attribution from the REAL Barra-style model.
+
+    Loadings are the stock's standardized factor exposures; the t-stat is each
+    factor's own return significance over the window and the contribution is the
+    exposure times the annualized factor return. Monthly attribution splits the
+    stock's realized monthly return into named-factor contributions plus a
+    residual that absorbs everything else (market, volatility, idiosyncratic).
+    """
+    import numpy as np
+    from collections import OrderedDict
+
     symbol = (params.get("symbol") or "AAPL").upper()
     company = data.get_company(symbol)
     if not company:
         symbol = "AAPL"
         company = data.get_company(symbol)
-    
-    seed = data._seed(symbol + "factor")
 
-    def rnd():
-        nonlocal seed
-        seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
-        return seed / 0x7FFFFFFF
+    res = factor_model.build([symbol])
+    model = res.model
+    if symbol not in model.symbols:
+        raise ValueError(
+            f"{symbol} lacks the price history or fundamentals needed to factor-model it"
+        )
+    i = model.symbols.index(symbol)
+    names = model.factor_names
+    fidx = {n: k for k, n in enumerate(names)}
+    expo = model.exposures[i]  # [Market, Size, Value, Momentum, Volatility, Quality]
 
-    factors = ["Momentum", "Value", "Size", "Quality", "Residual"]
+    # The panel charts these four named factors; residual captures the rest.
+    panel_factors = ["Momentum", "Value", "Size", "Quality"]
+
+    stock_rets = res.returns[:, i]  # (T,)
+    F = model.factor_returns  # (T, K)
+    dates = res.dates  # length T
+
+    # Group daily contributions by calendar month.
+    months: "OrderedDict[str, dict]" = OrderedDict()
+    for t, d in enumerate(dates):
+        ym = d[:7]
+        m = months.setdefault(
+            ym, {"stock": 0.0, **{f: 0.0 for f in panel_factors}}
+        )
+        # Compound daily contributions within the month for honest monthly numbers.
+        m["stock"] = (1.0 + m["stock"]) * (1.0 + float(stock_rets[t])) - 1.0
+        for f in panel_factors:
+            contrib = float(expo[fidx[f]] * F[t, fidx[f]])
+            m[f] = (1.0 + m[f]) * (1.0 + contrib) - 1.0
+
     attribution = []
-    today = date.today()
-    for i in range(12):
-        month = (today - timedelta(days=30 * (11 - i))).strftime("%b %y")
-        # Ensure they sum to something reasonable
-        vals = {f: round((rnd() - 0.5) * 4.0, 2) for f in factors}
-        attribution.append({"month": month, **vals})
+    for ym, m in list(months.items())[-12:]:
+        named = {f: round(m[f] * 100.0, 2) for f in panel_factors}
+        residual = round((m["stock"] - sum(m[f] for f in panel_factors)) * 100.0, 2)
+        attribution.append({
+            "month": ym,
+            "momentum": named["Momentum"],
+            "value": named["Value"],
+            "size": named["Size"],
+            "quality": named["Quality"],
+            "residual": residual,
+        })
 
     loadings = []
-    for f in factors[:-1]: # exclude residual for loadings
-        loading = round(rnd() * 1.5, 2)
-        t_stat = round(1.5 + rnd() * 3.0, 2)
+    for f in panel_factors:
+        k = fidx[f]
         loadings.append({
             "factor": f,
-            "loading": loading,
-            "tStat": t_stat,
-            "contribution": round(loading * 10, 1)
+            "loading": round(float(expo[k]), 2),
+            "tStat": round(float(res.factor_tstats[f]), 2),
+            "contribution": round(float(expo[k] * res.factor_ann_returns[f]) * 100.0, 2),
         })
 
     return {
         "symbol": symbol,
         "name": company["name"],
         "monthlyAttribution": attribution,
-        "loadings": loadings
+        "loadings": loadings,
+        "asOf": res.coverage.as_of,
+        "source": res.coverage.source,
+    }
+
+
+def _coverage_payload(res: "factor_model.RiskModelResult", dropped: list) -> dict:
+    """Honest coverage block shared by the risk-model panels."""
+    excluded = list(res.coverage.excluded)
+    seen = {e["symbol"] for e in excluded}
+    for s in dropped:
+        if s not in seen:
+            excluded.append({"symbol": s, "reason": "insufficient overlapping history"})
+            seen.add(s)
+    return {
+        "included": len(res.coverage.included),
+        "excluded": len(excluded),
+        "excludedNames": excluded[:12],
+        "days": res.coverage.days,
+        "source": res.coverage.source,
+        "pcaVarExplained": [round(x, 4) for x in res.pca],
+    }
+
+
+def _resolve_portfolio(params: dict):
+    """Resolve (name, symbols, weights) from params with sane defaults."""
+    symbols = [s.upper() for s in (params.get("symbols") or []) if repo.get_company(s.upper())]
+    if not symbols:
+        symbols = ["NVDA", "MSFT", "GOOGL", "META", "AMZN"]
+    pairs = factor_model.resolve_weights(symbols, params.get("weights"))
+    syms = [s for s, _ in pairs]
+    ws = [w for _, w in pairs]
+    name = params.get("portfolio_name") or (
+        ", ".join(syms[:3]) + (" + …" if len(syms) > 3 else "") + " Portfolio"
+    )
+    return name, syms, ws
+
+
+def build_risk_model(params: dict) -> dict:
+    """Portfolio risk decomposition from the real multi-factor model.
+
+    Splits predicted volatility into factor vs specific risk, attributes risk to
+    each common factor, and reports the marginal contribution to risk of every
+    holding — with an explicit coverage block listing any names that had to be
+    excluded for want of history or fundamentals.
+    """
+    import numpy as np
+
+    name, syms, ws = _resolve_portfolio(params)
+    res = factor_model.build(syms)
+    model = res.model
+    idx, w, dropped = factor_model.portfolio_indices(res, syms, ws)
+    pr = engine.decompose_portfolio(model, idx, w)
+
+    holdings = []
+    for k, i in enumerate(idx):
+        s = model.symbols[i]
+        c = data.get_company(s)
+        holdings.append({
+            "symbol": s,
+            "name": c["name"] if c else s,
+            "weight": round(float(w[k]) * 100.0, 2),
+            "mctr": round(float(pr.mctr[k]) * 100.0, 2),
+            "pctOfRisk": round(float(pr.pct_contrib[k]), 2),
+            "specificVol": round(float(np.sqrt(model.specific_var[i])) * 100.0, 2),
+        })
+    holdings.sort(key=lambda h: h["pctOfRisk"], reverse=True)
+
+    factor_contributions = []
+    for kk, fn in enumerate(model.factor_names):
+        factor_contributions.append({
+            "factor": fn,
+            "exposure": round(float(pr.factor_exposures[kk]), 3),
+            "volContribution": round(float(pr.factor_vol_contrib[kk]) * 100.0, 2),
+            "pctOfRisk": round(float(pr.factor_var_contrib[kk]), 2),
+        })
+
+    return {
+        "portfolioName": name,
+        "totalVol": round(pr.total_vol * 100.0, 2),
+        "factorVol": round(pr.factor_vol * 100.0, 2),
+        "specificVol": round(pr.specific_vol * 100.0, 2),
+        "factorVarPct": round(pr.factor_var_pct, 2),
+        "specificVarPct": round(pr.specific_var_pct, 2),
+        "diversificationRatio": round(pr.diversification_ratio, 2),
+        "rSquared": round(model.r2, 3),
+        "factorContributions": factor_contributions,
+        "holdings": holdings,
+        "coverage": _coverage_payload(res, dropped),
+        "asOf": res.coverage.as_of,
+        "source": res.coverage.source,
+    }
+
+
+def build_factor_exposures(params: dict) -> dict:
+    """Portfolio factor tilts: the weighted-average exposure to each factor plus
+    a per-holding exposure breakdown, alongside the realized factor premia."""
+    name, syms, ws = _resolve_portfolio(params)
+    res = factor_model.build(syms)
+    model = res.model
+    idx, w, dropped = factor_model.portfolio_indices(res, syms, ws)
+    pr = engine.decompose_portfolio(model, idx, w)
+
+    exposures = []
+    for kk, fn in enumerate(model.factor_names):
+        exposures.append({
+            "factor": fn,
+            "exposure": round(float(pr.factor_exposures[kk]), 3),
+            "factorReturn": round(float(res.factor_ann_returns[fn]) * 100.0, 2),
+            "tStat": round(float(res.factor_tstats[fn]), 2),
+        })
+
+    name_idx = {n: k for k, n in enumerate(model.factor_names)}
+    holdings = []
+    for k, i in enumerate(idx):
+        s = model.symbols[i]
+        c = data.get_company(s)
+        row = model.exposures[i]
+        holdings.append({
+            "symbol": s,
+            "name": c["name"] if c else s,
+            "weight": round(float(w[k]) * 100.0, 2),
+            "market": round(float(row[name_idx["Market"]]), 2),
+            "size": round(float(row[name_idx["Size"]]), 2),
+            "value": round(float(row[name_idx["Value"]]), 2),
+            "momentum": round(float(row[name_idx["Momentum"]]), 2),
+            "volatility": round(float(row[name_idx["Volatility"]]), 2),
+            "quality": round(float(row[name_idx["Quality"]]), 2),
+        })
+    holdings.sort(key=lambda h: h["weight"], reverse=True)
+
+    return {
+        "portfolioName": name,
+        "exposures": exposures,
+        "holdings": holdings,
+        "coverage": _coverage_payload(res, dropped),
+        "asOf": res.coverage.as_of,
+        "source": res.coverage.source,
     }
 
 
@@ -2750,6 +2925,39 @@ _reg(SkillDef(
         {"name": "compute_loadings", "description": "Estimate factor loadings and t-statistics.", "expectedOutput": "Factor loading table."},
     ],
     build_factor_analysis, "Factor Analysis",
+))
+_reg(SkillDef(
+    "risk-model", "Multi-Factor Risk Model", "risk_model",
+    "Decomposes a portfolio's predicted volatility into common-factor risk vs "
+    "stock-specific risk using a Barra-style multi-factor model (Market + Size, "
+    "Value, Momentum, Volatility, Quality). Reports each factor's share of risk, "
+    "the marginal contribution to risk (MCTR) of every holding, total/factor/"
+    "specific volatility, the diversification ratio, and an honest coverage block "
+    "naming any holdings excluded for lack of history or fundamentals. Use when "
+    "the user asks to decompose portfolio risk, factor vs specific risk, MCTR, "
+    "risk contribution, or for a risk model.",
+    [
+        {"name": "resolve_portfolio", "description": "Map the requested tickers and weights to a normalized portfolio.", "expectedOutput": "A list of weighted holdings."},
+        {"name": "estimate_factor_model", "description": "Estimate factor returns, factor covariance, and specific risk from real cross-sectional data.", "expectedOutput": "A fitted factor model with coverage."},
+        {"name": "decompose_risk", "description": "Split predicted volatility into factor vs specific risk and per-factor contributions.", "expectedOutput": "Risk decomposition with factor contributions."},
+        {"name": "compute_mctr", "description": "Derive each holding's marginal contribution to total risk.", "expectedOutput": "Per-holding MCTR and percent of risk."},
+    ],
+    build_risk_model, "Risk Model",
+))
+_reg(SkillDef(
+    "factor-exposures", "Portfolio Factor Exposures", "factor_exposures",
+    "Shows a portfolio's tilt toward each style factor (Market, Size, Value, "
+    "Momentum, Volatility, Quality) as weighted-average standardized exposures, "
+    "alongside the realized factor premia (annualized factor return + t-stat) and "
+    "a per-holding exposure breakdown. Use when the user asks about factor tilts, "
+    "style exposures, factor loadings of a portfolio, or how a portfolio is "
+    "positioned across factors.",
+    [
+        {"name": "resolve_portfolio", "description": "Map the requested tickers and weights to a normalized portfolio.", "expectedOutput": "A list of weighted holdings."},
+        {"name": "estimate_factor_model", "description": "Estimate standardized factor exposures from real fundamentals and returns.", "expectedOutput": "A fitted factor model with coverage."},
+        {"name": "aggregate_exposures", "description": "Compute weighted-average portfolio exposures and per-holding tilts.", "expectedOutput": "Factor tilt table and per-holding exposures."},
+    ],
+    build_factor_exposures, "Factor Exposures",
 ))
 
 

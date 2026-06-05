@@ -26,6 +26,8 @@ export const PanelType = {
   monte_carlo: 'monte_carlo',
   correlation_matrix: 'correlation_matrix',
   factor_analysis: 'factor_analysis',
+  risk_model: 'risk_model',
+  factor_exposures: 'factor_exposures',
   order_book: 'order_book',
   trade_flow: 'trade_flow',
   tca_report: 'tca_report',
@@ -362,7 +364,77 @@ export interface FactorAnalysisData {
   loadings: FactorLoading[];
 }
 
-export type PanelData = PriceChartData | NewsData | AnalysisData | FundamentalsData | ScreenerData | HeatmapData | SentimentData | ComparisonData | PortfolioRiskData | BacktestData | MonteCarloData | CorrelationMatrixData | FactorAnalysisData;
+export interface ExcludedName {
+  symbol: string;
+  reason: string;
+}
+
+export interface RiskCoverage {
+  included: number;
+  excluded: number;
+  excludedNames: ExcludedName[];
+  days: number;
+  source: string;
+  pcaVarExplained: number[];
+}
+
+export interface FactorContribution {
+  factor: string;
+  exposure: number;
+  volContribution: number;
+  pctOfRisk: number;
+}
+
+export interface RiskHolding {
+  symbol: string;
+  name: string;
+  weight: number;
+  mctr: number;
+  pctOfRisk: number;
+  specificVol: number;
+}
+
+export interface RiskModelData {
+  portfolioName: string;
+  totalVol: number;
+  factorVol: number;
+  specificVol: number;
+  factorVarPct: number;
+  specificVarPct: number;
+  diversificationRatio: number;
+  rSquared: number;
+  factorContributions: FactorContribution[];
+  holdings: RiskHolding[];
+  coverage: RiskCoverage;
+}
+
+export interface FactorPremium {
+  factor: string;
+  exposure: number;
+  factorReturn: number;
+  tStat: number;
+}
+
+export interface HoldingExposure {
+  symbol: string;
+  name: string;
+  weight: number;
+  market: number;
+  size: number;
+  value: number;
+  momentum: number;
+  volatility: number;
+  quality: number;
+}
+
+export interface FactorExposureData {
+  portfolioName: string;
+  exposures: FactorPremium[];
+  holdings: HoldingExposure[];
+  coverage: RiskCoverage;
+}
+
+export type PanelData = PriceChartData | NewsData | AnalysisData | FundamentalsData | ScreenerData | HeatmapData | SentimentData | ComparisonData | PortfolioRiskData | BacktestData | MonteCarloData | CorrelationMatrixData | FactorAnalysisData | RiskModelData | FactorExposureData;
 
 export interface Panel {
   id: string;

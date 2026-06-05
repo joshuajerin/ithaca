@@ -25,7 +25,7 @@ export const GetSkillsResponse = zod.object({
   "skills": zod.array(zod.object({
   "id": zod.string(),
   "name": zod.string(),
-  "panelType": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
+  "panelType": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'risk_model', 'factor_exposures', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
   "description": zod.string(),
   "subskills": zod.array(zod.object({
   "name": zod.string(),
@@ -67,7 +67,7 @@ export const GetDefaultDashboardResponse = zod.object({
   "summary": zod.string(),
   "panels": zod.array(zod.object({
   "id": zod.string(),
-  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
+  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'risk_model', 'factor_exposures', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
   "title": zod.string(),
   "layout": zod.object({
   "x": zod.number(),
@@ -277,6 +277,70 @@ export const GetDefaultDashboardResponse = zod.object({
   "tStat": zod.number(),
   "contribution": zod.number()
 }))
+}),zod.object({
+  "portfolioName": zod.string(),
+  "totalVol": zod.number(),
+  "factorVol": zod.number(),
+  "specificVol": zod.number(),
+  "factorVarPct": zod.number(),
+  "specificVarPct": zod.number(),
+  "diversificationRatio": zod.number(),
+  "rSquared": zod.number(),
+  "factorContributions": zod.array(zod.object({
+  "factor": zod.string(),
+  "exposure": zod.number(),
+  "volContribution": zod.number(),
+  "pctOfRisk": zod.number()
+})),
+  "holdings": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "weight": zod.number(),
+  "mctr": zod.number(),
+  "pctOfRisk": zod.number(),
+  "specificVol": zod.number()
+})),
+  "coverage": zod.object({
+  "included": zod.number(),
+  "excluded": zod.number(),
+  "excludedNames": zod.array(zod.object({
+  "symbol": zod.string(),
+  "reason": zod.string()
+})),
+  "days": zod.number(),
+  "source": zod.string(),
+  "pcaVarExplained": zod.array(zod.number())
+})
+}),zod.object({
+  "portfolioName": zod.string(),
+  "exposures": zod.array(zod.object({
+  "factor": zod.string(),
+  "exposure": zod.number(),
+  "factorReturn": zod.number(),
+  "tStat": zod.number()
+})),
+  "holdings": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "weight": zod.number(),
+  "market": zod.number(),
+  "size": zod.number(),
+  "value": zod.number(),
+  "momentum": zod.number(),
+  "volatility": zod.number(),
+  "quality": zod.number()
+})),
+  "coverage": zod.object({
+  "included": zod.number(),
+  "excluded": zod.number(),
+  "excludedNames": zod.array(zod.object({
+  "symbol": zod.string(),
+  "reason": zod.string()
+})),
+  "days": zod.number(),
+  "source": zod.string(),
+  "pcaVarExplained": zod.array(zod.number())
+})
 })]).optional()
 })),
   "narration": zod.array(zod.object({
@@ -301,7 +365,7 @@ export const OrchestrateResponse = zod.object({
   "summary": zod.string(),
   "panels": zod.array(zod.object({
   "id": zod.string(),
-  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
+  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'risk_model', 'factor_exposures', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
   "title": zod.string(),
   "layout": zod.object({
   "x": zod.number(),
@@ -511,6 +575,70 @@ export const OrchestrateResponse = zod.object({
   "tStat": zod.number(),
   "contribution": zod.number()
 }))
+}),zod.object({
+  "portfolioName": zod.string(),
+  "totalVol": zod.number(),
+  "factorVol": zod.number(),
+  "specificVol": zod.number(),
+  "factorVarPct": zod.number(),
+  "specificVarPct": zod.number(),
+  "diversificationRatio": zod.number(),
+  "rSquared": zod.number(),
+  "factorContributions": zod.array(zod.object({
+  "factor": zod.string(),
+  "exposure": zod.number(),
+  "volContribution": zod.number(),
+  "pctOfRisk": zod.number()
+})),
+  "holdings": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "weight": zod.number(),
+  "mctr": zod.number(),
+  "pctOfRisk": zod.number(),
+  "specificVol": zod.number()
+})),
+  "coverage": zod.object({
+  "included": zod.number(),
+  "excluded": zod.number(),
+  "excludedNames": zod.array(zod.object({
+  "symbol": zod.string(),
+  "reason": zod.string()
+})),
+  "days": zod.number(),
+  "source": zod.string(),
+  "pcaVarExplained": zod.array(zod.number())
+})
+}),zod.object({
+  "portfolioName": zod.string(),
+  "exposures": zod.array(zod.object({
+  "factor": zod.string(),
+  "exposure": zod.number(),
+  "factorReturn": zod.number(),
+  "tStat": zod.number()
+})),
+  "holdings": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "weight": zod.number(),
+  "market": zod.number(),
+  "size": zod.number(),
+  "value": zod.number(),
+  "momentum": zod.number(),
+  "volatility": zod.number(),
+  "quality": zod.number()
+})),
+  "coverage": zod.object({
+  "included": zod.number(),
+  "excluded": zod.number(),
+  "excludedNames": zod.array(zod.object({
+  "symbol": zod.string(),
+  "reason": zod.string()
+})),
+  "days": zod.number(),
+  "source": zod.string(),
+  "pcaVarExplained": zod.array(zod.number())
+})
 })]).optional()
 })),
   "narration": zod.array(zod.object({
@@ -566,7 +694,7 @@ export const RefinePanelBody = zod.object({
 
 export const RefinePanelResponse = zod.object({
   "id": zod.string(),
-  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
+  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'risk_model', 'factor_exposures', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product']),
   "title": zod.string(),
   "layout": zod.object({
   "x": zod.number(),
@@ -776,6 +904,70 @@ export const RefinePanelResponse = zod.object({
   "tStat": zod.number(),
   "contribution": zod.number()
 }))
+}),zod.object({
+  "portfolioName": zod.string(),
+  "totalVol": zod.number(),
+  "factorVol": zod.number(),
+  "specificVol": zod.number(),
+  "factorVarPct": zod.number(),
+  "specificVarPct": zod.number(),
+  "diversificationRatio": zod.number(),
+  "rSquared": zod.number(),
+  "factorContributions": zod.array(zod.object({
+  "factor": zod.string(),
+  "exposure": zod.number(),
+  "volContribution": zod.number(),
+  "pctOfRisk": zod.number()
+})),
+  "holdings": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "weight": zod.number(),
+  "mctr": zod.number(),
+  "pctOfRisk": zod.number(),
+  "specificVol": zod.number()
+})),
+  "coverage": zod.object({
+  "included": zod.number(),
+  "excluded": zod.number(),
+  "excludedNames": zod.array(zod.object({
+  "symbol": zod.string(),
+  "reason": zod.string()
+})),
+  "days": zod.number(),
+  "source": zod.string(),
+  "pcaVarExplained": zod.array(zod.number())
+})
+}),zod.object({
+  "portfolioName": zod.string(),
+  "exposures": zod.array(zod.object({
+  "factor": zod.string(),
+  "exposure": zod.number(),
+  "factorReturn": zod.number(),
+  "tStat": zod.number()
+})),
+  "holdings": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "weight": zod.number(),
+  "market": zod.number(),
+  "size": zod.number(),
+  "value": zod.number(),
+  "momentum": zod.number(),
+  "volatility": zod.number(),
+  "quality": zod.number()
+})),
+  "coverage": zod.object({
+  "included": zod.number(),
+  "excluded": zod.number(),
+  "excludedNames": zod.array(zod.object({
+  "symbol": zod.string(),
+  "reason": zod.string()
+})),
+  "days": zod.number(),
+  "source": zod.string(),
+  "pcaVarExplained": zod.array(zod.number())
+})
 })]).optional()
 })
 

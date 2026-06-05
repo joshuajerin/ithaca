@@ -23,6 +23,8 @@ export const PanelType = {
   monte_carlo: 'monte_carlo',
   correlation_matrix: 'correlation_matrix',
   factor_analysis: 'factor_analysis',
+  risk_model: 'risk_model',
+  factor_exposures: 'factor_exposures',
   order_book: 'order_book',
   trade_flow: 'trade_flow',
   tca_report: 'tca_report',

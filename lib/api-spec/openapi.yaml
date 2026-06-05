@@ -228,6 +228,8 @@ components:
         - monte_carlo
         - correlation_matrix
         - factor_analysis
+        - risk_model
+        - factor_exposures
         - order_book
         - trade_flow
         - tca_report
@@ -782,6 +784,142 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/FactorLoading"
+    ExcludedName:
+      type: object
+      required: [symbol, reason]
+      properties:
+        symbol:
+          type: string
+        reason:
+          type: string
+    RiskCoverage:
+      type: object
+      required: [included, excluded, excludedNames, days, source, pcaVarExplained]
+      properties:
+        included:
+          type: integer
+        excluded:
+          type: integer
+        excludedNames:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExcludedName"
+        days:
+          type: integer
+        source:
+          type: string
+        pcaVarExplained:
+          type: array
+          items:
+            type: number
+    FactorContribution:
+      type: object
+      required: [factor, exposure, volContribution, pctOfRisk]
+      properties:
+        factor:
+          type: string
+        exposure:
+          type: number
+        volContribution:
+          type: number
+        pctOfRisk:
+          type: number
+    RiskHolding:
+      type: object
+      required: [symbol, name, weight, mctr, pctOfRisk, specificVol]
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+        weight:
+          type: number
+        mctr:
+          type: number
+        pctOfRisk:
+          type: number
+        specificVol:
+          type: number
+    RiskModelData:
+      type: object
+      required: [portfolioName, totalVol, factorVol, specificVol, factorVarPct, specificVarPct, diversificationRatio, rSquared, factorContributions, holdings, coverage]
+      properties:
+        portfolioName:
+          type: string
+        totalVol:
+          type: number
+        factorVol:
+          type: number
+        specificVol:
+          type: number
+        factorVarPct:
+          type: number
+        specificVarPct:
+          type: number
+        diversificationRatio:
+          type: number
+        rSquared:
+          type: number
+        factorContributions:
+          type: array
+          items:
+            $ref: "#/components/schemas/FactorContribution"
+        holdings:
+          type: array
+          items:
+            $ref: "#/components/schemas/RiskHolding"
+        coverage:
+          $ref: "#/components/schemas/RiskCoverage"
+    FactorPremium:
+      type: object
+      required: [factor, exposure, factorReturn, tStat]
+      properties:
+        factor:
+          type: string
+        exposure:
+          type: number
+        factorReturn:
+          type: number
+        tStat:
+          type: number
+    HoldingExposure:
+      type: object
+      required: [symbol, name, weight, market, size, value, momentum, volatility, quality]
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+        weight:
+          type: number
+        market:
+          type: number
+        size:
+          type: number
+        value:
+          type: number
+        momentum:
+          type: number
+        volatility:
+          type: number
+        quality:
+          type: number
+    FactorExposureData:
+      type: object
+      required: [portfolioName, exposures, holdings, coverage]
+      properties:
+        portfolioName:
+          type: string
+        exposures:
+          type: array
+          items:
+            $ref: "#/components/schemas/FactorPremium"
+        holdings:
+          type: array
+          items:
+            $ref: "#/components/schemas/HoldingExposure"
+        coverage:
+          $ref: "#/components/schemas/RiskCoverage"
     PanelData:
       oneOf:
         - $ref: "#/components/schemas/PriceChartData"
@@ -797,6 +935,8 @@ components:
         - $ref: "#/components/schemas/MonteCarloData"
         - $ref: "#/components/schemas/CorrelationMatrixData"
         - $ref: "#/components/schemas/FactorAnalysisData"
+        - $ref: "#/components/schemas/RiskModelData"
+        - $ref: "#/components/schemas/FactorExposureData"
     Panel:
       type: object
       required: [id, type, title, layout, status]

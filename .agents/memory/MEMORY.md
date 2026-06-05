@@ -11,3 +11,4 @@
 - [Period returns (day vs year)](period-returns.md) — changePct is 1D only; real returns from price series via returns.py; screener/heatmap use YTD not 1Y (live DB ~6mo).
 - [AI navigator cursor](navigator-cursor.md) — chat-triggered guided cursor; tours only real session panels via [data-panel-id]; shares highlight with voice so never co-run; intent-strip routing.
 - [Adding hand-written panel types](passthrough-panels.md) — new panel types pass through without openapi codegen (Panel.data is dict); stale-PanelType tsc errors are expected and don't gate the vite build.
+- [Barra-style factor risk model](factor-risk-model.md) — 3 layers (pure-numpy engine / honest-coverage data assembly / skill builders); decomposition identities + factor-construction conventions.
