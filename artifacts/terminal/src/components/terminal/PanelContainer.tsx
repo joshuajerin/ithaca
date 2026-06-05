@@ -25,6 +25,8 @@ import { CorrelationMatrixPanel } from "./panels/CorrelationMatrixPanel";
 import { FactorAnalysisPanel } from "./panels/FactorAnalysisPanel";
 import { RiskModelPanel } from "./panels/RiskModelPanel";
 import { FactorExposurePanel } from "./panels/FactorExposurePanel";
+import { SignalResearchPanel } from "./panels/SignalResearchPanel";
+import { SignalScorecardPanel } from "./panels/SignalScorecardPanel";
 import { IVSurfacePanel } from "./panels/IVSurfacePanel";
 import { OptionsStrategyPanel } from "./panels/OptionsStrategyPanel";
 import { VolTermStructurePanel } from "./panels/VolTermStructurePanel";
@@ -133,6 +135,8 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "factor_analysis": return <FactorAnalysisPanel data={panel.data as any} />;
       case "risk_model": return <RiskModelPanel data={panel.data as any} />;
       case "factor_exposures": return <FactorExposurePanel data={panel.data as any} />;
+      case "signal_research": return <SignalResearchPanel data={panel.data as any} />;
+      case "signal_scorecard": return <SignalScorecardPanel data={panel.data as any} />;
       case "iv_surface": return <IVSurfacePanel data={panel.data as any} />;
       case "options_strategy": return <OptionsStrategyPanel data={panel.data as any} />;
       case "vol_term_structure": return <VolTermStructurePanel data={panel.data as any} />;

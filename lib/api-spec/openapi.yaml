@@ -242,6 +242,8 @@ components:
         - options_strategy
         - vol_term_structure
         - structured_product
+        - signal_research
+        - signal_scorecard
     PanelStatus:
       type: string
       enum:
@@ -784,6 +786,60 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/FactorLoading"
+    ICStat:
+      type: object
+      required: [mean, std, ir, tStat, hitRate, n]
+      properties:
+        mean:
+          type: number
+        std:
+          type: number
+        ir:
+          type: number
+        tStat:
+          type: number
+        hitRate:
+          type: number
+        n:
+          type: integer
+    ICDecayPoint:
+      type: object
+      required: [horizon, ic]
+      properties:
+        horizon:
+          type: integer
+        ic:
+          type: number
+    QuantileReturn:
+      type: object
+      required: [quantile, ret]
+      properties:
+        quantile:
+          type: integer
+        ret:
+          type: number
+    SpreadPoint:
+      type: object
+      required: [t, value, long, short]
+      properties:
+        t:
+          type: string
+        value:
+          type: number
+        long:
+          type: number
+        short:
+          type: number
+    SpreadStats:
+      type: object
+      required: [totalReturn, sharpe, cagr]
+      properties:
+        totalReturn:
+          type: number
+        sharpe:
+          type: number
+        cagr:
+          type: number
     ExcludedName:
       type: object
       required: [symbol, reason]
@@ -920,6 +976,108 @@ components:
             $ref: "#/components/schemas/HoldingExposure"
         coverage:
           $ref: "#/components/schemas/RiskCoverage"
+    SignalResearchData:
+      type: object
+      required: [signal, label, description, universe, universeSize, included, excluded, excludedNames, horizons, primaryHorizon, holding, quantiles, ic, decay, turnover, turnoverAnnual, rebalances, quantileReturns, spread, spreadStats]
+      properties:
+        signal:
+          type: string
+        label:
+          type: string
+        description:
+          type: string
+        universe:
+          type: string
+        universeSize:
+          type: integer
+        included:
+          type: integer
+        excluded:
+          type: integer
+        excludedNames:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExcludedName"
+        horizons:
+          type: array
+          items:
+            type: integer
+        primaryHorizon:
+          type: integer
+        holding:
+          type: integer
+        quantiles:
+          type: integer
+        ic:
+          $ref: "#/components/schemas/ICStat"
+        decay:
+          type: array
+          items:
+            $ref: "#/components/schemas/ICDecayPoint"
+        turnover:
+          type: number
+        turnoverAnnual:
+          type: number
+        rebalances:
+          type: integer
+        quantileReturns:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuantileReturn"
+        spread:
+          type: array
+          items:
+            $ref: "#/components/schemas/SpreadPoint"
+        spreadStats:
+          $ref: "#/components/schemas/SpreadStats"
+    SignalScoreRow:
+      type: object
+      required: [signal, label, meanIC, icIR, tStat, hitRate, turnover, spreadReturn, spreadSharpe, included, rank, spark]
+      properties:
+        signal:
+          type: string
+        label:
+          type: string
+        meanIC:
+          type: number
+        icIR:
+          type: number
+        tStat:
+          type: number
+        hitRate:
+          type: number
+        turnover:
+          type: number
+        spreadReturn:
+          type: number
+        spreadSharpe:
+          type: number
+        included:
+          type: integer
+        rank:
+          type: integer
+        spark:
+          type: array
+          items:
+            type: number
+    SignalScorecardData:
+      type: object
+      required: [universe, universeSize, primaryHorizon, holding, quantiles, rows]
+      properties:
+        universe:
+          type: string
+        universeSize:
+          type: integer
+        primaryHorizon:
+          type: integer
+        holding:
+          type: integer
+        quantiles:
+          type: integer
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalScoreRow"
     PanelData:
       oneOf:
         - $ref: "#/components/schemas/PriceChartData"
@@ -937,6 +1095,8 @@ components:
         - $ref: "#/components/schemas/FactorAnalysisData"
         - $ref: "#/components/schemas/RiskModelData"
         - $ref: "#/components/schemas/FactorExposureData"
+        - $ref: "#/components/schemas/SignalResearchData"
+        - $ref: "#/components/schemas/SignalScorecardData"
     Panel:
       type: object
       required: [id, type, title, layout, status]

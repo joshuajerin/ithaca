@@ -38,6 +38,8 @@ class PanelType(str, Enum):
     dcf_model = "dcf_model"
     earnings_transcript = "earnings_transcript"
     ma_tracker = "ma_tracker"
+    signal_research = "signal_research"
+    signal_scorecard = "signal_scorecard"
 
 
 class PanelStatus(str, Enum):
@@ -591,6 +593,39 @@ class FactorAnalysisData(BaseModel):
 
 
 # --- risk_model ---
+# --- signal_research ---
+class ICStat(BaseModel):
+    mean: float
+    std: float
+    ir: float
+    tStat: float
+    hitRate: float
+    n: int
+
+
+class ICDecayPoint(BaseModel):
+    horizon: int
+    ic: float
+
+
+class QuantileReturn(BaseModel):
+    quantile: int
+    ret: float
+
+
+class SpreadPoint(BaseModel):
+    t: str
+    value: float
+    long: float
+    short: float
+
+
+class SpreadStats(BaseModel):
+    totalReturn: float
+    sharpe: float
+    cagr: float
+
+
 class ExcludedName(BaseModel):
     symbol: str
     reason: str
@@ -660,6 +695,54 @@ class FactorExposureData(BaseModel):
     exposures: List[FactorPremium]
     holdings: List[HoldingExposure]
     coverage: RiskCoverage
+
+
+class SignalResearchData(BaseModel):
+    signal: str
+    label: str
+    description: str
+    universe: str
+    universeSize: int
+    included: int
+    excluded: int
+    excludedNames: List[ExcludedName]
+    horizons: List[int]
+    primaryHorizon: int
+    holding: int
+    quantiles: int
+    ic: ICStat
+    decay: List[ICDecayPoint]
+    turnover: float
+    turnoverAnnual: float
+    rebalances: int
+    quantileReturns: List[QuantileReturn]
+    spread: List[SpreadPoint]
+    spreadStats: SpreadStats
+
+
+# --- signal_scorecard ---
+class SignalScoreRow(BaseModel):
+    signal: str
+    label: str
+    meanIC: float
+    icIR: float
+    tStat: float
+    hitRate: float
+    turnover: float
+    spreadReturn: float
+    spreadSharpe: float
+    included: int
+    rank: int
+    spark: List[float]
+
+
+class SignalScorecardData(BaseModel):
+    universe: str
+    universeSize: int
+    primaryHorizon: int
+    holding: int
+    quantiles: int
+    rows: List[SignalScoreRow]
 
 
 # --- supply_chain ---

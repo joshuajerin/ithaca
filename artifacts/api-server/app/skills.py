@@ -1857,6 +1857,214 @@ def build_factor_exposures(params: dict) -> dict:
     }
 
 
+# ----------------------------- alpha signal research -----------------------------
+# How much history to pull per name for cross-sectional signal evaluation. Live
+# names return what the DB has (~6 months of trading days); breadth (mock) names
+# return the deterministic calendar series. The signal engine excludes any name
+# that lacks enough history at each date — no imputation.
+_SIGNAL_DAYS = 400
+_SIGNAL_HORIZONS = (1, 5, 10, 21, 42)
+_SIGNAL_HOLDING = 21
+_SIGNAL_QUANTILES = 5
+_SIGNAL_UNIVERSE_CAP = 40
+_DEFAULT_SCORECARD_SIGNALS = ["momentum", "short_reversal", "low_volatility", "value", "quality"]
+
+
+def _resolve_signal_universe(params: dict) -> tuple:
+    """Resolve (symbols, label) for the cross-section from explicit names, a
+    sector, or a default liquid core. Capped so the bulk fetch stays cheap."""
+    raw_syms = params.get("symbols") or []
+    syms = [s.upper() for s in raw_syms if repo.get_company(s.upper())]
+    if syms:
+        label = f"{len(syms)} selected names"
+        return syms[:_SIGNAL_UNIVERSE_CAP], label
+
+    sector = params.get("sector")
+    sid = repo.resolve_sector(sector) if sector else None
+    if sid:
+        syms = repo.symbols_in_sector(sid)
+        if len(syms) >= _SIGNAL_QUANTILES:
+            return syms[:_SIGNAL_UNIVERSE_CAP], repo.sector_name(sid)
+
+    # Default: a broad, liquid cross-section of the universe.
+    syms = repo.all_symbols()[:_SIGNAL_UNIVERSE_CAP]
+    return syms, "US large-cap universe"
+
+
+def _signal_ctx(signal: str, companies: Dict[str, dict]) -> tuple:
+    """Build per-symbol context for a signal plus a list of names to exclude up
+    front because the required fundamental field is genuinely missing.
+
+    Price signals need no context. Fundamental signals derive a single
+    cross-sectional value per name (never imputed): value uses earnings yield
+    (1 / P·E), quality uses net margin. Names lacking the field are reported.
+    """
+    meta = engine.SIGNAL_META.get(signal, {})
+    if meta.get("kind") != "fundamental":
+        return {}, []
+
+    ctx: Dict[str, dict] = {}
+    excluded: List[dict] = []
+    for sym, c in companies.items():
+        fval = None
+        reason = ""
+        if signal == "value":
+            pe = c.get("peRatio")
+            if pe is not None and pe > 0:
+                fval = 1.0 / float(pe)
+            else:
+                reason = "missing P/E (earnings yield)"
+        elif signal == "quality":
+            nm = c.get("netMargin")
+            if nm is not None and nm != 0.0:
+                fval = float(nm)
+            else:
+                reason = "missing net margin"
+        if fval is None:
+            excluded.append({"symbol": sym, "reason": reason or "missing fundamental"})
+        else:
+            ctx[sym] = {"fval": fval}
+    return ctx, excluded
+
+
+def build_signal_research(params: dict) -> dict:
+    """Evaluate one cross-sectional alpha signal over a real universe.
+
+    Computes rank IC (with IC decay across horizons), turnover and a long-short
+    quantile spread equity curve from the actual price/fundamental series. Names
+    missing data are excluded from the cross-section and reported, never imputed.
+    """
+    signal = engine.normalize_signal(params.get("signal") or "momentum")
+    meta = engine.SIGNAL_META.get(signal, {})
+    symbols, universe_label = _resolve_signal_universe(params)
+    if len(symbols) < _SIGNAL_QUANTILES:
+        raise ValueError("need a broader universe to evaluate a cross-sectional signal")
+
+    bulk = repo.price_closes_bulk(symbols, days=_SIGNAL_DAYS)
+    series = bulk["series"]
+    companies = repo.companies_bulk(symbols) if meta.get("kind") == "fundamental" else {}
+    ctx_by_symbol, pre_excluded = _signal_ctx(signal, companies)
+
+    # Drop names the fundamental field is missing for before evaluation.
+    excluded_syms = {e["symbol"] for e in pre_excluded}
+    eval_series = {s: pts for s, pts in series.items() if s not in excluded_syms}
+
+    result = engine.evaluate_signal(
+        eval_series,
+        signal=signal,
+        ctx_by_symbol=ctx_by_symbol,
+        horizons=_SIGNAL_HORIZONS,
+        holding=_SIGNAL_HOLDING,
+        quantiles=_SIGNAL_QUANTILES,
+    )
+
+    excluded_all = pre_excluded + list(result.get("excluded") or [])
+    if len(result.get("included") or []) < _SIGNAL_QUANTILES:
+        raise ValueError("not enough names with usable history for this signal")
+
+    return {
+        "signal": signal,
+        "label": result["label"],
+        "description": meta.get("desc", ""),
+        "universe": universe_label,
+        "universeSize": len(symbols),
+        "included": len(result["included"]),
+        "excluded": len(excluded_all),
+        "excludedNames": excluded_all[:30],
+        "horizons": result["horizons"],
+        "primaryHorizon": result["primaryHorizon"],
+        "holding": result["holding"],
+        "quantiles": result["quantiles"],
+        "ic": result["ic"],
+        "decay": result["decay"],
+        "turnover": result["turnover"],
+        "turnoverAnnual": result["turnoverAnnual"],
+        "rebalances": result["rebalances"],
+        "quantileReturns": result["quantileReturns"],
+        "spread": result["spread"],
+        "spreadStats": result["spreadStats"],
+        "asOf": bulk.get("asOf"),
+        "source": bulk.get("source", "mock"),
+    }
+
+
+def _downsample(values: List[float], n: int = 24) -> List[float]:
+    if len(values) <= n:
+        return [round(float(v), 2) for v in values]
+    step = len(values) / n
+    return [round(float(values[min(len(values) - 1, int(i * step))]), 2) for i in range(n)]
+
+
+def build_signal_scorecard(params: dict) -> dict:
+    """Compare several alpha signals head-to-head over one shared universe.
+
+    Each signal is evaluated on the same names and ranked by IC information ratio
+    (mean IC / IC volatility), with mean IC, t-stat, hit rate, turnover and the
+    long-short spread performance shown alongside a spread sparkline.
+    """
+    requested = params.get("signals") or []
+    signals = []
+    for s in requested:
+        key = engine.normalize_signal(s)
+        if key not in signals:
+            signals.append(key)
+    if not signals:
+        signals = list(_DEFAULT_SCORECARD_SIGNALS)
+
+    symbols, universe_label = _resolve_signal_universe(params)
+    if len(symbols) < _SIGNAL_QUANTILES:
+        raise ValueError("need a broader universe to compare signals")
+
+    bulk = repo.price_closes_bulk(symbols, days=_SIGNAL_DAYS)
+    series = bulk["series"]
+    need_fundamentals = any(engine.SIGNAL_META.get(s, {}).get("kind") == "fundamental" for s in signals)
+    companies = repo.companies_bulk(symbols) if need_fundamentals else {}
+
+    rows = []
+    for signal in signals:
+        meta = engine.SIGNAL_META.get(signal, {})
+        ctx_by_symbol, pre_excluded = _signal_ctx(signal, companies)
+        excluded_syms = {e["symbol"] for e in pre_excluded}
+        eval_series = {s: pts for s, pts in series.items() if s not in excluded_syms}
+        result = engine.evaluate_signal(
+            eval_series,
+            signal=signal,
+            ctx_by_symbol=ctx_by_symbol,
+            horizons=_SIGNAL_HORIZONS,
+            holding=_SIGNAL_HOLDING,
+            quantiles=_SIGNAL_QUANTILES,
+        )
+        ic = result["ic"]
+        rows.append({
+            "signal": signal,
+            "label": result["label"],
+            "meanIC": ic["mean"],
+            "icIR": ic["ir"],
+            "tStat": ic["tStat"],
+            "hitRate": ic["hitRate"],
+            "turnover": result["turnover"],
+            "spreadReturn": result["spreadStats"]["totalReturn"],
+            "spreadSharpe": result["spreadStats"]["sharpe"],
+            "included": len(result["included"]),
+            "spark": _downsample([p["value"] for p in result["spread"]]),
+        })
+
+    rows.sort(key=lambda r: r["icIR"], reverse=True)
+    for i, r in enumerate(rows):
+        r["rank"] = i + 1
+
+    return {
+        "universe": universe_label,
+        "universeSize": len(symbols),
+        "primaryHorizon": _SIGNAL_HOLDING,
+        "holding": _SIGNAL_HOLDING,
+        "quantiles": _SIGNAL_QUANTILES,
+        "rows": rows,
+        "asOf": bulk.get("asOf"),
+        "source": bulk.get("source", "mock"),
+    }
+
+
 # ----------------------------- supply chain builder -----------------------------
 _SUPPLY_CHAIN_DB: dict = {
     "NVDA": {
@@ -3094,6 +3302,34 @@ _reg(SkillDef(
         {"name": "extract_key_quotes", "description": "Surface the highest-impact management statements.", "expectedOutput": "Up to 5 key quote cards."},
     ],
     build_earnings_transcript, "Earnings Transcript",
+))
+_reg(SkillDef(
+    "signal-research", "Alpha Signal Research", "signal_research",
+    "Evaluates a single cross-sectional alpha signal (momentum, short-term reversal, "
+    "low volatility, value, or quality) over a real universe: computes rank IC, IC decay "
+    "across forward horizons, signal turnover, and a long-short decile/quintile spread "
+    "equity curve from real price/fundamental data. Names missing data are excluded and "
+    "reported, never imputed. Use when the user wants to research whether an alpha signal "
+    "predicts returns, see its information coefficient, IC decay, turnover, or quantile spread.",
+    [
+        {"name": "resolve_signal", "description": "Map the request to a known signal (momentum, reversal, low-vol, value, quality).", "expectedOutput": "A registered signal key."},
+        {"name": "select_universe", "description": "Resolve the cross-section from explicit names, a sector, or the liquid core.", "expectedOutput": "A capped list of tickers."},
+        {"name": "evaluate_signal", "description": "Compute rank IC, IC decay, turnover and the long-short quantile spread from real series.", "expectedOutput": "IC stats, decay curve, turnover, spread equity curve and coverage."},
+    ],
+    build_signal_research, "Signal Research",
+))
+_reg(SkillDef(
+    "signal-scorecard", "Alpha Signal Scorecard", "signal_scorecard",
+    "Compares several alpha signals head-to-head over one shared universe and ranks them by "
+    "IC information ratio, alongside mean IC, t-stat, hit rate, turnover and long-short spread "
+    "performance. Use when the user wants to compare signals, rank alphas, or asks which signal "
+    "works best (e.g. 'compare value vs momentum', 'signal scorecard').",
+    [
+        {"name": "resolve_signals", "description": "Resolve the set of signals to compare (defaults to the full library).", "expectedOutput": "A list of signal keys."},
+        {"name": "select_universe", "description": "Resolve one shared cross-section for all signals.", "expectedOutput": "A capped list of tickers."},
+        {"name": "rank_signals", "description": "Evaluate each signal on the same names and rank by IC information ratio.", "expectedOutput": "A ranked table of signal scorecard rows with spread sparklines."},
+    ],
+    build_signal_scorecard, "Signal Scorecard",
 ))
 
 

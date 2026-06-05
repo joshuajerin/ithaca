@@ -429,6 +429,66 @@ def closes_bulk(symbols: List[str], days: int = 180) -> dict:
     return {"series": series, "sources": sources, "asOf": (max(as_ofs) if as_ofs else None)}
 
 
+def price_closes_bulk(symbols: List[str], days: int = _RETURN_DAYS) -> dict:
+    """Date/close series for many symbols with a single OHLCV round-trip.
+
+    Live names with real OHLCV history come from one bulk DB query; every
+    remaining symbol falls back to its deterministic mock series. Used by the
+    cross-sectional signal research desk, which needs each name's close series.
+
+    Returns ``{"series": {sym: [{"t", "c"}, ...]}, "live": {sym: bool},
+    "source": "live"|"mock", "asOf": iso|None}``. ``source`` is "live" when ANY
+    name resolved to real DB history; ``live`` reports provenance per symbol.
+    """
+    want = [(s or "").upper() for s in symbols if s]
+    series: Dict[str, List[dict]] = {}
+    live: Dict[str, bool] = {}
+    as_of_stamps: List[str] = []
+    remaining = set(want)
+
+    if want and db.db_available():
+        try:
+            cutoff = (date.today() - timedelta(days=days + 10)).isoformat()
+            rows = db.query(
+                """
+                SELECT symbol, d, c, updated_at FROM ohlcv
+                WHERE symbol = ANY(%s) AND c IS NOT NULL AND d >= %s
+                ORDER BY symbol ASC, d ASC
+                """,
+                (want, cutoff),
+            )
+            by_sym: Dict[str, List[dict]] = {}
+            for r in rows:
+                d = r["d"]
+                by_sym.setdefault(r["symbol"], []).append({
+                    "t": d.isoformat() if hasattr(d, "isoformat") else str(d),
+                    "c": _num(r.get("c")),
+                })
+                stamp = _iso(r.get("updated_at"))
+                if stamp:
+                    as_of_stamps.append(stamp)
+            for sym, pts in by_sym.items():
+                if len(pts) >= 2:
+                    series[sym] = pts
+                    live[sym] = True
+                    remaining.discard(sym)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("price_closes_bulk DB error: %s", exc)
+
+    for sym in remaining:
+        note_symbol(sym)
+        pts = data.price_series(sym, days=days)
+        series[sym] = [{"t": p["t"], "c": p["c"]} for p in pts] if pts else []
+        live[sym] = False
+
+    return {
+        "series": series,
+        "live": live,
+        "source": "live" if any(live.values()) else "mock",
+        "asOf": max(as_of_stamps) if as_of_stamps else None,
+    }
+
+
 # ----------------------------- news -----------------------------
 def _news_item(r: dict) -> dict:
     return {

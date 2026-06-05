@@ -162,6 +162,95 @@ def test_monte_carlo_requires_history():
     assert raised, "expected ValueError on insufficient return history"
 
 
+def _ramp_series(n=300, start="2024-01-01"):
+    """A cross-section where each symbol has a distinct, monotone trend so that
+    momentum has a clean, predictable rank ordering."""
+    import datetime as _dt
+    base = _dt.date.fromisoformat(start)
+    dates = [(base + _dt.timedelta(days=i)).isoformat() for i in range(n)]
+    series = {}
+    for k, drift in enumerate([-0.002, -0.001, 0.0, 0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007]):
+        closes = [100.0]
+        for _ in range(1, n):
+            closes.append(closes[-1] * (1.0 + drift))
+        series[f"S{k}"] = [{"t": d, "c": c} for d, c in zip(dates, closes)]
+    return series
+
+
+def test_normalize_signal_aliases():
+    assert engine.normalize_signal("mom") == "momentum"
+    assert engine.normalize_signal("mean reversion") == "short_reversal"
+    assert engine.normalize_signal("low vol") == "low_volatility"
+    assert engine.normalize_signal("earnings yield") == "value"
+    assert engine.normalize_signal("profitability") == "quality"
+    assert engine.normalize_signal("garbage") == "momentum"
+
+
+def test_spearman_ic_perfect_and_inverse():
+    x = [1, 2, 3, 4, 5]
+    assert math.isclose(engine.spearman_ic(x, [10, 20, 30, 40, 50]), 1.0, abs_tol=1e-9)
+    assert math.isclose(engine.spearman_ic(x, [50, 40, 30, 20, 10]), -1.0, abs_tol=1e-9)
+
+
+def test_spearman_ic_insufficient_returns_nan():
+    assert math.isnan(engine.spearman_ic([1, 2], [3, 4]))
+
+
+def test_evaluate_signal_momentum_shape_and_positive_ic():
+    series = _ramp_series()
+    res = engine.evaluate_signal(series, signal="momentum", holding=21, quantiles=5)
+    # Coverage: all names usable, none excluded.
+    assert len(res["included"]) == 10
+    assert res["excluded"] == []
+    # Required keys present.
+    for k in ("ic", "decay", "turnover", "turnoverAnnual", "rebalances",
+              "quantileReturns", "spread", "spreadStats", "primaryHorizon"):
+        assert k in res
+    # Persistent trends → momentum should have strongly positive rank IC.
+    assert res["ic"]["mean"] > 0.5
+    # Decay curve has one point per horizon.
+    assert len(res["decay"]) == len(res["horizons"])
+    # Spread curve rebased to 100 at inception (first point already after a step).
+    assert res["spread"], "expected a non-empty spread curve"
+    # Top quantile beats bottom quantile for a working long signal.
+    qr = {q["quantile"]: q["ret"] for q in res["quantileReturns"]}
+    assert qr[5] > qr[1]
+
+
+def test_evaluate_signal_excludes_missing_history():
+    series = _ramp_series()
+    series["BAD"] = [{"t": "2024-01-01", "c": 100.0}]  # too short
+    res = engine.evaluate_signal(series, signal="momentum")
+    assert "BAD" in [e["symbol"] for e in res["excluded"]]
+    assert "BAD" not in res["included"]
+
+
+def test_evaluate_signal_fundamental_excludes_missing_ctx():
+    series = _ramp_series()
+    # Provide ctx for only some names; the rest must be excluded (no imputation).
+    ctx = {f"S{k}": {"fval": float(k)} for k in range(7)}
+    res = engine.evaluate_signal(series, signal="value", ctx_by_symbol=ctx, holding=21)
+    excluded = {e["symbol"] for e in res["excluded"]}
+    assert {"S7", "S8", "S9"} <= excluded
+    assert len(res["included"]) == 7
+
+
+def test_evaluate_signal_is_deterministic():
+    series = _ramp_series()
+    a = engine.evaluate_signal(series, signal="momentum", holding=21)
+    b = engine.evaluate_signal(series, signal="momentum", holding=21)
+    assert a["ic"] == b["ic"]
+    assert a["spread"] == b["spread"]
+    assert a["quantileReturns"] == b["quantileReturns"]
+
+
+def test_evaluate_signal_too_few_names_returns_empty_stats():
+    series = {k: v for k, v in list(_ramp_series().items())[:3]}
+    res = engine.evaluate_signal(series, signal="momentum", quantiles=5, min_names=5)
+    assert res["spread"] == []
+    assert res["ic"]["n"] == 0
+
+
 def _run_all():
     funcs = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

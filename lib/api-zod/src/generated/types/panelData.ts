@@ -20,5 +20,7 @@ import type { PriceChartData } from './priceChartData';
 import type { RiskModelData } from './riskModelData';
 import type { ScreenerData } from './screenerData';
 import type { SentimentData } from './sentimentData';
+import type { SignalResearchData } from './signalResearchData';
+import type { SignalScorecardData } from './signalScorecardData';
 
-export type PanelData = PriceChartData | NewsData | AnalysisData | FundamentalsData | ScreenerData | HeatmapData | SentimentData | ComparisonData | PortfolioRiskData | BacktestData | MonteCarloData | CorrelationMatrixData | FactorAnalysisData | RiskModelData | FactorExposureData;
+export type PanelData = PriceChartData | NewsData | AnalysisData | FundamentalsData | ScreenerData | HeatmapData | SentimentData | ComparisonData | PortfolioRiskData | BacktestData | MonteCarloData | CorrelationMatrixData | FactorAnalysisData | RiskModelData | FactorExposureData | SignalResearchData | SignalScorecardData;

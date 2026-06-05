@@ -41,6 +41,8 @@ DATA_MODELS = {
     "dcf_model": models.DCFData,
     "earnings_transcript": models.TranscriptData,
     "ma_tracker": models.MAData,
+    "signal_research": models.SignalResearchData,
+    "signal_scorecard": models.SignalScorecardData,
 }
 
 

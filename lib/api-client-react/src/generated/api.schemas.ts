@@ -40,6 +40,8 @@ export const PanelType = {
   options_strategy: 'options_strategy',
   vol_term_structure: 'vol_term_structure',
   structured_product: 'structured_product',
+  signal_research: 'signal_research',
+  signal_scorecard: 'signal_scorecard',
 } as const;
 
 export type PanelStatus = typeof PanelStatus[keyof typeof PanelStatus];
@@ -364,6 +366,38 @@ export interface FactorAnalysisData {
   loadings: FactorLoading[];
 }
 
+export interface ICStat {
+  mean: number;
+  std: number;
+  ir: number;
+  tStat: number;
+  hitRate: number;
+  n: number;
+}
+
+export interface ICDecayPoint {
+  horizon: number;
+  ic: number;
+}
+
+export interface QuantileReturn {
+  quantile: number;
+  ret: number;
+}
+
+export interface SpreadPoint {
+  t: string;
+  value: number;
+  long: number;
+  short: number;
+}
+
+export interface SpreadStats {
+  totalReturn: number;
+  sharpe: number;
+  cagr: number;
+}
+
 export interface ExcludedName {
   symbol: string;
   reason: string;
@@ -434,7 +468,54 @@ export interface FactorExposureData {
   coverage: RiskCoverage;
 }
 
-export type PanelData = PriceChartData | NewsData | AnalysisData | FundamentalsData | ScreenerData | HeatmapData | SentimentData | ComparisonData | PortfolioRiskData | BacktestData | MonteCarloData | CorrelationMatrixData | FactorAnalysisData | RiskModelData | FactorExposureData;
+export interface SignalResearchData {
+  signal: string;
+  label: string;
+  description: string;
+  universe: string;
+  universeSize: number;
+  included: number;
+  excluded: number;
+  excludedNames: ExcludedName[];
+  horizons: number[];
+  primaryHorizon: number;
+  holding: number;
+  quantiles: number;
+  ic: ICStat;
+  decay: ICDecayPoint[];
+  turnover: number;
+  turnoverAnnual: number;
+  rebalances: number;
+  quantileReturns: QuantileReturn[];
+  spread: SpreadPoint[];
+  spreadStats: SpreadStats;
+}
+
+export interface SignalScoreRow {
+  signal: string;
+  label: string;
+  meanIC: number;
+  icIR: number;
+  tStat: number;
+  hitRate: number;
+  turnover: number;
+  spreadReturn: number;
+  spreadSharpe: number;
+  included: number;
+  rank: number;
+  spark: number[];
+}
+
+export interface SignalScorecardData {
+  universe: string;
+  universeSize: number;
+  primaryHorizon: number;
+  holding: number;
+  quantiles: number;
+  rows: SignalScoreRow[];
+}
+
+export type PanelData = PriceChartData | NewsData | AnalysisData | FundamentalsData | ScreenerData | HeatmapData | SentimentData | ComparisonData | PortfolioRiskData | BacktestData | MonteCarloData | CorrelationMatrixData | FactorAnalysisData | RiskModelData | FactorExposureData | SignalResearchData | SignalScorecardData;
 
 export interface Panel {
   id: string;

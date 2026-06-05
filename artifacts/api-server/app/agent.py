@@ -12,7 +12,7 @@ import re
 import uuid
 from typing import List, Optional
 
-from . import ai, data, dynamic_skills, harness, repo, skills, state
+from . import ai, data, dynamic_skills, engine, harness, repo, skills, state
 
 
 # ----------------------------- tool schemas -----------------------------
@@ -261,6 +261,26 @@ def _tools() -> list:
             }, "required": ["symbols"]},
         }},
         {"type": "function", "function": {
+            "name": "add_signal_research",
+            "description": f"Add an alpha signal research panel evaluating ONE cross-sectional signal over a universe: rank IC, IC decay across horizons, signal turnover, and a long-short quantile spread equity curve from REAL price/fundamental data. {sizing} Use for IC, information coefficient, IC decay, signal turnover, quantile/decile spread, or 'does <signal> predict returns'. Signals: momentum, short_reversal, low_volatility, value, quality.",
+            "parameters": {"type": "object", "properties": {
+                "signal": {"type": "string", "description": "Signal to evaluate.", "enum": ["momentum", "short_reversal", "low_volatility", "value", "quality"]},
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Optional explicit universe. Valid: {syms}"},
+                "sector": {"type": "string", "description": "Optional sector to scope the universe."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["signal"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_signal_scorecard",
+            "description": f"Add an alpha signal scorecard comparing SEVERAL signals head-to-head over one shared universe, ranked by IC information ratio with mean IC, t-stat, hit rate, turnover and long-short spread performance. {sizing} Use for 'compare signals', 'rank alphas', 'signal scorecard', or 'which signal works best'. Defaults to the full library if none given.",
+            "parameters": {"type": "object", "properties": {
+                "signals": {"type": "array", "items": {"type": "string"}, "description": "Signals to compare. Subset of: momentum, short_reversal, low_volatility, value, quality."},
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Optional explicit universe. Valid: {syms}"},
+                "sector": {"type": "string", "description": "Optional sector to scope the universe."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": []},
+        }},
+        {"type": "function", "function": {
             "name": "add_iv_surface",
             "description": f"Add an implied volatility surface heatmap for a ticker. {sizing} Use for vol surface, IV surface, or skew requests.",
             "parameters": {"type": "object", "properties": {
@@ -424,6 +444,8 @@ _TOOL_TO_TYPE = {
     "add_factor_analysis": "factor_analysis",
     "add_risk_model": "risk_model",
     "add_factor_exposures": "factor_exposures",
+    "add_signal_research": "signal_research",
+    "add_signal_scorecard": "signal_scorecard",
     "add_iv_surface": "iv_surface",
     "add_options_strategy": "options_strategy",
     "add_vol_term_structure": "vol_term_structure",
@@ -499,6 +521,10 @@ def _system_prompt() -> str:
         "MCTR / 'where is my risk coming from' / risk model → add_risk_model; factor tilts / style exposures / "
         "'how is my portfolio positioned across factors' → add_factor_exposures; simple VaR / tracking error → "
         "add_portfolio_risk. A risk model + factor exposures pair makes a strong portfolio-risk dashboard.\n"
+        "- For alpha signal research (rank IC, information coefficient, IC decay, signal turnover, "
+        "quantile/decile long-short spread, 'does <signal> predict returns'), use add_signal_research with one "
+        "signal of momentum/short_reversal/low_volatility/value/quality. To compare or rank several signals "
+        "('signal scorecard', 'which signal works best', 'compare value vs momentum'), use add_signal_scorecard.\n"
         "- For company analytics requests ('why is X up/down', 'what drives X', 'analyze X vs competitors', "
         "'company analytics for X', 'competition for X', 'price drivers for X'), use add_company_analytics.\n"
         "- For data-layer requests: universe/coverage/'what's tracked'/'live vs mock' → add_data_universe; "
@@ -982,6 +1008,8 @@ _TYPE_LABELS = {
     "factor_analysis": "a factor analysis",
     "risk_model": "a multi-factor risk model",
     "factor_exposures": "a factor exposure panel",
+    "signal_research": "an alpha signal research panel",
+    "signal_scorecard": "an alpha signal scorecard",
     "iv_surface": "an IV surface",
     "options_strategy": "an options strategy",
     "vol_term_structure": "a vol term structure",
@@ -1114,6 +1142,38 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
     wants_montecarlo = any(k in q for k in ["monte carlo", "montecarlo", "monte-carlo", "simulate", "simulation", "forward project", "project price", "scenario analysis", "probability of loss", "forecast price", "gbm", "geometric brownian", "bootstrap"])
     wants_correlation = any(k in q for k in ["correlation", "correlat", "hedge ratio", "co-movement", "diversif", "beta table"])
     wants_factor = any(k in q for k in ["factor analysis", "factor", "attribution", "alpha", "loading", "momentum factor", "value factor"])
+    def _signals_in_query() -> list:
+        found = []
+        for key, kws in (
+            ("momentum", ["momentum", "trend"]),
+            ("short_reversal", ["reversal", "mean reversion", "reversion"]),
+            ("low_volatility", ["low vol", "low volatility", "volatility"]),
+            ("value", ["value", "earnings yield", "cheap"]),
+            ("quality", ["quality", "margin", "profitab"]),
+        ):
+            if any(kw in q for kw in kws) and key not in found:
+                found.append(key)
+        return found
+
+    _mentions_signal = any(k in q for k in ["signal", "alpha"])
+    _signals_found = _signals_in_query()
+    _explicit_scorecard = any(k in q for k in [
+        "scorecard", "compare signals", "compare signal", "rank signals", "rank the signals",
+        "rank alpha", "rank alphas", "rank the alphas", "which signal", "best signal",
+        "signal library", "signal comparison", "compare alphas", "signal leaderboard",
+    ])
+    _compare_words = any(k in q for k in ["compare", "versus", " vs "])
+    wants_scorecard = (
+        _explicit_scorecard
+        or (_compare_words and (len(_signals_found) >= 2 or _mentions_signal))
+        or (_mentions_signal and "signal research" not in q
+            and any(k in q for k in ["best", "which", "leaderboard", "ranking"]))
+    )
+    wants_signal = wants_scorecard or "signal research" in q or any(k in q for k in [
+        "alpha signal", "rank ic", "information coefficient", " ic ",
+        "ic decay", "signal turnover", "quantile spread", "decile spread", "long-short spread",
+        "long short spread", "predict returns", "cross-sectional", "cross sectional",
+    ]) or (_mentions_signal and len(_signals_found) >= 1)
 
     if wants_order_book and symbols:
         sym = symbols[0]
@@ -1351,6 +1411,29 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         summary = f"Pairwise correlation matrix for {', '.join(symbols[:4])}{'...' if len(symbols) > 4 else ''} with beta/hedge-ratio table."
         return panels, summary
 
+    if wants_scorecard:
+        chosen = _signals_in_query()
+        params: dict = {}
+        if len(chosen) >= 2:
+            params["signals"] = chosen
+        if symbols:
+            params["symbols"] = symbols
+        elif sector:
+            params["sector"] = sector
+        add("signal_scorecard", params, 12, 6)
+        return panels, "Alpha signal scorecard: rank IC, IC IR, t-stat, hit rate, turnover and long-short spread ranked across the signal library."
+
+    if wants_signal:
+        chosen = _signals_in_query()
+        sig = chosen[0] if chosen else "momentum"
+        params = {"signal": sig}
+        if symbols:
+            params["symbols"] = symbols
+        elif sector:
+            params["sector"] = sector
+        add("signal_research", params, 12, 6)
+        return panels, f"Alpha signal research for {sig.replace('_', ' ')}: rank IC, IC decay, turnover and the long-short quantile spread from real data."
+
     if wants_factor and symbols:
         sym = symbols[0]
         name = data.get_company(sym)["name"]
@@ -1522,6 +1605,24 @@ def _refine_params_heuristic(panel_type: str, panel: dict, instruction: str) -> 
         return {"symbol": syms[0], "strategy": _extract_strategy(instruction)}
     if panel_type == "structured_product" and syms:
         return {"symbol": syms[0]}
+    if panel_type == "signal_research":
+        ql = instruction.lower()
+        sig = engine.normalize_signal(ql) if any(
+            k in ql for k in ["momentum", "trend", "reversal", "reversion", "low vol", "volatility", "value", "earnings yield", "cheap", "quality", "margin", "profitab"]
+        ) else (panel.get("data") or {}).get("signal", "momentum")
+        params = {"signal": sig}
+        if syms:
+            params["symbols"] = syms
+        elif sector:
+            params["sector"] = sector
+        return params
+    if panel_type == "signal_scorecard":
+        params = {}
+        if syms:
+            params["symbols"] = syms
+        elif sector:
+            params["sector"] = sector
+        return params
     d = panel.get("data") or {}
     if panel_type in ("price_chart", "fundamentals", "supply_chain", "dcf_model", "earnings_transcript") and d.get("symbol"):
         return {"symbol": d["symbol"]}

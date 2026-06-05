@@ -37,4 +37,6 @@ export const PanelType = {
   options_strategy: 'options_strategy',
   vol_term_structure: 'vol_term_structure',
   structured_product: 'structured_product',
+  signal_research: 'signal_research',
+  signal_scorecard: 'signal_scorecard',
 } as const;

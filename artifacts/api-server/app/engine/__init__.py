@@ -31,6 +31,15 @@ from .stats import (
     var_historical,
 )
 from .strategies import STRATEGIES, available_strategies, normalize_strategy
+from .signals import (
+    SIGNAL_META,
+    SIGNALS,
+    available_signals,
+    evaluate_signal,
+    normalize_signal,
+    signal_label,
+    spearman_ic,
+)
 
 __all__ = [
     "run_backtest",
@@ -51,4 +60,11 @@ __all__ = [
     "build_model",
     "decompose_portfolio",
     "pca_variance",
+    "SIGNALS",
+    "SIGNAL_META",
+    "available_signals",
+    "evaluate_signal",
+    "normalize_signal",
+    "signal_label",
+    "spearman_ic",
 ]
