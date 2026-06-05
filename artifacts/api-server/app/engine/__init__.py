@@ -10,7 +10,16 @@ points and for the live/mock fallback decision.
 """
 from __future__ import annotations
 
-from . import execution, optimize, riskmodel
+from . import attribution, execution, optimize, riskmodel
+from .attribution import (
+    active_stats,
+    align_benchmark_returns,
+    book_returns,
+    brinson,
+    factor_attribution,
+    pnl_summary,
+    return_stats,
+)
 from .backtest import run_backtest
 from .execution import (
     aggregate_tca,
@@ -62,6 +71,13 @@ from .signals import (
 )
 
 __all__ = [
+    "attribution",
+    "active_stats",
+    "book_returns",
+    "brinson",
+    "factor_attribution",
+    "pnl_summary",
+    "return_stats",
     "run_backtest",
     "monte_carlo",
     "performance_stats",

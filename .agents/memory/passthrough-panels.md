@@ -30,5 +30,11 @@ passthrough panel (and any you add) because the generated `PanelType` enum doesn
 include them. This is by design — the build uses `vite build` (esbuild, no tsc gate)
 and dev uses vite, so these never block. Do not regenerate openapi to "fix" them.
 
+**Gotcha — missing `_reg` fails silently as "Unknown panel type":** `skills.build_<x>(params)`
+works when called directly, but `/api/orchestrate` dispatches by panel type through the `SKILLS`
+registry. If you forget `_reg(SkillDef(... panel_type ...))`, the panel returns a CLEAN failure
+(status `error`, note "could not be built: Unknown panel type") with NO traceback in logs — easy
+to misread as a builder bug. Always verify the new type via orchestrate, not just the builder.
+
 **Always restart `artifacts/api-server: API Server`** after backend changes — it runs
 WITHOUT `--reload`.

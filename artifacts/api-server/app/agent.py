@@ -277,6 +277,52 @@ def _tools() -> list:
             }, "required": ["symbols"]},
         }},
         {"type": "function", "function": {
+            "name": "add_performance_pnl",
+            "description": f"Add a portfolio P&L panel for a book over a window: cumulative & periodic return vs a REAL, traded benchmark ETF (default SPY; configurable e.g. QQQ/IWM), a drawdown track, and a full risk/return + active stat block (return, vol, Sharpe, max drawdown, hit rate, tracking error, information ratio, beta, alpha, up/down capture). Real returns only; excluded names reported. Use for P&L, performance vs benchmark, or how a book/portfolio has performed. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Portfolio tickers. Valid: {syms}"},
+                "weights": {"type": "array", "items": {"type": "number"}, "description": "Optional portfolio weights aligned with symbols (auto-normalized; equal-weight if omitted)."},
+                "portfolio_name": {"type": "string", "description": "Optional display name for the portfolio."},
+                "range": {"type": "string", "enum": ["1M", "3M", "6M", "1Y", "YTD"]},
+                "benchmark": {"type": "string", "description": "Real benchmark ETF to compare against (default SPY).", "enum": ["SPY", "QQQ", "DIA", "IWM", "VTI", "VOO"]},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbols"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_brinson_attribution",
+            "description": f"Add a Brinson performance attribution panel: decomposes a book's active return vs a sector-aware REAL benchmark (each sector mapped to a real, traded sector/industry ETF such as XLK/XLF/XLE) into allocation, selection and interaction effects BY SECTOR (the three effects sum exactly to the active return). Real sector weights/returns; excluded names and unmapped sectors reported. Use for performance attribution, allocation vs selection, Brinson, or 'where did my outperformance come from'. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Portfolio tickers. Valid: {syms}"},
+                "weights": {"type": "array", "items": {"type": "number"}, "description": "Optional portfolio weights aligned with symbols (auto-normalized; equal-weight if omitted)."},
+                "portfolio_name": {"type": "string", "description": "Optional display name for the portfolio."},
+                "range": {"type": "string", "enum": ["1M", "3M", "6M", "1Y", "YTD"]},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbols"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_factor_attribution",
+            "description": f"Add a factor return attribution panel: decomposes a book's REALIZED return over a window into per-factor contributions (exposure × realized factor return) for Market, Size, Value, Momentum, Volatility, Quality, plus a specific (idiosyncratic) return — contributions + specific reconstruct the realized return. Uses the real multi-factor risk model. Use for factor attribution, factor contribution to return, or 'which factors drove my return'. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Portfolio tickers. Valid: {syms}"},
+                "weights": {"type": "array", "items": {"type": "number"}, "description": "Optional portfolio weights aligned with symbols (auto-normalized; equal-weight if omitted)."},
+                "portfolio_name": {"type": "string", "description": "Optional display name for the portfolio."},
+                "range": {"type": "string", "enum": ["1M", "3M", "6M", "1Y", "YTD"]},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbols"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_tear_sheet",
+            "description": f"Add a performance tear-sheet panel that combines P&L vs a REAL benchmark ETF (default SPY; configurable), the drawdown track, Brinson sector attribution and factor attribution into one report-style view for a book over a window. Use for a tear sheet, a full performance review, or 'give me a complete performance breakdown of my portfolio'. Best at full width. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Portfolio tickers. Valid: {syms}"},
+                "weights": {"type": "array", "items": {"type": "number"}, "description": "Optional portfolio weights aligned with symbols (auto-normalized; equal-weight if omitted)."},
+                "portfolio_name": {"type": "string", "description": "Optional display name for the portfolio."},
+                "range": {"type": "string", "enum": ["1M", "3M", "6M", "1Y", "YTD"]},
+                "benchmark": {"type": "string", "description": "Real benchmark ETF to compare against (default SPY).", "enum": ["SPY", "QQQ", "DIA", "IWM", "VTI", "VOO"]},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbols"]},
+        }},
+        {"type": "function", "function": {
             "name": "add_portfolio_optimizer",
             "description": f"Add a portfolio construction & optimization panel that solves for optimal target weights over a candidate universe. Expected returns are factor-model-implied (style exposures × realized factor premia) and the covariance comes from the multi-factor risk model — both from REAL data. Reports expected return, vol, Sharpe, per-name weights vs the cap-weighted benchmark, sector allocation, factor tilts, binding constraints, and an honest coverage block. {sizing} Use to construct/optimize/rebalance/size a portfolio, find optimal/target weights, or allocate capital.",
             "parameters": {"type": "object", "properties": {
@@ -504,6 +550,10 @@ _TOOL_TO_TYPE = {
     "add_factor_analysis": "factor_analysis",
     "add_risk_model": "risk_model",
     "add_factor_exposures": "factor_exposures",
+    "add_performance_pnl": "performance_pnl",
+    "add_brinson_attribution": "brinson_attribution",
+    "add_factor_attribution": "factor_attribution",
+    "add_tear_sheet": "tear_sheet",
     "add_portfolio_optimizer": "portfolio_optimizer",
     "add_signal_research": "signal_research",
     "add_signal_scorecard": "signal_scorecard",
@@ -590,6 +640,14 @@ def _system_prompt() -> str:
         "method (max_sharpe/min_variance/target_vol/black_litterman/risk_parity/hrp), an optional sector or "
         "symbols for the candidate universe, and constraints (max_position, long_short, max_sector, "
         "gross_limit, target_vol). Pair with add_risk_model to show where the optimized book's risk sits.\n"
+        "- For performance & attribution requests, pick the right panel: P&L / performance vs a benchmark / "
+        "returns + Sharpe / drawdowns for a book → add_performance_pnl; performance attribution / allocation vs "
+        "selection / Brinson / 'where did my out/under-performance come from' → add_brinson_attribution; factor "
+        "attribution / which factors drove my return / per-factor contribution to return → add_factor_attribution; "
+        "a full 'tear sheet' / complete performance review combining P&L, drawdowns, Brinson and factor "
+        "attribution → add_tear_sheet (full width). These take symbols (+ optional weights, range). P&L and "
+        "tear sheet also take a real benchmark ETF (default SPY; pass benchmark=QQQ/IWM/DIA/VTI/VOO if the user "
+        "names one, e.g. 'vs the Nasdaq' → QQQ).\n"
         "- For alpha signal research (rank IC, information coefficient, IC decay, signal turnover, "
         "quantile/decile long-short spread, 'does <signal> predict returns'), use add_signal_research with one "
         "signal of momentum/short_reversal/low_volatility/value/quality. To compare or rank several signals "
@@ -1275,6 +1333,10 @@ _TYPE_LABELS = {
     "factor_analysis": "a factor analysis",
     "risk_model": "a multi-factor risk model",
     "factor_exposures": "a factor exposure panel",
+    "performance_pnl": "a P&L panel",
+    "brinson_attribution": "a Brinson attribution",
+    "factor_attribution": "a factor attribution",
+    "tear_sheet": "a performance tear sheet",
     "portfolio_optimizer": "a portfolio optimizer",
     "signal_research": "an alpha signal research panel",
     "signal_scorecard": "an alpha signal scorecard",
@@ -1335,6 +1397,40 @@ def _extract_symbols(q: str) -> List[str]:
             if len(short) > 3 and re.search(r"\b" + re.escape(short) + r"\b", low):
                 found.append(s)
     return found
+
+
+def _extract_range(q: str) -> Optional[str]:
+    """Map a free-text window to a supported range token, or None for default."""
+    ql = q.lower()
+    if "ytd" in ql or "year to date" in ql or "year-to-date" in ql:
+        return "YTD"
+    if "1 year" in ql or "one year" in ql or "1y" in ql or "12 month" in ql or "12-month" in ql:
+        return "1Y"
+    if "6 month" in ql or "6-month" in ql or "6mo" in ql or "6m" in ql or "half year" in ql:
+        return "6M"
+    if "3 month" in ql or "3-month" in ql or "3mo" in ql or "3m" in ql or "quarter" in ql:
+        return "3M"
+    if "1 month" in ql or "one month" in ql or "1mo" in ql or "1m" in ql:
+        return "1M"
+    return None
+
+
+def _extract_benchmark(q: str) -> Optional[str]:
+    """Map free-text to a real benchmark ETF ticker, or None for the default."""
+    ql = q.lower()
+    if "nasdaq" in ql or "qqq" in ql:
+        return "QQQ"
+    if "russell" in ql or "iwm" in ql or "small cap" in ql or "small-cap" in ql:
+        return "IWM"
+    if "dow" in ql or "dia" in ql:
+        return "DIA"
+    if "total market" in ql or " vti" in ql:
+        return "VTI"
+    if "voo" in ql:
+        return "VOO"
+    if "s&p" in ql or "sp500" in ql or "s and p" in ql or " spy" in ql or "500" in ql:
+        return "SPY"
+    return None
 
 
 def _extract_strategy(q: str) -> str:
@@ -1430,6 +1526,10 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
     wants_backtest = any(k in q for k in ["backtest", "back test", "back-test", "momentum strategy", "strategy", "sharpe", "cagr", "drawdown"])
     wants_montecarlo = any(k in q for k in ["monte carlo", "montecarlo", "monte-carlo", "simulate", "simulation", "forward project", "project price", "scenario analysis", "probability of loss", "forecast price", "gbm", "geometric brownian", "bootstrap"])
     wants_correlation = any(k in q for k in ["correlation", "correlat", "hedge ratio", "co-movement", "diversif", "beta table"])
+    wants_tearsheet = any(k in q for k in ["tear sheet", "tearsheet", "tear-sheet", "performance review", "performance breakdown", "full performance"])
+    wants_brinson = any(k in q for k in ["brinson", "allocation effect", "selection effect", "allocation vs selection", "performance attribution", "attribution analysis"])
+    wants_factor_attr = any(k in q for k in ["factor attribution", "factor contribution", "factors drove", "return from factors", "factor return attribution"])
+    wants_pnl = any(k in q for k in ["p&l", "pnl", "p and l", "performance vs", "vs benchmark", "book performance", "portfolio performance", "performance of my portfolio", "how has my portfolio", "realized return", "return attribution", "cumulative return"])
     wants_factor = any(k in q for k in ["factor analysis", "factor", "attribution", "alpha", "loading", "momentum factor", "value factor"])
     def _signals_in_query() -> list:
         found = []
@@ -1796,6 +1896,29 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
             params["sector"] = sector
         add("signal_research", params, 12, 6)
         return panels, f"Alpha signal research for {sig.replace('_', ' ')}: rank IC, IC decay, turnover and the long-short quantile spread from real data."
+
+    if wants_tearsheet or wants_brinson or wants_factor_attr or wants_pnl:
+        port_syms = symbols if len(symbols) >= 1 else ["NVDA", "MSFT", "GOOGL", "META", "AMZN"]
+        params = {"symbols": port_syms}
+        rng = _extract_range(q)
+        if rng:
+            params["range"] = rng
+        bench = _extract_benchmark(q)
+        if bench:
+            params["benchmark"] = bench
+        label = ", ".join(port_syms[:3]) + ("..." if len(port_syms) > 3 else "")
+        bench_label = bench or "SPY"
+        if wants_tearsheet:
+            add("tear_sheet", params, 12, 6)
+            return panels, f"Performance tear sheet for {label}: P&L vs {bench_label}, drawdowns, Brinson sector attribution and factor attribution in one view."
+        if wants_brinson:
+            add("brinson_attribution", params, 12, 6)
+            return panels, f"Brinson attribution for {label}: allocation, selection and interaction by sector vs real sector ETFs."
+        if wants_factor_attr:
+            add("factor_attribution", params, 12, 6)
+            return panels, f"Factor attribution for {label}: realized return decomposed into per-factor contributions and a specific return."
+        add("performance_pnl", params, 12, 6)
+        return panels, f"P&L for {label}: cumulative return vs {bench_label} with drawdowns and the full risk/return + active stat block."
 
     if wants_factor and symbols:
         sym = symbols[0]

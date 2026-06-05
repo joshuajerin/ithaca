@@ -43,6 +43,10 @@ import { DataQualityPanel } from "./panels/DataQualityPanel";
 import { AnalystReportPanel } from "./panels/AnalystReportPanel";
 import { ScenarioPanel } from "./panels/ScenarioPanel";
 import { RiskMonitorPanel } from "./panels/RiskMonitorPanel";
+import { PerformancePnlPanel } from "./panels/PerformancePnlPanel";
+import { BrinsonPanel } from "./panels/BrinsonPanel";
+import { FactorAttributionPanel } from "./panels/FactorAttributionPanel";
+import { TearSheetPanel } from "./panels/TearSheetPanel";
 import { DynamicPanel } from "./panels/generated/DynamicPanel";
 
 interface PanelContainerProps {
@@ -155,6 +159,10 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "analyst_report": return <AnalystReportPanel data={panel.data as any} />;
       case "scenario": return <ScenarioPanel data={panel.data as any} />;
       case "risk_monitor": return <RiskMonitorPanel data={panel.data as any} />;
+      case "performance_pnl": return <PerformancePnlPanel data={panel.data as any} />;
+      case "brinson_attribution": return <BrinsonPanel data={panel.data as any} />;
+      case "factor_attribution": return <FactorAttributionPanel data={panel.data as any} />;
+      case "tear_sheet": return <TearSheetPanel data={panel.data as any} />;
       default: return <DynamicPanel type={panel.type} data={panel.data as any} />;
     }
   };

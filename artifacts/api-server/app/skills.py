@@ -4,6 +4,7 @@ subskills, plus a builder that turns resolved params into panel `data`.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import uuid
 from datetime import date, timedelta
@@ -11,6 +12,8 @@ from typing import Callable, Dict, List, Optional
 
 from . import ai, cache, data, db, engine, factor_model, quality, repo
 from .sources import prices as p_src
+
+log = logging.getLogger(__name__)
 
 RANGE_DAYS = {"1M": 30, "3M": 90, "6M": 180, "1Y": 250, "YTD": 120}
 
@@ -2421,6 +2424,350 @@ def build_factor_exposures(params: dict) -> dict:
     }
 
 
+_ATTR_RANGE_LABELS = {
+    "1M": "1 month", "3M": "3 months", "6M": "6 months",
+    "1Y": "1 year", "YTD": "year to date",
+}
+
+# ---------------------------- real benchmarks ----------------------------
+# Validated, real, liquid US-listed ETFs usable as a headline benchmark for the
+# P&L / active-stats comparison. We will NOT benchmark against anything that is
+# not in this whitelist of real traded instruments.
+_BENCHMARK_ETFS = {
+    "SPY": "S&P 500 (SPY)",
+    "QQQ": "Nasdaq-100 (QQQ)",
+    "DIA": "Dow Jones (DIA)",
+    "IWM": "Russell 2000 (IWM)",
+    "VTI": "US Total Market (VTI)",
+    "VOO": "S&P 500 (VOO)",
+}
+_DEFAULT_BENCHMARK = "SPY"
+
+# Yahoo history period that comfortably covers each requested window plus the
+# lookback needed for the first window return. Sized generously so 1Y / YTD
+# stats are computed over the full window rather than a truncated 6mo series.
+_BENCH_PERIOD = {"1M": "3mo", "3M": "6mo", "6M": "1y", "1Y": "2y", "YTD": "1y"}
+
+# Sector-aware proxy for the Brinson decomposition: the terminal's thematic
+# sectors mapped onto real, liquid sector/industry ETFs so each benchmark sector
+# return comes from a real traded instrument. Sectors with no clean real ETF
+# (e.g. crypto / space) are excluded from the Brinson universe and reported.
+_SECTOR_ETFS = {
+    "semiconductors": "XLK", "ai_tech": "XLK", "cloud": "XLK", "quantum": "XLK",
+    "cybersecurity": "CIBR", "fintech": "XLF", "financials": "XLF",
+    "insurance": "KIE", "energy": "XLE", "clean_energy": "ICLN",
+    "ev_auto": "XLY", "consumer": "XLY", "staples": "XLP", "biotech": "XBI",
+    "healthcare": "XLV", "robotics": "XLI", "industrials": "XLI",
+    "defense": "ITA", "transportation": "IYT", "comms": "XLC", "telecom": "XLC",
+    "real_estate": "XLRE", "materials": "XLB", "metals_mining": "XME",
+    "utilities": "XLU",
+}
+
+# Process-local TTL cache so repeated attribution panels in one session don't
+# re-hit the network for the same instrument.
+_BENCH_CACHE: Dict[str, dict] = {}
+_BENCH_TTL = 900.0
+
+
+def _resolve_benchmark(params: dict) -> tuple:
+    """Resolve a REAL benchmark ticker + display name from params.
+
+    Accepts an explicit ``benchmark`` ticker (validated against the whitelist of
+    real instruments) and otherwise defaults to SPY. Unknown / unsupported
+    tickers fall back to the default rather than benchmarking against anything
+    that is not a known real instrument.
+    """
+    raw = str(params.get("benchmark") or "").upper().strip().lstrip("$")
+    if raw in _BENCHMARK_ETFS:
+        return raw, _BENCHMARK_ETFS[raw]
+    return _DEFAULT_BENCHMARK, _BENCHMARK_ETFS[_DEFAULT_BENCHMARK]
+
+
+def _benchmark_closes(ticker: str, rng: str = "3M") -> Optional[dict]:
+    """Real daily closes for a benchmark instrument, keyed by ISO date.
+
+    The fetch window is sized to the requested range (``rng``) so 1Y / YTD stats
+    are computed over the full window rather than a truncated 6mo series. Prefers
+    real OHLCV already in the DB; otherwise fetches the real Yahoo chart
+    synchronously and queues the symbol for the data worker to cache. Returns
+    ``{"closes": {date: close}, "source": "live", "asOf": iso|None}`` or None if
+    no real series could be sourced (the caller then reports it honestly).
+    """
+    import time as _time
+
+    t = (ticker or "").upper()
+    rng = (rng or "3M").upper()
+    win = RANGE_DAYS.get(rng, 90)
+    db_days = max(400, win * 2 + 40)
+    period = _BENCH_PERIOD.get(rng, "6mo")
+    now = _time.time()
+    key = f"{t}|{rng}"
+    hit = _BENCH_CACHE.get(key)
+    if hit and now - hit["ts"] < _BENCH_TTL:
+        return hit["val"]
+
+    val: Optional[dict] = None
+    try:
+        meta = repo.price_series_meta(t, days=db_days)
+        if meta.get("source") == "live":
+            closes = {
+                str(p["t"])[:10]: float(p["c"])
+                for p in (meta.get("points") or [])
+                if p.get("c") is not None
+            }
+            if len(closes) >= 2:
+                val = {"closes": closes, "source": "live", "asOf": meta.get("asOf")}
+    except Exception as exc:  # noqa: BLE001
+        log.warning("benchmark DB read failed for %s: %s", t, exc)
+
+    if val is None:
+        try:
+            res = p_src.fetch_price_history(t, period, "1d")
+            closes = {
+                str(p["d"])[:10]: float(p["c"])
+                for p in (res.get("points") or [])
+                if p.get("c") is not None
+            }
+            if len(closes) >= 2:
+                val = {"closes": closes, "source": "live", "asOf": None}
+                try:
+                    repo.note_symbol(t)
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception as exc:  # noqa: BLE001
+            log.warning("benchmark live fetch failed for %s: %s", t, exc)
+
+    _BENCH_CACHE[key] = {"ts": now, "val": val}
+    return val
+
+
+def _compute_attribution(params: dict) -> dict:
+    """Shared spine for the performance & factor attribution panels.
+
+    Builds the real factor model over the book's estimation universe, slices a
+    window off the aligned real-return panel, and computes (1) P&L vs a REAL
+    traded benchmark ETF (default SPY, date-aligned), (2) single-period Brinson
+    sector attribution against a sector-aware real benchmark (each sector mapped
+    to a real traded sector/industry ETF), and (3) a linear factor decomposition
+    of the realized return. Every number is real or excluded — no imputation.
+    """
+    import numpy as np
+
+    name, syms, ws = _resolve_portfolio(params)
+    res = factor_model.build(syms)
+    model = res.model
+    idx, w, dropped = factor_model.portfolio_indices(res, syms, ws)
+
+    rng = (params.get("range") or "3M").upper()
+    win = RANGE_DAYS.get(rng, 90)
+    total_days = res.returns.shape[0]
+    k = int(min(total_days, max(20, win)))
+    rets = res.returns[-k:]                  # (k, N) real daily returns
+    dates = list(res.dates[-k:])
+    fret = model.factor_returns[-k:]         # (k, K) real factor returns
+
+    # Book daily return series over the window.
+    book = engine.book_returns(rets[:, idx], w)
+
+    # Headline benchmark: a REAL, validated traded instrument (default SPY),
+    # sourced through the real price path and date-aligned to the book window.
+    bench_ticker, bench_name = _resolve_benchmark(params)
+    bser = _benchmark_closes(bench_ticker, rng)
+    if not bser:
+        raise ValueError(
+            f"benchmark {bench_ticker} unavailable — no real price series could be sourced"
+        )
+    bench, bench_missing = engine.align_benchmark_returns(bser["closes"], dates)
+
+    # Cumulative equity curves + drawdown for the chart (length k, date-aligned).
+    book_eq = engine.attribution.equity_curve(book)[1:]
+    bench_eq = engine.attribution.equity_curve(bench)[1:]
+    peak = np.maximum.accumulate(book_eq)
+    dd = book_eq / np.where(peak == 0, np.nan, peak) - 1.0
+    series = [
+        {
+            "date": dates[i],
+            "book": round(float(book_eq[i] / 100.0 - 1.0) * 100.0, 2),
+            "bench": round(float(bench_eq[i] / 100.0 - 1.0) * 100.0, 2),
+            "drawdown": round(float(dd[i]) * 100.0 if np.isfinite(dd[i]) else 0.0, 2),
+        }
+        for i in range(len(dates))
+    ]
+
+    # Single-period portfolio sector returns over the window (real per-stock).
+    cum_all = np.prod(1.0 + rets, axis=0) - 1.0  # (N,)
+    secs_all = [(data.get_company(s) or {}).get("sector") or "Other" for s in model.symbols]
+    caps_all = np.array(
+        [float((data.get_company(s) or {}).get("marketCap") or 0.0) for s in model.symbols],
+        dtype=float,
+    )
+
+    # Portfolio side: weight & real return by the book's sectors.
+    wp_raw: Dict[str, float] = {}
+    rp_num: Dict[str, float] = {}
+    for kk, i in enumerate(idx):
+        sec = secs_all[i]
+        wp_raw[sec] = wp_raw.get(sec, 0.0) + float(w[kk])
+        rp_num[sec] = rp_num.get(sec, 0.0) + float(w[kk]) * float(cum_all[i])
+
+    # Benchmark side: a sector-aware REAL proxy. Each sector the book touches is
+    # mapped to a real, traded sector/industry ETF whose window return is sourced
+    # through the real price path; its benchmark weight is that sector's market-
+    # cap weight across the universe. Sectors without a real ETF are excluded and
+    # reported, so every benchmark sector return is a real instrument.
+    bench_cap: Dict[str, float] = {}
+    for j in range(len(model.symbols)):
+        bench_cap[secs_all[j]] = bench_cap.get(secs_all[j], 0.0) + float(caps_all[j])
+
+    rb: Dict[str, float] = {}
+    wb_raw: Dict[str, float] = {}
+    sector_etf: Dict[str, str] = {}
+    excluded_sectors: List[str] = []
+    for sec in wp_raw:
+        etf = _SECTOR_ETFS.get(sec)
+        ser = _benchmark_closes(etf, rng) if etf else None
+        if not ser:
+            excluded_sectors.append(sec)
+            continue
+        arr, _ = engine.align_benchmark_returns(ser["closes"], dates)
+        rb[sec] = float(np.prod(1.0 + arr) - 1.0)
+        wb_raw[sec] = bench_cap.get(sec, 0.0)
+        sector_etf[sec] = etf
+
+    included = [s for s in wp_raw if s in rb]
+    # Renormalize portfolio & benchmark weights over the comparable (real-ETF-
+    # backed) sectors so the Brinson identity holds within that universe.
+    wp_sum = sum(wp_raw[s] for s in included) or 1.0
+    wb_sum = sum(wb_raw.get(s, 0.0) for s in included) or 1.0
+    wp = {s: wp_raw[s] / wp_sum for s in included}
+    wb = {s: (wb_raw.get(s, 0.0) / wb_sum) for s in included}
+    rp = {s: (rp_num[s] / wp_raw[s] if wp_raw[s] else 0.0) for s in included}
+
+    sectors = sorted(included, key=lambda s: -wb.get(s, 0.0))
+    sector_labels = {s: repo.sector_name(s) for s in sectors}
+    brinson = engine.brinson(sectors, wp, wb, rp, {s: rb[s] for s in sectors})
+    brinson["benchmarkName"] = "Real sector ETFs (SPDR / industry proxies)"
+    if excluded_sectors:
+        brinson["excludedSectors"] = [repo.sector_name(s) for s in excluded_sectors]
+    for row in brinson["rows"]:
+        row["sectorLabel"] = sector_labels.get(row["sector"], row["sector"])
+        row["benchmarkEtf"] = sector_etf.get(row["sector"])
+
+    # Linear factor decomposition of the realized book return.
+    b_exp = model.exposures[idx].T @ w  # (K,)
+    factor = engine.factor_attribution(b_exp, fret, model.factor_names, book)
+
+    return {
+        "portfolioName": name,
+        "benchmarkName": bench_name,
+        "benchmarkTicker": bench_ticker,
+        "benchmarkSource": bser["source"],
+        "benchmarkAsOf": bser.get("asOf"),
+        "benchmarkMissingDays": int(bench_missing),
+        "range": rng,
+        "rangeLabel": _ATTR_RANGE_LABELS.get(rng, rng),
+        "windowDays": int(k),
+        "series": series,
+        "pnl": engine.pnl_summary(book, bench),
+        "brinson": brinson,
+        "factor": factor,
+        "coverage": _coverage_payload(res, dropped),
+        "asOf": res.coverage.as_of,
+        "source": res.coverage.source,
+    }
+
+
+def build_performance_pnl(params: dict) -> dict:
+    """Book P&L over a window vs a real benchmark: cumulative & periodic returns,
+    a drawdown track, and the full risk/return + active stat block (return, vol,
+    Sharpe, max drawdown, hit rate, tracking error, information ratio, beta,
+    alpha, capture). Real returns only; excluded names reported."""
+    a = _compute_attribution(params)
+    return {
+        "portfolioName": a["portfolioName"],
+        "benchmarkName": a["benchmarkName"],
+        "benchmarkTicker": a["benchmarkTicker"],
+        "benchmarkSource": a["benchmarkSource"],
+        "benchmarkAsOf": a["benchmarkAsOf"],
+        "benchmarkMissingDays": a["benchmarkMissingDays"],
+        "range": a["range"],
+        "rangeLabel": a["rangeLabel"],
+        "windowDays": a["windowDays"],
+        "series": a["series"],
+        "stats": a["pnl"],
+        "coverage": a["coverage"],
+        "asOf": a["asOf"],
+        "source": a["source"],
+    }
+
+
+def build_brinson_attribution(params: dict) -> dict:
+    """Brinson allocation / selection / interaction attribution by sector vs a
+    sector-aware real benchmark (each sector mapped to a real traded sector/
+    industry ETF). The three effects sum exactly to the book's active return.
+    Real sector returns; excluded names and unmapped sectors reported."""
+    a = _compute_attribution(params)
+    return {
+        "portfolioName": a["portfolioName"],
+        "benchmarkName": a["brinson"].get("benchmarkName", a["benchmarkName"]),
+        "range": a["range"],
+        "rangeLabel": a["rangeLabel"],
+        "windowDays": a["windowDays"],
+        "rows": a["brinson"]["rows"],
+        "totals": a["brinson"]["totals"],
+        "excludedSectors": a["brinson"].get("excludedSectors", []),
+        "coverage": a["coverage"],
+        "asOf": a["asOf"],
+        "source": a["source"],
+    }
+
+
+def build_factor_attribution(params: dict) -> dict:
+    """Decompose the book's realized window return into per-factor contributions
+    (exposure × realized factor return) plus a specific (idiosyncratic) return
+    using the real multi-factor risk model. Contributions + specific reconstruct
+    the realized return exactly."""
+    a = _compute_attribution(params)
+    return {
+        "portfolioName": a["portfolioName"],
+        "range": a["range"],
+        "rangeLabel": a["rangeLabel"],
+        "windowDays": a["windowDays"],
+        "rows": a["factor"]["rows"],
+        "realizedReturn": a["factor"]["realizedReturn"],
+        "factorReturn": a["factor"]["factorReturn"],
+        "specificReturn": a["factor"]["specificReturn"],
+        "coverage": a["coverage"],
+        "asOf": a["asOf"],
+        "source": a["source"],
+    }
+
+
+def build_tear_sheet(params: dict) -> dict:
+    """One report-style view combining P&L vs a real benchmark, drawdowns,
+    Brinson sector attribution and factor attribution for a book over a window.
+    Wires the three attribution lenses into a single panel for narration."""
+    a = _compute_attribution(params)
+    return {
+        "portfolioName": a["portfolioName"],
+        "benchmarkName": a["benchmarkName"],
+        "benchmarkTicker": a["benchmarkTicker"],
+        "benchmarkSource": a["benchmarkSource"],
+        "benchmarkAsOf": a["benchmarkAsOf"],
+        "benchmarkMissingDays": a["benchmarkMissingDays"],
+        "range": a["range"],
+        "rangeLabel": a["rangeLabel"],
+        "windowDays": a["windowDays"],
+        "series": a["series"],
+        "stats": a["pnl"],
+        "brinson": a["brinson"],
+        "factor": a["factor"],
+        "coverage": a["coverage"],
+        "asOf": a["asOf"],
+        "source": a["source"],
+    }
+
+
 def build_portfolio_optimizer(params: dict) -> dict:
     """Construct an optimal portfolio from real expected returns + covariance.
 
@@ -4702,6 +5049,58 @@ _reg(SkillDef(
         {"name": "apply_scenario", "description": "Layer the estimated drift on the baseline to produce the scenario path.", "expectedOutput": "A scenario projection with delta vs baseline."},
     ],
     build_scenario, "What-If Scenario",
+))
+_reg(SkillDef(
+    "performance-pnl", "Performance & P&L", "performance_pnl",
+    "Computes a book's realized P&L over a window against a REAL, traded benchmark ETF (default SPY; "
+    "configurable e.g. QQQ/IWM) sourced through the real price path and date-aligned to the book: "
+    "cumulative book vs benchmark curves, the drawdown path, and a full "
+    "risk/return stat block (total return, vol, Sharpe, Sortino, max drawdown, hit rate) plus active "
+    "stats (active return, tracking error, information ratio, beta, alpha, up/down capture). Use when the "
+    "user asks for performance, P&L, returns vs a benchmark, or risk-adjusted return of a portfolio/book.",
+    [
+        {"name": "assemble_book", "description": "Resolve the holdings and align real return history for the window.", "expectedOutput": "An aligned (T,N) return panel and book weights."},
+        {"name": "build_benchmark", "description": "Fetch the real benchmark ETF's price series and align its returns to the window.", "expectedOutput": "A real, date-aligned benchmark daily return series."},
+        {"name": "compute_stats", "description": "Compute risk/return and active statistics over the window.", "expectedOutput": "Book, benchmark and active stat blocks plus series."},
+    ],
+    build_performance_pnl, "Performance & P&L",
+))
+_reg(SkillDef(
+    "brinson-attribution", "Brinson Attribution", "brinson_attribution",
+    "Decomposes a book's active return versus a sector-aware REAL benchmark — each sector mapped to a real, "
+    "traded sector/industry ETF (e.g. XLK/XLF/XLE) whose window return is sourced through the real price path — "
+    "into Brinson-Hood-Beebower allocation, selection and interaction effects by sector. Allocation + selection "
+    "+ interaction sum exactly to the active return. Sectors without a real ETF are excluded and reported. Use "
+    "when the user asks where active return came from, allocation vs selection, sector attribution, or Brinson.",
+    [
+        {"name": "sector_weights", "description": "Compute portfolio and real sector-ETF benchmark weights and returns.", "expectedOutput": "Per-sector weights and single-period returns."},
+        {"name": "decompose", "description": "Apply BHB to split active return into allocation/selection/interaction.", "expectedOutput": "Per-sector effects that sum to active return."},
+    ],
+    build_brinson_attribution, "Brinson Attribution",
+))
+_reg(SkillDef(
+    "factor-attribution", "Factor Attribution", "factor_attribution",
+    "Decomposes a book's realized window return into per-factor contributions (exposure times cumulative "
+    "factor return) plus a specific/idiosyncratic return, using the estimated multi-factor model. Factor "
+    "contributions plus specific reconstruct the realized return. Use when the user asks what factors drove "
+    "returns, factor attribution, or factor-based return decomposition of a portfolio.",
+    [
+        {"name": "estimate_model", "description": "Estimate factor returns and the book's factor exposures from real data.", "expectedOutput": "An exposure vector and a factor-return panel."},
+        {"name": "decompose", "description": "Attribute realized return to each factor and a specific term.", "expectedOutput": "Per-factor contributions plus a specific return."},
+    ],
+    build_factor_attribution, "Factor Attribution",
+))
+_reg(SkillDef(
+    "tear-sheet", "Performance Tear Sheet", "tear_sheet",
+    "Combines P&L vs a REAL benchmark, the drawdown path, the full risk/return + active stat block, Brinson "
+    "sector attribution and factor attribution into a single tear sheet. Use when the user asks for a tear "
+    "sheet, a full performance review, or a combined performance and attribution report for a book.",
+    [
+        {"name": "compute_performance", "description": "Build P&L, drawdown and the risk/return + active stats vs a real benchmark.", "expectedOutput": "Series and stat blocks."},
+        {"name": "attribute_active", "description": "Run Brinson sector attribution on the active return.", "expectedOutput": "Per-sector allocation/selection/interaction."},
+        {"name": "attribute_factors", "description": "Decompose realized return into factor contributions and specific.", "expectedOutput": "Per-factor contributions plus specific."},
+    ],
+    build_tear_sheet, "Performance Tear Sheet",
 ))
 
 

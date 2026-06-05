@@ -251,6 +251,174 @@ def test_evaluate_signal_too_few_names_returns_empty_stats():
     assert res["ic"]["n"] == 0
 
 
+from app.engine import attribution as attr
+
+
+def _attr_panel(T=80, N=6, K=4, seed=7):
+    rng = np.random.default_rng(seed)
+    asset_returns = rng.normal(0.0005, 0.012, size=(T, N))
+    weights = np.full(N, 1.0 / N)
+    exposures = rng.normal(0.0, 0.6, size=K)
+    factor_returns = rng.normal(0.0002, 0.006, size=(T, K))
+    return asset_returns, weights, exposures, factor_returns
+
+
+def test_brinson_effects_sum_to_active_return():
+    sectors = ["Tech", "Health", "Energy"]
+    wp = {"Tech": 0.5, "Health": 0.3, "Energy": 0.2}
+    wb = {"Tech": 0.4, "Health": 0.4, "Energy": 0.2}
+    rp = {"Tech": 0.08, "Health": -0.02, "Energy": 0.05}
+    rb = {"Tech": 0.06, "Health": 0.01, "Energy": 0.03}
+    out = attr.brinson(sectors, wp, wb, rp, rb)
+    t = out["totals"]
+    # Outputs are percent rounded to 2dp, so allow a small rounding tolerance.
+    assert abs((t["allocation"] + t["selection"] + t["interaction"]) - t["activeReturn"]) < 0.02
+    for row in out["rows"]:
+        assert abs((row["allocation"] + row["selection"] + row["interaction"]) - row["total"]) < 0.02
+
+
+def test_factor_contributions_plus_specific_reconstruct_realized():
+    asset_returns, weights, exposures, factor_returns = _attr_panel()
+    book = attr.book_returns(asset_returns, weights)
+    names = [f"F{k}" for k in range(factor_returns.shape[1])]
+    out = attr.factor_attribution(exposures, factor_returns, names, book)
+    # Each field is percent rounded to 2dp; identity holds within rounding.
+    assert abs((out["factorReturn"] + out["specificReturn"]) - out["realizedReturn"]) < 0.02
+    contrib_sum = sum(r["contribution"] for r in out["rows"])  # includes Specific row
+    assert abs(contrib_sum - out["realizedReturn"]) < 0.02
+
+
+def test_equity_curve_matches_compounded_book_return():
+    asset_returns, weights, _, _ = _attr_panel()
+    book = attr.book_returns(asset_returns, weights)
+    curve = attr.equity_curve(book, base=100.0)
+    expected = 100.0 * float(np.prod(1.0 + book))
+    assert abs(curve[-1] - expected) < 1e-6
+    assert curve.shape[0] == book.shape[0] + 1
+
+
+def test_active_stats_zero_when_book_equals_bench():
+    asset_returns, weights, _, _ = _attr_panel()
+    book = attr.book_returns(asset_returns, weights)
+    out = attr.active_stats(book, book)
+    assert abs(out["activeReturn"]) < 1e-9
+    assert abs(out["trackingError"]) < 1e-9
+    assert abs(out["beta"] - 1.0) < 1e-6
+
+
+def test_align_benchmark_returns_date_aligned():
+    # A real-style close series keyed by ISO date. The window asks for the last
+    # three dates; the first window return must use the close just BEFORE it.
+    closes = {
+        "2025-01-01": 100.0,
+        "2025-01-02": 110.0,
+        "2025-01-03": 121.0,
+        "2025-01-04": 121.0,
+    }
+    dates = ["2025-01-02", "2025-01-03", "2025-01-04"]
+    out, missing = attr.align_benchmark_returns(closes, dates)
+    assert missing == 0
+    assert out.shape[0] == 3
+    assert abs(out[0] - 0.10) < 1e-9   # 110/100 - 1
+    assert abs(out[1] - 0.10) < 1e-9   # 121/110 - 1
+    assert abs(out[2] - 0.0) < 1e-9    # flat
+
+
+def test_align_benchmark_returns_reports_missing_days():
+    # The benchmark did not trade on 2025-01-03 (a portfolio trading day).
+    closes = {"2025-01-01": 100.0, "2025-01-02": 105.0, "2025-01-04": 105.0}
+    dates = ["2025-01-02", "2025-01-03", "2025-01-04"]
+    out, missing = attr.align_benchmark_returns(closes, dates)
+    assert missing == 1
+    assert abs(out[0] - 0.05) < 1e-9   # 105/100 - 1
+    assert abs(out[1] - 0.0) < 1e-9    # missing day carried flat
+    assert abs(out[2] - 0.0) < 1e-9    # 105/105 - 1 vs last available close
+
+
+def test_align_benchmark_returns_empty_series():
+    out, missing = attr.align_benchmark_returns({}, ["2025-01-02", "2025-01-03"])
+    assert missing == 2
+    assert out.shape[0] == 2
+    assert float(np.sum(np.abs(out))) == 0.0
+
+
+def test_resolve_benchmark_validates_real_instruments():
+    from app import skills
+    assert skills._resolve_benchmark({})[0] == "SPY"                     # default
+    assert skills._resolve_benchmark({"benchmark": "qqq"})[0] == "QQQ"   # case + valid
+    assert skills._resolve_benchmark({"benchmark": "$IWM"})[0] == "IWM"  # strips $
+    # An unknown / non-real ticker must NOT be used; fall back to the default.
+    assert skills._resolve_benchmark({"benchmark": "FAKE"})[0] == "SPY"
+    assert skills._resolve_benchmark({"benchmark": "NVDA"})[0] == "SPY"
+
+
+def test_benchmark_closes_degrades_on_source_failure():
+    # Both the DB read and the live fetch raise. The function must degrade to
+    # None (and log) without raising — guards against the undefined-logger
+    # NameError regression on the critical benchmark path.
+    from app import skills
+
+    skills._BENCH_CACHE.clear()
+    orig_meta = skills.repo.price_series_meta
+    orig_fetch = skills.p_src.fetch_price_history
+
+    def boom(*a, **k):
+        raise RuntimeError("network down")
+
+    skills.repo.price_series_meta = boom
+    skills.p_src.fetch_price_history = boom
+    try:
+        out = skills._benchmark_closes("SPY", "1Y")
+        assert out is None
+    finally:
+        skills.repo.price_series_meta = orig_meta
+        skills.p_src.fetch_price_history = orig_fetch
+        skills._BENCH_CACHE.clear()
+
+
+def test_benchmark_fetch_window_covers_requested_range():
+    # For a 1Y request with no DB history, the live fetch must use a period that
+    # covers the full window (not a fixed 6mo), or the window stats are biased.
+    import datetime as _dt
+
+    from app import skills
+
+    skills._BENCH_CACHE.clear()
+    captured = {}
+    orig_meta = skills.repo.price_series_meta
+    orig_fetch = skills.p_src.fetch_price_history
+    orig_note = skills.repo.note_symbol
+
+    def no_db(*a, **k):
+        return {"source": "mock", "points": []}
+
+    def fake_fetch(ticker, period, interval):
+        captured["period"] = period
+        base = _dt.date(2024, 1, 1)
+        pts = [
+            {"d": (base + _dt.timedelta(days=i)).isoformat(), "c": 100.0 + i}
+            for i in range(400)
+        ]
+        return {"points": pts}
+
+    skills.repo.price_series_meta = no_db
+    skills.p_src.fetch_price_history = fake_fetch
+    skills.repo.note_symbol = lambda *a, **k: None
+    try:
+        out = skills._benchmark_closes("SPY", "1Y")
+        assert out is not None and out["source"] == "live"
+        assert captured["period"] == "2y"   # >= the 1Y window + lookback
+        # 3M must stay modest so we don't over-fetch on short windows.
+        skills._BENCH_CACHE.clear()
+        skills._benchmark_closes("SPY", "3M")
+        assert captured["period"] == "6mo"
+    finally:
+        skills.repo.price_series_meta = orig_meta
+        skills.p_src.fetch_price_history = orig_fetch
+        skills.repo.note_symbol = orig_note
+        skills._BENCH_CACHE.clear()
+
+
 def _run_all():
     funcs = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
