@@ -37,6 +37,7 @@ export function Dashboard({ dashboard, onPanelRefined, highlightedPanelId }: Das
         {panels.map((panel) => (
           <motion.div
             key={panel.id}
+            data-panel-id={panel.id}
             layout
             initial={{ opacity: 0, y: 14, scale: 0.98, filter: "blur(2px)" }}
             animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}

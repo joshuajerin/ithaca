@@ -3,17 +3,41 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   useOrchestrate,
   useSpeak,
+  useNavigate,
 } from "@workspace/api-client-react";
 import type { DashboardSpec, NarrationSegment } from "@workspace/api-client-react";
 import { Dashboard } from "@/components/terminal/Dashboard";
 import { ChatPanel } from "@/components/terminal/ChatPanel";
 import { VoicePanel } from "@/components/terminal/VoicePanel";
+import { NavigatorCursor } from "@/components/terminal/NavigatorCursor";
 import { useVoiceConductor } from "@/hooks/useVoiceConductor";
+import { useNavigator } from "@/hooks/useNavigator";
 import { FeatureRequestModal } from "@/components/terminal/FeatureRequestModal";
 import { DotWaveCanvas } from "@/components/terminal/DotWaveCanvas";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
+
+// Phrases that mean "drive the terminal and walk me through it" — these route to
+// the AI navigator cursor instead of (or in addition to) a normal orchestration.
+const NAV_INTENT =
+  /\b(walk me through|walk through|guide me through|guide me|take me through|give me a tour|take me on a tour|show me around|tour (?:the|this|my)|navigate me|show me what matters|talk me through)\b/i;
+
+// What's left of a tour request once the navigation phrasing and filler is
+// stripped. Empty => a "tour what's already here" request; non-empty => there's
+// a subject to build first (e.g. "walk me through NVDA").
+function tourSubject(command: string): string {
+  return command
+    .toLowerCase()
+    .replace(NAV_INTENT, " ")
+    .replace(
+      /\b(the|this|these|my|our|current|whole|entire|please|me|us|it|them|now|today|dashboard|board|terminal|screen|everything|around|here)\b/g,
+      " ",
+    )
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 export default function Terminal() {
   const [activeDashboard, setActiveDashboard] = useState<DashboardSpec | null>(null);
@@ -24,6 +48,7 @@ export default function Terminal() {
 
   const orchestrate = useOrchestrate();
   const speak = useSpeak();
+  const navigateTour = useNavigate();
   const { toast } = useToast();
   const isMobile = useIsMobile();
 
@@ -33,8 +58,61 @@ export default function Terminal() {
     sessionIdRef.current = activeDashboard?.sessionId || undefined;
   }, [activeDashboard?.sessionId]);
 
+  // AI navigator cursor — drives across the dashboard, stopping on each panel.
+  const navigator = useNavigator({
+    onHighlight: setHighlightedPanelId,
+    onComplete: useCallback(() => {
+      toast({ title: "Walkthrough complete", duration: 2500 });
+    }, [toast]),
+  });
+  const navigatorRef = useRef(navigator);
+  useEffect(() => {
+    navigatorRef.current = navigator;
+  });
+
+  // Fetch a tour for a session and let the cursor drive it. Tours only ever
+  // reference panels that are actually on screen.
+  const runTour = useCallback(
+    async (sessionId: string, query: string) => {
+      try {
+        const tour = await navigateTour.mutateAsync({ data: { sessionId, query } });
+        if (!tour.stops || tour.stops.length === 0) {
+          toast({
+            title: "Nothing to walk through yet",
+            description: "Ask for a few panels first, then I'll guide you.",
+            duration: 3000,
+          });
+          return;
+        }
+        navigatorRef.current.start(tour);
+      } catch (e) {
+        console.error("Navigation failed", e);
+      }
+    },
+    [navigateTour, toast],
+  );
+
   const handleCommand = async (command: string) => {
+    // A new command always supersedes a running tour.
+    if (navigatorRef.current.active) navigatorRef.current.stop();
     try {
+      if (NAV_INTENT.test(command)) {
+        const bare = tourSubject(command).length === 0;
+        // "Walk me through this" with panels already up → tour what's on screen.
+        if (bare && hasPanels && sessionIdRef.current) {
+          await runTour(sessionIdRef.current, command);
+          return;
+        }
+        // Otherwise build the dashboard for the request first, then tour it once
+        // the new panels have rendered.
+        const result = await orchestrate.mutateAsync({
+          data: { query: command, sessionId: sessionIdRef.current },
+        });
+        setActiveDashboard(result);
+        window.setTimeout(() => void runTour(result.sessionId, command), 850);
+        return;
+      }
+
       const result = await orchestrate.mutateAsync({
         data: {
           query: command,
@@ -88,6 +166,11 @@ export default function Terminal() {
       toast({ title: "complete", duration: 2500 });
     }, [toast]),
   });
+
+  // Navigator and voice both drive the highlight — never let them run together.
+  useEffect(() => {
+    if (voiceMode && navigatorRef.current.active) navigatorRef.current.stop();
+  }, [voiceMode]);
 
   return (
     <div className="flex h-screen w-full bg-black text-white overflow-hidden">
@@ -212,6 +295,19 @@ export default function Terminal() {
           </aside>
         </div>
       )}
+
+      <NavigatorCursor
+        active={navigator.active}
+        status={navigator.status}
+        point={navigator.point}
+        caption={navigator.caption}
+        title={navigator.title}
+        index={navigator.index}
+        total={navigator.total}
+        onStop={navigator.stop}
+        onNext={navigator.next}
+        onPrev={navigator.prev}
+      />
 
       <FeatureRequestModal open={showFeatureModal} onClose={() => setShowFeatureModal(false)} />
     </div>

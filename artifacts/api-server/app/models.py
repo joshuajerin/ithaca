@@ -830,6 +830,23 @@ class OrchestrationRequest(BaseModel):
     voice: Optional[bool] = None
 
 
+# --- navigator (AI cursor tour) ---
+class NavigationStop(BaseModel):
+    panelId: str
+    caption: str
+
+
+class NavigationTour(BaseModel):
+    sessionId: str
+    title: str
+    stops: List[NavigationStop]
+
+
+class NavigateRequest(BaseModel):
+    sessionId: str
+    query: Optional[str] = None
+
+
 class SpeakRequest(BaseModel):
     text: str
     voice: Optional[str] = None

@@ -649,6 +649,97 @@ def _narration_heuristic(summary: str, panels: List[dict]) -> List[dict]:
     return segs
 
 
+# ----------------------------- navigator tour -----------------------------
+def _reading_order(panels: List[dict]) -> List[dict]:
+    """Sort panels in visual reading order (top-to-bottom, then left-to-right)."""
+    def key(p: dict):
+        layout = p.get("layout") or {}
+        return (layout.get("y", 0), layout.get("x", 0))
+    return sorted(panels, key=key)
+
+
+def navigate(query: Optional[str], session_id: str) -> dict:
+    """Produce an ordered navigator tour over the panels currently on screen.
+
+    The tour references ONLY panels that exist in the session's dashboard, so the
+    AI cursor never points at something that isn't rendered. Uses the AI to order
+    and caption the stops when available, with a reading-order heuristic fallback.
+    """
+    panels = state.get_dashboard(session_id)
+    if not panels:
+        return {"sessionId": session_id, "title": "Navigator", "stops": []}
+
+    q = (query or "").strip()
+    if ai.ai_available():
+        try:
+            tour = _navigate_llm(q, panels)
+            if tour and tour.get("stops"):
+                return {"sessionId": session_id, **tour}
+        except Exception:
+            pass
+    return {"sessionId": session_id, **_navigate_heuristic(q, panels)}
+
+
+def _navigate_llm(query: str, panels: List[dict]) -> Optional[dict]:
+    """Ask the model to order the on-screen panels into a guided tour with captions."""
+    panel_brief = [
+        {"id": p["id"], "type": p["type"], "title": p.get("title", "")}
+        for p in panels
+    ]
+    sys = (
+        "You are the navigator of an agentic market terminal. An AI cursor will glide across the "
+        "screen, stopping on one panel at a time to walk the user through an analysis. You are given "
+        "the panels CURRENTLY on screen and the user's request. Plan the tour as JSON: "
+        '{"title": <short tour title>, "stops": [{"panelId": <id>, "caption": <one short caption>}]}.\n'
+        "- Order the stops so the walkthrough tells a coherent story for the request (lead with the "
+        "most important panel, then supporting context).\n"
+        "- Include only panels that genuinely matter to the request; you may skip irrelevant ones. "
+        "If everything is relevant, include them all.\n"
+        "- Each caption is shown on screen next to the cursor: ONE short, plain sentence about what "
+        "to look at and why it matters. No markdown, no panel ids, no type codes.\n"
+        "- Use ONLY ids from the provided list. Never invent panels or ids."
+    )
+    user = json.dumps({"request": query or "Walk me through this dashboard", "panels": panel_brief})
+    msg = ai.chat(
+        [{"role": "system", "content": sys}, {"role": "user", "content": user}],
+        response_format={"type": "json_object"},
+    )
+    content = (msg.content or "").strip()
+    if not content:
+        return None
+    parsed = json.loads(content)
+    raw = parsed.get("stops") or []
+    valid_ids = {p["id"] for p in panels}
+    stops: List[dict] = []
+    seen: set = set()
+    for s in raw:
+        if not isinstance(s, dict):
+            continue
+        pid = s.get("panelId")
+        caption = (s.get("caption") or "").strip()
+        if pid not in valid_ids or not caption or pid in seen:
+            continue
+        seen.add(pid)
+        stops.append({"panelId": pid, "caption": caption})
+    if not stops:
+        return None
+    title = (parsed.get("title") or "Guided walkthrough").strip() or "Guided walkthrough"
+    return {"title": title, "stops": stops}
+
+
+def _navigate_heuristic(query: str, panels: List[dict]) -> dict:
+    """Reading-order tour with templated captions, used when the AI is unavailable."""
+    stops: List[dict] = []
+    for p in _reading_order(panels):
+        label = _TYPE_LABELS.get(p["type"], p["type"]).lstrip("a ").lstrip("an ")
+        title = p.get("title") or label
+        stops.append({"panelId": p["id"], "caption": f"Here's {title}."})
+    title = "Guided walkthrough"
+    if query:
+        title = f"Walkthrough: {query[:48]}"
+    return {"title": title, "stops": stops}
+
+
 # Phrases that mean "throw away what's there and start a fresh dashboard".
 # Matched on word boundaries to avoid false positives (e.g. "preset", "swipe").
 _RESET_PATTERNS = (

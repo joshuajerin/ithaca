@@ -536,6 +536,25 @@ export const SpeakResponse = zod.object({
 
 
 /**
+ * Returns an ordered tour of the panels currently on a session's dashboard, each with a short caption, for the AI cursor to walk the user through.
+ * @summary Plan an AI navigator tour
+ */
+export const NavigateBody = zod.object({
+  "sessionId": zod.string(),
+  "query": zod.string().nullish().describe('Optional natural-language request guiding what the tour should emphasize.')
+})
+
+export const NavigateResponse = zod.object({
+  "sessionId": zod.string(),
+  "title": zod.string(),
+  "stops": zod.array(zod.object({
+  "panelId": zod.string(),
+  "caption": zod.string()
+}).describe('One stop on the navigator tour, tying a panel to a short on-screen caption.'))
+})
+
+
+/**
  * Updates one panel of an existing dashboard without touching the others
  * @summary Refine a single panel
  */

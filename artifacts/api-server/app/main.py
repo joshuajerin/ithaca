@@ -131,6 +131,13 @@ def speak(req: models.SpeakRequest):
     return {"audio": base64.b64encode(audio).decode("ascii"), "format": "mp3"}
 
 
+@api.post("/navigate", response_model=models.NavigationTour)
+def navigate(req: models.NavigateRequest):
+    if not req.sessionId or not req.sessionId.strip():
+        raise HTTPException(status_code=400, detail="sessionId is required")
+    return agent.navigate(req.query, req.sessionId.strip())
+
+
 @api.post("/refine", response_model=models.Panel)
 def refine(req: models.RefineRequest):
     updated = agent.refine(req.sessionId, req.panelId, req.instruction)

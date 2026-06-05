@@ -118,6 +118,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SpeechAudio"
+  /navigate:
+    post:
+      operationId: navigate
+      tags: [terminal]
+      summary: Plan an AI navigator tour
+      description: Returns an ordered tour of the panels currently on a session's dashboard, each with a short caption, for the AI cursor to walk the user through.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NavigateRequest"
+      responses:
+        "200":
+          description: Navigation tour
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NavigationTour"
   /refine:
     post:
       operationId: refinePanel
@@ -868,6 +887,36 @@ components:
           type: string
         instruction:
           type: string
+    NavigateRequest:
+      type: object
+      required: [sessionId]
+      properties:
+        sessionId:
+          type: string
+        query:
+          type: ["string", "null"]
+          description: Optional natural-language request guiding what the tour should emphasize.
+    NavigationStop:
+      type: object
+      description: One stop on the navigator tour, tying a panel to a short on-screen caption.
+      required: [panelId, caption]
+      properties:
+        panelId:
+          type: string
+        caption:
+          type: string
+    NavigationTour:
+      type: object
+      required: [sessionId, title, stops]
+      properties:
+        sessionId:
+          type: string
+        title:
+          type: string
+        stops:
+          type: array
+          items:
+            $ref: "#/components/schemas/NavigationStop"
     Subskill:
       type: object
       required: [name, description, expectedOutput]

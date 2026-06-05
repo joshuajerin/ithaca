@@ -438,6 +438,29 @@ export interface RefineRequest {
   instruction: string;
 }
 
+export interface NavigateRequest {
+  sessionId: string;
+  /**
+     * Optional natural-language request guiding what the tour should emphasize.
+     * @nullable
+     */
+  query?: string | null;
+}
+
+/**
+ * One stop on the navigator tour, tying a panel to a short on-screen caption.
+ */
+export interface NavigationStop {
+  panelId: string;
+  caption: string;
+}
+
+export interface NavigationTour {
+  sessionId: string;
+  title: string;
+  stops: NavigationStop[];
+}
+
 export interface Subskill {
   name: string;
   description: string;

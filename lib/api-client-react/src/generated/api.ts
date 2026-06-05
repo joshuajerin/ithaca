@@ -22,6 +22,8 @@ import type {
 import type {
   DashboardSpec,
   HealthStatus,
+  NavigateRequest,
+  NavigationTour,
   OrchestrationRequest,
   Panel,
   RefineRequest,
@@ -578,6 +580,78 @@ export const useSpeak = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getSpeakMutationOptions(options));
+    }
+
+export const getNavigateUrl = () => {
+
+
+
+
+  return `/api/navigate`
+}
+
+/**
+ * Returns an ordered tour of the panels currently on a session's dashboard, each with a short caption, for the AI cursor to walk the user through.
+ * @summary Plan an AI navigator tour
+ */
+export const navigate = async (navigateRequest: NavigateRequest, options?: RequestInit): Promise<NavigationTour> => {
+
+  return customFetch<NavigationTour>(getNavigateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      navigateRequest,)
+  }
+);}
+
+
+
+
+export const getNavigateMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof navigate>>, TError,{data: BodyType<NavigateRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof navigate>>, TError,{data: BodyType<NavigateRequest>}, TContext> => {
+
+const mutationKey = ['navigate'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof navigate>>, {data: BodyType<NavigateRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  navigate(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type NavigateMutationResult = NonNullable<Awaited<ReturnType<typeof navigate>>>
+    export type NavigateMutationBody = BodyType<NavigateRequest>
+    export type NavigateMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Plan an AI navigator tour
+ */
+export const useNavigate = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof navigate>>, TError,{data: BodyType<NavigateRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof navigate>>,
+        TError,
+        {data: BodyType<NavigateRequest>},
+        TContext
+      > => {
+      return useMutation(getNavigateMutationOptions(options));
     }
 
 export const getRefinePanelUrl = () => {
