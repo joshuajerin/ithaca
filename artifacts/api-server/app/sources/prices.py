@@ -15,6 +15,41 @@ _BASE = "https://query1.finance.yahoo.com/v8/finance/chart/"
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; AgenticTerminal/1.0)"}
 _TIMEOUT = httpx.Timeout(12.0)
 
+# Intraday resolutions Yahoo's chart endpoint serves, mapped to the windows it
+# will actually honor for each (longest last). These mirror real upstream limits:
+# 1-minute bars go back ~7 days, the finer multi-minute bars ~60 days, and hourly
+# bars up to ~2 years. Windows that aren't plain range tokens ("7d", "60d") are
+# fetched with explicit period1/period2 epochs since Yahoo has no matching token.
+# Requests outside these windows return a clean "unavailable" rather than being
+# silently truncated or faked.
+INTRADAY_RANGES = {
+    "1m": ["1d", "5d", "7d"],
+    "2m": ["1d", "5d", "1mo", "60d"],
+    "5m": ["1d", "5d", "1mo", "60d"],
+    "15m": ["1d", "5d", "1mo", "60d"],
+    "30m": ["1d", "5d", "1mo", "60d"],
+    "90m": ["1d", "5d", "1mo", "60d"],
+    "60m": ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y"],
+    "1h": ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y"],
+}
+
+# Windows expressed in days that Yahoo has no range token for; fetched via
+# period1/period2 epoch params instead.
+INTRADAY_CUSTOM_DAYS = {"7d": 7, "60d": 60}
+
+INTRADAY_DEFAULT_RANGE = {
+    "1m": "1d", "2m": "1d", "5m": "5d", "15m": "5d", "30m": "1mo",
+    "90m": "1mo", "60m": "1mo", "1h": "1mo",
+}
+
+
+class IntradayUnavailable(Exception):
+    """Raised when an intraday window/resolution is not available upstream.
+
+    Callers should surface this as a clean "not available" panel state rather
+    than substituting any synthetic or daily data.
+    """
+
 
 def fetch_price_history(symbol: str, range_: str = "6mo", interval: str = "1d") -> Dict:
     """Return {points: [{d,o,h,l,c,v}], quote: {...}}.
@@ -74,6 +109,89 @@ def fetch_price_history(symbol: str, range_: str = "6mo", interval: str = "1d") 
             "week52Low": meta.get("fiftyTwoWeekLow"),
             "asOf": _as_of(meta.get("regularMarketTime")),
         },
+    }
+
+
+def fetch_intraday(symbol: str, interval: str = "5m", range_: Optional[str] = None) -> Dict:
+    """Return intraday OHLCV for `symbol` at the requested resolution.
+
+    Returns {points: [{t,o,h,l,c,v}], interval, range, asOf, price, name,
+    currency}, where `t` is an ISO datetime (UTC) per bar and `interval`/`range`
+    reflect what was actually served.
+
+    Raises `IntradayUnavailable` when the resolution is not intraday, the
+    requested window exceeds the source's limit, or no usable bars come back.
+    Raises on network/parse failure so the caller can report a clean error.
+    """
+    iv = (interval or "5m").lower()
+    if iv not in INTRADAY_RANGES:
+        raise IntradayUnavailable(
+            f"{interval} is not an intraday resolution "
+            f"(supported: {', '.join(INTRADAY_RANGES)})"
+        )
+    allowed = INTRADAY_RANGES[iv]
+    rng = (range_ or INTRADAY_DEFAULT_RANGE[iv]).lower()
+    if rng not in allowed:
+        raise IntradayUnavailable(
+            f"Yahoo serves {iv} bars only up to {allowed[-1]}; "
+            f"a {rng} window exceeds that limit"
+        )
+
+    url = f"{_BASE}{symbol.upper()}"
+    params = {"interval": iv, "includePrePost": "false"}
+    if rng in INTRADAY_CUSTOM_DAYS:
+        now = int(datetime.now(tz=timezone.utc).timestamp())
+        params["period1"] = now - INTRADAY_CUSTOM_DAYS[rng] * 86400
+        params["period2"] = now
+    else:
+        params["range"] = rng
+    with httpx.Client(timeout=_TIMEOUT, headers=_HEADERS) as client:
+        resp = client.get(url, params=params)
+        resp.raise_for_status()
+        payload = resp.json()
+
+    result = (payload.get("chart") or {}).get("result") or []
+    if not result:
+        raise IntradayUnavailable(f"no intraday data returned for {symbol}")
+    r0 = result[0]
+    meta = r0.get("meta") or {}
+    timestamps = r0.get("timestamp") or []
+    quote = ((r0.get("indicators") or {}).get("quote") or [{}])[0]
+    opens = quote.get("open") or []
+    highs = quote.get("high") or []
+    lows = quote.get("low") or []
+    closes = quote.get("close") or []
+    volumes = quote.get("volume") or []
+
+    points: List[dict] = []
+    for i, ts in enumerate(timestamps):
+        c = _at(closes, i)
+        if c is None:
+            continue
+        t = datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+        points.append({
+            "t": t,
+            "o": _round(_at(opens, i, c)),
+            "h": _round(_at(highs, i, c)),
+            "l": _round(_at(lows, i, c)),
+            "c": _round(c),
+            "v": float(_at(volumes, i, 0) or 0),
+        })
+
+    if not points:
+        raise IntradayUnavailable(
+            f"no usable {iv} bars for {symbol} over {rng}"
+        )
+
+    as_of = _as_of(meta.get("regularMarketTime")) or points[-1]["t"]
+    return {
+        "points": points,
+        "interval": iv,
+        "range": rng,
+        "asOf": as_of,
+        "price": meta.get("regularMarketPrice"),
+        "name": meta.get("longName") or meta.get("shortName"),
+        "currency": meta.get("currency") or "USD",
     }
 
 

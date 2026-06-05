@@ -54,6 +54,7 @@ def _seed_universe() -> None:
     for ddl in (
         "ALTER TABLE universe ADD COLUMN IF NOT EXISTS country TEXT",
         "ALTER TABLE universe ADD COLUMN IF NOT EXISTS exchange TEXT",
+        "ALTER TABLE universe ADD COLUMN IF NOT EXISTS industry TEXT",
         "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS is_live BOOLEAN NOT NULL DEFAULT FALSE",
     ):
         db.execute(ddl)
@@ -190,8 +191,9 @@ def _upsert_fundamentals(d: dict) -> None:
     )
     if d.get("sector"):
         db.execute(
-            "UPDATE universe SET sector = %s, name = COALESCE(name, %s), updated_at = now() WHERE symbol = %s",
-            (d["sector"], d.get("name"), d.get("symbol")),
+            "UPDATE universe SET sector = %s, name = COALESCE(name, %s), "
+            "industry = COALESCE(%s, industry), updated_at = now() WHERE symbol = %s",
+            (d["sector"], d.get("name"), d.get("industry"), d.get("symbol")),
         )
 
 

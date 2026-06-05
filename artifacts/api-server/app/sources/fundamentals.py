@@ -47,6 +47,7 @@ def fetch_fundamentals(symbol: str) -> Dict:
         "week52Low": _f(info.get("fiftyTwoWeekLow")),
         "description": (info.get("longBusinessSummary") or "")[:600] or None,
         "sector": map_sector(info.get("sector"), info.get("industry")),
+        "industry": info.get("industry") or None,
     }
 
 

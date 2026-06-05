@@ -9,7 +9,8 @@ import uuid
 from datetime import date, timedelta
 from typing import Callable, Dict, List, Optional
 
-from . import ai, data, db, engine, repo
+from . import ai, cache, data, db, engine, quality, repo
+from .sources import prices as p_src
 
 RANGE_DAYS = {"1M": 30, "3M": 90, "6M": 180, "1Y": 250, "YTD": 120}
 
@@ -2351,6 +2352,190 @@ def build_ma_tracker(params: dict) -> dict:
     return {"title": title, "deals": deal_list, "stats": stats}
 
 
+# ----------------------------- quant data layer -----------------------------
+_INTERVAL_LABELS = {
+    "1m": "1-minute", "2m": "2-minute", "5m": "5-minute", "15m": "15-minute",
+    "30m": "30-minute", "60m": "1-hour", "90m": "90-minute", "1h": "1-hour",
+}
+_RANGE_LABELS = {
+    "1d": "1 day", "5d": "5 days", "7d": "7 days", "1mo": "1 month",
+    "60d": "60 days", "3mo": "3 months", "6mo": "6 months",
+    "1y": "1 year", "2y": "2 years",
+}
+
+
+def build_data_universe(params: dict) -> dict:
+    """Investable-universe overview: symbols, sector/industry, coverage and
+    provenance. Honest about which names are live vs catalog breadth (mock)."""
+    sector = params.get("sector") or params.get("scope")
+    try:
+        limit = int(params.get("limit") or 150)
+    except (TypeError, ValueError):
+        limit = 150
+    limit = max(10, min(limit, 400))
+    ov = repo.universe_overview(sector=sector, limit=limit)
+
+    if sector and ov["summary"]["totalSymbols"]:
+        sid = repo.resolve_sector(sector) or sector
+        title = f"Data Universe — {repo.sector_name(sid)}"
+    else:
+        title = "Data Universe — Coverage & Provenance"
+
+    return {
+        "title": title,
+        "summary": ov["summary"],
+        "sectors": ov["sectors"],
+        "rows": ov["rows"],
+        "rowsShown": len(ov["rows"]),
+        "asOf": ov.get("asOf"),
+        "source": ov.get("source") or _live_source(),
+    }
+
+
+def build_intraday_chart(params: dict) -> dict:
+    """Intraday OHLCV at a selectable Yahoo resolution, fetched live (with a
+    short-lived cache) and clearly labeled with the resolution/window actually
+    served. Returns a clean unavailable state when the request exceeds source
+    limits — never daily or synthetic data in its place."""
+    symbol = (params.get("symbol") or "NVDA").upper()
+    repo.note_symbol(symbol)
+    company = repo.get_company(symbol)
+    name = company["name"] if company else symbol
+
+    interval = (params.get("interval") or params.get("resolution") or "5m").lower()
+    rng = params.get("range") or params.get("window")
+    rng = rng.lower() if isinstance(rng, str) else None
+
+    base = {
+        "symbol": symbol, "name": name,
+        "interval": interval,
+        "intervalLabel": _INTERVAL_LABELS.get(interval, interval),
+    }
+
+    ysym = data.yahoo_symbol(symbol)
+    cache_key = f"intraday:{ysym}:{interval}:{rng or 'default'}"
+    try:
+        res = cache.cached(
+            cache_key, 60.0,
+            lambda: p_src.fetch_intraday(ysym, interval, rng),
+        )
+    except p_src.IntradayUnavailable as exc:
+        return {
+            **base,
+            "range": rng or "",
+            "rangeLabel": _RANGE_LABELS.get(rng or "", rng or ""),
+            "available": False,
+            "reason": str(exc),
+            "points": [], "last": None, "change": None, "changePct": None,
+            "asOf": None, "source": "unavailable",
+        }
+    except Exception as exc:  # noqa: BLE001 - any upstream failure -> clean state
+        return {
+            **base,
+            "range": rng or "",
+            "rangeLabel": _RANGE_LABELS.get(rng or "", rng or ""),
+            "available": False,
+            "reason": f"Upstream fetch failed: {exc}",
+            "points": [], "last": None, "change": None, "changePct": None,
+            "asOf": None, "source": "unavailable",
+        }
+
+    points = res["points"]
+    served_iv = res["interval"]
+    last = points[-1]["c"] if points else None
+    first = points[0]["o"] if points else None
+    change = round(last - first, 2) if (last is not None and first) else None
+    change_pct = round(change / first * 100, 2) if (change is not None and first) else None
+
+    return {
+        **base,
+        "interval": served_iv,
+        "intervalLabel": _INTERVAL_LABELS.get(served_iv, served_iv),
+        "name": res.get("name") or name,
+        "range": res["range"],
+        "rangeLabel": _RANGE_LABELS.get(res["range"], res["range"]),
+        "currency": res.get("currency") or "USD",
+        "available": True,
+        "reason": None,
+        "bars": len(points),
+        "points": points,
+        "last": last,
+        "change": change,
+        "changePct": change_pct,
+        "asOf": res.get("asOf"),
+        "source": "live",
+    }
+
+
+def _quality_status(source: str, q: dict) -> str:
+    if source != "live":
+        return "mock"
+    if q.get("stale"):
+        return "stale"
+    if q.get("issues"):
+        return "warn"
+    return "ok"
+
+
+def build_data_quality(params: dict) -> dict:
+    """Data-quality report over real OHLCV series: gaps, stale, NaN/zero-volume
+    bars and duplicate timestamps, each row tagged with its provenance."""
+    symbol = params.get("symbol")
+    sector = params.get("sector")
+    try:
+        days = int(params.get("days") or 120)
+    except (TypeError, ValueError):
+        days = 120
+    days = max(20, min(days, 400))
+
+    if symbol:
+        syms = [symbol.upper()]
+        title = f"Data Quality — {symbol.upper()}"
+    elif sector:
+        sid = repo.resolve_sector(sector) or sector
+        syms = repo.symbols_in_sector(sid)[:12]
+        title = f"Data Quality — {repo.sector_name(sid)}"
+    else:
+        syms = repo.prompt_symbols(8)
+        title = "Data Quality — Core Coverage"
+
+    series: List[dict] = []
+    latest: Optional[str] = None
+    for sym in syms:
+        repo.note_symbol(sym)
+        meta = repo.price_series_meta(sym, days=days)
+        company = repo.get_company(sym)
+        nm = company["name"] if company else sym
+        source = meta.get("source") or "mock"
+        as_of = meta.get("asOf")
+        q = quality.validate_series(meta["points"], interval="1d", as_of=as_of)
+        status = _quality_status(source, q)
+        if as_of and (latest is None or as_of > latest):
+            latest = as_of
+        series.append({
+            "symbol": sym, "name": nm, "interval": "1d",
+            "source": source, "asOf": as_of, "status": status,
+            **q,
+        })
+
+    ok = sum(1 for s in series if s["status"] == "ok")
+    issues = sum(1 for s in series if s["status"] in ("warn", "stale"))
+    mock = sum(1 for s in series if s["status"] == "mock")
+    return {
+        "title": title,
+        "series": series,
+        "summary": {
+            "seriesCount": len(series),
+            "okCount": ok,
+            "issueCount": issues,
+            "mockCount": mock,
+            "asOf": latest,
+        },
+        "asOf": latest,
+        "source": "live" if any(s["source"] == "live" for s in series) else "mock",
+    }
+
+
 # ----------------------------- registry -----------------------------
 class SkillDef:
     def __init__(self, id, name, panel_type, description, subskills, builder, default_title):
@@ -2887,6 +3072,49 @@ _reg(SkillDef(
         {"name": "list_catalysts", "description": "Return upcoming events with dates and High/Medium/Low impact labels.", "expectedOutput": "A catalyst list."},
     ],
     build_company_analytics, "Company Analytics",
+))
+_reg(SkillDef(
+    "data-universe", "Data Universe", "data_universe",
+    "Shows the formal investable universe: every tracked symbol with its sector, "
+    "industry, listing venue, market cap, and data provenance (live vs catalog "
+    "breadth), plus coverage statistics by sector and exchange. Use when the user "
+    "asks what's covered, the universe, data coverage, which symbols are tracked, "
+    "or which names have live vs mock data. Optionally filter by sector.",
+    [
+        {"name": "select_scope", "description": "Choose the whole universe or a single sector.", "expectedOutput": "A symbol set to summarize."},
+        {"name": "assemble_rows", "description": "List symbols with sector, industry, venue, market cap and provenance.", "expectedOutput": "A ranked table of universe rows."},
+        {"name": "compute_coverage", "description": "Aggregate live/mock/tracked counts by sector and exchange.", "expectedOutput": "Coverage summary statistics."},
+    ],
+    build_data_universe, "Data Universe",
+))
+_reg(SkillDef(
+    "intraday-chart", "Intraday OHLCV", "intraday_chart",
+    "Renders an intraday OHLCV chart for one ticker at a selectable resolution "
+    "(1m, 5m, 15m, 30m, 1h) within the real limits of the data source, fetched "
+    "live and labeled with the exact resolution and window served. When the "
+    "requested window exceeds source limits it cleanly reports that the data is "
+    "unavailable rather than substituting daily or synthetic bars. Use when the "
+    "user wants intraday, minute, or hourly price action.",
+    [
+        {"name": "resolve_symbol", "description": "Map the request to a known ticker.", "expectedOutput": "A valid ticker."},
+        {"name": "select_resolution", "description": "Pick an intraday resolution and window within source limits.", "expectedOutput": "An interval and range."},
+        {"name": "fetch_intraday", "description": "Fetch live intraday bars (cached briefly) or report unavailable.", "expectedOutput": "An ordered list of intraday OHLCV points, or a clean unavailable state."},
+    ],
+    build_intraday_chart, "Intraday Chart",
+))
+_reg(SkillDef(
+    "data-quality", "Data Quality", "data_quality",
+    "Audits the OHLCV series behind one symbol, a sector, or the core set and "
+    "reports data-quality findings: missing periods (gaps), stale freshness, "
+    "rows with missing OHLC, zero-volume bars and duplicate timestamps, each "
+    "tagged with its provenance. Use when the user asks about data quality, data "
+    "gaps, stale data, freshness, or whether the data can be trusted.",
+    [
+        {"name": "select_series", "description": "Choose the symbol(s) whose series to audit.", "expectedOutput": "A set of series to validate."},
+        {"name": "run_checks", "description": "Detect gaps, staleness, NaN/zero-volume and duplicate timestamps.", "expectedOutput": "Per-series quality counts and issues."},
+        {"name": "summarize", "description": "Aggregate clean vs flagged vs mock series.", "expectedOutput": "A quality summary."},
+    ],
+    build_data_quality, "Data Quality",
 ))
 
 

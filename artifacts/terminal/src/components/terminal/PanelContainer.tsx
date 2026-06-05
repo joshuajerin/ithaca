@@ -32,6 +32,9 @@ import { DCFPanel } from "./panels/DCFPanel";
 import { TranscriptPanel } from "./panels/TranscriptPanel";
 import { MACPanel } from "./panels/MACPanel";
 import { CompanyAnalyticsPanel } from "./panels/CompanyAnalyticsPanel";
+import { DataUniversePanel } from "./panels/DataUniversePanel";
+import { IntradayChartPanel } from "./panels/IntradayChartPanel";
+import { DataQualityPanel } from "./panels/DataQualityPanel";
 import { DynamicPanel } from "./panels/generated/DynamicPanel";
 
 interface PanelContainerProps {
@@ -133,6 +136,9 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "earnings_transcript": return <TranscriptPanel data={panel.data as any} />;
       case "ma_tracker": return <MACPanel data={panel.data as any} />;
       case "company_analytics": return <CompanyAnalyticsPanel data={panel.data as any} />;
+      case "data_universe": return <DataUniversePanel data={panel.data as any} />;
+      case "intraday_chart": return <IntradayChartPanel data={panel.data as any} />;
+      case "data_quality": return <DataQualityPanel data={panel.data as any} />;
       default: return <DynamicPanel type={panel.type} data={panel.data as any} />;
     }
   };
@@ -159,7 +165,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
               <span
                 className={`w-1.5 h-1.5 rounded-full ${panel.source === "live" ? "bg-emerald-400" : "bg-muted-foreground/50"}`}
               />
-              {panel.source === "live" ? formatAsOf(panel.asOf) : "mock"}
+              {panel.source === "live" ? formatAsOf(panel.asOf) : panel.source}
             </span>
           )}
           <button 

@@ -519,6 +519,169 @@ def prompt_symbols(limit: int = 80) -> List[str]:
     return data.top_symbols(limit)
 
 
+def universe_overview(sector: Optional[str] = None, limit: int = 150) -> dict:
+    """Formal investable-universe accessor with coverage + provenance.
+
+    Returns {rows, summary, sectors, source, asOf}. `rows` lists symbols
+    (most-valuable first) each tagged with its sector, industry (when known),
+    listing venue and provenance (``live`` once real data has been ingested,
+    else ``mock`` catalog breadth). `summary`/`sectors` describe coverage across
+    the *whole* universe, not just the capped row slice. Provenance is honest:
+    nothing is invented, and unknown fields are reported as null.
+    """
+    sid = resolve_sector(sector) if sector else None
+    rows: List[dict] = []
+    sectors: List[dict] = []
+    summary = {
+        "totalSymbols": 0, "liveSymbols": 0, "mockSymbols": 0,
+        "trackedSymbols": 0, "sectorCount": 0, "exchanges": [], "asOf": None,
+    }
+    latest: Optional[str] = None
+
+    if db.db_available():
+        try:
+            where = "WHERE f.price IS NOT NULL"
+            params: list = []
+            if sid:
+                where += " AND u.sector = %s"
+                params.append(sid)
+
+            row_sql = f"""
+                SELECT f.symbol, f.name, u.sector, u.industry, u.country,
+                       u.exchange, COALESCE(u.tracked, FALSE) AS tracked,
+                       COALESCE(f.is_live, FALSE) AS is_live,
+                       f.price, f.market_cap, f.updated_at
+                FROM fundamentals f
+                LEFT JOIN universe u ON u.symbol = f.symbol
+                {where}
+                ORDER BY f.market_cap DESC NULLS LAST
+                LIMIT %s
+            """
+            db_rows = db.query(row_sql, tuple(params + [limit]))
+            for r in db_rows:
+                as_of_row = _iso(r.get("updated_at"))
+                is_live = bool(r.get("is_live"))
+                if is_live and as_of_row and (latest is None or as_of_row > latest):
+                    latest = as_of_row
+                rows.append({
+                    "symbol": r["symbol"],
+                    "name": r.get("name") or r["symbol"],
+                    "sector": r.get("sector"),
+                    "sectorName": sector_name(r["sector"]) if r.get("sector") else None,
+                    "industry": r.get("industry"),
+                    "country": r.get("country"),
+                    "exchange": r.get("exchange"),
+                    "tracked": bool(r.get("tracked")),
+                    "price": _num(r.get("price")),
+                    "marketCap": _num(r.get("market_cap")),
+                    "source": "live" if is_live else "mock",
+                    "asOf": as_of_row if is_live else None,
+                })
+
+            agg = db.query_one(f"""
+                SELECT COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE f.is_live) AS live,
+                       COUNT(*) FILTER (WHERE COALESCE(u.tracked, FALSE)) AS tracked,
+                       COUNT(DISTINCT u.exchange) FILTER (WHERE u.exchange IS NOT NULL) AS venues
+                FROM fundamentals f
+                LEFT JOIN universe u ON u.symbol = f.symbol
+                {where}
+            """, tuple(params))
+            ex_rows = db.query(f"""
+                SELECT DISTINCT u.exchange AS exchange
+                FROM fundamentals f
+                LEFT JOIN universe u ON u.symbol = f.symbol
+                {where} AND u.exchange IS NOT NULL
+                ORDER BY u.exchange
+            """, tuple(params))
+            sec_rows = db.query(f"""
+                SELECT u.sector AS sector, COUNT(*) AS n,
+                       COUNT(*) FILTER (WHERE f.is_live) AS live
+                FROM fundamentals f
+                LEFT JOIN universe u ON u.symbol = f.symbol
+                {where}
+                GROUP BY u.sector
+                ORDER BY n DESC
+            """, tuple(params))
+
+            if agg:
+                total = int(agg.get("total") or 0)
+                live = int(agg.get("live") or 0)
+                summary = {
+                    "totalSymbols": total,
+                    "liveSymbols": live,
+                    "mockSymbols": total - live,
+                    "trackedSymbols": int(agg.get("tracked") or 0),
+                    "sectorCount": len([s for s in sec_rows if s.get("sector")]),
+                    "exchanges": [e["exchange"] for e in ex_rows if e.get("exchange")],
+                    "asOf": latest,
+                }
+            sectors = [
+                {
+                    "id": s["sector"],
+                    "name": sector_name(s["sector"]),
+                    "count": int(s.get("n") or 0),
+                    "liveCount": int(s.get("live") or 0),
+                }
+                for s in sec_rows if s.get("sector")
+            ]
+            if rows:
+                return {
+                    "rows": rows, "summary": summary, "sectors": sectors,
+                    "source": "live" if summary["liveSymbols"] else "mock",
+                    "asOf": latest,
+                }
+        except Exception as exc:  # noqa: BLE001
+            log.warning("universe_overview DB error: %s", exc)
+
+    # Mock fallback (DB unavailable / empty): catalog breadth, honestly labeled.
+    companies = data.COMPANIES
+    items = [
+        (sym, c) for sym, c in companies.items()
+        if not sid or c.get("sector") == sid
+    ]
+    items.sort(key=lambda kv: kv[1].get("marketCap", 0), reverse=True)
+    rows = [
+        {
+            "symbol": sym,
+            "name": c.get("name") or sym,
+            "sector": c.get("sector"),
+            "sectorName": sector_name(c["sector"]) if c.get("sector") else None,
+            "industry": None,
+            "country": c.get("country"),
+            "exchange": c.get("exchange"),
+            "tracked": sym in set(data.CORE_SYMBOLS),
+            "price": c.get("price"),
+            "marketCap": c.get("marketCap"),
+            "source": "mock",
+            "asOf": None,
+        }
+        for sym, c in items[:limit]
+    ]
+    sec_counts: Dict[str, int] = {}
+    for _, c in items:
+        s = c.get("sector")
+        if s:
+            sec_counts[s] = sec_counts.get(s, 0) + 1
+    sectors = sorted(
+        ({"id": s, "name": sector_name(s), "count": n, "liveCount": 0}
+         for s, n in sec_counts.items()),
+        key=lambda x: x["count"], reverse=True,
+    )
+    exchanges = sorted({c.get("exchange") for _, c in items if c.get("exchange")})
+    summary = {
+        "totalSymbols": len(items),
+        "liveSymbols": 0,
+        "mockSymbols": len(items),
+        "trackedSymbols": sum(1 for sym, _ in items if sym in set(data.CORE_SYMBOLS)),
+        "sectorCount": len(sec_counts),
+        "exchanges": exchanges,
+        "asOf": None,
+    }
+    return {"rows": rows, "summary": summary, "sectors": sectors,
+            "source": "mock", "asOf": None}
+
+
 def as_of(*records) -> Optional[str]:
     """Most-recent freshness timestamp across the given company/sentiment records."""
     stamps = [r.get("_asOf") for r in records if isinstance(r, dict) and r.get("_asOf")]

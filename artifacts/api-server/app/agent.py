@@ -300,6 +300,49 @@ def _tools() -> list:
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }, "required": ["symbol"]},
         }},
+        {"type": "function", "function": {
+            "name": "add_data_universe",
+            "description": (
+                f"Add a data-universe panel showing the investable universe: symbols with sector, "
+                f"industry, listing venue and market cap, plus coverage statistics and data provenance "
+                f"(live vs mock). Optionally filter by sector. {sizing} "
+                "Use when the user asks what's covered, the universe, data coverage, tracked symbols, "
+                "or which names are live vs mock."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "sector": {"type": "string", "description": f"Sector ({secs}) or omit for the whole universe."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
+        {"type": "function", "function": {
+            "name": "add_intraday_chart",
+            "description": (
+                f"Add an intraday OHLCV chart for one ticker at a selectable resolution (1m, 5m, 15m, "
+                f"30m, 1h), fetched live and labeled with the resolution/window served; reports a clean "
+                f"unavailable state when the window exceeds source limits. {sizing} "
+                "Use when the user wants intraday, minute, or hourly price action."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Ticker. One of: {syms}"},
+                "interval": {"type": "string", "enum": ["1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h"]},
+                "range": {"type": "string", "enum": ["1d", "5d", "7d", "1mo", "60d", "3mo", "6mo", "1y", "2y"]},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_data_quality",
+            "description": (
+                f"Add a data-quality panel auditing the OHLCV series behind one symbol, a sector, or the "
+                f"core set: gaps, stale freshness, missing-OHLC rows, zero-volume bars and duplicate "
+                f"timestamps, each tagged with provenance. {sizing} "
+                "Use when the user asks about data quality, gaps, stale data, freshness, or data trust."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Ticker ({syms}) to audit a single series, or omit."},
+                "sector": {"type": "string", "description": f"Sector ({secs}) to audit a group, or omit."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
     ]
 
 
@@ -334,6 +377,9 @@ _TOOL_TO_TYPE = {
     "add_earnings_transcript": "earnings_transcript",
     "add_ma_tracker": "ma_tracker",
     "add_company_analytics": "company_analytics",
+    "add_data_universe": "data_universe",
+    "add_intraday_chart": "intraday_chart",
+    "add_data_quality": "data_quality",
 }
 
 
@@ -393,6 +439,9 @@ def _system_prompt() -> str:
         "simulation / forward projection / 'probability of loss' / scenario forecast requests, use add_monte_carlo.\n"
         "- For company analytics requests ('why is X up/down', 'what drives X', 'analyze X vs competitors', "
         "'company analytics for X', 'competition for X', 'price drivers for X'), use add_company_analytics.\n"
+        "- For data-layer requests: universe/coverage/'what's tracked'/'live vs mock' → add_data_universe; "
+        "intraday/minute/hourly price action → add_intraday_chart; data quality/gaps/stale/freshness/'can I "
+        "trust the data' → add_data_quality.\n"
         "- Decide each panel's width (3-12 grid columns) and height (2-6 row units). Make the "
         "primary panel larger; supporting panels narrower. A full-width hero is width 12.\n"
         "- Only use tickers and sectors that exist in the dataset.\n"
@@ -820,6 +869,9 @@ _TYPE_LABELS = {
     "earnings_transcript": "an earnings transcript",
     "ma_tracker": "an M&A tracker",
     "company_analytics": "a company analytics panel",
+    "data_universe": "a data universe overview",
+    "intraday_chart": "an intraday chart",
+    "data_quality": "a data quality report",
 }
 
 
