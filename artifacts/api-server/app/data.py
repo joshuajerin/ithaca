@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 from datetime import date, timedelta
 from typing import Dict, List, Optional
 
@@ -1766,10 +1767,24 @@ def get_revenue_growth(symbol: str) -> Optional[float]:
     return REVENUE_GROWTH.get(symbol.upper())
 
 
-def news_for(scope_type: str, scope: str, limit: int = 8) -> List[dict]:
-    """scope_type: 'symbol' or 'sector'. Returns curated news items."""
+def news_for(scope_type: str, scope: str, limit: int = 40) -> List[dict]:
+    """scope_type: 'symbol', 'sector' or 'topic'. Returns curated news items."""
     items: List[dict] = []
-    if scope_type == "symbol":
+    if scope_type == "topic":
+        kws = [w for w in re.findall(r"[a-z0-9][a-z0-9\-]+", (scope or "").lower())
+               if len(w) >= 3]
+        if kws:
+            scored = []
+            for n in _NEWS:
+                hay = (n["headline"] + " " + n["summary"]).lower()
+                score = sum(1 for kw in kws if kw in hay)
+                if score:
+                    scored.append((score, n))
+            scored.sort(key=lambda t: (-t[0], t[1]["days_ago"]))
+            items = [n for _, n in scored]
+        if not items:
+            items = list(_NEWS)
+    elif scope_type == "symbol":
         sym = scope.upper()
         for n in _NEWS:
             if sym in n["tickers"]:

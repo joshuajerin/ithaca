@@ -9,6 +9,7 @@ keys on company records and an `as_of` helper for panels.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
@@ -504,10 +505,12 @@ def _news_item(r: dict) -> dict:
     }
 
 
-def news_for(scope_type: str, scope: str, limit: int = 8) -> List[dict]:
+def news_for(scope_type: str, scope: str, limit: int = 40) -> List[dict]:
     if db.db_available():
         try:
-            if scope_type == "symbol":
+            if scope_type == "topic":
+                rows = _news_topic_rows(scope, limit)
+            elif scope_type == "symbol":
                 sym = scope.upper()
                 rows = db.query(
                     """
@@ -542,6 +545,102 @@ def news_for(scope_type: str, scope: str, limit: int = 8) -> List[dict]:
         except Exception as exc:  # noqa: BLE001
             log.warning("news_for DB error (%s/%s): %s", scope_type, scope, exc)
     return data.news_for(scope_type, scope, limit)
+
+
+# Common words that carry no topical signal in a "<topic> news" prompt.
+_NEWS_STOPWORDS = {
+    "news", "headlines", "headline", "latest", "recent", "update", "updates",
+    "show", "me", "the", "a", "an", "about", "on", "for", "of", "and", "or",
+    "in", "to", "what", "whats", "what's", "is", "are", "happening", "with",
+    "any", "give", "get", "find", "today", "now", "story", "stories", "around",
+}
+
+
+def news_keywords(text: str) -> List[str]:
+    """Extract topical keywords from a free-text news prompt."""
+    words = re.findall(r"[a-z0-9][a-z0-9\-]+", (text or "").lower())
+    kws = [w for w in words if w not in _NEWS_STOPWORDS and len(w) >= 2]
+    seen: set = set()
+    out: List[str] = []
+    for w in kws:
+        if w not in seen:
+            seen.add(w)
+            out.append(w)
+    return out[:6]
+
+
+def _news_topic_rows(scope: str, limit: int) -> List[dict]:
+    """Keyword search across headline + summary, ranked by relevance then recency."""
+    kws = news_keywords(scope)
+    if not kws:
+        return []
+    score_parts: List[str] = []
+    where_parts: List[str] = []
+    args: List = []
+    for kw in kws:
+        like = f"%{kw}%"
+        score_parts.append(
+            "(CASE WHEN headline ILIKE %s THEN 2 ELSE 0 END) "
+            "+ (CASE WHEN summary ILIKE %s THEN 1 ELSE 0 END)"
+        )
+        args.extend([like, like])
+        where_parts.append("(headline ILIKE %s OR summary ILIKE %s)")
+        args.extend([like, like])
+    sql = (
+        f"SELECT *, ({' + '.join(score_parts)}) AS rel FROM news "
+        f"WHERE {' OR '.join(where_parts)} "
+        "ORDER BY rel DESC, published_at DESC NULLS LAST, fetched_at DESC LIMIT %s"
+    )
+    args.append(limit)
+    return db.query(sql, tuple(args))
+
+
+def _upsert_news(items: List[dict]) -> None:
+    rows = [
+        (it["id"], it["headline"], it.get("source"), it.get("summary"), it.get("url"),
+         it.get("publishedAt"), it.get("sentiment"), it.get("tickers") or [], it.get("sector"))
+        for it in items
+    ]
+    db.execute_many(
+        """
+        INSERT INTO news (id, headline, source, summary, url, published_at,
+                          sentiment, tickers, sector, fetched_at)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+        ON CONFLICT (id) DO UPDATE SET
+          headline = EXCLUDED.headline, summary = EXCLUDED.summary,
+          sentiment = EXCLUDED.sentiment,
+          tickers = EXCLUDED.tickers,
+          sector = COALESCE(EXCLUDED.sector, news.sector),
+          fetched_at = now()
+        """,
+        rows,
+    )
+
+
+def refresh_news_live(scope_type: str, scope: str) -> None:
+    """Best-effort, bounded live news fetch at query time so fresh headlines land
+    in the panel for the current request. Never raises; failures fall back to
+    whatever is already stored."""
+    if not db.db_available() or not scope:
+        return
+    try:
+        from .sources import news as n_src
+        if scope_type == "topic":
+            items = n_src.fetch_topic_news(scope, limit=40, timeout=8.0)
+        elif scope_type == "symbol":
+            sym = scope.upper()
+            company = get_company(sym)
+            sid = company["sector"] if company else None
+            items = n_src.fetch_news([sym], sid, limit=40, timeout=8.0)
+        else:
+            sid = resolve_sector(scope) or scope
+            syms = symbols_in_sector(sid)[:8]
+            items = n_src.fetch_news(syms, sid, limit=40, timeout=8.0) if syms else []
+        items = n_src.dedupe(items)
+        if items:
+            _upsert_news(items)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("query-time news fetch failed (%s/%s): %s", scope_type, scope, exc)
 
 
 # ----------------------------- sentiment -----------------------------

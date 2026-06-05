@@ -134,13 +134,31 @@ def build_price_chart(params: dict) -> dict:
     }
 
 
+NEWS_PANEL_LIMIT = 40
+
+
 def build_news(params: dict) -> dict:
-    scope_type = params.get("scope_type") or ("symbol" if params.get("symbol") else "sector")
-    scope = params.get("scope") or params.get("symbol") or params.get("sector") or "ai_tech"
-    items = repo.news_for(scope_type, scope)
+    topic = params.get("topic") or params.get("query")
+    if params.get("scope_type"):
+        scope_type = params["scope_type"]
+    elif params.get("symbol"):
+        scope_type = "symbol"
+    elif topic:
+        scope_type = "topic"
+    else:
+        scope_type = "sector"
+    scope = (params.get("scope") or params.get("symbol") or params.get("sector")
+             or topic or "ai_tech")
+    # Pull fresh headlines for the user's actual topic/symbol at query time so the
+    # panel reflects what's happening now. Best-effort and bounded — falls back to
+    # whatever is already stored (or curated mock) if a source is slow or down.
+    repo.refresh_news_live(scope_type, scope)
+    items = repo.news_for(scope_type, scope, limit=NEWS_PANEL_LIMIT)
     if scope_type == "symbol":
         company = repo.get_company(scope.upper())
         label = company["name"] if company else scope.upper()
+    elif scope_type == "topic":
+        label = scope.strip().title() if scope else "Markets"
     else:
         sid = repo.resolve_sector(scope) or scope
         label = repo.sector_name(sid)

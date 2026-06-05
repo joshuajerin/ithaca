@@ -10,8 +10,15 @@ gotchas (not discoverable without hitting them live):
   (`range`/`interval` params). Returns daily series + a `meta` block with the live
   quote (regularMarketPrice, fiftyTwoWeekHigh/Low, etc). Needs a browser `User-Agent`
   header or it 403s/429s.
-- **News:** Yahoo RSS `https://feeds.finance.yahoo.com/rss/2.0/headline?s=SYM1,SYM2`
+- **News (per-ticker):** Yahoo RSS `https://feeds.finance.yahoo.com/rss/2.0/headline?s=SYM1,SYM2`
   — multi-symbol, key-less. Parse with feedparser; per-item `tags` carry the tickers.
+  Note Yahoo's per-ticker feed also returns broad/generic articles (Motley Fool etc.), so
+  symbol-scoped news is never purely about that name.
+- **News (topic/market):** Google News RSS, key-less. Search:
+  `https://news.google.com/rss/search?q=<query>&hl=en-US&gl=US&ceid=US:en`; Business topic:
+  `.../rss/headlines/section/topic/BUSINESS`. BOTH **302-redirect** — httpx needs
+  `follow_redirects=True` or you get an empty feed. Titles end in " - Publisher" and carry
+  `entry.source.title`; strip the suffix and prefer that as the source name.
 - **Fundamentals:** `yfinance` `Ticker(sym).info` (it handles Yahoo's crumb/cookie auth).
   Heavier/slower than the chart endpoint, so ingest it on a slower cadence.
 

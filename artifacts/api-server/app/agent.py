@@ -39,10 +39,15 @@ def _tools() -> list:
         }},
         {"type": "function", "function": {
             "name": "add_news",
-            "description": f"Add curated news for a ticker or sector. {sizing}",
+            "description": (
+                "Add a live news feed for a ticker, a sector, or a free-text topic/theme. "
+                "Use scope_type='topic' for anything that isn't a tracked ticker or sector "
+                "(e.g. 'cybersecurity', 'AI chip shortage', 'oil prices', 'EV demand') and "
+                f"put the topic words in scope. {sizing}"
+            ),
             "parameters": {"type": "object", "properties": {
-                "scope_type": {"type": "string", "enum": ["symbol", "sector"]},
-                "scope": {"type": "string", "description": f"A ticker ({syms}) or sector ({secs})."},
+                "scope_type": {"type": "string", "enum": ["symbol", "sector", "topic"]},
+                "scope": {"type": "string", "description": f"A ticker ({syms}), a sector ({secs}), or a free-text topic/theme."},
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }, "required": ["scope_type", "scope"]},
         }},
@@ -624,6 +629,11 @@ def _system_prompt() -> str:
         "- For microstructure/execution requests: order book → add_order_book; trade flow/unusual activity → add_trade_flow; "
         "TCA / execution simulation / slippage / market impact / VWAP-TWAP-POV / 'cost to trade into a portfolio' → add_tca_report "
         "(pass symbols+target_weights for a portfolio, or symbol+side+notional for one name).\n"
+        "- For news requests, use add_news. If the request is about a tracked ticker or sector, "
+        "pass scope_type='symbol'/'sector'. For ANY theme or topic that is not a tracked ticker "
+        "or sector ('cybersecurity news', 'AI chip shortage', 'oil prices', 'EV demand', "
+        "'rate cuts'), pass scope_type='topic' and put the user's topic words in scope so the "
+        "feed is about that topic, not generic market news.\n"
         "- For supply chain requests ('suppliers', 'supply chain', 'vendors'), use add_supply_chain.\n"
         "- For DCF / valuation / intrinsic value requests, use add_dcf_model.\n"
         "- For earnings call / transcript / 'what did management say' requests, use add_earnings_transcript.\n"
@@ -1454,6 +1464,11 @@ def _extract_strategy(q: str) -> str:
     return "straddle"
 
 
+def _news_topic(query: str) -> str:
+    """Reduce a free-text news prompt to its topical keywords (empty if none)."""
+    return " ".join(repo.news_keywords(query))
+
+
 def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
                            dash_syms: Optional[List[str]] = None,
                            dash_secs: Optional[List[str]] = None):
@@ -2000,6 +2015,14 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         add("analysis", {"scope_type": "sector", "scope": sector}, 6, 4)
         return panels, f"{repo.sector_name(sector)} overview: heatmap, screener, news and analysis."
 
+    if wants_news:
+        topic = _news_topic(query)
+        if topic:
+            add("news", {"scope_type": "topic", "scope": topic}, 12, 5)
+            if wants_sentiment:
+                add("sentiment", {"scope_type": "sector", "scope": "ai_tech"}, 6, 4)
+            return panels, f"Live headlines on {topic}."
+
     if wants_sentiment:
         add("sentiment", {"scope_type": "sector", "scope": "ai_tech"}, 6, 4)
         add("news", {"scope_type": "sector", "scope": "ai_tech"}, 6, 4)
@@ -2083,6 +2106,10 @@ def _refine_params_heuristic(panel_type: str, panel: dict, instruction: str) -> 
             return {"scope_type": "symbol", "scope": syms[0]}
         if sector:
             return {"scope_type": "sector", "scope": sector}
+        if panel_type == "news":
+            topic = _news_topic(instruction)
+            if topic:
+                return {"scope_type": "topic", "scope": topic}
     if panel_type in ("screener", "heatmap", "ma_tracker") and sector:
         return {"sector": sector}
     if panel_type in ("iv_surface", "vol_term_structure") and syms:

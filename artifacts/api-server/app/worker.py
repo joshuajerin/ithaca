@@ -28,9 +28,12 @@ log = logging.getLogger("terminal.worker")
 # Cadences (seconds). Prices fast; fundamentals/news/sentiment slower.
 PRICE_INTERVAL = 90
 FUNDAMENTALS_INTERVAL = 900
-NEWS_INTERVAL = 300
+NEWS_INTERVAL = 120
 SENTIMENT_INTERVAL = 600
 ONDEMAND_INTERVAL = 15
+
+# Small pause between RSS batches so a fast news cadence doesn't trip Yahoo 403/429.
+NEWS_BATCH_PAUSE = 1.5
 
 _SEM = asyncio.Semaphore(5)  # bound concurrent network calls
 _tasks: List[asyncio.Task] = []
@@ -265,11 +268,24 @@ async def _ingest_news_for(symbols: List[str], sector: Optional[str]) -> None:
     if not symbols:
         return
     try:
-        items = await _net(n_src.fetch_news, symbols, sector, 25)
+        items = await _net(n_src.fetch_news, symbols, sector, 40)
+        items = n_src.dedupe(items or [])
         if items:
             await asyncio.to_thread(_upsert_news, items)
     except Exception as exc:  # noqa: BLE001
         log.warning("news ingest failed for %s: %s", symbols, exc)
+
+
+async def _ingest_market_news() -> None:
+    """Broad, key-less market/business headlines (Google News) so the feed has
+    breadth beyond per-ticker stories. Best-effort."""
+    try:
+        items = await _net(n_src.fetch_market_news, 40)
+        items = n_src.dedupe(items or [])
+        if items:
+            await asyncio.to_thread(_upsert_news, items)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("market news ingest failed: %s", exc)
 
 
 # ----------------------------- loops -----------------------------
@@ -299,6 +315,7 @@ async def _fundamentals_loop():
 async def _news_loop():
     while True:
         try:
+            await _ingest_market_news()
             for sid in data.SECTORS.keys():
                 rows = await asyncio.to_thread(
                     db.query,
@@ -308,6 +325,8 @@ async def _news_loop():
                 syms = [r["symbol"] for r in rows]
                 for i in range(0, len(syms), 8):
                     await _ingest_news_for(syms[i:i + 8], sid)
+                    # Stagger batches so the faster cadence stays under Yahoo limits.
+                    await asyncio.sleep(NEWS_BATCH_PAUSE)
             log.info("news cycle complete")
         except Exception as exc:  # noqa: BLE001
             log.warning("news loop error: %s", exc)
