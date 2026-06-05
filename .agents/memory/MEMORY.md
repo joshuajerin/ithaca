@@ -7,3 +7,4 @@
 - [Voice Mode push-to-talk](voice-mode-loop.md) — hold orb to listen / release to send (no auto re-arm); continuous=true + graceful stop() vs abort(); mic off during TTS; iframe blocks Web Speech; compact mobile layout.
 - [Backtesting & simulation engine](backtest-engine.md) — pure numpy engine in app/engine/; no-lookahead position lag, real OHLCV via price_series_meta (live/mock+asOf), Monte Carlo bootstrap/GBM.
 - [Stock universe breadth (US + SGX)](universe-breadth.md) — CORE tracked-live vs bulk mock-on-demand split; SGX base codes + .SI at fetch only; is_live provenance; prompt_symbols cap.
+- [Launch video layering & perf](launch-video-layering.md) — persistent layers by baseSceneKey; single rAF loop, no blur filters, scrims behind text fix lag+overlap.

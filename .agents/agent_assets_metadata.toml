@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "4aVRKYPbXe4wnCAnCeW0u"
+uri = "file://artifacts/launch-video/public/audio/bg_music.mp3"
+type = "audio"
+title = "background music"
