@@ -9,35 +9,34 @@ interface ChatPanelProps {
   sessionId?: string;
   onCommand: (cmd: string) => void;
   isProcessing: boolean;
-  lastSummary?: string;
+  // The latest assistant reply (a build summary or a conversational answer),
+  // carried with a monotonically increasing nonce so every reply renders — even
+  // when its text repeats a previous one (no content-based dedup dropping it).
+  reply?: { text: string; kind: 'answer' | 'summary'; nonce: number } | null;
 }
 
 interface Message {
   role: 'user' | 'assistant';
   content: string;
+  kind?: 'answer' | 'summary';
 }
 
-export function ChatPanel({ sessionId, onCommand, isProcessing, lastSummary }: ChatPanelProps) {
+export function ChatPanel({ sessionId, onCommand, isProcessing, reply }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const lastReplyNonce = useRef(0);
 
   const { data: suggestions } = useGetSuggestions();
   const { data: skills } = useGetSkills();
   const { data: watchlist } = useGetWatchlist();
 
   useEffect(() => {
-    if (lastSummary) {
-      setMessages(prev => {
-        // Only add if it's different from the last assistant message
-        const lastMsg = prev[prev.length - 1];
-        if (lastMsg?.role === 'assistant' && lastMsg.content === lastSummary) {
-          return prev;
-        }
-        return [...prev, { role: 'assistant', content: lastSummary }];
-      });
+    if (reply && reply.text && reply.nonce !== lastReplyNonce.current) {
+      lastReplyNonce.current = reply.nonce;
+      setMessages(prev => [...prev, { role: 'assistant', content: reply.text, kind: reply.kind }]);
     }
-  }, [lastSummary]);
+  }, [reply]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -121,7 +120,7 @@ export function ChatPanel({ sessionId, onCommand, isProcessing, lastSummary }: C
               className={`flex flex-col gap-1.5 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
             >
               <div className="editorial-label text-[8.5px] text-muted-foreground">
-                {msg.role === 'user' ? 'Operator' : 'Terminal'}
+                {msg.role === 'user' ? 'Operator' : msg.kind === 'answer' ? 'Terminal · Answer' : 'Terminal'}
               </div>
               <div className={`px-3.5 py-2.5 max-w-[90%] font-serif text-base leading-snug ${
                 msg.role === 'user' 

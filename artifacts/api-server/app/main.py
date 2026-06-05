@@ -61,8 +61,11 @@ def get_sectors():
 def get_suggestions():
     return {"prompts": [
         "Give me a market overview of what's moving today",
+        "What is a Sortino ratio?",
         "Deep dive on NVIDIA",
+        "Explain what I'm seeing on this dashboard",
         "Compare NVDA, AMD and TSM",
+        "What's the difference between IV and HV?",
         "Screen the robotics & automation sector",
         "Show me the EV and automotive heatmap",
         "What's the latest news in cybersecurity?",

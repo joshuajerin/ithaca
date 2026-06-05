@@ -45,6 +45,19 @@ export default function Terminal() {
   const [highlightedPanelId, setHighlightedPanelId] = useState<string | null>(null);
   const [chatOpen, setChatOpen] = useState(true);
   const [showFeatureModal, setShowFeatureModal] = useState(false);
+  // The latest assistant reply to surface in the Console, carried with an
+  // incrementing nonce so every reply renders — including a question's answer
+  // even when panels did not change.
+  const [reply, setReply] = useState<{ text: string; kind: 'answer' | 'summary'; nonce: number } | null>(null);
+  const replyNonce = useRef(0);
+
+  const pushReply = useCallback((result: DashboardSpec) => {
+    const isAnswer = result.intent === "question";
+    const text = (isAnswer ? result.answer : result.summary) || "";
+    if (!text) return;
+    replyNonce.current += 1;
+    setReply({ text, kind: isAnswer ? 'answer' : 'summary', nonce: replyNonce.current });
+  }, []);
 
   const orchestrate = useOrchestrate();
   const speak = useSpeak();
@@ -109,6 +122,7 @@ export default function Terminal() {
           data: { query: command, sessionId: sessionIdRef.current },
         });
         setActiveDashboard(result);
+        pushReply(result);
         window.setTimeout(() => void runTour(result.sessionId, command), 850);
         return;
       }
@@ -119,7 +133,10 @@ export default function Terminal() {
           sessionId: sessionIdRef.current,
         },
       });
+      // A question answer leaves the panels untouched; a build recomposes them.
+      // Either way we adopt the returned spec so the session id stays in sync.
       setActiveDashboard(result);
+      pushReply(result);
     } catch (e) {
       console.error("Orchestration failed", e);
     }
@@ -289,7 +306,7 @@ export default function Terminal() {
                 sessionId={activeDashboard?.sessionId}
                 onCommand={handleCommand}
                 isProcessing={orchestrate.isPending}
-                lastSummary={activeDashboard?.summary}
+                reply={reply}
               />
             </div>
           </aside>

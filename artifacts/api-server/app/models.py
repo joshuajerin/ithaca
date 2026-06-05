@@ -1045,6 +1045,11 @@ class DashboardSpec(BaseModel):
     summary: str
     panels: List[Panel]
     narration: Optional[List[NarrationSegment]] = None
+    # "question" when the message was answered conversationally (panels unchanged)
+    # or "build" when the dashboard was composed/modified.
+    intent: Optional[str] = None
+    # Conversational answer text for a question intent; null for a build.
+    answer: Optional[str] = None
 
 
 class OrchestrationRequest(BaseModel):

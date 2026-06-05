@@ -36,3 +36,18 @@ Frontend (`Dashboard.tsx`): panels are wrapped in framer-motion `AnimatePresence
 keyed by `panel.id`, so appended panels fade/slide/blur in while existing ones (same key) do NOT
 remount or re-animate. Grid placement (gridColumn/Row from `panel.layout`) lives on the motion
 wrapper; `PanelContainer` is `h-full` and fills the cell.
+
+## Conversational Q&A intent (Console)
+`orchestrate` now splits each non-voice, non-reset message into a **question** vs **build**
+intent (`_classify_intent`): a cheap `_has_question_signal` gate (no signal → build, no LLM
+call) then an LLM classifier (`_classify_intent_llm`, JSON `{intent}`) with a conservative
+keyword fallback (`_is_question_heuristic`, defaults to build unless clearly conceptual and no
+`_BUILD_CUES`). A question answers in chat (`_answer_question` → LLM grounded in on-screen
+panels + last 6 history turns; honest fallback string) and returns the panel set UNCHANGED with
+`{intent:"question", answer, summary:""}`; a build is unchanged and returns `{intent:"build"}`.
+**Voice always builds** (intent split skipped when `voice=True`) so narration is untouched.
+
+**Frontend contract:** `DashboardSpec` gained optional `intent` + `answer`. `Terminal.tsx`
+drives the Console via a nonce-bumped `reply={text,kind,nonce}` prop (replaces the old
+content-deduped `lastSummary` effect) so a question's answer ALWAYS renders even if its text
+repeats. `ChatPanel` appends on nonce change; answers are labelled "Terminal · Answer".

@@ -556,6 +556,16 @@ export interface DashboardSpec {
      * @nullable
      */
   narration?: NarrationSegment[] | null;
+  /**
+     * "question" when the message was answered conversationally (panels unchanged) or "build" when the dashboard was composed/modified.
+     * @nullable
+     */
+  intent?: string | null;
+  /**
+     * Conversational answer text for a question intent; null/omitted for a build.
+     * @nullable
+     */
+  answer?: string | null;
 }
 
 export interface OrchestrationRequest {

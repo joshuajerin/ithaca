@@ -590,6 +590,24 @@ def orchestrate(query: str, session_id: Optional[str], voice: bool = False) -> d
     if reset:
         base = []
 
+    # A message can either ask a question (answer it in chat, leave the dashboard
+    # untouched) or be a build/modify request (compose panels as before). Voice
+    # mode always builds — its narration flow is unchanged. A reset is an explicit
+    # build/clear action, never a question.
+    if not voice and not reset and _classify_intent(query, sid) == "question":
+        answer = _answer_question(query, sid, base)
+        state.append_history(sid, "user", query)
+        state.append_history(sid, "assistant", answer)
+        # Persist the (unchanged) panel set so the session keeps its dashboard.
+        state.set_dashboard(sid, base)
+        return {
+            "sessionId": sid,
+            "summary": "",
+            "answer": answer,
+            "intent": "question",
+            "panels": base,
+        }
+
     # Decide which existing panels remain relevant to this prompt, then re-pack
     # the kept panels from the top so removed panels leave no holes in the grid.
     kept = _decide_kept_panels(query, sid, base) if base else []
@@ -613,10 +631,179 @@ def orchestrate(query: str, session_id: Optional[str], voice: bool = False) -> d
     state.append_history(sid, "user", query)
     state.append_history(sid, "assistant", summary)
 
-    result: dict = {"sessionId": sid, "summary": summary, "panels": combined}
+    result: dict = {"sessionId": sid, "summary": summary, "panels": combined, "intent": "build"}
     if voice:
         result["narration"] = _build_narration(query, summary, panels)
     return result
+
+
+# --------------------- conversational question answering ---------------------
+# Signals that a message *might* be a question rather than a build request. When
+# none are present the message is unambiguously a build, so we skip the extra LLM
+# classification round-trip entirely (keeps build latency low).
+_QUESTION_SIGNALS = (
+    r"\?",
+    r"\bwhat\b", r"\bwhat'?s\b", r"\bwhy\b", r"\bhow\b", r"\bwhen\b",
+    r"\bwhich\b", r"\bwho\b",
+    r"\bexplain\b", r"\bdefine\b", r"\bdefinition\b", r"\bdescribe\b",
+    r"\bdifference\b", r"\bmean(s|ing)?\b", r"\btell me about\b",
+    r"\bhelp me understand\b", r"\bsummari[sz]e\b",
+)
+
+# Strong build cues — even when a question word is present (e.g. "what's the
+# latest news on NVDA"), these mark the message as a dashboard build request.
+_BUILD_CUES = (
+    r"\bshow\b", r"\badd\b", r"\bbuild\b", r"\bcompose\b", r"\bpull up\b",
+    r"\bbring up\b", r"\bgive me\b", r"\bdisplay\b", r"\bscreen\b",
+    r"\bheatmap\b", r"\bchart\b", r"\bdashboard for\b", r"\bnews\b",
+    r"\bsentiment\b", r"\bcompare\b", r"\bdeep dive\b", r"\bdcf\b",
+    r"\bbacktest\b", r"\bmodel for\b", r"\bwhat'?s moving\b",
+    r"\bwhat'?s the latest\b",
+)
+
+
+def _has_question_signal(query: str) -> bool:
+    q = query.lower()
+    return any(re.search(p, q) for p in _QUESTION_SIGNALS)
+
+
+def _classify_intent(query: str, sid: str) -> str:
+    """Return "question" or "build" for the message.
+
+    Fast path: a message with no question signal at all is always a build, so we
+    avoid an extra model call on the common case. When there *is* a question
+    signal we ask the model to disambiguate (a definitional question vs. a build
+    phrased as a question like "what's the latest news on NVDA"), falling back to
+    a keyword heuristic if the model is unavailable.
+    """
+    if not _has_question_signal(query):
+        return "build"
+    if ai.ai_available():
+        try:
+            intent = _classify_intent_llm(query, sid)
+            if intent in ("question", "build"):
+                return intent
+        except Exception:
+            pass
+    return "question" if _is_question_heuristic(query) else "build"
+
+
+def _classify_intent_llm(query: str, sid: str) -> Optional[str]:
+    sys = (
+        "Classify a message sent to an agentic market terminal as either QUESTION or BUILD.\n"
+        "- QUESTION: the user wants a conversational explanation in the chat, not new panels. "
+        "This covers concept/definition questions ('what is a Sortino ratio', 'explain Monte Carlo "
+        "VaR', \"what's the difference between IV and HV\", 'how is beta calculated') and questions "
+        "about what is currently on their screen ('explain what I'm seeing', 'what does this dashboard "
+        "tell me', 'summarize these panels').\n"
+        "- BUILD: the user wants to see data or compose/change the dashboard ('show me NVDA news', "
+        "'add a yield curve', 'compare V and MA', \"what's moving today\", 'screen biotech', 'heatmap "
+        "of healthcare', 'DCF for MSFT', \"what's the sentiment on PLTR\"). A request naming a "
+        "ticker or sector together with a view (news, chart, screener, heatmap, sentiment, comparison, "
+        "model) is BUILD even when phrased as a question.\n"
+        "Use the recent conversation for follow-ups (e.g. after a definition, 'and how is it different "
+        "from Sharpe?' is a QUESTION).\n"
+        'Return JSON: {"intent": "question" | "build"}.'
+    )
+    messages = [{"role": "system", "content": sys}]
+    for h in state.get_history(sid)[-4:]:
+        messages.append({"role": h["role"], "content": h["content"]})
+    messages.append({"role": "user", "content": query})
+    msg = ai.chat(messages, response_format={"type": "json_object"})
+    content = (msg.content or "").strip()
+    if not content:
+        return None
+    parsed = json.loads(content)
+    intent = parsed.get("intent")
+    return intent if intent in ("question", "build") else None
+
+
+def _is_question_heuristic(query: str) -> bool:
+    """Keyword fallback used only when the model is unavailable.
+
+    Conservative: defaults to BUILD (the established behavior) unless the message
+    clearly reads as a concept/definition or a "what am I seeing" question and
+    carries no strong build cue.
+    """
+    q = query.lower().strip()
+    if any(re.search(p, q) for p in _BUILD_CUES):
+        return False
+    concept = (
+        r"\bwhat(?:'?s| is| are| does| do)\b.*\b(ratio|spread|curve|model|metric|"
+        r"sharpe|sortino|beta|alpha|var|drawdown|duration|convexity|greeks|vix|iv|"
+        r"hv|cds|dcf|monte carlo|backtest|skew|volatility|correlation|factor)\b",
+        r"\bwhat'?s the difference\b",
+        r"\b(explain|define|definition of|describe)\b",
+        r"\bhow (?:do|does|is|are)\b.*\b(work|works|calculated|computed|defined|differ)\b",
+        r"\bwhat (?:am i|are we) (?:seeing|looking at)\b",
+        r"\bwhat (?:does|do) (?:this|these|the|my)\b.*\b(tell|mean|show|say|indicate)\b",
+        r"\bhelp me understand\b",
+    )
+    return any(re.search(p, q) for p in concept)
+
+
+def _answer_question(query: str, sid: str, panels: List[dict]) -> str:
+    """Generate a conversational chat answer, grounded in on-screen panels.
+
+    Uses the AI client (bounded timeout / no retry, like every other caller) and
+    falls back to a short honest message if the model is unavailable.
+    """
+    if ai.ai_available():
+        try:
+            ans = _answer_question_llm(query, sid, panels)
+            if ans:
+                return ans
+        except Exception:
+            pass
+    return _answer_fallback(panels)
+
+
+def _answer_question_llm(query: str, sid: str, panels: List[dict]) -> str:
+    sys = (
+        "You are the analyst assistant inside an agentic market terminal. The user is asking a "
+        "question in the side Console rather than requesting a new dashboard, so answer in chat — "
+        "do NOT describe building anything. Reply conversationally in plain prose (no markdown "
+        "headings), tight and concrete: about 2-5 sentences for a concept question. Bring real "
+        "finance/quant knowledge to definitions (e.g. Sortino ratio, Monte Carlo VaR, IV vs HV, "
+        "drawdown, beta). "
+        "If the user asks about what they are seeing / this dashboard / these panels, ground your "
+        "answer in the panels currently on screen (listed below): explain what they collectively "
+        "show and how they relate. Never invent panels or data that are not listed. If there are no "
+        "panels on screen and the user asks about the screen, say the dashboard is empty and invite "
+        "them to ask for something to build."
+    )
+    messages = [{"role": "system", "content": sys}]
+    for h in state.get_history(sid)[-6:]:
+        messages.append({"role": h["role"], "content": h["content"]})
+    if panels:
+        shown = "; ".join(f'{p.get("title")} ({p["type"]})' for p in panels)
+        messages.append({"role": "system", "content": f"Panels currently on screen: {shown}."})
+    else:
+        messages.append({"role": "system", "content": "There are no panels on screen right now."})
+    messages.append({"role": "user", "content": query})
+    msg = ai.chat(messages)
+    return (msg.content or "").strip()
+
+
+def _answer_fallback(panels: List[dict]) -> str:
+    if panels:
+        labels: List[str] = []
+        for p in panels:
+            label = _TYPE_LABELS.get(p["type"], p["type"])
+            if label not in labels:
+                labels.append(label)
+        if len(labels) == 1:
+            body = labels[0]
+        else:
+            body = ", ".join(labels[:-1]) + " and " + labels[-1]
+        return (
+            f"Right now your dashboard shows {body}. I can't write a full explanation at the "
+            "moment — try your question again shortly, or ask me to add or change panels."
+        )
+    return (
+        "I can't answer that right now — the assistant is temporarily unavailable. "
+        "Please try again in a moment."
+    )
 
 
 # --------------------- context-aware panel relevance ---------------------

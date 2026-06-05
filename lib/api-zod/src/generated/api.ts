@@ -412,7 +412,9 @@ export const GetDefaultDashboardResponse = zod.object({
   "narration": zod.array(zod.object({
   "text": zod.string(),
   "panelId": zod.string().nullish()
-}).describe('A spoken narration chunk, optionally tied to a panel to highlight while it is read.')).nullish().describe('Ordered spoken narration segments for voice mode; null\/omitted for text requests.')
+}).describe('A spoken narration chunk, optionally tied to a panel to highlight while it is read.')).nullish().describe('Ordered spoken narration segments for voice mode; null\/omitted for text requests.'),
+  "intent": zod.string().nullish().describe('\"question\" when the message was answered conversationally (panels unchanged) or \"build\" when the dashboard was composed\/modified.'),
+  "answer": zod.string().nullish().describe('Conversational answer text for a question intent; null\/omitted for a build.')
 })
 
 
@@ -776,7 +778,9 @@ export const OrchestrateResponse = zod.object({
   "narration": zod.array(zod.object({
   "text": zod.string(),
   "panelId": zod.string().nullish()
-}).describe('A spoken narration chunk, optionally tied to a panel to highlight while it is read.')).nullish().describe('Ordered spoken narration segments for voice mode; null\/omitted for text requests.')
+}).describe('A spoken narration chunk, optionally tied to a panel to highlight while it is read.')).nullish().describe('Ordered spoken narration segments for voice mode; null\/omitted for text requests.'),
+  "intent": zod.string().nullish().describe('\"question\" when the message was answered conversationally (panels unchanged) or \"build\" when the dashboard was composed\/modified.'),
+  "answer": zod.string().nullish().describe('Conversational answer text for a question intent; null\/omitted for a build.')
 })
 
 
