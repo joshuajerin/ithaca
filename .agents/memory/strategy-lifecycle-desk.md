@@ -32,6 +32,14 @@ with a paper book marked to REAL prices. Layers:
 - **Promotion to live gates on persisted criteria** (default minSharpe .5,
   minReturnPct 0, maxDrawdownPct 25, minDays 5); "force"/"override"/"anyway" in
   the query bypasses via `transition(..., force=True)`.
+- **Track record must come from PERSISTED daily NAV, not calendar age or live
+  overlay**: promotion's "track record ≥ N days" counts audited `strategy_snapshots`
+  rows (`trackDays`), never `ageDays` and never the display-only live "today"
+  overlay point `mark()` appends. **Why:** a strategy must not clear `minDays` on a
+  day whose snapshot hasn't been written yet. Snapshots are taken for *every*
+  paper/live book (even flat ones — NAV = cash) so the series stays continuous;
+  `mark()` only reconstructs from real closes as a fallback when zero snapshots
+  exist yet.
 - **Terminal vite build needs `PORT` and `BASE_PATH` env** or config load fails:
   `PORT=3000 BASE_PATH=/terminal pnpm --filter @workspace/terminal build`. The
   dev workflow runs HMR so source edits are live without a rebuild.

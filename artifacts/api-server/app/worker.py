@@ -17,7 +17,7 @@ import asyncio
 import logging
 from typing import List, Optional
 
-from . import data, db
+from . import data, db, strategy
 from .sources import fundamentals as f_src
 from .sources import news as n_src
 from .sources import prices as p_src
@@ -31,6 +31,10 @@ FUNDAMENTALS_INTERVAL = 900
 NEWS_INTERVAL = 120
 SENTIMENT_INTERVAL = 600
 ONDEMAND_INTERVAL = 15
+# Daily mark cadence: re-check hourly. record_daily_snapshots is idempotent per
+# trading day (one row per strategy per day), so an hourly pass simply keeps the
+# day's NAV fresh and settles to the close once prices stop moving.
+SNAPSHOT_INTERVAL = 3600
 
 # Small pause between RSS batches so a fast news cadence doesn't trip Yahoo 403/429.
 NEWS_BATCH_PAUSE = 1.5
@@ -361,6 +365,22 @@ async def _sentiment_loop():
         await asyncio.sleep(SENTIMENT_INTERVAL)
 
 
+async def _snapshot_loop():
+    """Persist a daily mark-to-market NAV/P&L point per active strategy.
+
+    Runs on startup and then hourly. ``record_daily_snapshots`` skips weekends
+    and is idempotent per trading day, so this loop survives restarts without
+    duplicating points and converges to the day's close as quotes settle.
+    """
+    while True:
+        try:
+            res = await asyncio.to_thread(strategy.record_daily_snapshots)
+            log.info("snapshot cycle: %s", res)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("snapshot loop error: %s", exc)
+        await asyncio.sleep(SNAPSHOT_INTERVAL)
+
+
 async def _ondemand_loop():
     while True:
         try:
@@ -398,6 +418,7 @@ async def start() -> None:
     _tasks.append(asyncio.create_task(_news_loop()))
     _tasks.append(asyncio.create_task(_sentiment_loop()))
     _tasks.append(asyncio.create_task(_ondemand_loop()))
+    _tasks.append(asyncio.create_task(_snapshot_loop()))
     log.info("data worker started (%d loops)", len(_tasks))
 
 

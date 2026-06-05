@@ -19,6 +19,9 @@ import numpy as np
 
 from . import engine, repo, strategy_store
 
+# Stages whose books are actively marked end-of-day and accrue a track record.
+ACTIVE_STAGES = ("paper", "live")
+
 log = logging.getLogger(__name__)
 
 DEFAULT_CAPITAL = 1_000_000.0
@@ -244,7 +247,15 @@ def paper_trade(view: dict) -> dict:
 
 
 def mark(view: dict) -> dict:
-    """Mark the book to market and reconstruct its real P&L history."""
+    """Mark the book to market and resolve its real P&L history.
+
+    Current value (marks, book value, exposures) is always computed from live
+    prices. The NAV/P&L *history* now prefers the audited daily snapshot series
+    persisted by the background worker; only when no snapshots exist yet (a fresh
+    book or a fresh database) does it fall back to reconstructing the curve from
+    real daily closes since inception. ``trackDays`` is the audited point count
+    used by promotion — calendar ``ageDays`` is kept for display.
+    """
     positions = view.get("positions") or []
     cash = float(view.get("cash") or 0.0)
     capital = float(view.get("capital") or DEFAULT_CAPITAL)
@@ -256,19 +267,45 @@ def mark(view: dict) -> dict:
     book_val = engine.paperbook.book_value(positions, cash, price_map)
     expos = engine.paperbook.exposures(marks, book_val)
 
+    pnl = round(book_val - capital, 2)
+    pnl_pct = round((book_val / capital - 1.0) * 100.0, 2) if capital else 0.0
+
     curve: List[dict] = []
     stats: dict = {}
     source = "live"
     as_of = None
-    if positions and inception:
+    track_days = 0
+
+    snaps = strategy_store.snapshot_series(view["id"]) if view.get("id") else []
+    if snaps:
+        # Audited path: read the persisted daily series instead of recomputing.
+        curve = [{"t": s["t"], "nav": s["nav"], "pnl": s["pnl"], "pnlPct": s["pnlPct"]}
+                 for s in snaps if s.get("nav") is not None]
+        # Track record counts ONLY persisted audited points — never the live
+        # overlay below — so promotion can't pass on a not-yet-written day.
+        track_days = len(curve)
+        # Overlay the current live mark so the desk shows today's value without
+        # waiting for the end-of-day write. Display-only: it does not change
+        # track_days. Replace today's point if it is already persisted.
+        today = date.today().isoformat()
+        live_point = {"t": today, "nav": round(book_val, 2), "pnl": pnl, "pnlPct": pnl_pct}
+        if curve and curve[-1]["t"] == today:
+            curve[-1] = live_point
+        else:
+            curve.append(live_point)
+        stats = engine.paperbook.realized_stats(curve)
+        last_src = next((s.get("source") for s in reversed(snaps) if s.get("source")), None)
+        source = last_src or "live"
+        as_of = strategy_store.latest_snapshot_date(view["id"]) or today
+    elif positions and inception:
+        # Bootstrap path: reconstruct from real closes until snapshots accrue.
         bulk = repo.price_closes_bulk(syms, days=260)
         curve = engine.paperbook.nav_curve(positions, cash, capital, bulk.get("series", {}), inception)
         stats = engine.paperbook.realized_stats(curve)
+        track_days = len(curve)
         source = bulk.get("source") or "live"
         as_of = bulk.get("asOf")
 
-    pnl = round(book_val - capital, 2)
-    pnl_pct = round((book_val / capital - 1.0) * 100.0, 2) if capital else 0.0
     return {
         "marks": marks,
         "exposures": expos,
@@ -282,6 +319,7 @@ def mark(view: dict) -> dict:
         "grossPct": round(sum(abs(e["weight"]) for e in expos), 2),
         "positionsCount": len(positions),
         "ageDays": _age_days(inception),
+        "trackDays": track_days,
         "asOf": as_of,
         "source": source,
     }
@@ -294,6 +332,43 @@ def _age_days(inception: Optional[str]) -> int:
         return max(0, (date.today() - date.fromisoformat(inception)).days)
     except ValueError:
         return 0
+
+
+def record_daily_snapshots(as_of: Optional[date] = None) -> dict:
+    """Mark every active (paper/live) book and persist its daily NAV/P&L point.
+
+    Called once per trading day by the background worker. Weekends are skipped so
+    the audited series stays on trading days (consistent with the real-close
+    reconstruction). Idempotent: re-running on the same day refreshes that day's
+    snapshot instead of appending a duplicate.
+    """
+    day = as_of or date.today()
+    if day.weekday() >= 5:  # Saturday/Sunday — no trading day to mark.
+        return {"recorded": 0, "skipped": "weekend", "date": day.isoformat()}
+
+    recorded = 0
+    skipped = 0
+    for s in strategy_store.list_strategies():
+        stage = (s.get("stage") or "").lower()
+        # Every active (paper/live) book is marked daily — including a flat/empty
+        # book, whose NAV is simply its cash so the audited series stays continuous.
+        if stage not in ACTIVE_STAGES:
+            skipped += 1
+            continue
+        try:
+            m = mark(s)
+            strategy_store.record_snapshot(
+                s["id"], day.isoformat(),
+                nav=m["bookValue"], pnl=m["pnl"], pnl_pct=m["pnlPct"],
+                cash=m["cash"], capital=m["capital"], stage=stage,
+                source=m.get("source"),
+            )
+            recorded += 1
+        except Exception as exc:  # noqa: BLE001
+            log.warning("snapshot failed for %s: %s", s.get("id"), exc)
+            skipped += 1
+    log.info("daily snapshots: recorded %d, skipped %d (%s)", recorded, skipped, day.isoformat())
+    return {"recorded": recorded, "skipped": skipped, "date": day.isoformat()}
 
 
 def evaluate_promotion(view: dict, marked: Optional[dict] = None) -> dict:
@@ -318,10 +393,12 @@ def evaluate_promotion(view: dict, marked: Optional[dict] = None) -> dict:
     if "maxDrawdownPct" in crit and crit["maxDrawdownPct"] is not None:
         ok = dd is not None and abs(dd) <= crit["maxDrawdownPct"]
         add(f"Max DD ≤ {crit['maxDrawdownPct']}%", ok, f"{dd if dd is not None else '—'}%")
-    age = m.get("ageDays", 0)
+    # Track record is the count of audited daily NAV points, not calendar age,
+    # so promotion rests on a real persisted series rather than inception alone.
+    track = m.get("trackDays", m.get("ageDays", 0))
     if "minDays" in crit and crit["minDays"] is not None:
-        ok = age >= crit["minDays"]
-        add(f"Track record ≥ {crit['minDays']}d", ok, f"{age}d")
+        ok = track >= crit["minDays"]
+        add(f"Track record ≥ {crit['minDays']}d", ok, f"{track}d")
 
     passed = all(c["pass"] for c in checks) if checks else True
     return {"pass": passed, "checks": checks}

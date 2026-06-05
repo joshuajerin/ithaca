@@ -1,4 +1,4 @@
-import { pgTable, text, doublePrecision, timestamp, date, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, doublePrecision, timestamp, date, jsonb, primaryKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -28,3 +28,30 @@ export const strategiesTable = pgTable("strategies", {
 export const insertStrategySchema = createInsertSchema(strategiesTable);
 export type InsertStrategy = z.infer<typeof insertStrategySchema>;
 export type Strategy = typeof strategiesTable.$inferSelect;
+
+// Audited end-of-day mark-to-market snapshots, one row per strategy per trading
+// day. Written by the background worker so every paper/live book accrues a real,
+// persisted daily NAV/P&L track record instead of being recomputed on the fly.
+// The composite primary key (strategy_id, d) makes daily writes idempotent — a
+// re-run for the same day refreshes the value rather than inserting a duplicate.
+export const strategySnapshotsTable = pgTable(
+  "strategy_snapshots",
+  {
+    strategyId: text("strategy_id").notNull(),
+    d: date("d").notNull(),
+    nav: doublePrecision("nav"),
+    pnl: doublePrecision("pnl"),
+    pnlPct: doublePrecision("pnl_pct"),
+    cash: doublePrecision("cash"),
+    capital: doublePrecision("capital"),
+    stage: text("stage"),
+    source: text("source"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.strategyId, t.d] })],
+);
+
+export const insertStrategySnapshotSchema = createInsertSchema(strategySnapshotsTable);
+export type InsertStrategySnapshot = z.infer<typeof insertStrategySnapshotSchema>;
+export type StrategySnapshot = typeof strategySnapshotsTable.$inferSelect;
