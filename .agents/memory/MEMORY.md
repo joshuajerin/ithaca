@@ -6,3 +6,4 @@
 - [Panel layout collision resolution](panel-layout-collision.md) — dashboard overlap fix uses two-pass reserve-then-reflow (not single-pass greedy) so non-conflicting panels keep AI positions.
 - [Voice Mode push-to-talk](voice-mode-loop.md) — hold orb to listen / release to send (no auto re-arm); continuous=true + graceful stop() vs abort(); mic off during TTS; iframe blocks Web Speech; compact mobile layout.
 - [Backtesting & simulation engine](backtest-engine.md) — pure numpy engine in app/engine/; no-lookahead position lag, real OHLCV via price_series_meta (live/mock+asOf), Monte Carlo bootstrap/GBM.
+- [Stock universe breadth (US + SGX)](universe-breadth.md) — CORE tracked-live vs bulk mock-on-demand split; SGX base codes + .SI at fetch only; is_live provenance; prompt_symbols cap.

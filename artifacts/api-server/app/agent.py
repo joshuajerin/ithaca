@@ -17,7 +17,13 @@ from . import ai, data, dynamic_skills, harness, repo, skills, state
 
 # ----------------------------- tool schemas -----------------------------
 def _tools() -> list:
-    syms = ", ".join(repo.all_symbols())
+    # The full catalog (hundreds of US + SGX names) is too large to inline into
+    # every tool description, so advertise a capped most-valuable slice plus a
+    # hint that the wider universe (incl. SGX base codes like D05, no .SI needed)
+    # is accepted at request time.
+    syms = (", ".join(repo.prompt_symbols(60))
+            + ", and many more US + Singapore (SGX) names; SGX uses base codes "
+              "like D05/O39 (no .SI suffix needed)")
     secs = ", ".join(data.SECTORS.keys())
     sizing = "Width is grid columns 3-12 (12 = full row). Height is row units 2-6."
     strategies = "iron_condor, straddle, strangle, bull_call_spread, bear_put_spread, covered_call, long_call, long_put"
@@ -392,7 +398,9 @@ def _system_prompt() -> str:
         "- Only use tickers and sectors that exist in the dataset.\n"
         "- After the tool calls, the panels are rendered for the user; your text content should be "
         "a one or two sentence summary of what you assembled and why. Keep it crisp.\n"
-        f"- Valid tickers: {', '.join(repo.all_symbols())}.\n"
+        f"- Popular tickers include: {', '.join(repo.prompt_symbols(60))}. The dataset also covers "
+        "hundreds more US and Singapore (SGX) names across every sector; SGX names use their base "
+        "code (e.g. D05 for DBS, O39 for OCBC, Z74 for Singtel) with no .SI suffix.\n"
         f"- Valid sectors: {', '.join(data.SECTORS.keys())}."
     )
 
@@ -745,9 +753,11 @@ _AMBIGUOUS_TICKERS = {"NOW", "COP"}
 
 def _extract_symbols(q: str) -> List[str]:
     up = q.upper()
-    tokens = set(re.findall(r"\b[A-Z]{1,6}\b", up))
-    explicit_upper = set(re.findall(r"\b[A-Z]{2,6}\b", q))
-    dollar = {d.upper() for d in re.findall(r"\$([A-Za-z]{1,6})", q)}
+    # Allow alphanumeric tokens so SGX base codes (e.g. D05, O39, C38U) match,
+    # not just pure-alpha US tickers.
+    tokens = set(re.findall(r"\b[A-Z0-9]{1,6}\b", up))
+    explicit_upper = set(re.findall(r"\b[A-Z0-9]{2,6}\b", q))
+    dollar = {d.upper() for d in re.findall(r"\$([A-Za-z0-9]{1,6})", q)}
     found: List[str] = []
     for s in repo.all_symbols():
         if s in tokens or s in dollar:
@@ -1134,7 +1144,9 @@ def _refine_params_llm(panel_type: str, panel: dict, instruction: str) -> dict:
         "You update a single dashboard panel in a market terminal. Keep the panel the SAME "
         "type. Call the provided tool exactly once with the parameters that satisfy the user's "
         "instruction. Use only valid tickers and sectors.\n"
-        f"Valid tickers: {', '.join(repo.all_symbols())}. Valid sectors: {', '.join(data.SECTORS.keys())}."
+        f"Popular tickers: {', '.join(repo.prompt_symbols(60))}. Hundreds more US + Singapore (SGX) "
+        "names are valid; SGX uses base codes like D05/O39 (no .SI). "
+        f"Valid sectors: {', '.join(data.SECTORS.keys())}."
     )
     msg = ai.chat(
         [

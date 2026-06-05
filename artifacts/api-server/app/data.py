@@ -27,9 +27,21 @@ SECTORS = {
     "defense": "Defense & Aerospace",
     "financials": "Banks & Financials",
     "healthcare": "Healthcare",
-    "consumer": "Consumer & Retail",
+    "consumer": "Consumer Discretionary",
     "comms": "Communications & Media",
     "industrials": "Industrials",
+    # --- Expanded taxonomy (Task: deep curated universe) ---
+    "staples": "Consumer Staples",
+    "real_estate": "Real Estate & REITs",
+    "materials": "Materials & Chemicals",
+    "metals_mining": "Metals & Mining",
+    "utilities": "Utilities",
+    "transportation": "Transportation & Logistics",
+    "insurance": "Insurance",
+    "telecom": "Telecom",
+    "crypto": "Crypto & Blockchain",
+    "space": "Space",
+    "quantum": "Quantum Computing",
 }
 
 # Aliases so natural-language scope resolution is forgiving.
@@ -46,8 +58,9 @@ SECTOR_ALIASES = {
     "gas": "energy",
     "crude": "energy",
     "fossil fuels": "energy",
-    "power": "energy",
-    "utilities": "energy",
+    "upstream": "energy",
+    "midstream": "energy",
+    "refiners": "energy",
     # AI / Tech
     "ai": "ai_tech",
     "tech": "ai_tech",
@@ -137,27 +150,114 @@ SECTOR_ALIASES = {
     "medical devices": "healthcare",
     "health insurers": "healthcare",
     "hospitals": "healthcare",
-    # Consumer & retail
+    # Consumer discretionary
     "consumer": "consumer",
     "retail": "consumer",
     "retailers": "consumer",
     "consumer discretionary": "consumer",
-    "consumer staples": "consumer",
+    "discretionary": "consumer",
     "shopping": "consumer",
+    "restaurants": "consumer",
+    "apparel": "consumer",
+    "travel": "consumer",
+    "leisure": "consumer",
+    "gaming": "consumer",
     # Communications & media
     "comms": "comms",
     "communications": "comms",
     "media": "comms",
-    "telecom": "comms",
-    "telecoms": "comms",
     "streaming": "comms",
     "entertainment": "comms",
+    "social media": "comms",
+    "advertising": "comms",
     # Industrials
     "industrials": "industrials",
     "industrial": "industrials",
     "machinery": "industrials",
     "manufacturing": "industrials",
-    "transports": "industrials",
+    # Consumer staples
+    "staples": "staples",
+    "consumer staples": "staples",
+    "food": "staples",
+    "food & beverage": "staples",
+    "beverages": "staples",
+    "groceries": "staples",
+    "household products": "staples",
+    "tobacco": "staples",
+    # Real estate & REITs
+    "real estate": "real_estate",
+    "reit": "real_estate",
+    "reits": "real_estate",
+    "property": "real_estate",
+    "properties": "real_estate",
+    "realty": "real_estate",
+    # Materials & chemicals
+    "materials": "materials",
+    "chemicals": "materials",
+    "chemical": "materials",
+    "commodities": "materials",
+    "industrial materials": "materials",
+    # Metals & mining
+    "metals": "metals_mining",
+    "metals & mining": "metals_mining",
+    "mining": "metals_mining",
+    "miners": "metals_mining",
+    "gold": "metals_mining",
+    "gold miners": "metals_mining",
+    "silver": "metals_mining",
+    "copper": "metals_mining",
+    "steel": "metals_mining",
+    # Utilities
+    "utilities": "utilities",
+    "utility": "utilities",
+    "power": "utilities",
+    "electric": "utilities",
+    "electricity": "utilities",
+    "water utilities": "utilities",
+    # Transportation & logistics
+    "transportation": "transportation",
+    "transports": "transportation",
+    "transport": "transportation",
+    "logistics": "transportation",
+    "shipping": "transportation",
+    "airlines": "transportation",
+    "railroads": "transportation",
+    "trucking": "transportation",
+    "freight": "transportation",
+    # Insurance
+    "insurance": "insurance",
+    "insurers": "insurance",
+    "insurer": "insurance",
+    "reinsurance": "insurance",
+    "p&c insurance": "insurance",
+    "life insurance": "insurance",
+    # Telecom
+    "telecom": "telecom",
+    "telecoms": "telecom",
+    "telecommunications": "telecom",
+    "carriers": "telecom",
+    "wireless": "telecom",
+    "cell towers": "telecom",
+    "towers": "telecom",
+    # Crypto & blockchain
+    "crypto": "crypto",
+    "cryptocurrency": "crypto",
+    "blockchain": "crypto",
+    "bitcoin": "crypto",
+    "bitcoin miners": "crypto",
+    "digital assets": "crypto",
+    "web3": "crypto",
+    # Space
+    "space": "space",
+    "space stocks": "space",
+    "satellite": "space",
+    "satellites": "space",
+    "rockets": "space",
+    "launch": "space",
+    # Quantum computing
+    "quantum": "quantum",
+    "quantum computing": "quantum",
+    "quantum stocks": "quantum",
 }
 
 # symbol -> company record
@@ -165,7 +265,8 @@ COMPANIES: Dict[str, dict] = {}
 
 
 def _c(symbol, name, sector, price, change_pct, market_cap, pe, volume,
-       revenue, net_margin, eps, div_yield, beta, hi, lo, desc):
+       revenue, net_margin, eps, div_yield, beta, hi, lo, desc,
+       country="United States", exchange="NASDAQ"):
     COMPANIES[symbol] = {
         "symbol": symbol,
         "name": name,
@@ -183,6 +284,8 @@ def _c(symbol, name, sector, price, change_pct, market_cap, pe, volume,
         "week52High": hi,
         "week52Low": lo,
         "description": desc,
+        "country": country,
+        "exchange": exchange,
     }
 
 
@@ -604,6 +707,431 @@ def resolve_sector(text: str) -> Optional[str]:
 
 def _seed(symbol: str) -> int:
     return int(hashlib.md5(symbol.encode()).hexdigest(), 16) % (2 ** 31)
+
+
+# The curated, hand-written headliners above are the "core" set that the worker
+# keeps continuously fresh with live data. Everything added by the compact _q()
+# loader below is catalog/breadth: it carries deterministic mock metrics and only
+# pulls live data on demand when a user opens the symbol.
+CORE_SYMBOLS: List[str] = list(COMPANIES.keys())
+
+
+def _q(symbol, name, sector, mcap_b, *, country="United States",
+       exchange="NASDAQ", pe=None, div=None, desc=None):
+    """Register a catalog entry from a few inputs.
+
+    All 16 display fields are derived deterministically from the symbol seed plus
+    a market-cap hint (in USD billions), so hundreds of names can be added without
+    hand-writing every metric and charts/screeners stay stable across restarts.
+    """
+    seed = _seed(symbol)
+
+    def nxt(lo, hi):
+        nonlocal seed
+        seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
+        return lo + (seed / 0x7FFFFFFF) * (hi - lo)
+
+    market_cap = mcap_b * B
+    price = round(nxt(9.0, 480.0), 2)
+    change_pct = round(nxt(-3.2, 3.4), 2)
+    beta = round(nxt(0.55, 1.95), 2)
+    net_margin = round(nxt(3.0, 36.0), 1)
+    if pe is None:
+        pe = round(nxt(11.0, 48.0), 1)
+    eps = round(price / pe, 2) if pe and pe > 0 else round(price * 0.04, 2)
+    revenue = round(market_cap * nxt(0.18, 0.95))
+    shares = market_cap / price if price else 0
+    volume = int(shares * nxt(0.002, 0.012))
+    if div is None:
+        coin = nxt(0.0, 1.0)
+        div = round(nxt(0.0, 3.2), 2) if coin > 0.45 else 0.0
+    hi = round(price * nxt(1.08, 1.55), 2)
+    lo = round(price * nxt(0.52, 0.88), 2)
+    if desc is None:
+        desc = (f"{name} is a {country}-listed company in the "
+                f"{SECTORS.get(sector, sector)} sector.")
+    COMPANIES[symbol] = {
+        "symbol": symbol, "name": name, "sector": sector, "price": price,
+        "changePct": change_pct, "marketCap": market_cap, "peRatio": pe,
+        "volume": volume, "revenue": revenue, "netMargin": net_margin,
+        "eps": eps, "dividendYield": div, "beta": beta, "week52High": hi,
+        "week52Low": lo, "description": desc, "country": country,
+        "exchange": exchange,
+    }
+
+
+def _load(rows, *, country="United States", exchange="NASDAQ"):
+    """Bulk-register (symbol, name, sector, mcap_b) tuples without clobbering
+    any curated headliner already present."""
+    for sym, nm, sec, mc in rows:
+        if sym not in COMPANIES:
+            _q(sym, nm, sec, mc, country=country, exchange=exchange)
+
+
+def yahoo_symbol(symbol: str) -> str:
+    """Translate an internal symbol to the symbol Yahoo Finance expects.
+
+    Singapore (SGX) names are catalogued under their base code (e.g. ``D05``) but
+    Yahoo requires the ``.SI`` suffix, so callers never have to type it."""
+    s = (symbol or "").upper()
+    c = COMPANIES.get(s)
+    if c and c.get("exchange") == "SGX":
+        return f"{s}.SI"
+    return s
+
+
+def top_symbols(limit: int = 80) -> List[str]:
+    """Most-valuable names first (used to keep LLM prompts lean)."""
+    ordered = sorted(COMPANIES.items(),
+                     key=lambda kv: kv[1].get("marketCap", 0), reverse=True)
+    return [s for s, _ in ordered[:limit]]
+
+
+def resolve_symbol(text: str) -> Optional[str]:
+    """Best-effort name/code -> symbol resolution (case-insensitive)."""
+    if not text:
+        return None
+    t = text.strip()
+    up = t.upper()
+    if up in COMPANIES:
+        return up
+    low = t.lower()
+    for sym, c in COMPANIES.items():
+        if c["name"].lower() == low:
+            return sym
+    for sym, c in COMPANIES.items():
+        first = c["name"].split()[0].lower()
+        if len(first) > 2 and first == low:
+            return sym
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Deep curated catalog. Compact (symbol, name, sector, market_cap_billions)
+# tuples; metrics derived deterministically by _q(). The _load() guard keeps any
+# curated headliner above from being overwritten.
+# ---------------------------------------------------------------------------
+_US: List[tuple] = [
+    # Semiconductors
+    ("TXN", "Texas Instruments", "semiconductors", 165), ("ADI", "Analog Devices", "semiconductors", 110),
+    ("NXPI", "NXP Semiconductors", "semiconductors", 60), ("MCHP", "Microchip Technology", "semiconductors", 45),
+    ("ON", "ON Semiconductor", "semiconductors", 30), ("MRVL", "Marvell Technology", "semiconductors", 60),
+    ("KLAC", "KLA Corp.", "semiconductors", 95), ("LRCX", "Lam Research", "semiconductors", 95),
+    ("AMAT", "Applied Materials", "semiconductors", 150), ("SWKS", "Skyworks Solutions", "semiconductors", 17),
+    ("MPWR", "Monolithic Power Systems", "semiconductors", 38), ("GFS", "GlobalFoundries", "semiconductors", 28),
+    ("QRVO", "Qorvo Inc.", "semiconductors", 10), ("LSCC", "Lattice Semiconductor", "semiconductors", 8),
+    ("ARM", "Arm Holdings", "semiconductors", 130), ("SMCI", "Super Micro Computer", "semiconductors", 35),
+    ("WOLF", "Wolfspeed Inc.", "semiconductors", 5), ("ALGM", "Allegro MicroSystems", "semiconductors", 6),
+    ("AMKR", "Amkor Technology", "semiconductors", 9), ("ENTG", "Entegris Inc.", "semiconductors", 18),
+    # AI / Tech hardware & IT services
+    ("AAPL", "Apple Inc.", "ai_tech", 3300), ("IBM", "IBM Corp.", "ai_tech", 200),
+    ("CSCO", "Cisco Systems", "ai_tech", 230), ("ANET", "Arista Networks", "ai_tech", 110),
+    ("DELL", "Dell Technologies", "ai_tech", 90), ("HPQ", "HP Inc.", "ai_tech", 35),
+    ("HPE", "Hewlett Packard Enterprise", "ai_tech", 25), ("ACN", "Accenture plc", "ai_tech", 220),
+    ("UBER", "Uber Technologies", "ai_tech", 150), ("AI", "C3.ai Inc.", "ai_tech", 3),
+    ("BBAI", "BigBear.ai Holdings", "ai_tech", 1), ("SOUN", "SoundHound AI", "ai_tech", 2),
+    ("PSTG", "Pure Storage", "ai_tech", 18), ("NTAP", "NetApp Inc.", "ai_tech", 25),
+    ("WDC", "Western Digital", "ai_tech", 22), ("STX", "Seagate Technology", "ai_tech", 22),
+    ("JBL", "Jabil Inc.", "ai_tech", 15), ("EPAM", "EPAM Systems", "ai_tech", 12),
+    ("CDW", "CDW Corp.", "ai_tech", 30), ("GLW", "Corning Inc.", "ai_tech", 35),
+    ("APH", "Amphenol Corp.", "ai_tech", 80), ("TEL", "TE Connectivity", "ai_tech", 45),
+    ("KEYS", "Keysight Technologies", "ai_tech", 28), ("FFIV", "F5 Inc.", "ai_tech", 12),
+    # Cloud & software
+    ("INTU", "Intuit Inc.", "cloud", 180), ("SHOP", "Shopify Inc.", "cloud", 110),
+    ("ABNB", "Airbnb Inc.", "cloud", 90), ("DOCU", "DocuSign Inc.", "cloud", 12),
+    ("TEAM", "Atlassian Corp.", "cloud", 50), ("ZM", "Zoom Video", "cloud", 22),
+    ("HUBS", "HubSpot Inc.", "cloud", 30), ("TWLO", "Twilio Inc.", "cloud", 12),
+    ("DBX", "Dropbox Inc.", "cloud", 9), ("BOX", "Box Inc.", "cloud", 4),
+    ("GTLB", "GitLab Inc.", "cloud", 9), ("FROG", "JFrog Ltd.", "cloud", 4),
+    ("ESTC", "Elastic N.V.", "cloud", 10), ("CFLT", "Confluent Inc.", "cloud", 9),
+    ("ASAN", "Asana Inc.", "cloud", 4), ("MNDY", "monday.com", "cloud", 12),
+    ("PCOR", "Procore Technologies", "cloud", 10), ("BILL", "BILL Holdings", "cloud", 7),
+    ("U", "Unity Software", "cloud", 8), ("RBLX", "Roblox Corp.", "cloud", 30),
+    ("DASH", "DoorDash Inc.", "cloud", 60), ("WIX", "Wix.com Ltd.", "cloud", 9),
+    ("APP", "AppLovin Corp.", "cloud", 100), ("AKAM", "Akamai Technologies", "cloud", 14),
+    ("VRSN", "VeriSign Inc.", "cloud", 20), ("DOCN", "DigitalOcean Holdings", "cloud", 4),
+    ("GEN", "Gen Digital Inc.", "cloud", 18), ("ZI", "ZoomInfo Technologies", "cloud", 5),
+    ("WDAY", "Workday Inc.", "cloud", 65),
+    # Fintech
+    ("HOOD", "Robinhood Markets", "fintech", 50), ("NU", "Nu Holdings", "fintech", 60),
+    ("FOUR", "Shift4 Payments", "fintech", 8), ("GPN", "Global Payments", "fintech", 25),
+    ("FIS", "Fidelity National Info", "fintech", 45), ("FI", "Fiserv Inc.", "fintech", 90),
+    ("TOST", "Toast Inc.", "fintech", 18), ("UPST", "Upstart Holdings", "fintech", 6),
+    ("ADYEY", "Adyen N.V.", "fintech", 50), ("JKHY", "Jack Henry & Associates", "fintech", 13),
+    ("BR", "Broadridge Financial", "fintech", 25), ("FLYW", "Flywire Corp.", "fintech", 3),
+    # Banks & financials
+    ("USB", "U.S. Bancorp", "financials", 75), ("PNC", "PNC Financial Services", "financials", 75),
+    ("TFC", "Truist Financial", "financials", 60), ("COF", "Capital One Financial", "financials", 60),
+    ("SCHW", "Charles Schwab", "financials", 130), ("AXP", "American Express", "financials", 200),
+    ("BK", "Bank of New York Mellon", "financials", 55), ("STT", "State Street Corp.", "financials", 28),
+    ("NTRS", "Northern Trust", "financials", 20), ("FITB", "Fifth Third Bancorp", "financials", 28),
+    ("HBAN", "Huntington Bancshares", "financials", 22), ("RF", "Regions Financial", "financials", 22),
+    ("KEY", "KeyCorp", "financials", 18), ("CFG", "Citizens Financial", "financials", 20),
+    ("MTB", "M&T Bank Corp.", "financials", 30), ("ALLY", "Ally Financial", "financials", 12),
+    ("DFS", "Discover Financial", "financials", 35), ("SYF", "Synchrony Financial", "financials", 25),
+    ("CMA", "Comerica Inc.", "financials", 8), ("ZION", "Zions Bancorporation", "financials", 8),
+    ("RJF", "Raymond James Financial", "financials", 30), ("NDAQ", "Nasdaq Inc.", "financials", 40),
+    ("ICE", "Intercontinental Exchange", "financials", 90), ("CME", "CME Group", "financials", 80),
+    ("CBOE", "Cboe Global Markets", "financials", 22), ("TROW", "T. Rowe Price", "financials", 25),
+    ("AMP", "Ameriprise Financial", "financials", 45), ("BEN", "Franklin Resources", "financials", 12),
+    ("MSCI", "MSCI Inc.", "financials", 45),
+    # Insurance
+    ("PGR", "Progressive Corp.", "insurance", 145), ("ALL", "Allstate Corp.", "insurance", 50),
+    ("TRV", "Travelers Companies", "insurance", 55), ("CB", "Chubb Ltd.", "insurance", 110),
+    ("AIG", "American International Group", "insurance", 50), ("MET", "MetLife Inc.", "insurance", 55),
+    ("PRU", "Prudential Financial", "insurance", 45), ("AFL", "Aflac Inc.", "insurance", 65),
+    ("HIG", "Hartford Financial", "insurance", 35), ("CINF", "Cincinnati Financial", "insurance", 22),
+    ("PFG", "Principal Financial", "insurance", 20), ("GL", "Globe Life Inc.", "insurance", 10),
+    ("AON", "Aon plc", "insurance", 75), ("MMC", "Marsh & McLennan", "insurance", 110),
+    ("WTW", "Willis Towers Watson", "insurance", 35), ("BRO", "Brown & Brown", "insurance", 30),
+    ("AJG", "Arthur J. Gallagher", "insurance", 70), ("ACGL", "Arch Capital Group", "insurance", 40),
+    ("EG", "Everest Group", "insurance", 18), ("RGA", "Reinsurance Group", "insurance", 14),
+    ("UNM", "Unum Group", "insurance", 10),
+    # Healthcare
+    ("PFE", "Pfizer Inc.", "healthcare", 160), ("MRK", "Merck & Co.", "healthcare", 250),
+    ("ABBV", "AbbVie Inc.", "healthcare", 320), ("BMY", "Bristol-Myers Squibb", "healthcare", 110),
+    ("DHR", "Danaher Corp.", "healthcare", 190), ("SYK", "Stryker Corp.", "healthcare", 130),
+    ("BSX", "Boston Scientific", "healthcare", 130), ("BDX", "Becton Dickinson", "healthcare", 65),
+    ("EW", "Edwards Lifesciences", "healthcare", 45), ("ZBH", "Zimmer Biomet", "healthcare", 22),
+    ("BAX", "Baxter International", "healthcare", 18), ("HCA", "HCA Healthcare", "healthcare", 90),
+    ("CI", "Cigna Group", "healthcare", 95), ("ELV", "Elevance Health", "healthcare", 110),
+    ("HUM", "Humana Inc.", "healthcare", 35), ("CNC", "Centene Corp.", "healthcare", 30),
+    ("MOH", "Molina Healthcare", "healthcare", 18), ("DVA", "DaVita Inc.", "healthcare", 12),
+    ("LH", "Labcorp Holdings", "healthcare", 18), ("DGX", "Quest Diagnostics", "healthcare", 18),
+    ("IDXX", "IDEXX Laboratories", "healthcare", 40), ("ALGN", "Align Technology", "healthcare", 18),
+    ("RMD", "ResMed Inc.", "healthcare", 35), ("IQV", "IQVIA Holdings", "healthcare", 35),
+    ("MTD", "Mettler-Toledo", "healthcare", 28), ("WAT", "Waters Corp.", "healthcare", 22),
+    ("A", "Agilent Technologies", "healthcare", 40), ("GEHC", "GE HealthCare", "healthcare", 38),
+    ("COR", "Cencora Inc.", "healthcare", 45), ("MCK", "McKesson Corp.", "healthcare", 75),
+    ("CAH", "Cardinal Health", "healthcare", 28), ("ZTS", "Zoetis Inc.", "healthcare", 80),
+    ("DXCM", "DexCom Inc.", "healthcare", 30), ("PODD", "Insulet Corp.", "healthcare", 18),
+    # Biotech
+    ("BIIB", "Biogen Inc.", "biotech", 25), ("ALNY", "Alnylam Pharmaceuticals", "biotech", 35),
+    ("BMRN", "BioMarin Pharmaceutical", "biotech", 14), ("INCY", "Incyte Corp.", "biotech", 14),
+    ("EXAS", "Exact Sciences", "biotech", 12), ("NBIX", "Neurocrine Biosciences", "biotech", 14),
+    ("SRPT", "Sarepta Therapeutics", "biotech", 12), ("RARE", "Ultragenyx Pharmaceutical", "biotech", 4),
+    ("IONS", "Ionis Pharmaceuticals", "biotech", 6), ("UTHR", "United Therapeutics", "biotech", 18),
+    ("HALO", "Halozyme Therapeutics", "biotech", 8), ("CRSP", "CRISPR Therapeutics", "biotech", 4),
+    ("NTLA", "Intellia Therapeutics", "biotech", 2), ("BEAM", "Beam Therapeutics", "biotech", 2),
+    ("ARWR", "Arrowhead Pharmaceuticals", "biotech", 3), ("ACAD", "Acadia Pharmaceuticals", "biotech", 3),
+    ("JAZZ", "Jazz Pharmaceuticals", "biotech", 8), ("BPMC", "Blueprint Medicines", "biotech", 6),
+    ("MRTX", "Mirati Therapeutics", "biotech", 3), ("RXRX", "Recursion Pharmaceuticals", "biotech", 3),
+    ("VKTX", "Viking Therapeutics", "biotech", 5), ("MDGL", "Madrigal Pharmaceuticals", "biotech", 6),
+    ("CYTK", "Cytokinetics Inc.", "biotech", 5), ("ROIV", "Roivant Sciences", "biotech", 8),
+    # Consumer discretionary
+    ("LOW", "Lowe's Companies", "consumer", 140), ("TJX", "TJX Companies", "consumer", 130),
+    ("BKNG", "Booking Holdings", "consumer", 140), ("MAR", "Marriott International", "consumer", 75),
+    ("HLT", "Hilton Worldwide", "consumer", 55), ("RCL", "Royal Caribbean Cruises", "consumer", 50),
+    ("CCL", "Carnival Corp.", "consumer", 25), ("NCLH", "Norwegian Cruise Line", "consumer", 8),
+    ("LULU", "Lululemon Athletica", "consumer", 35), ("ROST", "Ross Stores", "consumer", 50),
+    ("DG", "Dollar General", "consumer", 30), ("DLTR", "Dollar Tree", "consumer", 22),
+    ("BBY", "Best Buy Co.", "consumer", 18), ("ULTA", "Ulta Beauty", "consumer", 18),
+    ("YUM", "Yum! Brands", "consumer", 38), ("CMG", "Chipotle Mexican Grill", "consumer", 80),
+    ("DPZ", "Domino's Pizza", "consumer", 16), ("DRI", "Darden Restaurants", "consumer", 20),
+    ("EBAY", "eBay Inc.", "consumer", 28), ("ETSY", "Etsy Inc.", "consumer", 7),
+    ("CHWY", "Chewy Inc.", "consumer", 12), ("APTV", "Aptiv plc", "consumer", 18),
+    ("LVS", "Las Vegas Sands", "consumer", 38), ("WYNN", "Wynn Resorts", "consumer", 10),
+    ("MGM", "MGM Resorts", "consumer", 12), ("CZR", "Caesars Entertainment", "consumer", 8),
+    ("EXPE", "Expedia Group", "consumer", 18), ("POOL", "Pool Corp.", "consumer", 14),
+    ("GRMN", "Garmin Ltd.", "consumer", 30), ("ORLY", "O'Reilly Automotive", "consumer", 65),
+    ("AZO", "AutoZone Inc.", "consumer", 50), ("TSCO", "Tractor Supply", "consumer", 30),
+    ("KMX", "CarMax Inc.", "consumer", 12), ("DKNG", "DraftKings Inc.", "consumer", 18),
+    ("RL", "Ralph Lauren", "consumer", 12), ("TPR", "Tapestry Inc.", "consumer", 12),
+    ("DECK", "Deckers Outdoor", "consumer", 22), ("GPC", "Genuine Parts", "consumer", 18),
+    # Consumer staples
+    ("PG", "Procter & Gamble", "staples", 380), ("KO", "Coca-Cola Co.", "staples", 270),
+    ("PEP", "PepsiCo Inc.", "staples", 230), ("MDLZ", "Mondelez International", "staples", 95),
+    ("CL", "Colgate-Palmolive", "staples", 75), ("KMB", "Kimberly-Clark", "staples", 45),
+    ("GIS", "General Mills", "staples", 38), ("KHC", "Kraft Heinz", "staples", 42),
+    ("MO", "Altria Group", "staples", 95), ("PM", "Philip Morris International", "staples", 180),
+    ("STZ", "Constellation Brands", "staples", 45), ("KDP", "Keurig Dr Pepper", "staples", 48),
+    ("HSY", "Hershey Co.", "staples", 40), ("K", "Kellanova", "staples", 28),
+    ("SYY", "Sysco Corp.", "staples", 38), ("ADM", "Archer-Daniels-Midland", "staples", 28),
+    ("KR", "Kroger Co.", "staples", 40), ("KVUE", "Kenvue Inc.", "staples", 38),
+    ("CHD", "Church & Dwight", "staples", 25), ("CLX", "Clorox Co.", "staples", 18),
+    ("MKC", "McCormick & Co.", "staples", 20), ("HRL", "Hormel Foods", "staples", 16),
+    ("TSN", "Tyson Foods", "staples", 22), ("CAG", "Conagra Brands", "staples", 14),
+    ("CPB", "Campbell's Co.", "staples", 13), ("TAP", "Molson Coors Beverage", "staples", 12),
+    ("BG", "Bunge Global", "staples", 14), ("EL", "Estée Lauder", "staples", 30),
+    # Communications & media
+    ("GOOG", "Alphabet Inc. (Class C)", "comms", 2100), ("SPOT", "Spotify Technology", "comms", 90),
+    ("FOXA", "Fox Corp. (Class A)", "comms", 22), ("PARA", "Paramount Global", "comms", 8),
+    ("NYT", "New York Times Co.", "comms", 9), ("OMC", "Omnicom Group", "comms", 18),
+    ("IPG", "Interpublic Group", "comms", 12), ("TTD", "The Trade Desk", "comms", 55),
+    ("ROKU", "Roku Inc.", "comms", 9), ("LYV", "Live Nation Entertainment", "comms", 22),
+    ("WMG", "Warner Music Group", "comms", 16), ("EA", "Electronic Arts", "comms", 38),
+    ("TTWO", "Take-Two Interactive", "comms", 28), ("MTCH", "Match Group", "comms", 9),
+    ("PINS", "Pinterest Inc.", "comms", 25), ("SNAP", "Snap Inc.", "comms", 20),
+    ("BIDU", "Baidu Inc.", "comms", 35), ("NWSA", "News Corp (Class A)", "comms", 16),
+    ("FWONK", "Liberty Media Formula One", "comms", 18),
+    # Telecom
+    ("AMT", "American Tower", "telecom", 90), ("CCI", "Crown Castle", "telecom", 45),
+    ("SBAC", "SBA Communications", "telecom", 25), ("LUMN", "Lumen Technologies", "telecom", 5),
+    ("TDS", "Telephone & Data Systems", "telecom", 3), ("USM", "United States Cellular", "telecom", 5),
+    ("IRDM", "Iridium Communications", "telecom", 3), ("GSAT", "Globalstar Inc.", "telecom", 3),
+    ("FYBR", "Frontier Communications", "telecom", 8),
+    # Industrials
+    ("GE", "GE Aerospace", "industrials", 180), ("ITW", "Illinois Tool Works", "industrials", 75),
+    ("PH", "Parker-Hannifin", "industrials", 80), ("ROP", "Roper Technologies", "industrials", 60),
+    ("CMI", "Cummins Inc.", "industrials", 45), ("PCAR", "PACCAR Inc.", "industrials", 55),
+    ("GWW", "W.W. Grainger", "industrials", 50), ("FAST", "Fastenal Co.", "industrials", 45),
+    ("DOV", "Dover Corp.", "industrials", 28), ("IR", "Ingersoll Rand", "industrials", 38),
+    ("AME", "AMETEK Inc.", "industrials", 42), ("XYL", "Xylem Inc.", "industrials", 30),
+    ("IEX", "IDEX Corp.", "industrials", 16), ("NDSN", "Nordson Corp.", "industrials", 14),
+    ("PNR", "Pentair plc", "industrials", 15), ("FTV", "Fortive Corp.", "industrials", 28),
+    ("OTIS", "Otis Worldwide", "industrials", 40), ("CARR", "Carrier Global", "industrials", 60),
+    ("JCI", "Johnson Controls", "industrials", 50), ("TT", "Trane Technologies", "industrials", 90),
+    ("GNRC", "Generac Holdings", "industrials", 10), ("AOS", "A.O. Smith", "industrials", 12),
+    ("WAB", "Wabtec Corp.", "industrials", 35), ("PWR", "Quanta Services", "industrials", 45),
+    ("URI", "United Rentals", "industrials", 50), ("FERG", "Ferguson Enterprises", "industrials", 40),
+    ("LII", "Lennox International", "industrials", 22), ("MAS", "Masco Corp.", "industrials", 16),
+    ("ALLE", "Allegion plc", "industrials", 12), ("SWK", "Stanley Black & Decker", "industrials", 14),
+    ("SNA", "Snap-on Inc.", "industrials", 18),
+    # Transportation & logistics
+    ("FDX", "FedEx Corp.", "transportation", 70), ("UNP", "Union Pacific", "transportation", 145),
+    ("CSX", "CSX Corp.", "transportation", 65), ("NSC", "Norfolk Southern", "transportation", 55),
+    ("CHRW", "C.H. Robinson Worldwide", "transportation", 12), ("JBHT", "J.B. Hunt Transport", "transportation", 18),
+    ("EXPD", "Expeditors International", "transportation", 18), ("XPO", "XPO Inc.", "transportation", 16),
+    ("KNX", "Knight-Swift Transportation", "transportation", 8), ("LSTR", "Landstar System", "transportation", 6),
+    ("DAL", "Delta Air Lines", "transportation", 35), ("UAL", "United Airlines Holdings", "transportation", 18),
+    ("AAL", "American Airlines Group", "transportation", 9), ("LUV", "Southwest Airlines", "transportation", 18),
+    ("ALK", "Alaska Air Group", "transportation", 8), ("GXO", "GXO Logistics", "transportation", 6),
+    ("MATX", "Matson Inc.", "transportation", 5), ("ZIM", "ZIM Integrated Shipping", "transportation", 3),
+    ("ODFL", "Old Dominion Freight Line", "transportation", 40),
+    # Materials & chemicals
+    ("LIN", "Linde plc", "materials", 220), ("SHW", "Sherwin-Williams", "materials", 90),
+    ("APD", "Air Products and Chemicals", "materials", 65), ("ECL", "Ecolab Inc.", "materials", 65),
+    ("DD", "DuPont de Nemours", "materials", 35), ("DOW", "Dow Inc.", "materials", 38),
+    ("PPG", "PPG Industries", "materials", 28), ("VMC", "Vulcan Materials", "materials", 35),
+    ("MLM", "Martin Marietta Materials", "materials", 35), ("CTVA", "Corteva Inc.", "materials", 42),
+    ("LYB", "LyondellBasell Industries", "materials", 30), ("IFF", "Intl. Flavors & Fragrances", "materials", 25),
+    ("ALB", "Albemarle Corp.", "materials", 12), ("CE", "Celanese Corp.", "materials", 14),
+    ("EMN", "Eastman Chemical", "materials", 12), ("CF", "CF Industries Holdings", "materials", 16),
+    ("MOS", "Mosaic Co.", "materials", 9), ("FMC", "FMC Corp.", "materials", 8),
+    ("AVY", "Avery Dennison", "materials", 18), ("PKG", "Packaging Corp. of America", "materials", 18),
+    ("IP", "International Paper", "materials", 18), ("RPM", "RPM International", "materials", 16),
+    ("AXTA", "Axalta Coating Systems", "materials", 8),
+    # Metals & mining
+    ("NEM", "Newmont Corp.", "metals_mining", 50), ("FCX", "Freeport-McMoRan", "metals_mining", 65),
+    ("GOLD", "Barrick Gold", "metals_mining", 30), ("AEM", "Agnico Eagle Mines", "metals_mining", 40),
+    ("WPM", "Wheaton Precious Metals", "metals_mining", 30), ("FNV", "Franco-Nevada", "metals_mining", 25),
+    ("RGLD", "Royal Gold", "metals_mining", 9), ("KGC", "Kinross Gold", "metals_mining", 18),
+    ("AU", "AngloGold Ashanti", "metals_mining", 18, ), ("AGI", "Alamos Gold", "metals_mining", 8),
+    ("BTG", "B2Gold Corp.", "metals_mining", 4), ("HMY", "Harmony Gold Mining", "metals_mining", 6),
+    ("PAAS", "Pan American Silver", "metals_mining", 8), ("HL", "Hecla Mining", "metals_mining", 4),
+    ("CDE", "Coeur Mining", "metals_mining", 3), ("MP", "MP Materials", "metals_mining", 4),
+    ("SCCO", "Southern Copper", "metals_mining", 90), ("X", "United States Steel", "metals_mining", 8),
+    ("CLF", "Cleveland-Cliffs", "metals_mining", 6), ("STLD", "Steel Dynamics", "metals_mining", 22),
+    ("RS", "Reliance Inc.", "metals_mining", 16), ("AA", "Alcoa Corp.", "metals_mining", 8),
+    # Utilities
+    ("DUK", "Duke Energy", "utilities", 90), ("SO", "Southern Co.", "utilities", 95),
+    ("D", "Dominion Energy", "utilities", 48), ("AEP", "American Electric Power", "utilities", 50),
+    ("EXC", "Exelon Corp.", "utilities", 38), ("XEL", "Xcel Energy", "utilities", 35),
+    ("SRE", "Sempra", "utilities", 55), ("PEG", "Public Service Enterprise", "utilities", 42),
+    ("ED", "Consolidated Edison", "utilities", 35), ("WEC", "WEC Energy Group", "utilities", 32),
+    ("ES", "Eversource Energy", "utilities", 22), ("EIX", "Edison International", "utilities", 30),
+    ("PCG", "PG&E Corp.", "utilities", 45), ("FE", "FirstEnergy Corp.", "utilities", 24),
+    ("AEE", "Ameren Corp.", "utilities", 22), ("CMS", "CMS Energy", "utilities", 20),
+    ("DTE", "DTE Energy", "utilities", 25), ("PPL", "PPL Corp.", "utilities", 25),
+    ("CNP", "CenterPoint Energy", "utilities", 22), ("ATO", "Atmos Energy", "utilities", 22),
+    ("NI", "NiSource Inc.", "utilities", 18), ("LNT", "Alliant Energy", "utilities", 16),
+    ("EVRG", "Evergy Inc.", "utilities", 14), ("AES", "AES Corp.", "utilities", 9),
+    ("NRG", "NRG Energy", "utilities", 18), ("VST", "Vistra Corp.", "utilities", 50),
+    ("AWK", "American Water Works", "utilities", 28),
+    # Real estate & REITs
+    ("PLD", "Prologis Inc.", "real_estate", 110), ("EQIX", "Equinix Inc.", "real_estate", 90),
+    ("PSA", "Public Storage", "real_estate", 60), ("O", "Realty Income", "real_estate", 50),
+    ("WELL", "Welltower Inc.", "real_estate", 80), ("SPG", "Simon Property Group", "real_estate", 60),
+    ("DLR", "Digital Realty Trust", "real_estate", 55), ("VICI", "VICI Properties", "real_estate", 32),
+    ("CBRE", "CBRE Group", "real_estate", 45), ("AVB", "AvalonBay Communities", "real_estate", 30),
+    ("EQR", "Equity Residential", "real_estate", 30), ("EXR", "Extra Space Storage", "real_estate", 35),
+    ("INVH", "Invitation Homes", "real_estate", 22), ("MAA", "Mid-America Apartment", "real_estate", 18),
+    ("ESS", "Essex Property Trust", "real_estate", 20), ("ARE", "Alexandria Real Estate", "real_estate", 20),
+    ("VTR", "Ventas Inc.", "real_estate", 28), ("WY", "Weyerhaeuser Co.", "real_estate", 22),
+    ("IRM", "Iron Mountain", "real_estate", 30), ("KIM", "Kimco Realty", "real_estate", 16),
+    ("REG", "Regency Centers", "real_estate", 14), ("BXP", "BXP Inc.", "real_estate", 12),
+    ("HST", "Host Hotels & Resorts", "real_estate", 12), ("UDR", "UDR Inc.", "real_estate", 14),
+    ("CPT", "Camden Property Trust", "real_estate", 14), ("DOC", "Healthpeak Properties", "real_estate", 14),
+    ("SUI", "Sun Communities", "real_estate", 16), ("ELS", "Equity LifeStyle Properties", "real_estate", 14),
+    ("GLPI", "Gaming and Leisure Properties", "real_estate", 14), ("WPC", "W. P. Carey", "real_estate", 14),
+    # Defense & aerospace
+    ("HII", "Huntington Ingalls Industries", "defense", 9), ("LDOS", "Leidos Holdings", "defense", 22),
+    ("AXON", "Axon Enterprise", "defense", 50), ("KTOS", "Kratos Defense & Security", "defense", 8),
+    ("AVAV", "AeroVironment Inc.", "defense", 5), ("HWM", "Howmet Aerospace", "defense", 50),
+    ("TDG", "TransDigm Group", "defense", 75), ("TXT", "Textron Inc.", "defense", 16),
+    ("CW", "Curtiss-Wright", "defense", 14), ("BWXT", "BWX Technologies", "defense", 10),
+    ("HEI", "HEICO Corp.", "defense", 40),
+    # EV & auto
+    ("STLA", "Stellantis N.V.", "ev_auto", 40), ("TM", "Toyota Motor Corp.", "ev_auto", 250),
+    ("HMC", "Honda Motor Co.", "ev_auto", 50), ("RACE", "Ferrari N.V.", "ev_auto", 80),
+    ("XPEV", "XPeng Inc.", "ev_auto", 12), ("PSNY", "Polestar Automotive", "ev_auto", 2),
+    ("QS", "QuantumScape Corp.", "ev_auto", 4), ("CHPT", "ChargePoint Holdings", "ev_auto", 1),
+    ("BLNK", "Blink Charging", "ev_auto", 1),
+    # Robotics & automation
+    ("FANUY", "Fanuc Corp.", "robotics", 18), ("OMRNY", "Omron Corp.", "robotics", 8),
+    # Crypto & blockchain
+    ("MSTR", "MicroStrategy Inc.", "crypto", 90), ("MARA", "MARA Holdings", "crypto", 6),
+    ("RIOT", "Riot Platforms", "crypto", 4), ("CLSK", "CleanSpark Inc.", "crypto", 4),
+    ("HUT", "Hut 8 Corp.", "crypto", 3), ("BITF", "Bitfarms Ltd.", "crypto", 1),
+    ("BTBT", "Bit Digital", "crypto", 2), ("CIFR", "Cipher Mining", "crypto", 2),
+    ("WULF", "TeraWulf Inc.", "crypto", 3), ("CORZ", "Core Scientific", "crypto", 5),
+    ("IREN", "IREN Ltd.", "crypto", 4),
+    # Space
+    ("RKLB", "Rocket Lab USA", "space", 12), ("ASTS", "AST SpaceMobile", "space", 8),
+    ("LUNR", "Intuitive Machines", "space", 2), ("RDW", "Redwire Corp.", "space", 2),
+    ("PL", "Planet Labs PBC", "space", 2), ("BKSY", "BlackSky Technology", "space", 1),
+    # Quantum computing
+    ("IONQ", "IonQ Inc.", "quantum", 8), ("RGTI", "Rigetti Computing", "quantum", 3),
+    ("QBTS", "D-Wave Quantum", "quantum", 2), ("QUBT", "Quantum Computing Inc.", "quantum", 1),
+    ("ARQQ", "Arqit Quantum", "quantum", 1),
+    # Clean & renewable energy
+    ("BEP", "Brookfield Renewable Partners", "clean_energy", 16), ("BEPC", "Brookfield Renewable Corp.", "clean_energy", 12),
+    ("NOVA", "Sunnova Energy", "clean_energy", 1), ("ARRY", "Array Technologies", "clean_energy", 1),
+    ("SHLS", "Shoals Technologies", "clean_energy", 1), ("FLNC", "Fluence Energy", "clean_energy", 4),
+    ("CSIQ", "Canadian Solar", "clean_energy", 1), ("JKS", "JinkoSolar Holding", "clean_energy", 1),
+    ("NXT", "Nextracker Inc.", "clean_energy", 6),
+    # Energy (oil & gas)
+    ("PSX", "Phillips 66", "energy", 55), ("MPC", "Marathon Petroleum", "energy", 60),
+    ("VLO", "Valero Energy", "energy", 45), ("EOG", "EOG Resources", "energy", 70),
+    ("DVN", "Devon Energy", "energy", 28), ("FANG", "Diamondback Energy", "energy", 50),
+    ("HES", "Hess Corp.", "energy", 45), ("HAL", "Halliburton Co.", "energy", 28),
+    ("BKR", "Baker Hughes Co.", "energy", 38), ("WMB", "Williams Companies", "energy", 65),
+    ("KMI", "Kinder Morgan", "energy", 55), ("OKE", "ONEOK Inc.", "energy", 55),
+    ("LNG", "Cheniere Energy", "energy", 50), ("TRGP", "Targa Resources", "energy", 35),
+    ("EQT", "EQT Corp.", "energy", 22), ("AR", "Antero Resources", "energy", 9),
+    ("APA", "APA Corp.", "energy", 8), ("CTRA", "Coterra Energy", "energy", 20),
+    ("OVV", "Ovintiv Inc.", "energy", 12), ("PR", "Permian Resources", "energy", 14),
+    ("RRC", "Range Resources", "energy", 9), ("CHRD", "Chord Energy", "energy", 8),
+]
+
+# --- Singapore Exchange (SGX). Catalogued under base code; .SI added on demand.
+_SGX: List[tuple] = [
+    ("D05", "DBS Group Holdings", "financials", 70), ("O39", "Oversea-Chinese Banking (OCBC)", "financials", 48),
+    ("U11", "United Overseas Bank (UOB)", "financials", 38), ("Z74", "Singtel", "telecom", 38),
+    ("S68", "Singapore Exchange (SGX)", "financials", 9), ("J36", "Jardine Matheson Holdings", "financials", 12),
+    ("C6L", "Singapore Airlines", "transportation", 14), ("C52", "ComfortDelGro Corp.", "transportation", 4),
+    ("S58", "SATS Ltd.", "transportation", 3), ("S59", "SIA Engineering", "transportation", 2),
+    ("S08", "Singapore Post (SingPost)", "industrials", 2), ("BN4", "Keppel Ltd.", "industrials", 9),
+    ("BS6", "Yangzijiang Shipbuilding", "industrials", 7), ("5E2", "Seatrium Ltd.", "industrials", 5),
+    ("V03", "Venture Corp.", "ai_tech", 4), ("AWX", "AEM Holdings", "semiconductors", 1),
+    ("S63", "ST Engineering", "defense", 12), ("U96", "Sembcorp Industries", "utilities", 8),
+    ("F34", "Wilmar International", "staples", 15), ("Y92", "Thai Beverage", "staples", 9),
+    ("D01", "DFI Retail Group", "staples", 3), ("OV8", "Sheng Siong Group", "staples", 2),
+    ("E5H", "Golden Agri-Resources", "staples", 2), ("C07", "Jardine Cycle & Carriage", "consumer", 8),
+    ("G13", "Genting Singapore", "consumer", 6), ("BSL", "Raffles Medical Group", "healthcare", 2),
+    ("H02", "Haw Par Corp.", "healthcare", 2), ("9CI", "CapitaLand Investment", "real_estate", 10),
+    ("C38U", "CapitaLand Integrated Commercial Trust", "real_estate", 12),
+    ("A17U", "CapitaLand Ascendas REIT", "real_estate", 8), ("ME8U", "Mapletree Industrial Trust", "real_estate", 5),
+    ("M44U", "Mapletree Logistics Trust", "real_estate", 5), ("N2IU", "Mapletree Pan Asia Commercial Trust", "real_estate", 5),
+    ("BUOU", "Frasers Logistics & Commercial Trust", "real_estate", 4), ("AJBU", "Keppel DC REIT", "real_estate", 3),
+    ("T82U", "Suntec REIT", "real_estate", 3), ("K71U", "Keppel REIT", "real_estate", 3),
+    ("J69U", "Frasers Centrepoint Trust", "real_estate", 3), ("C2PU", "Parkway Life REIT", "real_estate", 2),
+    ("C09", "City Developments", "real_estate", 4), ("H78", "Hongkong Land Holdings", "real_estate", 7),
+    ("U14", "UOL Group", "real_estate", 4), ("TQ5", "Frasers Property", "real_estate", 3),
+]
+
+_load(_US)
+_load(_SGX, country="Singapore", exchange="SGX")
 
 
 def price_series(symbol: str, days: int = 90) -> List[dict]:

@@ -111,6 +111,8 @@ class FundamentalsData(BaseModel):
     symbol: str
     name: str
     metrics: List[FundamentalMetric]
+    country: Optional[str] = None
+    exchange: Optional[str] = None
 
 
 # --- screener ---
@@ -123,6 +125,8 @@ class ScreenerRow(BaseModel):
     peRatio: Optional[float] = None
     volume: float
     sector: str
+    country: Optional[str] = None
+    exchange: Optional[str] = None
 
 
 class ScreenerData(BaseModel):
@@ -137,6 +141,8 @@ class HeatmapCell(BaseModel):
     changePct: float
     marketCap: float
     sector: str
+    country: Optional[str] = None
+    exchange: Optional[str] = None
 
 
 class HeatmapData(BaseModel):

@@ -43,27 +43,70 @@ async def _net(fn, *args):
 
 # ----------------------------- seeding -----------------------------
 def _seed_universe() -> None:
-    """Seed the sectors + universe registry from the curated Phase 1 dataset so
-    the worker has a base universe to ingest and panels work immediately."""
+    """Seed sectors + the full curated universe and pre-seed mock fundamentals.
+
+    The whole catalog (US + SGX) is registered so sector filters, screeners and
+    heatmaps have breadth immediately, but only the curated CORE set is marked
+    ``tracked`` for continuous live ingestion. Everything else carries
+    deterministic mock fundamentals (``is_live = FALSE``) and is refreshed with
+    real data on demand when a user opens it. Schema is extended idempotently so
+    no migration step is required."""
+    for ddl in (
+        "ALTER TABLE universe ADD COLUMN IF NOT EXISTS country TEXT",
+        "ALTER TABLE universe ADD COLUMN IF NOT EXISTS exchange TEXT",
+        "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS is_live BOOLEAN NOT NULL DEFAULT FALSE",
+    ):
+        db.execute(ddl)
+
     for sid, name in data.SECTORS.items():
         db.execute(
             "INSERT INTO sectors (id, name) VALUES (%s, %s) "
             "ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, updated_at = now()",
             (sid, name),
         )
-    for sym, c in data.COMPANIES.items():
-        db.execute(
-            """
-            INSERT INTO universe (symbol, name, sector, tracked, pending)
-            VALUES (%s, %s, %s, TRUE, FALSE)
-            ON CONFLICT (symbol) DO UPDATE
-              SET name = COALESCE(universe.name, EXCLUDED.name),
-                  sector = COALESCE(universe.sector, EXCLUDED.sector),
-                  tracked = TRUE
-            """,
-            (sym, c["name"], c["sector"]),
-        )
-    log.info("seeded universe: %d sectors, %d symbols", len(data.SECTORS), len(data.COMPANIES))
+
+    core = set(data.CORE_SYMBOLS)
+    uni_rows = [
+        (sym, c["name"], c["sector"], c.get("country"), c.get("exchange"),
+         sym in core)
+        for sym, c in data.COMPANIES.items()
+    ]
+    db.execute_many(
+        """
+        INSERT INTO universe (symbol, name, sector, country, exchange, tracked, pending)
+        VALUES (%s, %s, %s, %s, %s, %s, FALSE)
+        ON CONFLICT (symbol) DO UPDATE
+          SET name = COALESCE(universe.name, EXCLUDED.name),
+              sector = COALESCE(universe.sector, EXCLUDED.sector),
+              country = COALESCE(universe.country, EXCLUDED.country),
+              exchange = COALESCE(universe.exchange, EXCLUDED.exchange),
+              tracked = universe.tracked OR EXCLUDED.tracked
+        """,
+        uni_rows,
+    )
+
+    # Pre-seed deterministic mock fundamentals so breadth panels never read empty.
+    # DO NOTHING preserves any real (is_live) data already ingested in prior runs.
+    fund_rows = [
+        (sym, c["name"], c["price"], c["changePct"], c["marketCap"], c["peRatio"],
+         c["volume"], c["revenue"], c["netMargin"], c["eps"], c["dividendYield"],
+         c["beta"], c["week52High"], c["week52Low"], c["description"])
+        for sym, c in data.COMPANIES.items()
+    ]
+    db.execute_many(
+        """
+        INSERT INTO fundamentals (symbol, name, price, change_pct, market_cap,
+            pe_ratio, volume, revenue, net_margin, eps, dividend_yield, beta,
+            week52_high, week52_low, description, is_live, updated_at)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, FALSE, now())
+        ON CONFLICT (symbol) DO NOTHING
+        """,
+        fund_rows,
+    )
+    log.info(
+        "seeded universe: %d sectors, %d symbols (%d core tracked)",
+        len(data.SECTORS), len(data.COMPANIES), len(core),
+    )
 
 
 def _tracked_symbols() -> List[str]:
@@ -98,8 +141,8 @@ def _upsert_quote(q: dict) -> None:
     db.execute(
         """
         INSERT INTO fundamentals (symbol, name, price, change_pct, volume,
-                                  week52_high, week52_low, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, now())
+                                  week52_high, week52_low, is_live, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE, now())
         ON CONFLICT (symbol) DO UPDATE SET
           name = COALESCE(EXCLUDED.name, fundamentals.name),
           price = COALESCE(EXCLUDED.price, fundamentals.price),
@@ -107,6 +150,7 @@ def _upsert_quote(q: dict) -> None:
           volume = COALESCE(EXCLUDED.volume, fundamentals.volume),
           week52_high = COALESCE(EXCLUDED.week52_high, fundamentals.week52_high),
           week52_low = COALESCE(EXCLUDED.week52_low, fundamentals.week52_low),
+          is_live = TRUE,
           updated_at = now()
         """,
         (q.get("symbol"), q.get("name"), q.get("price"), q.get("changePct"),
@@ -119,8 +163,8 @@ def _upsert_fundamentals(d: dict) -> None:
         """
         INSERT INTO fundamentals (symbol, name, price, change_pct, market_cap,
             pe_ratio, volume, revenue, net_margin, eps, dividend_yield, beta,
-            week52_high, week52_low, description, updated_at)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+            week52_high, week52_low, description, is_live, updated_at)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, TRUE, now())
         ON CONFLICT (symbol) DO UPDATE SET
           name = COALESCE(EXCLUDED.name, fundamentals.name),
           price = COALESCE(EXCLUDED.price, fundamentals.price),
@@ -136,6 +180,7 @@ def _upsert_fundamentals(d: dict) -> None:
           week52_high = COALESCE(EXCLUDED.week52_high, fundamentals.week52_high),
           week52_low = COALESCE(EXCLUDED.week52_low, fundamentals.week52_low),
           description = COALESCE(EXCLUDED.description, fundamentals.description),
+          is_live = TRUE,
           updated_at = now()
         """,
         (d.get("symbol"), d.get("name"), d.get("price"),
@@ -189,19 +234,26 @@ def _upsert_sentiment(scope_type: str, scope: str, payload: dict) -> None:
 
 # ----------------------------- per-symbol ingest -----------------------------
 async def _ingest_prices(symbol: str) -> None:
+    # Fetch under the Yahoo symbol (adds .SI for SGX) but persist under the
+    # internal base code so all reads stay keyed consistently.
+    ysym = data.yahoo_symbol(symbol)
     try:
-        res = await _net(p_src.fetch_price_history, symbol, "6mo", "1d")
+        res = await _net(p_src.fetch_price_history, ysym, "6mo", "1d")
         if res.get("points"):
             await asyncio.to_thread(_upsert_ohlcv, symbol, res["points"])
         if res.get("quote", {}).get("price") is not None:
-            await asyncio.to_thread(_upsert_quote, res["quote"])
+            quote = dict(res["quote"])
+            quote["symbol"] = symbol
+            await asyncio.to_thread(_upsert_quote, quote)
     except Exception as exc:  # noqa: BLE001
         log.warning("price ingest failed for %s: %s", symbol, exc)
 
 
 async def _ingest_fundamentals(symbol: str) -> None:
+    ysym = data.yahoo_symbol(symbol)
     try:
-        d = await _net(f_src.fetch_fundamentals, symbol)
+        d = await _net(f_src.fetch_fundamentals, ysym)
+        d["symbol"] = symbol
         await asyncio.to_thread(_upsert_fundamentals, d)
     except Exception as exc:  # noqa: BLE001
         log.warning("fundamentals ingest failed for %s: %s", symbol, exc)

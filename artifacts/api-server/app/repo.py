@@ -45,9 +45,11 @@ def get_company(symbol: str) -> Optional[dict]:
             row = db.query_one(
                 """
                 SELECT f.symbol, f.name, u.sector AS sector,
+                       u.country AS country, u.exchange AS exchange,
                        f.price, f.change_pct, f.market_cap, f.pe_ratio, f.volume,
                        f.revenue, f.net_margin, f.eps, f.dividend_yield, f.beta,
-                       f.week52_high, f.week52_low, f.description, f.updated_at
+                       f.week52_high, f.week52_low, f.description, f.is_live,
+                       f.updated_at
                 FROM fundamentals f
                 LEFT JOIN universe u ON u.symbol = f.symbol
                 WHERE f.symbol = %s
@@ -87,8 +89,10 @@ def _company_from_row(row: dict) -> dict:
         "week52High": _num(row.get("week52_high")),
         "week52Low": _num(row.get("week52_low")),
         "description": row.get("description") or "",
+        "country": row.get("country"),
+        "exchange": row.get("exchange"),
         "_asOf": _iso(row.get("updated_at")),
-        "_source": "live",
+        "_source": "live" if row.get("is_live") else "mock",
     }
     return c
 
@@ -98,6 +102,44 @@ def _num(v, default: float = 0.0) -> float:
         return float(v) if v is not None else default
     except (TypeError, ValueError):
         return default
+
+
+def companies_bulk(symbols: List[str]) -> Dict[str, dict]:
+    """Fetch many companies in one query (for screeners/heatmaps).
+
+    Avoids N per-symbol round-trips. Missing symbols fall back to the curated
+    mock so breadth panels never show holes."""
+    want = [(s or "").upper() for s in symbols if s]
+    out: Dict[str, dict] = {}
+    if want and db.db_available():
+        try:
+            rows = db.query(
+                """
+                SELECT f.symbol, f.name, u.sector AS sector,
+                       u.country AS country, u.exchange AS exchange,
+                       f.price, f.change_pct, f.market_cap, f.pe_ratio, f.volume,
+                       f.revenue, f.net_margin, f.eps, f.dividend_yield, f.beta,
+                       f.week52_high, f.week52_low, f.description, f.is_live,
+                       f.updated_at
+                FROM fundamentals f
+                LEFT JOIN universe u ON u.symbol = f.symbol
+                WHERE f.symbol = ANY(%s) AND f.price IS NOT NULL
+                """,
+                (want,),
+            )
+            for r in rows:
+                out[r["symbol"]] = _company_from_row(r)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("companies_bulk DB error: %s", exc)
+    for s in want:
+        if s not in out:
+            company = data.get_company(s)
+            if company:
+                c = dict(company)
+                c["_asOf"] = None
+                c["_source"] = "mock"
+                out[s] = c
+    return out
 
 
 def get_all_companies() -> Dict[str, dict]:
@@ -340,15 +382,36 @@ def get_sentiment(scope_type: str, scope: str) -> Optional[dict]:
 
 # ----------------------------- on-demand expansion -----------------------------
 def note_symbol(symbol: str) -> None:
-    """Enqueue a newly-referenced symbol for proactive ingestion (idempotent)."""
+    """Request live data for a referenced symbol on demand (idempotent).
+
+    Symbols can be alphanumeric (SGX codes such as ``D05``/``C38U``) up to 6
+    chars. A catalogued breadth name still carrying mock fundamentals gets its
+    ``pending`` flag flipped so the worker refreshes it with real data; once it
+    has live data we skip it. Brand-new (uncatalogued) symbols are inserted as
+    pending."""
     sym = (symbol or "").upper()
-    if not sym.isalpha() or not (1 <= len(sym) <= 6):
+    if not sym.isalnum() or not (1 <= len(sym) <= 6):
         return
     if not db.db_available():
         return
     try:
-        existing = db.query_one("SELECT symbol, pending FROM universe WHERE symbol=%s", (sym,))
+        existing = db.query_one(
+            """
+            SELECT u.symbol, u.pending, COALESCE(f.is_live, FALSE) AS is_live
+            FROM universe u
+            LEFT JOIN fundamentals f ON f.symbol = u.symbol
+            WHERE u.symbol = %s
+            """,
+            (sym,),
+        )
         if existing:
+            if existing.get("is_live") or existing.get("pending"):
+                return  # already live, or already queued
+            db.execute(
+                "UPDATE universe SET pending = TRUE, tracked = TRUE, updated_at = now() WHERE symbol = %s",
+                (sym,),
+            )
+            log.info("requested on-demand refresh for catalogued symbol: %s", sym)
             return
         db.execute(
             """
@@ -361,6 +424,27 @@ def note_symbol(symbol: str) -> None:
         log.info("enqueued new symbol for ingestion: %s", sym)
     except Exception as exc:  # noqa: BLE001
         log.warning("note_symbol DB error for %s: %s", sym, exc)
+
+
+def prompt_symbols(limit: int = 80) -> List[str]:
+    """A capped, most-valuable-first symbol list for LLM tool/system prompts.
+
+    The full catalog is far too large to inline into every tool description, so
+    callers use this lean slice while `all_symbols()`/`symbols_in_sector()` still
+    expose the full breadth at request time."""
+    if db.db_available():
+        try:
+            rows = db.query(
+                "SELECT symbol FROM fundamentals WHERE price IS NOT NULL "
+                "ORDER BY market_cap DESC NULLS LAST LIMIT %s",
+                (limit,),
+            )
+            syms = [r["symbol"] for r in rows]
+            if syms:
+                return syms
+        except Exception as exc:  # noqa: BLE001
+            log.warning("prompt_symbols DB error: %s", exc)
+    return data.top_symbols(limit)
 
 
 def as_of(*records) -> Optional[str]:

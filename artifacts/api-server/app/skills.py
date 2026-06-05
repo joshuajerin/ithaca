@@ -105,6 +105,7 @@ def _iv_smile(moneyness: float, T_years: float, base_iv: float) -> float:
 # ----------------------------- builders -----------------------------
 def build_price_chart(params: dict) -> dict:
     symbol = (params.get("symbol") or "NVDA").upper()
+    repo.note_symbol(symbol)  # request live data on demand for this symbol
     company = repo.get_company(symbol)
     if not company:
         raise ValueError(f"Unknown symbol: {symbol}")
@@ -260,6 +261,7 @@ def build_analysis(params: dict) -> dict:
 
 def build_fundamentals(params: dict) -> dict:
     symbol = (params.get("symbol") or "NVDA").upper()
+    repo.note_symbol(symbol)  # request live data on demand for this symbol
     company = repo.get_company(symbol)
     if not company:
         raise ValueError(f"Unknown symbol: {symbol}")
@@ -275,10 +277,16 @@ def build_fundamentals(params: dict) -> dict:
         {"label": "52W High", "value": f"${company['week52High']:.2f}", "change": None, "hint": None},
         {"label": "52W Low", "value": f"${company['week52Low']:.2f}", "change": None, "hint": None},
     ]
+    if company.get("exchange"):
+        hint = company.get("country")
+        metrics.append({"label": "Exchange", "value": company["exchange"],
+                        "change": None, "hint": hint})
     return {
         "symbol": symbol,
         "name": company["name"],
         "metrics": metrics,
+        "country": company.get("country"),
+        "exchange": company.get("exchange"),
         "asOf": company.get("_asOf"),
         "source": company.get("_source"),
     }
@@ -293,10 +301,11 @@ def build_screener(params: dict) -> dict:
     else:
         syms = repo.all_symbols()
         title = "Market Screener"
+    bulk = repo.companies_bulk(syms)
     rows = []
     companies = []
     for s in syms:
-        c = repo.get_company(s)
+        c = bulk.get(s)
         if not c:
             continue
         companies.append(c)
@@ -309,6 +318,8 @@ def build_screener(params: dict) -> dict:
             "peRatio": c["peRatio"],
             "volume": c["volume"],
             "sector": repo.sector_name(c["sector"]),
+            "country": c.get("country"),
+            "exchange": c.get("exchange"),
         })
     rows.sort(key=lambda r: r["marketCap"], reverse=True)
     return {"title": title, "rows": rows, "asOf": repo.as_of(*companies), "source": repo.source_of(*companies)}
@@ -323,10 +334,11 @@ def build_heatmap(params: dict) -> dict:
     else:
         syms = repo.all_symbols()
         title = "Market Overview"
+    bulk = repo.companies_bulk(syms)
     cells = []
     companies = []
     for s in syms:
-        c = repo.get_company(s)
+        c = bulk.get(s)
         if not c:
             continue
         companies.append(c)
@@ -336,6 +348,8 @@ def build_heatmap(params: dict) -> dict:
             "changePct": c["changePct"],
             "marketCap": c["marketCap"],
             "sector": repo.sector_name(c["sector"]),
+            "country": c.get("country"),
+            "exchange": c.get("exchange"),
         })
     cells.sort(key=lambda x: x["marketCap"], reverse=True)
     return {"title": title, "cells": cells, "asOf": repo.as_of(*companies), "source": repo.source_of(*companies)}
