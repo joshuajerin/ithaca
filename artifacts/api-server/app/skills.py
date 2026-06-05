@@ -265,8 +265,21 @@ def build_fundamentals(params: dict) -> dict:
     company = repo.get_company(symbol)
     if not company:
         raise ValueError(f"Unknown symbol: {symbol}")
+    rets = repo.period_returns(symbol, windows=("1M", "YTD", "1Y"))["returns"]
+
+    def _ret(window: str):
+        v = rets.get(window)
+        return (f"{v:+.2f}%" if v is not None else "—"), v
+
+    r1m_v, r1m = _ret("1M")
+    rytd_v, rytd = _ret("YTD")
+    r1y_v, r1y = _ret("1Y")
+
     metrics = [
-        {"label": "Last Price", "value": f"${company['price']:.2f}", "change": company["changePct"], "hint": "Day change %"},
+        {"label": "Last Price", "value": f"${company['price']:.2f}", "change": company["changePct"], "hint": "1D change %"},
+        {"label": "Return (1M)", "value": r1m_v, "change": r1m, "hint": "Price return, 1 month"},
+        {"label": "Return (YTD)", "value": rytd_v, "change": rytd, "hint": "Price return, year-to-date"},
+        {"label": "Return (1Y)", "value": r1y_v, "change": r1y, "hint": "Price return, 1 year"},
         {"label": "Market Cap", "value": fmt_usd(company["marketCap"]), "change": None, "hint": None},
         {"label": "P/E (TTM)", "value": f"{company['peRatio']:.1f}" if company["peRatio"] else "N/A", "change": None, "hint": "Not meaningful if unprofitable" if not company["peRatio"] else None},
         {"label": "Revenue (TTM)", "value": fmt_usd(company["revenue"]), "change": None, "hint": None},
@@ -302,6 +315,7 @@ def build_screener(params: dict) -> dict:
         syms = repo.all_symbols()
         title = "Market Screener"
     bulk = repo.companies_bulk(syms)
+    rets = repo.period_returns_bulk(syms, windows=("YTD",))
     rows = []
     companies = []
     for s in syms:
@@ -313,7 +327,8 @@ def build_screener(params: dict) -> dict:
             "symbol": s,
             "name": c["name"],
             "price": c["price"],
-            "changePct": c["changePct"],
+            "changePct": c["changePct"],  # 1-day move
+            "retYTD": (rets.get(s) or {}).get("YTD"),  # true year-to-date return
             "marketCap": c["marketCap"],
             "peRatio": c["peRatio"],
             "volume": c["volume"],
@@ -335,6 +350,7 @@ def build_heatmap(params: dict) -> dict:
         syms = repo.all_symbols()
         title = "Market Overview"
     bulk = repo.companies_bulk(syms)
+    rets = repo.period_returns_bulk(syms, windows=("YTD",))
     cells = []
     companies = []
     for s in syms:
@@ -345,7 +361,8 @@ def build_heatmap(params: dict) -> dict:
         cells.append({
             "symbol": s,
             "name": c["name"],
-            "changePct": c["changePct"],
+            "changePct": c["changePct"],  # 1-day move
+            "retYTD": (rets.get(s) or {}).get("YTD"),  # true year-to-date return
             "marketCap": c["marketCap"],
             "sector": repo.sector_name(c["sector"]),
             "country": c.get("country"),
@@ -2742,6 +2759,7 @@ def build_company_analytics(params: dict) -> dict:
 
     name = company["name"]
     chg_pct = company["changePct"]
+    period_rets = repo.period_returns(symbol, windows=("1M", "YTD", "1Y"))["returns"]
 
     # --- Peers & competitive comparison ---
     peer_syms = data.get_peers(symbol)
@@ -2824,7 +2842,13 @@ def build_company_analytics(params: dict) -> dict:
     return {
         "symbol": symbol,
         "name": name,
-        "priceTrendPct": chg_pct,
+        "priceTrendPct": chg_pct,  # 1-day move
+        "returns": {
+            "1D": chg_pct,
+            "1M": period_rets.get("1M"),
+            "YTD": period_rets.get("YTD"),
+            "1Y": period_rets.get("1Y"),
+        },
         "drivers": drivers,
         "peers": peers_table,
         "correlations": correlations,

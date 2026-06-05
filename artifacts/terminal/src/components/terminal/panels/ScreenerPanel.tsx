@@ -24,7 +24,8 @@ export function ScreenerPanel({ data }: { data: ScreenerData }) {
               <TableRow className="border-border hover:bg-transparent">
                 <TableHead className="editorial-label text-[8px] text-muted-foreground w-20 py-2.5 h-auto">Sym</TableHead>
                 <TableHead className="editorial-label text-[8px] text-muted-foreground py-2.5 h-auto text-right">Price</TableHead>
-                <TableHead className="editorial-label text-[8px] text-muted-foreground py-2.5 h-auto text-right">Chg%</TableHead>
+                <TableHead className="editorial-label text-[8px] text-muted-foreground py-2.5 h-auto text-right">1D %</TableHead>
+                <TableHead className="editorial-label text-[8px] text-muted-foreground py-2.5 h-auto text-right">YTD %</TableHead>
                 <TableHead className="editorial-label text-[8px] text-muted-foreground py-2.5 h-auto text-right">MCap</TableHead>
                 <TableHead className="editorial-label text-[8px] text-muted-foreground py-2.5 h-auto text-right">Vol</TableHead>
                 <TableHead className="editorial-label text-[8px] text-muted-foreground py-2.5 h-auto text-right hidden sm:table-cell">P/E</TableHead>
@@ -37,6 +38,9 @@ export function ScreenerPanel({ data }: { data: ScreenerData }) {
                   <TableCell className="font-serif text-sm nums-tabular py-2 text-right">{row.price.toFixed(2)}</TableCell>
                   <TableCell className={`font-serif text-sm nums-tabular py-2 text-right ${row.changePct >= 0 ? 'text-white' : 'text-muted-foreground'}`}>
                     {row.changePct > 0 ? '+' : ''}{row.changePct.toFixed(2)}%
+                  </TableCell>
+                  <TableCell className={`font-serif text-sm nums-tabular py-2 text-right ${row.retYTD == null ? 'text-gray-500' : row.retYTD >= 0 ? 'text-white' : 'text-muted-foreground'}`}>
+                    {row.retYTD == null ? '—' : `${row.retYTD > 0 ? '+' : ''}${row.retYTD.toFixed(1)}%`}
                   </TableCell>
                   <TableCell className="font-serif text-sm nums-tabular py-2 text-right text-gray-400">{formatNumber(row.marketCap)}</TableCell>
                   <TableCell className="font-serif text-sm nums-tabular py-2 text-right text-gray-400">{formatNumber(row.volume)}</TableCell>

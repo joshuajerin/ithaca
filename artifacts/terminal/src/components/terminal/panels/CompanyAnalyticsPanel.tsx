@@ -32,10 +32,18 @@ interface Catalyst {
   description: string;
 }
 
+interface PeriodReturns {
+  "1D"?: number | null;
+  "1M"?: number | null;
+  YTD?: number | null;
+  "1Y"?: number | null;
+}
+
 interface CompanyAnalyticsData {
   symbol: string;
   name: string;
   priceTrendPct: number;
+  returns?: PeriodReturns;
   drivers: Driver[];
   peers: Peer[];
   correlations: Correlation[];
@@ -93,12 +101,34 @@ function corrBar(corr: number): number {
   return Math.round(Math.abs(corr) * 100);
 }
 
+function ReturnStat({ label, value }: { label: string; value?: number | null }) {
+  const has = value !== null && value !== undefined;
+  const pos = has && value! >= 0;
+  return (
+    <div className="flex flex-col items-end gap-0.5 min-w-[3rem]">
+      <span className="editorial-label text-[7px] text-muted-foreground tracking-widest uppercase">{label}</span>
+      <span className={`editorial-label text-[9px] nums-tabular ${!has ? "text-gray-600" : pos ? "text-white" : "text-muted-foreground"}`}>
+        {!has ? "—" : `${value! > 0 ? "+" : ""}${value!.toFixed(label === "1D" ? 2 : 1)}%`}
+      </span>
+    </div>
+  );
+}
+
 export function CompanyAnalyticsPanel({ data }: { data: CompanyAnalyticsData }) {
   const trend = data.priceTrendPct >= 0;
+  const r = data.returns ?? { "1D": data.priceTrendPct };
 
   return (
     <ScrollArea className="h-full pr-1">
       <div className="flex flex-col gap-5 pb-2">
+
+        {/* ── Performance by timeframe ── */}
+        <section className="flex items-end justify-end gap-5 border-b border-border pb-3">
+          <ReturnStat label="1D" value={r["1D"] ?? data.priceTrendPct} />
+          <ReturnStat label="1M" value={r["1M"]} />
+          <ReturnStat label="YTD" value={r.YTD} />
+          <ReturnStat label="1Y" value={r["1Y"]} />
+        </section>
 
         {/* ── 1. Price Drivers ── */}
         <section>
@@ -106,7 +136,7 @@ export function CompanyAnalyticsPanel({ data }: { data: CompanyAnalyticsData }) 
             <Zap className="w-3 h-3 text-muted-foreground" strokeWidth={1.5} />
             <span className="editorial-label text-[8.5px] text-muted-foreground tracking-widest uppercase">Price Drivers</span>
             <span className={`editorial-label text-[8.5px] ml-auto nums-tabular ${trend ? "text-white" : "text-muted-foreground"}`}>
-              {trend ? "+" : ""}{data.priceTrendPct.toFixed(2)}% today
+              {trend ? "+" : ""}{data.priceTrendPct.toFixed(2)}% 1D
             </span>
           </div>
           <div className="flex flex-col border-t border-border">

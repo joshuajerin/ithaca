@@ -11,8 +11,12 @@ export function HeatmapPanel({ data }: { data: HeatmapData }) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="editorial-label text-[9px] text-muted-foreground mb-3 shrink-0">
-        {data.title}
+      <div className="editorial-label text-[9px] text-muted-foreground mb-3 shrink-0 flex items-center justify-between gap-2">
+        <span>{data.title}</span>
+        <span className="flex items-center gap-3 tabular-nums">
+          <span>1D</span>
+          <span className="text-muted-foreground/50">YTD</span>
+        </span>
       </div>
 
       <div className="flex-1 w-full min-h-0 overflow-y-auto font-mono text-[12px] leading-none border-t border-border">
@@ -29,7 +33,7 @@ export function HeatmapPanel({ data }: { data: HeatmapData }) {
             <div
               key={cell.symbol}
               className="group flex items-stretch border-b border-border hover:bg-white/[0.06] transition-colors"
-              title={`${cell.name} · ${cell.sector} · ${cell.changePct}%`}
+              title={`${cell.name} · ${cell.sector} · 1D ${cell.changePct}%${cell.retYTD == null ? "" : ` · YTD ${cell.retYTD}%`}`}
             >
               {/* Row index */}
               <div className="w-9 shrink-0 flex items-center justify-end pr-2 py-3 text-muted-foreground/60 border-r border-border tabular-nums">
@@ -63,9 +67,18 @@ export function HeatmapPanel({ data }: { data: HeatmapData }) {
                       ? "text-muted-foreground"
                       : "text-muted-foreground/70"
                   }`}
+                  title="1-day move"
                 >
                   {cell.changePct > 0 ? "+" : ""}
                   {cell.changePct.toFixed(2)}%
+                </span>
+                <span
+                  className="w-16 shrink-0 text-right tabular-nums text-muted-foreground/50"
+                  title="year-to-date return"
+                >
+                  {cell.retYTD == null
+                    ? "—"
+                    : `${cell.retYTD > 0 ? "+" : ""}${cell.retYTD.toFixed(0)}%`}
                 </span>
               </div>
 

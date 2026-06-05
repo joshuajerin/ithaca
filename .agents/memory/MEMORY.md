@@ -8,3 +8,4 @@
 - [Backtesting & simulation engine](backtest-engine.md) — pure numpy engine in app/engine/; no-lookahead position lag, real OHLCV via price_series_meta (live/mock+asOf), Monte Carlo bootstrap/GBM.
 - [Stock universe breadth (US + SGX)](universe-breadth.md) — CORE tracked-live vs bulk mock-on-demand split; SGX base codes + .SI at fetch only; is_live provenance; prompt_symbols cap.
 - [Launch video layering & perf](launch-video-layering.md) — persistent layers by baseSceneKey; single rAF loop, no blur filters, scrims behind text fix lag+overlap.
+- [Period returns (day vs year)](period-returns.md) — changePct is 1D only; real returns from price series via returns.py; screener/heatmap use YTD not 1Y (live DB ~6mo).

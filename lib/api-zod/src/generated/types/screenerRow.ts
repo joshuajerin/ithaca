@@ -11,6 +11,8 @@ export interface ScreenerRow {
   name: string;
   price: number;
   changePct: number;
+  /** @nullable */
+  retYTD?: number | null;
   marketCap: number;
   /** @nullable */
   peRatio?: number | null;

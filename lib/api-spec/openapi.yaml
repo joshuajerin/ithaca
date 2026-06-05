@@ -366,6 +366,8 @@ components:
           type: number
         changePct:
           type: number
+        retYTD:
+          type: ["number", "null"]
         marketCap:
           type: number
         peRatio:
@@ -394,6 +396,8 @@ components:
           type: string
         changePct:
           type: number
+        retYTD:
+          type: ["number", "null"]
         marketCap:
           type: number
         sector:

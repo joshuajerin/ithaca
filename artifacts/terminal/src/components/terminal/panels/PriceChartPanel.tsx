@@ -48,6 +48,7 @@ export function PriceChartPanel({ data }: PriceChartPanelProps) {
           <div className={`font-serif text-base nums-oldstyle ${isPositive ? 'text-white' : 'text-muted-foreground'}`}>
             {isPositive ? '+' : ''}{data.change.toFixed(2)} ({isPositive ? '+' : ''}{data.changePct.toFixed(2)}%)
           </div>
+          <div className="editorial-label text-[8px] text-muted-foreground mt-0.5">over {data.range}</div>
         </div>
       </div>
 

@@ -9,10 +9,10 @@ keys on company records and an `as_of` helper for panels.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
-from . import data, db
+from . import data, db, returns
 
 log = logging.getLogger("terminal.repo")
 
@@ -300,6 +300,78 @@ def price_series_meta(symbol: str, days: int = 90) -> dict:
             log.warning("price_series_meta DB error for %s: %s", sym, exc)
     note_symbol(sym)
     return {"points": data.price_series(sym, days=days), "source": "mock", "asOf": None}
+
+
+# ----------------------------- period returns -----------------------------
+# We fetch enough calendar history to anchor a 1Y / YTD window. Live series are
+# trading days (this many rows comfortably spans a year); mock series are
+# calendar days, so ~400 days guarantees full 1Y coverage.
+_RETURN_DAYS = 400
+
+
+def period_returns(
+    symbol: str,
+    windows=returns.DEFAULT_WINDOWS,
+    days: int = _RETURN_DAYS,
+) -> dict:
+    """Real period returns (e.g. 1M / YTD / 1Y) for one symbol.
+
+    Computed from the price series so live names reflect genuine history and
+    breadth (mock) names use the deterministic series. Returns
+    ``{"returns": {window: pct|None}, "source": "live"|"mock", "asOf": iso|None}``.
+    """
+    meta = price_series_meta(symbol, days=days)
+    rets = returns.compute_period_returns(meta["points"], windows=windows)
+    return {"returns": rets, "source": meta["source"], "asOf": meta["asOf"]}
+
+
+def period_returns_bulk(
+    symbols: List[str],
+    windows=("1Y",),
+    days: int = _RETURN_DAYS,
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Period returns for many symbols with a single OHLCV round-trip.
+
+    Live names with real OHLCV history are computed from one bulk DB query;
+    every remaining symbol falls back to its deterministic mock series. Keeps
+    breadth panels (screener/heatmap) cheap even across hundreds of rows.
+    """
+    want = [(s or "").upper() for s in symbols if s]
+    out: Dict[str, Dict[str, Optional[float]]] = {}
+    remaining = set(want)
+
+    if want and db.db_available():
+        try:
+            cutoff = (date.today() - timedelta(days=days + 10)).isoformat()
+            rows = db.query(
+                """
+                SELECT symbol, d, c FROM ohlcv
+                WHERE symbol = ANY(%s) AND c IS NOT NULL AND d >= %s
+                ORDER BY symbol ASC, d ASC
+                """,
+                (want, cutoff),
+            )
+            by_sym: Dict[str, List[dict]] = {}
+            for r in rows:
+                d = r["d"]
+                by_sym.setdefault(r["symbol"], []).append({
+                    "t": d.isoformat() if hasattr(d, "isoformat") else str(d),
+                    "c": _num(r.get("c")),
+                })
+            for sym, pts in by_sym.items():
+                if len(pts) >= 2:
+                    out[sym] = returns.compute_period_returns(pts, windows=windows)
+                    remaining.discard(sym)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("period_returns_bulk DB error: %s", exc)
+
+    for sym in remaining:
+        pts = data.price_series(sym, days=days)
+        out[sym] = (
+            returns.compute_period_returns(pts, windows=windows)
+            if pts else {w: None for w in windows}
+        )
+    return out
 
 
 # ----------------------------- news -----------------------------

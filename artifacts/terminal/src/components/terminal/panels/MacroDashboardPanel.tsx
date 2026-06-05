@@ -83,6 +83,9 @@ function AssetTile({ tile }: { tile: any }) {
 export function MacroDashboardPanel({ data }: { data: any }) {
   return (
     <div className="flex flex-col h-full gap-3 overflow-y-auto">
+      <div className="editorial-label text-[8px] text-muted-foreground/70 shrink-0 text-right -mb-1">
+        % = 1D change
+      </div>
       {data.groups.map((group: any) => (
         <div key={group.label} className="shrink-0">
           <div

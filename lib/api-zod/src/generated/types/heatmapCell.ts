@@ -10,6 +10,8 @@ export interface HeatmapCell {
   symbol: string;
   name: string;
   changePct: number;
+  /** @nullable */
+  retYTD?: number | null;
   marketCap: number;
   sector: string;
 }
