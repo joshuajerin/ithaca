@@ -33,6 +33,7 @@ DATA_MODELS = {
     "factor_analysis": models.FactorAnalysisData,
     "risk_model": models.RiskModelData,
     "factor_exposures": models.FactorExposureData,
+    "portfolio_optimizer": models.PortfolioOptimizerData,
     "iv_surface": models.IVSurfaceData,
     "options_strategy": models.OptionsStrategyData,
     "vol_term_structure": models.VolTermStructureData,

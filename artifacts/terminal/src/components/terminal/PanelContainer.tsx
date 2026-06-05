@@ -24,6 +24,7 @@ import { MonteCarloPanel } from "./panels/MonteCarloPanel";
 import { CorrelationMatrixPanel } from "./panels/CorrelationMatrixPanel";
 import { FactorAnalysisPanel } from "./panels/FactorAnalysisPanel";
 import { RiskModelPanel } from "./panels/RiskModelPanel";
+import { PortfolioOptimizerPanel } from "./panels/PortfolioOptimizerPanel";
 import { FactorExposurePanel } from "./panels/FactorExposurePanel";
 import { SignalResearchPanel } from "./panels/SignalResearchPanel";
 import { SignalScorecardPanel } from "./panels/SignalScorecardPanel";
@@ -134,6 +135,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "correlation_matrix": return <CorrelationMatrixPanel data={panel.data as any} />;
       case "factor_analysis": return <FactorAnalysisPanel data={panel.data as any} />;
       case "risk_model": return <RiskModelPanel data={panel.data as any} />;
+      case "portfolio_optimizer": return <PortfolioOptimizerPanel data={panel.data as any} />;
       case "factor_exposures": return <FactorExposurePanel data={panel.data as any} />;
       case "signal_research": return <SignalResearchPanel data={panel.data as any} />;
       case "signal_scorecard": return <SignalScorecardPanel data={panel.data as any} />;

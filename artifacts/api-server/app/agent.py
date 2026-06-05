@@ -261,6 +261,23 @@ def _tools() -> list:
             }, "required": ["symbols"]},
         }},
         {"type": "function", "function": {
+            "name": "add_portfolio_optimizer",
+            "description": f"Add a portfolio construction & optimization panel that solves for optimal target weights over a candidate universe. Expected returns are factor-model-implied (style exposures × realized factor premia) and the covariance comes from the multi-factor risk model — both from REAL data. Reports expected return, vol, Sharpe, per-name weights vs the cap-weighted benchmark, sector allocation, factor tilts, binding constraints, and an honest coverage block. {sizing} Use to construct/optimize/rebalance/size a portfolio, find optimal/target weights, or allocate capital.",
+            "parameters": {"type": "object", "properties": {
+                "method": {"type": "string", "description": "Construction method.", "enum": ["max_sharpe", "min_variance", "target_vol", "black_litterman", "risk_parity", "hrp"]},
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Optional explicit candidate universe. Valid: {syms}"},
+                "sector": {"type": "string", "description": "Optional sector to scope the candidate universe (e.g. semiconductors, energy, ai_tech)."},
+                "max_position": {"type": "number", "description": "Per-name max weight as a fraction (e.g. 0.05 for 5%)."},
+                "long_short": {"type": "boolean", "description": "Allow shorts (long/short book). Defaults to long-only."},
+                "market_neutral": {"type": "boolean", "description": "Target net exposure 0 (only with long_short)."},
+                "max_sector": {"type": "number", "description": "Optional blanket cap on any single sector's weight, as a fraction."},
+                "gross_limit": {"type": "number", "description": "Optional gross exposure cap (sum of |weights|) as a fraction, e.g. 2.0 for 200%."},
+                "target_vol": {"type": "number", "description": "Annualized target volatility (fraction) for the target_vol method, e.g. 0.15."},
+                "turnover_penalty": {"type": "number", "description": "Optional penalty on trading away from the current book."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": []},
+        }},
+        {"type": "function", "function": {
             "name": "add_signal_research",
             "description": f"Add an alpha signal research panel evaluating ONE cross-sectional signal over a universe: rank IC, IC decay across horizons, signal turnover, and a long-short quantile spread equity curve from REAL price/fundamental data. {sizing} Use for IC, information coefficient, IC decay, signal turnover, quantile/decile spread, or 'does <signal> predict returns'. Signals: momentum, short_reversal, low_volatility, value, quality.",
             "parameters": {"type": "object", "properties": {
@@ -444,6 +461,7 @@ _TOOL_TO_TYPE = {
     "add_factor_analysis": "factor_analysis",
     "add_risk_model": "risk_model",
     "add_factor_exposures": "factor_exposures",
+    "add_portfolio_optimizer": "portfolio_optimizer",
     "add_signal_research": "signal_research",
     "add_signal_scorecard": "signal_scorecard",
     "add_iv_surface": "iv_surface",
@@ -521,6 +539,12 @@ def _system_prompt() -> str:
         "MCTR / 'where is my risk coming from' / risk model → add_risk_model; factor tilts / style exposures / "
         "'how is my portfolio positioned across factors' → add_factor_exposures; simple VaR / tracking error → "
         "add_portfolio_risk. A risk model + factor exposures pair makes a strong portfolio-risk dashboard.\n"
+        "- For portfolio construction / optimization ('build/optimize/rebalance a portfolio', 'optimal "
+        "weights', 'how should I allocate', 'max-Sharpe / minimum-variance / risk-parity / Black-Litterman "
+        "/ HRP portfolio', 'size my positions', 'target-vol portfolio'), use add_portfolio_optimizer. Pass "
+        "method (max_sharpe/min_variance/target_vol/black_litterman/risk_parity/hrp), an optional sector or "
+        "symbols for the candidate universe, and constraints (max_position, long_short, max_sector, "
+        "gross_limit, target_vol). Pair with add_risk_model to show where the optimized book's risk sits.\n"
         "- For alpha signal research (rank IC, information coefficient, IC decay, signal turnover, "
         "quantile/decile long-short spread, 'does <signal> predict returns'), use add_signal_research with one "
         "signal of momentum/short_reversal/low_volatility/value/quality. To compare or rank several signals "
@@ -1008,6 +1032,7 @@ _TYPE_LABELS = {
     "factor_analysis": "a factor analysis",
     "risk_model": "a multi-factor risk model",
     "factor_exposures": "a factor exposure panel",
+    "portfolio_optimizer": "a portfolio optimizer",
     "signal_research": "an alpha signal research panel",
     "signal_scorecard": "an alpha signal scorecard",
     "iv_surface": "an IV surface",
@@ -1138,6 +1163,15 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
     wants_risk = any(k in q for k in ["risk", "var", "value at risk", "tracking error", "factor exposure", "portfolio risk"])
     wants_riskmodel = any(k in q for k in ["risk model", "risk decomp", "decompose risk", "factor vs specific", "specific risk", "mctr", "marginal contribution", "where is my risk", "risk contribution", "factor risk"])
     wants_factor_exposures = any(k in q for k in ["factor exposure", "factor tilt", "style exposure", "style tilt", "factor loading", "factor premia", "positioned across factors"])
+    wants_optimizer = any(k in q for k in [
+        "optimize", "optimise", "optimal portfolio", "optimal weight", "construct a portfolio",
+        "build a portfolio", "build me a portfolio", "rebalance", "max sharpe", "max-sharpe",
+        "maximum sharpe", "minimum variance", "min variance", "min-variance", "risk parity",
+        "risk-parity", "black-litterman", "black litterman", "hierarchical risk", "hrp",
+        "target vol", "target-vol", "mean-variance", "mean variance", "allocate capital",
+        "how should i allocate", "asset allocation", "position sizing", "size my positions",
+        "efficient frontier", "tangency portfolio",
+    ])
     wants_backtest = any(k in q for k in ["backtest", "back test", "back-test", "momentum strategy", "strategy", "sharpe", "cagr", "drawdown"])
     wants_montecarlo = any(k in q for k in ["monte carlo", "montecarlo", "monte-carlo", "simulate", "simulation", "forward project", "project price", "scenario analysis", "probability of loss", "forecast price", "gbm", "geometric brownian", "bootstrap"])
     wants_correlation = any(k in q for k in ["correlation", "correlat", "hedge ratio", "co-movement", "diversif", "beta table"])
@@ -1362,6 +1396,46 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         add("cashflow_duration", {"bond": bond_key}, 8, 6)
         add("yield_curve", {"region": "US"}, 4, 5)
         return panels, f"Cash flow schedule, duration/convexity, and rate-shock scenarios for {bond_key}."
+
+    if wants_optimizer:
+        params: dict = {}
+        if "min variance" in q or "min-variance" in q or "minimum variance" in q:
+            params["method"] = "min_variance"
+        elif "risk parity" in q or "risk-parity" in q:
+            params["method"] = "risk_parity"
+        elif "hrp" in q or "hierarchical risk" in q:
+            params["method"] = "hrp"
+        elif "black-litterman" in q or "black litterman" in q:
+            params["method"] = "black_litterman"
+        elif "target vol" in q or "target-vol" in q:
+            params["method"] = "target_vol"
+        else:
+            params["method"] = "max_sharpe"
+        if any(k in q for k in ["long/short", "long short", "long-short", "market neutral", "market-neutral", "allow short"]):
+            params["long_short"] = True
+            if "market neutral" in q or "market-neutral" in q:
+                params["market_neutral"] = True
+        m = re.search(r"(\d+(?:\.\d+)?)\s*%\s*(?:max|cap|position|per name|per-name|maximum)?", q)
+        if "max position" in q or "position cap" in q or "max weight" in q or (m and "%" in q):
+            if m:
+                params["max_position"] = float(m.group(1)) / 100.0
+        # Portfolio construction needs breadth: only prefer explicit names when
+        # at least two were given (a lone single-letter false positive would
+        # otherwise leave nothing to optimize over).
+        use_syms = len(symbols) >= 2
+        if use_syms:
+            params["symbols"] = symbols
+        elif sector:
+            params["sector"] = sector
+        add("portfolio_optimizer", params, 12, 6)
+        label = (", ".join(symbols[:3]) + ("..." if len(symbols) > 3 else "")) if use_syms else (
+            repo.sector_name(sector) if sector else "the core universe")
+        method_label = {
+            "max_sharpe": "max-Sharpe", "min_variance": "minimum-variance",
+            "target_vol": "target-volatility", "black_litterman": "Black-Litterman",
+            "risk_parity": "risk-parity", "hrp": "hierarchical risk parity",
+        }[params["method"]]
+        return panels, f"Constructed a {method_label} portfolio over {label}: optimal weights, expected return/vol/Sharpe, factor tilts and binding constraints from real data."
 
     if wants_riskmodel or wants_factor_exposures:
         port_syms = symbols if symbols else ["NVDA", "MSFT", "GOOGL", "META", "AMZN"]

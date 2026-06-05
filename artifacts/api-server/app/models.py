@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
@@ -30,6 +30,7 @@ class PanelType(str, Enum):
     factor_analysis = "factor_analysis"
     risk_model = "risk_model"
     factor_exposures = "factor_exposures"
+    portfolio_optimizer = "portfolio_optimizer"
     iv_surface = "iv_surface"
     options_strategy = "options_strategy"
     vol_term_structure = "vol_term_structure"
@@ -694,6 +695,69 @@ class FactorExposureData(BaseModel):
     portfolioName: str
     exposures: List[FactorPremium]
     holdings: List[HoldingExposure]
+    coverage: RiskCoverage
+
+
+# --- portfolio_optimizer ---
+class OptObjective(BaseModel):
+    expReturn: float
+    vol: float
+    sharpe: float
+    gross: float
+    net: float
+    nHoldings: int
+
+
+class OptConstraints(BaseModel):
+    maxPosition: float
+    requestedMaxPosition: Optional[float] = None
+    longOnly: bool
+    net: float
+    gross: float
+    sectorCaps: Dict[str, float]
+    turnoverPenalty: float
+    binding: List[str]
+
+
+class OptHolding(BaseModel):
+    symbol: str
+    name: str
+    sector: str
+    weight: float
+    benchWeight: float
+    activeWeight: float
+    expReturn: float
+    riskContribPct: float
+    currentWeight: Optional[float] = None
+    trade: Optional[float] = None
+    priorReturn: Optional[float] = None
+
+
+class OptFactorTilt(BaseModel):
+    factor: str
+    tilt: float
+    factorReturn: float
+
+
+class OptSectorAllocation(BaseModel):
+    sector: str
+    weight: float
+
+
+class PortfolioOptimizerData(BaseModel):
+    method: str
+    methodLabel: str
+    universeLabel: str
+    longOnly: bool
+    status: str
+    notes: List[str]
+    objective: OptObjective
+    constraints: OptConstraints
+    holdings: List[OptHolding]
+    factorTilts: List[OptFactorTilt]
+    sectorAllocation: List[OptSectorAllocation]
+    turnover: Optional[float] = None
+    blDelta: Optional[float] = None
     coverage: RiskCoverage
 
 

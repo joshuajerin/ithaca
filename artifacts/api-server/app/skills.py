@@ -1857,6 +1857,26 @@ def build_factor_exposures(params: dict) -> dict:
     }
 
 
+def build_portfolio_optimizer(params: dict) -> dict:
+    """Construct an optimal portfolio from real expected returns + covariance.
+
+    Expected returns are factor-model-implied (exposures × realized factor
+    premia) and the covariance comes from the multi-factor risk model — both
+    estimated from real data. Supports mean-variance (min-var / max-Sharpe /
+    target-vol), Black-Litterman, risk parity and HRP, under long-only/short,
+    max-position, sector-cap, gross/net and turnover constraints. Names without
+    enough history or fundamentals are excluded and reported in the coverage
+    block rather than fabricated.
+    """
+    from . import portfolio
+
+    payload, res, dropped = portfolio.optimize(params)
+    payload["coverage"] = _coverage_payload(res, dropped)
+    payload["asOf"] = res.coverage.as_of
+    payload["source"] = res.coverage.source
+    return payload
+
+
 # ----------------------------- alpha signal research -----------------------------
 # How much history to pull per name for cross-sectional signal evaluation. Live
 # names return what the DB has (~6 months of trading days); breadth (mock) names
@@ -3166,6 +3186,26 @@ _reg(SkillDef(
         {"name": "aggregate_exposures", "description": "Compute weighted-average portfolio exposures and per-holding tilts.", "expectedOutput": "Factor tilt table and per-holding exposures."},
     ],
     build_factor_exposures, "Factor Exposures",
+))
+_reg(SkillDef(
+    "portfolio-optimizer", "Portfolio Construction & Optimization", "portfolio_optimizer",
+    "Builds an optimal target portfolio from a candidate universe. Expected "
+    "returns are factor-model-implied (style exposures × realized factor premia) "
+    "and the covariance comes from the multi-factor risk model — both estimated "
+    "from real data. Methods: max_sharpe / min_variance / target_vol "
+    "(mean-variance), black_litterman, risk_parity, hrp. Constraints: long-only "
+    "or long/short, per-name max position, sector caps, gross/net exposure, and a "
+    "turnover penalty vs a current book. Use when the user wants to construct, "
+    "optimize, rebalance, or size a portfolio, find optimal/target weights, build "
+    "a max-Sharpe / minimum-variance / risk-parity / Black-Litterman portfolio, "
+    "or allocate capital across names.",
+    [
+        {"name": "resolve_universe", "description": "Resolve the candidate names (explicit tickers, a sector, or a default core).", "expectedOutput": "A modelable universe of tickers."},
+        {"name": "estimate_inputs", "description": "Build the covariance from the risk model and factor-implied expected returns from real data.", "expectedOutput": "An expected-return vector and covariance matrix with coverage."},
+        {"name": "optimize_weights", "description": "Solve for target weights under the requested method and constraints.", "expectedOutput": "Constrained optimal weights and binding constraints."},
+        {"name": "report_portfolio", "description": "Compute expected return, vol, Sharpe, factor tilts, sector allocation and active vs benchmark weights.", "expectedOutput": "A portfolio construction payload."},
+    ],
+    build_portfolio_optimizer, "Portfolio Optimizer",
 ))
 
 

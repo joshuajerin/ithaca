@@ -10,9 +10,21 @@ points and for the live/mock fallback decision.
 """
 from __future__ import annotations
 
-from . import riskmodel
+from . import optimize, riskmodel
 from .backtest import run_backtest
 from .montecarlo import monte_carlo
+from .optimize import (
+    Constraints,
+    OptResult,
+    apply_long_only_constraints,
+    black_litterman,
+    hrp,
+    implied_risk_aversion,
+    mean_variance,
+    portfolio_stats,
+    risk_contributions,
+    risk_parity,
+)
 from .riskmodel import (
     FactorModel,
     PortfolioRisk,
