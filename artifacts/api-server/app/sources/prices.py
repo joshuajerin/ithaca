@@ -112,6 +112,49 @@ def fetch_price_history(symbol: str, range_: str = "6mo", interval: str = "1d") 
     }
 
 
+def fetch_daily_closes(symbol: str, start: str, end: str) -> Dict[str, float]:
+    """Real daily closes for `symbol` over the inclusive ISO date range.
+
+    Uses Yahoo's chart endpoint with explicit period1/period2 epochs so arbitrary
+    historical windows (e.g. the 2008 crisis) return genuine daily bars rather
+    than a truncated range token. Returns {iso_date: close}. Names that did not
+    trade in the window come back with fewer (or no) keys — callers must treat a
+    sparse/empty result as missing coverage, never impute it.
+
+    Raises on network/parse failure so the caller can fall back to a clean
+    "no coverage" state.
+    """
+    d0 = date.fromisoformat(start)
+    d1 = date.fromisoformat(end)
+    p1 = int(datetime(d0.year, d0.month, d0.day, tzinfo=timezone.utc).timestamp())
+    # +1 day so the end date itself is inclusive of the upstream window.
+    p2 = int(datetime(d1.year, d1.month, d1.day, tzinfo=timezone.utc).timestamp()) + 86400
+
+    url = f"{_BASE}{symbol.upper()}"
+    params = {"interval": "1d", "period1": p1, "period2": p2, "includePrePost": "false"}
+    with httpx.Client(timeout=_TIMEOUT, headers=_HEADERS) as client:
+        resp = client.get(url, params=params)
+        resp.raise_for_status()
+        payload = resp.json()
+
+    result = (payload.get("chart") or {}).get("result") or []
+    if not result:
+        return {}
+    r0 = result[0]
+    timestamps = r0.get("timestamp") or []
+    quote = ((r0.get("indicators") or {}).get("quote") or [{}])[0]
+    closes = quote.get("close") or []
+
+    out: Dict[str, float] = {}
+    for i, ts in enumerate(timestamps):
+        c = _at(closes, i)
+        if c is None:
+            continue
+        d = datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
+        out[d] = round(float(c), 4)
+    return out
+
+
 def fetch_intraday(symbol: str, interval: str = "5m", range_: Optional[str] = None) -> Dict:
     """Return intraday OHLCV for `symbol` at the requested resolution.
 

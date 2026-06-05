@@ -434,6 +434,33 @@ def _tools() -> list:
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }, "required": ["prompt"]},
         }},
+        {"type": "function", "function": {
+            "name": "add_risk_monitor",
+            "description": (
+                "Add a RISK MANAGEMENT & MONITORING desk for a book: live gross/net/sector/factor "
+                "exposures and position concentrations, real historical VaR/CVaR plus the factor model's "
+                "predicted volatility, a configurable LIMITS framework (max gross/net/position/sector/"
+                "factor and a daily VaR cap) with in-limit/breach status and a breach list, HISTORICAL "
+                "STRESS replaying real crisis-window returns (2020 COVID, 2022 rate shock, 2008 GFC, "
+                "Q4-2018, Aug-2015) onto the book, and HYPOTHETICAL STRESS mapping factor/asset/market "
+                f"shocks through the book's real exposures. {sizing} Use when the user asks to monitor or "
+                "manage portfolio risk, check exposures, limits or breaches, run a stress test, or 'how "
+                "much could I lose if markets crash / rates spike / momentum reverses'. For a "
+                "dashboard-wide review of what's on screen, omit symbols. Names without coverage are "
+                "flagged, never imputed."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Book tickers. Valid: {syms}"},
+                "weights": {"type": "array", "items": {"type": "number"}, "description": "Optional signed NAV-fraction weights aligned with symbols (negative = short, e.g. 0.3 or -0.2). Default: equal-weight long."},
+                "nav": {"type": "number", "description": "Book NAV in USD (default 10,000,000)."},
+                "portfolio_name": {"type": "string", "description": "Optional display name for the book."},
+                "limits": {"type": "object", "description": "Optional limit overrides: maxGross, maxNet, maxPosition, maxSector, maxFactor (multiples/fractions) and varLimit (daily VaR fraction)."},
+                "factor_shocks": {"type": "object", "description": "Optional custom factor shocks in percent, e.g. {\"Momentum\": -8, \"Value\": 5}. Factors: Market, Size, Value, Momentum, Volatility, Quality."},
+                "asset_shocks": {"type": "object", "description": "Optional per-ticker price shocks in percent, e.g. {\"NVDA\": -20}."},
+                "market_shock": {"type": "number", "description": "Optional broad-market shock in percent (shocks the Market/beta factor), e.g. -10."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
     ]
 
 
@@ -478,6 +505,7 @@ _TOOL_TO_TYPE = {
     "add_data_quality": "data_quality",
     "add_analyst_report": "analyst_report",
     "add_scenario": "scenario",
+    "add_risk_monitor": "risk_monitor",
 }
 
 
@@ -562,6 +590,14 @@ def _system_prompt() -> str:
         "- For WHAT-IF / hypothetical requests ('what if', 'if I do X then Y', 'if rates fall 100bps', "
         "'if X margins compress to 40%', 'suppose', 'scenario where'), use add_scenario and pass the user's "
         "full hypothetical as the prompt argument.\n"
+        "- For RISK MANAGEMENT / MONITORING requests ('monitor/manage my risk', 'risk dashboard', 'check my "
+        "exposures', 'gross/net exposure', 'am I within limits', 'any limit breaches', 'stress test my book', "
+        "'how much could I lose if markets crash / rates spike / momentum reverses'), use add_risk_monitor. "
+        "Pass signed weights (negative = short) when the user describes a long/short book; pass limits to "
+        "override defaults, and factor_shocks/asset_shocks/market_shock for a specific hypothetical stress. "
+        "This is the risk DESK (exposures + limits + crisis & shock stress); use add_risk_model instead when "
+        "the user only wants factor-vs-specific risk decomposition/MCTR, and add_scenario for a narrative "
+        "what-if projection.\n"
         "- Decide each panel's width (3-12 grid columns) and height (2-6 row units). Make the "
         "primary panel larger; supporting panels narrower. A full-width hero is width 12.\n"
         "- Only use tickers and sectors that exist in the dataset.\n"
@@ -935,6 +971,9 @@ def _apply_dashboard_scope(name: str, args: dict, dash_syms: List[str], dash_sec
             and dash_syms
         ):
             args["symbols"] = dash_syms
+    elif name == "add_risk_monitor":
+        if not args.get("symbols") and dash_syms:
+            args["symbols"] = dash_syms
 
 
 def _relevance_heuristic(query: str, existing: List[dict]) -> List[dict]:
@@ -1236,6 +1275,7 @@ _TYPE_LABELS = {
     "data_quality": "a data quality report",
     "analyst_report": "an analyst report",
     "scenario": "a what-if scenario",
+    "risk_monitor": "a risk monitor",
 }
 
 
@@ -1349,6 +1389,15 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
     wants_cashflow = any(k in q for k in ["cash flow", "cashflow", "duration", "convexity", "dv01", "rate sensitivity", "bond cash", "modified duration"])
     wants_risk = any(k in q for k in ["risk", "var", "value at risk", "tracking error", "factor exposure", "portfolio risk"])
     wants_riskmodel = any(k in q for k in ["risk model", "risk decomp", "decompose risk", "factor vs specific", "specific risk", "mctr", "marginal contribution", "where is my risk", "risk contribution", "factor risk"])
+    wants_riskmonitor = any(k in q for k in [
+        "risk monitor", "risk management", "manage my risk", "manage risk", "monitor my risk",
+        "monitor risk", "risk dashboard", "risk desk", "risk limit", "limit breach", "breach",
+        "within limits", "within my limits", "in limit", "limits framework", "exposure limit",
+        "gross exposure", "net exposure", "check my exposure", "check exposures", "my exposures",
+        "stress my book", "stress the book", "stress test my", "monitor my book", "risk report",
+        "how much could i lose", "how much can i lose", "downside risk", "crisis scenario",
+        "replay 2008", "replay 2020", "if markets crash", "market crash",
+    ])
     wants_factor_exposures = any(k in q for k in ["factor exposure", "factor tilt", "style exposure", "style tilt", "factor loading", "factor premia", "positioned across factors"])
     wants_optimizer = any(k in q for k in [
         "optimize", "optimise", "optimal portfolio", "optimal weight", "construct a portfolio",
@@ -1454,6 +1503,23 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         "analy", "review", "report", "take", "thesis", "assess", "summary",
         "summarize", "overview", "opinion", "view",
     ])
+
+    if wants_riskmonitor:
+        rm_params: dict = {}
+        if symbols:
+            rm_params["symbols"] = symbols
+        elif dash_syms:
+            rm_params["symbols"] = dash_syms
+        add("risk_monitor", rm_params, 12, 6)
+        scope = (
+            "the symbols you named" if symbols
+            else "your dashboard book" if dash_syms
+            else "a representative book"
+        )
+        return panels, (
+            f"Risk monitor for {scope}: gross/net & factor exposures, limit breaches, "
+            "and historical + hypothetical stress."
+        )
 
     if wants_scenario:
         sym = symbols[0] if symbols else None

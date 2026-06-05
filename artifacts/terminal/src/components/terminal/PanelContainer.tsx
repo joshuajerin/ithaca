@@ -42,6 +42,7 @@ import { IntradayChartPanel } from "./panels/IntradayChartPanel";
 import { DataQualityPanel } from "./panels/DataQualityPanel";
 import { AnalystReportPanel } from "./panels/AnalystReportPanel";
 import { ScenarioPanel } from "./panels/ScenarioPanel";
+import { RiskMonitorPanel } from "./panels/RiskMonitorPanel";
 import { DynamicPanel } from "./panels/generated/DynamicPanel";
 
 interface PanelContainerProps {
@@ -153,6 +154,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "data_quality": return <DataQualityPanel data={panel.data as any} />;
       case "analyst_report": return <AnalystReportPanel data={panel.data as any} />;
       case "scenario": return <ScenarioPanel data={panel.data as any} />;
+      case "risk_monitor": return <RiskMonitorPanel data={panel.data as any} />;
       default: return <DynamicPanel type={panel.type} data={panel.data as any} />;
     }
   };

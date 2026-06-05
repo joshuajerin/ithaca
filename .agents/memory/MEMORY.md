@@ -13,3 +13,4 @@
 - [Adding hand-written panel types](passthrough-panels.md) — new panel types pass through without openapi codegen (Panel.data is dict); stale-PanelType tsc errors are expected and don't gate the vite build.
 - [Barra-style factor risk model](factor-risk-model.md) — 3 layers (pure-numpy engine / honest-coverage data assembly / skill builders); decomposition identities + factor-construction conventions.
 - [Alpha signal library & eval](signal-library.md) — cross-sectional IC/decay/turnover/spread; real-data-only (exclude+report); builders return data-only; "rank IC" trap in research-vs-scorecard dispatch.
+- [Risk Management & Monitoring pillar](risk-monitor-pillar.md) — risk_monitor panel: book exposures+limits, real crisis replay (period1/period2 fetch, missing flagged), hypothetical shocks; routed before scenario.

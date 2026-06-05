@@ -1810,6 +1810,327 @@ def build_risk_model(params: dict) -> dict:
     }
 
 
+# --------------------------- risk monitor ---------------------------
+# Real historical crisis windows replayed onto the current book. Each is a
+# genuine market dislocation; the book's holdings' REAL returns over the window
+# are replayed (no imputation) to estimate the P&L the book would have taken.
+RISK_CRISIS_WINDOWS = [
+    {"id": "covid2020", "label": "COVID Crash", "start": "2020-02-19", "end": "2020-03-23"},
+    {"id": "rateshock2022", "label": "2022 Rate Shock", "start": "2022-01-03", "end": "2022-10-14"},
+    {"id": "gfc2008", "label": "GFC 2008 (Lehman)", "start": "2008-09-02", "end": "2008-11-20"},
+    {"id": "q4_2018", "label": "Q4 2018 Selloff", "start": "2018-10-01", "end": "2018-12-24"},
+    {"id": "vol2015", "label": "Aug 2015 (China)", "start": "2015-08-10", "end": "2015-08-26"},
+]
+
+# Default risk limits (fractions of NAV, exposure units for factors, daily VaR
+# fraction). Any subset can be overridden via the `limits` param.
+DEFAULT_RISK_LIMITS = {
+    "maxGross": 2.0,      # gross exposure as multiple of NAV
+    "maxNet": 1.2,        # |net| exposure as multiple of NAV
+    "maxPosition": 0.15,  # |weight| of any single name
+    "maxSector": 0.40,    # |net| exposure to any single sector
+    "maxFactor": 1.5,     # |exposure| to any single style/market factor
+    "varLimit": 0.035,    # daily 95% VaR as fraction of NAV
+}
+
+# Default hypothetical macro shocks, each mapped through the book's REAL factor
+# exposures (b · shock). The Market factor is the book's net beta.
+DEFAULT_HYPO_SHOCKS = [
+    {"id": "equity_selloff", "label": "Equities −10%", "factorShocks": {"Market": -10.0}},
+    {"id": "momentum_reversal", "label": "Momentum Reversal −8%", "factorShocks": {"Momentum": -8.0}},
+    {"id": "vol_spike", "label": "Volatility Spike +6%", "factorShocks": {"Volatility": 6.0}},
+    {"id": "quality_flight", "label": "Flight to Quality +5%", "factorShocks": {"Quality": 5.0}},
+    {"id": "value_rotation", "label": "Value Rotation +6%", "factorShocks": {"Value": 6.0}},
+]
+
+
+def _resolve_book(params: dict):
+    """Resolve (name, symbols, signed NAV-fraction weights, nav) for a book.
+
+    Provided `weights` are treated as raw NAV fractions (signed, so a long/short
+    book keeps its leverage and net), while the default is an equal-weight, fully
+    invested long book. `nav`/`capital` set the dollar base (default $10M).
+    """
+    raw = [s.upper() for s in (params.get("symbols") or [])]
+    symbols = [s for s in raw if repo.get_company(s)]
+    if not symbols:
+        symbols = ["NVDA", "MSFT", "GOOGL", "META", "AMZN"]
+    weights = params.get("weights")
+    if weights and len(weights) == len(symbols):
+        ws = [float(x) for x in weights]
+    else:
+        ws = [1.0 / len(symbols)] * len(symbols)
+    nav = float(params.get("nav") or params.get("capital") or 10_000_000.0)
+    if nav <= 0:
+        nav = 10_000_000.0
+    name = params.get("portfolio_name") or (
+        ", ".join(symbols[:3]) + (" +…" if len(symbols) > 3 else "") + " Book"
+    )
+    return name, symbols, ws, nav
+
+
+def build_risk_monitor(params: dict) -> dict:
+    """Risk desk: live exposures, limits, and stress testing for a real book.
+
+    Combines (1) gross/net/sector/factor exposures and concentrations, (2) real
+    historical VaR/CVaR plus the factor model's predicted vol, (3) a configurable
+    limits framework with in-limit/breach status, (4) historical stress that
+    replays REAL crisis-window returns onto the book, and (5) hypothetical stress
+    that maps user/factor/asset shocks through the book's real exposures. Names
+    without coverage are flagged, never imputed.
+    """
+    import numpy as np
+
+    name, symbols, ws, nav = _resolve_book(params)
+    weights_map = {s: w for s, w in zip(symbols, ws)}
+
+    # --- exposures ---
+    gross = sum(abs(w) for w in ws)
+    net = sum(ws)
+    positions = []
+    for s, w in zip(symbols, ws):
+        c = repo.get_company(s)
+        positions.append({
+            "symbol": s,
+            "name": c["name"] if c else s,
+            "sector": (c.get("sector") if c else None),
+            "weightPct": round(w * 100.0, 2),
+            "exposureUsd": round(w * nav, 0),
+            "side": "long" if w >= 0 else "short",
+        })
+    positions.sort(key=lambda p: abs(p["weightPct"]), reverse=True)
+
+    sec_net: Dict[str, float] = {}
+    sec_gross: Dict[str, float] = {}
+    for s, w in zip(symbols, ws):
+        c = repo.get_company(s)
+        key = (c.get("sector") if c else None) or "unknown"
+        sec_net[key] = sec_net.get(key, 0.0) + w
+        sec_gross[key] = sec_gross.get(key, 0.0) + abs(w)
+    sectors = [{
+        "sector": k,
+        "label": repo.sector_name(k) if k != "unknown" else "Unclassified",
+        "netPct": round(v * 100.0, 2),
+        "grossPct": round(sec_gross[k] * 100.0, 2),
+        "netUsd": round(v * nav, 0),
+    } for k, v in sec_net.items()]
+    sectors.sort(key=lambda x: abs(x["netPct"]), reverse=True)
+
+    # --- real historical VaR / CVaR / vol from the signed book return series ---
+    series: Dict[str, "np.ndarray"] = {}
+    src = "mock"
+    as_of: Optional[str] = None
+    for s in symbols:
+        meta = repo.price_series_meta(s, days=260)
+        pts = meta.get("points") or []
+        closes = [p["c"] for p in pts if p.get("c")]
+        if len(closes) >= 30:
+            arr = np.asarray(closes, dtype=float)
+            series[s] = arr[1:] / arr[:-1] - 1.0
+            if meta.get("source") == "live":
+                src = "live"
+            if meta.get("asOf"):
+                as_of = meta["asOf"] if as_of is None else max(as_of, meta["asOf"])
+    risk_syms = [s for s in symbols if s in series]
+    var95 = cvar95 = ann_vol = None
+    days_used = 0
+    if risk_syms:
+        n = min(len(series[s]) for s in risk_syms)
+        days_used = int(n)
+        mat = np.vstack([series[s][-n:] for s in risk_syms])  # (k, n)
+        wvec = np.asarray([weights_map[s] for s in risk_syms], dtype=float)
+        book_rets = (wvec[:, None] * mat).sum(axis=0)
+        var95 = engine.var_historical(book_rets, 0.95)
+        cvar95 = engine.cvar_historical(book_rets, 0.95)
+        ann_vol = float(np.std(book_rets, ddof=0) * np.sqrt(252))
+
+    # --- factor exposures + MCTR via the real model (leverage-aware weights) ---
+    factor_block: dict = {"available": False, "exposures": [], "holdings": [],
+                          "predictedVolPct": None, "factorVolPct": None,
+                          "specificVolPct": None}
+    factor_exposures: Dict[str, float] = {}
+    try:
+        res = factor_model.build(symbols)
+        model = res.model
+        pos_map = {sym: i for i, sym in enumerate(model.symbols)}
+        idx, wsel = [], []
+        for s, w in zip(symbols, ws):
+            if s in pos_map:
+                idx.append(pos_map[s])
+                wsel.append(w)
+        if idx:
+            wv = np.asarray(wsel, dtype=float)
+            pr = engine.decompose_portfolio(model, idx, wv)
+            exps = []
+            for kk, fn in enumerate(model.factor_names):
+                e = float(pr.factor_exposures[kk])
+                factor_exposures[fn] = e
+                exps.append({
+                    "factor": fn,
+                    "exposure": round(e, 3),
+                    "pctOfRisk": round(float(pr.factor_var_contrib[kk]), 2),
+                })
+            fh = []
+            for k, i in enumerate(idx):
+                fh.append({
+                    "symbol": model.symbols[i],
+                    "weightPct": round(float(wv[k]) * 100.0, 2),
+                    "mctr": round(float(pr.mctr[k]) * 100.0, 2),
+                    "pctOfRisk": round(float(pr.pct_contrib[k]), 2),
+                })
+            fh.sort(key=lambda h: h["pctOfRisk"], reverse=True)
+            factor_block = {
+                "available": True,
+                "exposures": exps,
+                "holdings": fh,
+                "predictedVolPct": round(pr.total_vol * 100.0, 2),
+                "factorVolPct": round(pr.factor_vol * 100.0, 2),
+                "specificVolPct": round(pr.specific_vol * 100.0, 2),
+            }
+    except Exception:  # noqa: BLE001 — factor model degrades to exposure-only
+        factor_block["available"] = False
+
+    # --- limits framework ---
+    lim = {**DEFAULT_RISK_LIMITS, **(params.get("limits") or {})}
+    rows: List[dict] = []
+
+    def _add(name_, scope, current, limit, fmt, detail=None):
+        limit = float(limit)
+        util = (abs(current) / limit * 100.0) if limit else 0.0
+        status = "breach" if abs(current) > limit else ("warn" if util >= 80.0 else "ok")
+        rows.append({
+            "name": name_, "scope": scope, "current": round(float(current), 4),
+            "limit": round(limit, 4), "utilizationPct": round(util, 1),
+            "status": status, "format": fmt, "detail": detail,
+        })
+
+    _add("Gross Exposure", "book", gross, lim["maxGross"], "ratio")
+    _add("Net Exposure", "book", net, lim["maxNet"], "ratio")
+    worst_pos = max(positions, key=lambda p: abs(p["weightPct"])) if positions else None
+    if worst_pos:
+        over = [p["symbol"] for p in positions if abs(p["weightPct"]) / 100.0 > lim["maxPosition"]]
+        _add("Max Position", worst_pos["symbol"], worst_pos["weightPct"] / 100.0,
+             lim["maxPosition"], "ratio", ", ".join(over) if over else None)
+    if sectors:
+        worst_sec = max(sectors, key=lambda x: abs(x["netPct"]))
+        _add("Max Sector (net)", worst_sec["label"], worst_sec["netPct"] / 100.0,
+             lim["maxSector"], "ratio", worst_sec["label"])
+    if factor_block["available"] and factor_exposures:
+        wf = max(factor_exposures.items(), key=lambda kv: abs(kv[1]))
+        _add("Max Factor", wf[0], wf[1], lim["maxFactor"], "exp", wf[0])
+    if var95 is not None:
+        _add("Daily VaR 95%", "book", var95, lim["varLimit"], "pct")
+
+    breaches = [r for r in rows if r["status"] == "breach"]
+
+    # --- historical stress (real crisis-window replay) ---
+    union_start = min(w["start"] for w in RISK_CRISIS_WINDOWS)
+    union_end = max(w["end"] for w in RISK_CRISIS_WINDOWS)
+    closes_by_sym: Dict[str, Dict[str, float]] = {}
+    for s in symbols:
+        try:
+            closes_by_sym[s] = cache.cached(
+                f"histcloses:{s}:{union_start}:{union_end}", 6 * 3600,
+                lambda s=s: p_src.fetch_daily_closes(s, union_start, union_end),
+            ) or {}
+        except Exception:  # noqa: BLE001 — missing coverage, never imputed
+            closes_by_sym[s] = {}
+
+    historical = []
+    for win in RISK_CRISIS_WINDOWS:
+        rep = engine.replay_window(weights_map, closes_by_sym, win["start"], win["end"])
+        period = f'{win["start"]} → {win["end"]}'
+        if rep is None:
+            historical.append({
+                "id": win["id"], "label": win["label"], "period": period,
+                "available": False, "bookPnlPct": None, "bookPnlUsd": None,
+                "maxDrawdownPct": None, "covered": [],
+                "missing": [{"symbol": s, "reason": "no price history in window"} for s in symbols],
+                "worst": [],
+            })
+            continue
+        historical.append({
+            "id": win["id"], "label": win["label"], "period": period,
+            "available": True,
+            "bookPnlPct": rep["bookPnlPct"],
+            "bookPnlUsd": round(rep["bookPnlPct"] / 100.0 * nav, 0),
+            "maxDrawdownPct": rep["maxDrawdownPct"],
+            "covered": rep["covered"],
+            "missing": [{"symbol": s, "reason": "no price history in window"} for s in rep["missing"]],
+            "worst": rep["perHolding"][:3],
+        })
+
+    # --- hypothetical stress (factor/asset shocks through real exposures) ---
+    hypothetical = []
+    if factor_exposures:
+        for sc in DEFAULT_HYPO_SHOCKS:
+            r = engine.factor_shock_pnl(factor_exposures, sc["factorShocks"])
+            hypothetical.append({
+                "id": sc["id"], "label": sc["label"],
+                "pnlPct": r["totalPnlPct"],
+                "pnlUsd": round(r["totalPnlPct"] / 100.0 * nav, 0),
+                "breakdown": r["contributions"],
+            })
+
+    custom = None
+    fshocks = dict(params.get("factor_shocks") or {})
+    ashocks = dict(params.get("asset_shocks") or {})
+    if params.get("market_shock") is not None:
+        fshocks["Market"] = float(params["market_shock"])
+    if fshocks or ashocks:
+        fb = engine.factor_shock_pnl(factor_exposures, fshocks) if factor_exposures else {"contributions": [], "totalPnlPct": 0.0}
+        ab = engine.asset_shock_pnl(weights_map, ashocks)
+        total = fb["totalPnlPct"] + ab["totalPnlPct"]
+        custom = {
+            "label": "Custom Shock",
+            "pnlPct": round(total, 2),
+            "pnlUsd": round(total / 100.0 * nav, 0),
+            "factorBreakdown": fb["contributions"],
+            "assetBreakdown": ab["contributions"],
+        }
+
+    # --- coverage (honest: names with no usable return history are excluded) ---
+    excluded = [{"symbol": s, "reason": "no usable price history"} for s in symbols if s not in series]
+    coverage = {
+        "included": len(risk_syms),
+        "excluded": len(excluded),
+        "excludedNames": excluded[:12],
+        "days": days_used,
+        "source": src,
+    }
+
+    return {
+        "bookName": name,
+        "nav": round(nav, 0),
+        "grossPct": round(gross * 100.0, 2),
+        "netPct": round(net * 100.0, 2),
+        "grossUsd": round(gross * nav, 0),
+        "netUsd": round(net * nav, 0),
+        "longCount": sum(1 for w in ws if w >= 0),
+        "shortCount": sum(1 for w in ws if w < 0),
+        "risk": {
+            "var95Pct": round(var95 * 100.0, 2) if var95 is not None else None,
+            "cvar95Pct": round(cvar95 * 100.0, 2) if cvar95 is not None else None,
+            "annVolPct": round(ann_vol * 100.0, 2) if ann_vol is not None else None,
+            "predictedVolPct": factor_block.get("predictedVolPct"),
+            "var95Usd": round(var95 * nav, 0) if var95 is not None else None,
+            "cvar95Usd": round(cvar95 * nav, 0) if cvar95 is not None else None,
+        },
+        "positions": positions[:14],
+        "sectors": sectors,
+        "factor": factor_block,
+        "limits": rows,
+        "breaches": breaches,
+        "inLimit": len(breaches) == 0,
+        "historicalStress": historical,
+        "hypotheticalStress": hypothetical,
+        "customStress": custom,
+        "coverage": coverage,
+        "asOf": as_of,
+        "source": src,
+    }
+
+
 def build_factor_exposures(params: dict) -> dict:
     """Portfolio factor tilts: the weighted-average exposure to each factor plus
     a per-holding exposure breakdown, alongside the realized factor premia."""
@@ -3171,6 +3492,30 @@ _reg(SkillDef(
         {"name": "compute_mctr", "description": "Derive each holding's marginal contribution to total risk.", "expectedOutput": "Per-holding MCTR and percent of risk."},
     ],
     build_risk_model, "Risk Model",
+))
+_reg(SkillDef(
+    "risk-monitor", "Risk Management & Monitoring", "risk_monitor",
+    "A risk desk for a real book: live GROSS/NET/sector/factor exposures and "
+    "position concentrations, real historical VaR/CVaR plus the factor model's "
+    "predicted volatility, a configurable LIMITS framework (max gross/net/"
+    "position/sector/factor and a daily VaR cap) with in-limit/breach status and "
+    "a breach list, HISTORICAL STRESS that replays real crisis-window returns "
+    "(2020 COVID, 2022 rate shock, 2008 GFC, Q4-2018, Aug-2015) onto the book, "
+    "and HYPOTHETICAL STRESS that maps factor/asset/market shocks through the "
+    "book's real exposures. Use when the user asks to monitor/manage portfolio "
+    "risk, check exposures or limits/breaches, run a stress test, or ask 'how "
+    "much could I lose if markets crash'. Pass symbols and optional signed "
+    "weights (negative = short), nav/capital, a limits override, and shocks "
+    "(factor_shocks, asset_shocks, market_shock). Names lacking coverage are "
+    "flagged, never imputed.",
+    [
+        {"name": "resolve_book", "description": "Map tickers + signed weights + NAV to a real long/short book.", "expectedOutput": "A weighted book with gross/net exposure."},
+        {"name": "measure_exposures", "description": "Compute gross/net, sector and factor exposures, concentrations and VaR/CVaR from real data.", "expectedOutput": "Exposure, concentration and tail-risk metrics."},
+        {"name": "check_limits", "description": "Evaluate the book against configurable limits and flag breaches.", "expectedOutput": "Per-limit utilization/status and a breach list."},
+        {"name": "stress_historical", "description": "Replay real crisis-window returns onto the current book.", "expectedOutput": "Simulated P&L and drawdown per crisis."},
+        {"name": "stress_hypothetical", "description": "Map factor/asset/market shocks through the book's real exposures.", "expectedOutput": "Estimated P&L per hypothetical scenario."},
+    ],
+    build_risk_monitor, "Risk Monitor",
 ))
 _reg(SkillDef(
     "factor-exposures", "Portfolio Factor Exposures", "factor_exposures",

@@ -33,6 +33,7 @@ from .riskmodel import (
     pca_variance,
 )
 from .scenario import combine_returns, project_scenario
+from .stress import asset_shock_pnl, factor_shock_pnl, replay_window
 from .stats import (
     cagr,
     cvar_historical,
@@ -63,6 +64,11 @@ __all__ = [
     "max_drawdown",
     "var_historical",
     "cvar_historical",
+    "combine_returns",
+    "project_scenario",
+    "factor_shock_pnl",
+    "asset_shock_pnl",
+    "replay_window",
     "STRATEGIES",
     "available_strategies",
     "normalize_strategy",
