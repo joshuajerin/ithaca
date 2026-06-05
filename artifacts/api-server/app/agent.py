@@ -315,6 +315,23 @@ def _tools() -> list:
             }},
         }},
         {"type": "function", "function": {
+            "name": "add_analyst_report",
+            "description": (
+                "Add a DEEP, structured AI analyst write-up for a ticker (or sector): headline, an explicit "
+                "bull/bear/neutral stance with a conviction score, a multi-sentence thesis, and sections for "
+                "drivers, risks, catalysts, a valuation read, and a clear actionable call — grounded in the "
+                f"terminal's figures. {sizing} Use for 'analyst take', 'deep analysis', 'write-up', "
+                "'bull/bear case', 'investment thesis', 'should I buy/sell X', 'your view on X'. This is "
+                "richer than and ADDITIVE to add_analysis; prefer it when the user wants a real analyst opinion."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Ticker for a company write-up. One of: {syms}"},
+                "sector": {"type": "string", "description": f"Sector for a sector write-up ({secs}). Use symbol OR sector."},
+                "scope": {"type": "string", "enum": ["symbol", "sector", "dashboard"], "description": "Set to 'dashboard' for a PORTFOLIO-LEVEL review across everything currently on screen (no symbol/sector needed)."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
+        {"type": "function", "function": {
             "name": "add_intraday_chart",
             "description": (
                 f"Add an intraday OHLCV chart for one ticker at a selectable resolution (1m, 5m, 15m, "
@@ -342,6 +359,23 @@ def _tools() -> list:
                 "sector": {"type": "string", "description": f"Sector ({secs}) to audit a group, or omit."},
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }},
+        }},
+        {"type": "function", "function": {
+            "name": "add_scenario",
+            "description": (
+                "Add a WHAT-IF / scenario panel. Parses a natural-language hypothetical into structured "
+                "assumptions, runs a baseline forward projection from real return history, and layers the "
+                "assumptions' estimated drift on top to show baseline vs scenario outcome, divergent projected "
+                f"paths, reasoning and caveats. {sizing} Use when the user poses a hypothetical: 'what if', "
+                "'if I do X then Y', 'if rates fall 100bps', 'if NVDA margins compress to 40%', 'suppose', "
+                "'scenario where', or asks to stress a shock. Pass the user's full hypothetical as `prompt`."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "prompt": {"type": "string", "description": "The user's full natural-language what-if statement."},
+                "symbol": {"type": "string", "description": f"Primary ticker if the what-if targets one name ({syms})."},
+                "sector": {"type": "string", "description": f"Sector if the what-if targets a sector ({secs})."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["prompt"]},
         }},
     ]
 
@@ -380,6 +414,8 @@ _TOOL_TO_TYPE = {
     "add_data_universe": "data_universe",
     "add_intraday_chart": "intraday_chart",
     "add_data_quality": "data_quality",
+    "add_analyst_report": "analyst_report",
+    "add_scenario": "scenario",
 }
 
 
@@ -442,6 +478,14 @@ def _system_prompt() -> str:
         "- For data-layer requests: universe/coverage/'what's tracked'/'live vs mock' → add_data_universe; "
         "intraday/minute/hourly price action → add_intraday_chart; data quality/gaps/stale/freshness/'can I "
         "trust the data' → add_data_quality.\n"
+        "- For a DEEP analyst opinion ('analyst take', 'deep analysis', 'write-up', 'bull/bear case', "
+        "'investment thesis', 'should I buy/sell X', 'your view on X'), use add_analyst_report (richer than "
+        "add_analysis). Pair it with a price chart for context. If the user asks to analyze/review "
+        "'my dashboard', 'this dashboard', 'everything on screen' or 'my portfolio', call add_analyst_report "
+        "with scope='dashboard' (no symbol/sector) for a portfolio-level take across the kept panels.\n"
+        "- For WHAT-IF / hypothetical requests ('what if', 'if I do X then Y', 'if rates fall 100bps', "
+        "'if X margins compress to 40%', 'suppose', 'scenario where'), use add_scenario and pass the user's "
+        "full hypothetical as the prompt argument.\n"
         "- Decide each panel's width (3-12 grid columns) and height (2-6 row units). Make the "
         "primary panel larger; supporting panels narrower. A full-width hero is width 12.\n"
         "- Only use tickers and sectors that exist in the dataset.\n"
@@ -485,7 +529,8 @@ def orchestrate(query: str, session_id: Optional[str], voice: bool = False) -> d
             panels, summary = [], ""
 
     if not panels:
-        panels, summary = _orchestrate_heuristic(query, dict(cursor))
+        dash_syms, dash_secs = _dashboard_subjects(kept)
+        panels, summary = _orchestrate_heuristic(query, dict(cursor), dash_syms, dash_secs)
 
     combined = kept + panels
     state.set_dashboard(sid, combined)
@@ -580,6 +625,53 @@ def _panel_subjects(panel: dict) -> dict:
     if sec:
         sectors.add(sec)
     return {"symbols": symbols, "sectors": sectors}
+
+
+def _dashboard_subjects(panels: List[dict]):
+    """Collect the distinct symbols and sectors the kept panels are about.
+
+    Used to ground a dashboard-scoped analyst report / scenario in whatever the
+    user currently has on screen, in panel order.
+    """
+    syms: List[str] = []
+    secs: List[str] = []
+    seen_s, seen_sec = set(), set()
+    for p in panels:
+        subj = _panel_subjects(p)
+        for s in subj["symbols"]:
+            if s not in seen_s:
+                seen_s.add(s)
+                syms.append(s)
+        for sec in subj["sectors"]:
+            if sec not in seen_sec:
+                seen_sec.add(sec)
+                secs.append(sec)
+    return syms, secs
+
+
+def _apply_dashboard_scope(name: str, args: dict, dash_syms: List[str], dash_secs: List[str]) -> None:
+    """Fill a dashboard-scoped analyst report / scenario with the kept panels' subjects.
+
+    When the model requests scope='dashboard' (or omits any subject) for an analyst
+    report, or omits a subject for a scenario, inject the symbols/sectors currently
+    on screen so the builder can aggregate over them instead of guessing.
+    """
+    if name == "add_analyst_report":
+        wants_dash = args.get("scope") == "dashboard" or (
+            not args.get("symbol") and not args.get("sector")
+        )
+        if wants_dash and (dash_syms or dash_secs):
+            args["scope"] = "dashboard"
+            args.setdefault("symbols", dash_syms)
+            args.setdefault("sectors", dash_secs)
+    elif name == "add_scenario":
+        if (
+            not args.get("symbol")
+            and not args.get("sector")
+            and not args.get("symbols")
+            and dash_syms
+        ):
+            args["symbols"] = dash_syms
 
 
 def _relevance_heuristic(query: str, existing: List[dict]) -> List[dict]:
@@ -820,6 +912,7 @@ def _orchestrate_llm(query: str, sid: str, existing: List[dict], cursor: dict):
 
     msg = ai.chat(messages, tools=_all_tools(), tool_choice="auto")
     tool_calls = getattr(msg, "tool_calls", None) or []
+    dash_syms, dash_secs = _dashboard_subjects(existing)
     panels: List[dict] = []
     for tc in tool_calls:
         name = tc.function.name
@@ -830,6 +923,7 @@ def _orchestrate_llm(query: str, sid: str, existing: List[dict], cursor: dict):
             args = json.loads(tc.function.arguments or "{}")
         except json.JSONDecodeError:
             args = {}
+        _apply_dashboard_scope(name, args, dash_syms, dash_secs)
         layout = harness.pack_layout(args.get("width"), args.get("height"), cursor)
         panels.append(harness.run_skill(panel_type, args, layout))
     summary = (msg.content or "").strip()
@@ -872,6 +966,8 @@ _TYPE_LABELS = {
     "data_universe": "a data universe overview",
     "intraday_chart": "an intraday chart",
     "data_quality": "a data quality report",
+    "analyst_report": "an analyst report",
+    "scenario": "a what-if scenario",
 }
 
 
@@ -937,10 +1033,14 @@ def _extract_strategy(q: str) -> str:
     return "straddle"
 
 
-def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None):
+def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
+                           dash_syms: Optional[List[str]] = None,
+                           dash_secs: Optional[List[str]] = None):
     q = query.lower()
     if cursor is None:
         cursor = {"x": 0, "y": 0, "rowH": 0}
+    dash_syms = dash_syms or []
+    dash_secs = dash_secs or []
     panels: List[dict] = []
 
     def add(panel_type, params, w, h, title=None):
@@ -1025,6 +1125,56 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None):
         "why is", "why is it", "what drives", "price driver", "company analytics",
         "compete", "competition for", "competitors", "analyze", "vs competitor",
     ])
+    wants_scenario = any(k in q for k in [
+        "what if", "what-if", "if i ", "if rates", "if the", "suppose", "scenario where",
+        "stress test", "shock", "hypothetical", "rotate into", "100bps", "bps",
+    ]) or bool(re.search(r"\bif\b.+\bthen\b", q))
+    wants_analyst_report = any(k in q for k in [
+        "analyst take", "analyst report", "analyst view", "deep analysis", "deep-dive analysis",
+        "write-up", "writeup", "write up", "bull case", "bear case", "bull/bear", "bull or bear",
+        "investment thesis", "thesis on", "should i buy", "should i sell", "your view on",
+        "your take on", "make the case",
+    ])
+    wants_dashboard_review = any(k in q for k in [
+        "my dashboard", "this dashboard", "the dashboard", "current dashboard",
+        "whole dashboard", "entire dashboard", "everything on screen", "on my screen",
+        "these panels", "my portfolio", "my holdings", "what i have up",
+    ]) and any(k in q for k in [
+        "analy", "review", "report", "take", "thesis", "assess", "summary",
+        "summarize", "overview", "opinion", "view",
+    ])
+
+    if wants_scenario:
+        sym = symbols[0] if symbols else None
+        sc_params: dict = {"prompt": query}
+        if sym:
+            sc_params["symbol"] = sym
+        elif sector:
+            sc_params["sector"] = sector
+        elif dash_syms:
+            sc_params["symbols"] = dash_syms
+        add("scenario", sc_params, 12, 6)
+        label = (
+            data.get_company(sym)["name"] if sym
+            else repo.sector_name(sector) if sector
+            else "your dashboard" if dash_syms
+            else "a market-proxy basket"
+        )
+        return panels, f"What-if scenario for {label}: baseline vs scenario projection with reasoning and caveats."
+
+    if wants_analyst_report or wants_dashboard_review:
+        if symbols:
+            sym = symbols[0]
+            add("analyst_report", {"symbol": sym}, 8, 6)
+            add("price_chart", {"symbol": sym, "range": "6M"}, 4, 6)
+            name = data.get_company(sym)["name"]
+            return panels, f"Analyst report on {name}: thesis, drivers, risks, catalysts, valuation and a clear call."
+        if sector:
+            add("analyst_report", {"sector": sector}, 12, 6)
+            return panels, f"Analyst report on {repo.sector_name(sector)}: thesis, drivers, risks, catalysts and a call."
+        if dash_syms or dash_secs:
+            add("analyst_report", {"scope": "dashboard", "symbols": dash_syms, "sectors": dash_secs}, 12, 6)
+            return panels, "Analyst report across your current dashboard: thesis, drivers, risks, catalysts and a clear call."
 
     if wants_company_analytics and symbols:
         sym = symbols[0]

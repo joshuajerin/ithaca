@@ -35,6 +35,8 @@ import { CompanyAnalyticsPanel } from "./panels/CompanyAnalyticsPanel";
 import { DataUniversePanel } from "./panels/DataUniversePanel";
 import { IntradayChartPanel } from "./panels/IntradayChartPanel";
 import { DataQualityPanel } from "./panels/DataQualityPanel";
+import { AnalystReportPanel } from "./panels/AnalystReportPanel";
+import { ScenarioPanel } from "./panels/ScenarioPanel";
 import { DynamicPanel } from "./panels/generated/DynamicPanel";
 
 interface PanelContainerProps {
@@ -139,6 +141,8 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "data_universe": return <DataUniversePanel data={panel.data as any} />;
       case "intraday_chart": return <IntradayChartPanel data={panel.data as any} />;
       case "data_quality": return <DataQualityPanel data={panel.data as any} />;
+      case "analyst_report": return <AnalystReportPanel data={panel.data as any} />;
+      case "scenario": return <ScenarioPanel data={panel.data as any} />;
       default: return <DynamicPanel type={panel.type} data={panel.data as any} />;
     }
   };

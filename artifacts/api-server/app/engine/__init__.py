@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from .backtest import run_backtest
 from .montecarlo import monte_carlo
+from .scenario import combine_returns, project_scenario
 from .stats import (
     cagr,
     cvar_historical,

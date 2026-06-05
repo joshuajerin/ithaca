@@ -10,3 +10,4 @@
 - [Launch video layering & perf](launch-video-layering.md) — persistent layers by baseSceneKey; single rAF loop, no blur filters, scrims behind text fix lag+overlap.
 - [Period returns (day vs year)](period-returns.md) — changePct is 1D only; real returns from price series via returns.py; screener/heatmap use YTD not 1Y (live DB ~6mo).
 - [AI navigator cursor](navigator-cursor.md) — chat-triggered guided cursor; tours only real session panels via [data-panel-id]; shares highlight with voice so never co-run; intent-strip routing.
+- [Adding hand-written panel types](passthrough-panels.md) — new panel types pass through without openapi codegen (Panel.data is dict); stale-PanelType tsc errors are expected and don't gate the vite build.

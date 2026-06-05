@@ -144,6 +144,39 @@ def test_price_chart_change_is_period_return_over_range():
     assert abs(out["changePct"] - expected) < 0.02
 
 
+def test_analyst_report_dashboard_scope_aggregates():
+    # Dashboard scope aggregates across the given symbols (and sectors) into a
+    # portfolio-level write-up, regardless of whether AI is available.
+    out = skills.build_analyst_report({"scope": "dashboard", "symbols": ["NVDA", "AMD", "TSM"]})
+    assert out["scopeType"] == "dashboard"
+    assert out.get("symbol") is None
+    labels = {f["label"] for f in out["figures"]}
+    assert {"Names", "Avg YTD"} <= labels
+    # Core structured sections are always present (AI or heuristic fallback).
+    assert out["thesis"]
+    assert out["drivers"]
+    assert out["stance"] in {"bullish", "bearish", "neutral"}
+    assert 0.0 <= out["conviction"] <= 1.0
+
+
+def test_analyst_report_requires_a_scope():
+    # No ticker, sector, or dashboard -> explicit failure, never a silent default.
+    try:
+        skills.build_analyst_report({})
+    except ValueError:
+        return
+    raise AssertionError("expected ValueError when no scope is provided")
+
+
+def test_scenario_grounds_in_symbols_list():
+    # A dashboard scenario passes a symbols list; the projection grounds in them.
+    out = skills.build_scenario({"prompt": "what if rates fall 100bps", "symbols": ["NVDA", "AMD"]})
+    assert out["assumptions"], "scenario produced no assumptions"
+    assert out["symbols"], "scenario reported no symbols"
+    assert set(out["symbols"]) <= {"NVDA", "AMD"}
+    assert out["basis"] in {"grounded", "estimated"}
+
+
 def _run_all():
     funcs = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

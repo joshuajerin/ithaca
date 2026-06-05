@@ -3118,6 +3118,516 @@ _reg(SkillDef(
 ))
 
 
+# ----------------------------- analyst report -----------------------------
+def _stance_from_figures(returns: dict, change_pct: Optional[float]) -> str:
+    """Crude directional read from recent returns when the AI is unavailable."""
+    signals = []
+    for k in ("1M", "YTD", "1Y"):
+        v = returns.get(k)
+        if v is not None:
+            signals.append(v)
+    if change_pct is not None:
+        signals.append(change_pct)
+    if not signals:
+        return "neutral"
+    avg = sum(signals) / len(signals)
+    if avg >= 5:
+        return "bullish"
+    if avg <= -5:
+        return "bearish"
+    return "neutral"
+
+
+def _analyst_report_fallback(scope: str, scope_type: str, figures: List[dict],
+                             returns: dict, change_pct: Optional[float],
+                             peers: List[dict], news: List[dict],
+                             catalysts: List[dict]) -> dict:
+    """Rules-based analyst write-up used when the AI is unavailable or errors."""
+    stance = _stance_from_figures(returns, change_pct)
+    ytd = returns.get("YTD")
+    one_y = returns.get("1Y")
+    move = "advanced" if (ytd or 0) >= 0 else "declined"
+    thesis = (
+        f"{scope} has {move} {abs(ytd):.1f}% year-to-date" if ytd is not None
+        else f"{scope} sits in a mixed tape"
+    )
+    if one_y is not None:
+        thesis += f" and is {one_y:+.1f}% over the trailing year"
+    thesis += ". The read below is a rules-based summary built from the panel's grounding figures."
+
+    drivers = []
+    for f in figures[:3]:
+        drivers.append({"title": f["label"], "detail": f"Currently {f['value']}."})
+    if not drivers:
+        drivers.append({"title": "Price trend", "detail": "Recent performance is the primary observable driver."})
+
+    risks = [
+        {"title": "Macro sensitivity", "detail": "Rates, liquidity and broad risk appetite can override company specifics."},
+        {"title": "Estimate revisions", "detail": "Forward numbers may re-rate the multiple in either direction."},
+    ]
+    cats = [{"title": c.get("event", "Upcoming event"), "detail": c.get("date", "")} for c in catalysts[:3]]
+    if not cats:
+        cats = [{"title": "Next earnings", "detail": "Scheduled results are the most likely near-term catalyst."}]
+
+    return {
+        "stance": stance,
+        "conviction": 0.45,
+        "headline": f"{scope}: {stance.title()} on recent trend",
+        "thesis": thesis,
+        "drivers": drivers,
+        "risks": risks,
+        "catalysts": cats,
+        "valuation": "Valuation read unavailable without AI; refer to the cited multiples in the figures strip.",
+        "call": f"Rules-based stance is {stance}; treat as a low-conviction, data-only summary.",
+    }
+
+
+def build_analyst_report(params: dict) -> dict:
+    """Deeper, structured analyst write-up grounded in the terminal's own data.
+
+    Scope is a single ticker (preferred), a sector, or the whole DASHBOARD — a
+    portfolio-level review aggregated across the symbols/sectors currently on
+    screen (pass scope='dashboard' with symbols/sectors). The AI produces a
+    thesis, drivers, risks, catalysts, a valuation read and an explicit
+    bull/bear/neutral call; on any failure it degrades to a rules-based summary
+    over the same data.
+    """
+    symbol = (params.get("symbol") or "").upper().strip()
+    sector = params.get("sector")
+    dash_symbols = [str(s).upper().strip() for s in (params.get("symbols") or []) if str(s).strip()]
+    dash_sectors = [str(s) for s in (params.get("sectors") or []) if str(s).strip()]
+    scope_pref = (params.get("scope") or "").lower().strip()
+    if symbol:
+        scope_type = "symbol"
+    elif sector:
+        scope_type = "sector"
+    elif scope_pref == "dashboard" or dash_symbols or dash_sectors:
+        scope_type = "dashboard"
+    else:
+        raise ValueError(
+            "An analyst report needs a ticker, a sector, or an active dashboard to analyze."
+        )
+
+    figures: List[dict] = []
+    returns: dict = {}
+    change_pct: Optional[float] = None
+    peers: List[dict] = []
+    catalysts: List[dict] = []
+    news: List[dict] = []
+    as_of = None
+    source = _live_source()
+
+    if scope_type == "symbol":
+        company = repo.get_company(symbol)
+        if not company:
+            raise ValueError(f"Unknown symbol: {symbol}")
+        scope = company["name"]
+        change_pct = company.get("changePct")
+        ret_meta = repo.period_returns(symbol, windows=("1M", "YTD", "1Y"))
+        returns = ret_meta["returns"]
+        as_of = company.get("_asOf") or ret_meta.get("asOf")
+        source = company.get("_source") or ret_meta.get("source") or source
+        rev_growth = data.get_revenue_growth(symbol)
+        figures = [
+            {"label": "Price", "value": f"${company['price']:,.2f}"},
+            {"label": "1D", "value": f"{change_pct:+.2f}%" if change_pct is not None else "n/a"},
+            {"label": "YTD", "value": f"{returns.get('YTD'):+.1f}%" if returns.get("YTD") is not None else "n/a"},
+            {"label": "1Y", "value": f"{returns.get('1Y'):+.1f}%" if returns.get("1Y") is not None else "n/a"},
+            {"label": "P/E", "value": f"{company['peRatio']:.1f}" if company.get("peRatio") else "n/a"},
+            {"label": "Net margin", "value": f"{company['netMargin']:.1f}%" if company.get("netMargin") is not None else "n/a"},
+            {"label": "Rev growth", "value": f"{rev_growth:+.1f}%" if rev_growth is not None else "n/a"},
+            {"label": "Beta", "value": f"{company['beta']:.2f}" if company.get("beta") is not None else "n/a"},
+        ]
+        peer_syms = data.get_peers(symbol)
+        for ps in peer_syms[:3]:
+            c = repo.get_company(ps)
+            if c:
+                peers.append({"symbol": ps, "name": c["name"], "pe": c.get("peRatio"), "netMargin": c.get("netMargin")})
+        catalysts = data.get_catalysts(symbol)
+        news = repo.news_for("symbol", symbol)
+        ctx_extra = {
+            "description": company.get("description"),
+            "marketCapB": round(company["marketCap"] / 1_000_000_000, 1) if company.get("marketCap") else None,
+            "revenueGrowthPct": rev_growth,
+        }
+    elif scope_type == "sector":
+        scope = repo.sector_name(sector)
+        syms = repo.symbols_in_sector(sector)[:6]
+        ret_bulk = repo.period_returns_bulk(syms, windows=("YTD", "1Y"))
+        ytds = [r.get("YTD") for r in ret_bulk.values() if r.get("YTD") is not None]
+        oneys = [r.get("1Y") for r in ret_bulk.values() if r.get("1Y") is not None]
+        returns = {
+            "YTD": round(sum(ytds) / len(ytds), 1) if ytds else None,
+            "1Y": round(sum(oneys) / len(oneys), 1) if oneys else None,
+        }
+        figures = [
+            {"label": "Names", "value": str(len(syms))},
+            {"label": "Avg YTD", "value": f"{returns['YTD']:+.1f}%" if returns.get("YTD") is not None else "n/a"},
+            {"label": "Avg 1Y", "value": f"{returns['1Y']:+.1f}%" if returns.get("1Y") is not None else "n/a"},
+        ]
+        for ps in syms[:4]:
+            c = repo.get_company(ps)
+            if c:
+                peers.append({"symbol": ps, "name": c["name"], "pe": c.get("peRatio"), "netMargin": c.get("netMargin")})
+        news = repo.news_for("sector", sector)
+        ctx_extra = {"members": [p["symbol"] for p in peers]}
+    else:
+        # Dashboard scope: aggregate across the names/sectors currently on screen.
+        syms = []
+        seen = set()
+        for s in dash_symbols:
+            if s not in seen and repo.get_company(s):
+                seen.add(s)
+                syms.append(s)
+        for sec in dash_sectors:
+            for s in repo.symbols_in_sector(sec):
+                if s not in seen and repo.get_company(s):
+                    seen.add(s)
+                    syms.append(s)
+        syms = syms[:8]
+        if not syms:
+            raise ValueError("No recognizable holdings on the dashboard to analyze.")
+        scope = "Your Dashboard"
+        ret_bulk = repo.period_returns_bulk(syms, windows=("YTD", "1Y"))
+        ytds = [r.get("YTD") for r in ret_bulk.values() if r.get("YTD") is not None]
+        oneys = [r.get("1Y") for r in ret_bulk.values() if r.get("1Y") is not None]
+        returns = {
+            "YTD": round(sum(ytds) / len(ytds), 1) if ytds else None,
+            "1Y": round(sum(oneys) / len(oneys), 1) if oneys else None,
+        }
+        winners = sum(1 for v in ytds if v > 0)
+        figures = [
+            {"label": "Names", "value": str(len(syms))},
+            {"label": "Avg YTD", "value": f"{returns['YTD']:+.1f}%" if returns.get("YTD") is not None else "n/a"},
+            {"label": "Avg 1Y", "value": f"{returns['1Y']:+.1f}%" if returns.get("1Y") is not None else "n/a"},
+            {"label": "Breadth", "value": f"{winners}/{len(ytds)} up YTD" if ytds else "n/a"},
+        ]
+        for ps in syms[:6]:
+            c = repo.get_company(ps)
+            if c:
+                peers.append({"symbol": ps, "name": c["name"], "pe": c.get("peRatio"), "netMargin": c.get("netMargin")})
+                if c.get("_asOf"):
+                    as_of = c["_asOf"] if as_of is None else max(as_of, c["_asOf"])
+                source = c.get("_source") or source
+        for ps in syms[:4]:
+            news.extend(repo.news_for("symbol", ps)[:2])
+        ctx_extra = {"members": [p["symbol"] for p in peers], "sectors": dash_sectors or None}
+
+    report: Optional[dict] = None
+    if ai.ai_available():
+        try:
+            ctx = {
+                "scope": scope,
+                "scopeType": scope_type,
+                "figures": figures,
+                "returns": returns,
+                "changePct": change_pct,
+                "peers": peers,
+                "recentHeadlines": [{"headline": n["headline"], "sentiment": n.get("sentiment")} for n in news[:6]],
+                "catalysts": [{"event": c.get("event"), "date": c.get("date"), "impact": c.get("impact")} for c in catalysts[:5]],
+                **ctx_extra,
+            }
+            scope_note = (
+                "This is a PORTFOLIO-LEVEL review across the names currently on the user's "
+                "dashboard; write the thesis, drivers, risks, catalysts and call about the "
+                "dashboard as a whole, not a single stock.\n" if scope_type == "dashboard" else ""
+            )
+            prompt = (
+                "You are a buy-side equity analyst. Write a structured analyst take using ONLY "
+                "the data below. Do NOT invent precise figures beyond what is provided; you may "
+                "reason qualitatively. Respond with a single JSON object and nothing else:\n"
+                '{"headline": string (max 10 words), '
+                '"stance": "bullish"|"bearish"|"neutral", '
+                '"conviction": number between 0 and 1, '
+                '"thesis": string (2-4 sentences), '
+                '"drivers": [{"title": string (max 6 words), "detail": string (1-2 sentences)}] (2-4 items), '
+                '"risks": [{"title": string (max 6 words), "detail": string (1-2 sentences)}] (2-4 items), '
+                '"catalysts": [{"title": string (max 6 words), "detail": string}] (1-4 items), '
+                '"valuation": string (1-3 sentences referencing the multiples provided), '
+                '"call": string (1-2 sentences, an explicit actionable view)}\n\n'
+                + scope_note
+                + "DATA:\n"
+                + json.dumps(ctx, default=str)
+            )
+            msg = ai.chat(
+                [
+                    {"role": "system", "content": "You output only valid JSON. No prose, no code fences."},
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+            )
+            content = (msg.content or "").strip()
+            if content.startswith("```"):
+                content = content.strip("`")
+                if content.lower().startswith("json"):
+                    content = content[4:]
+            parsed = json.loads(content)
+            if parsed.get("stance") not in ("bullish", "bearish", "neutral"):
+                parsed["stance"] = _stance_from_figures(returns, change_pct)
+            try:
+                parsed["conviction"] = max(0.0, min(1.0, float(parsed.get("conviction", 0.5))))
+            except (TypeError, ValueError):
+                parsed["conviction"] = 0.5
+            if not parsed.get("thesis") or not parsed.get("drivers"):
+                raise ValueError("incomplete report")
+            report = parsed
+        except Exception:
+            report = None
+
+    if report is None:
+        report = _analyst_report_fallback(scope, scope_type, figures, returns, change_pct, peers, news, catalysts)
+
+    report.update({
+        "scope": scope,
+        "scopeType": scope_type,
+        "symbol": symbol or None,
+        "sector": sector,
+        "figures": figures,
+        "asOf": as_of,
+        "source": source,
+    })
+    return report
+
+
+# ----------------------------- what-if scenario -----------------------------
+def _scenario_parse_heuristic(prompt: str, symbols: List[str]) -> dict:
+    """Extract a coarse drift estimate and assumptions from a what-if prompt.
+
+    Used when the AI is unavailable. Reads magnitudes (bps, %), a direction, and
+    horizon hints, then maps them to a rough annualized return impact.
+    """
+    import re as _re
+    q = (prompt or "").lower()
+
+    horizon = 252
+    m = _re.search(r"(\d+)\s*(year|yr)", q)
+    if m:
+        horizon = max(21, min(252 * 5, int(m.group(1)) * 252))
+    else:
+        m = _re.search(r"(\d+)\s*(month|mo)", q)
+        if m:
+            horizon = max(21, min(252 * 5, int(m.group(1)) * 21))
+
+    impact = 0.0
+    assumptions: List[dict] = []
+
+    for m in _re.finditer(r"(\d+(?:\.\d+)?)\s*bps", q):
+        bps = float(m.group(1))
+        # Rate moves: falling rates broadly positive for equities, rising negative.
+        sign = 1.0 if any(w in q for w in ["fall", "cut", "lower", "drop", "down", "ease"]) else -1.0
+        contrib = sign * (bps / 100.0) * 4.0  # ~4% equity impact per 100bps move
+        impact += contrib
+        assumptions.append({
+            "label": f"Rates move {int(bps)}bps",
+            "detail": f"Estimated {contrib:+.1f}% annualized equity impact.",
+            "impactPct": round(contrib, 1),
+        })
+
+    for m in _re.finditer(r"(\d+(?:\.\d+)?)\s*%", q):
+        pct = float(m.group(1))
+        if "bps" in q[max(0, m.start() - 6):m.start() + 1]:
+            continue
+        neg = any(w in q for w in ["compress", "fall", "drop", "cut", "decline", "down", "lower", "shrink"])
+        sign = -1.0 if neg else 1.0
+        contrib = sign * min(pct, 50.0) * 0.4  # dampened pass-through to return
+        impact += contrib
+        assumptions.append({
+            "label": f"{pct:g}% shift",
+            "detail": f"Estimated {contrib:+.1f}% annualized impact (dampened pass-through).",
+            "impactPct": round(contrib, 1),
+        })
+
+    if not assumptions:
+        neg = any(w in q for w in ["recession", "selloff", "crash", "bear", "downturn", "compress"])
+        contrib = -8.0 if neg else 6.0
+        impact = contrib
+        assumptions.append({
+            "label": "Directional what-if",
+            "detail": f"No explicit magnitude found; assumed {contrib:+.1f}% annualized tilt.",
+            "impactPct": contrib,
+        })
+
+    impact = max(-60.0, min(60.0, impact))
+    return {"horizonDays": horizon, "driftPct": round(impact, 1), "assumptions": assumptions, "caveats": [
+        "Heuristic estimate (AI unavailable): magnitudes mapped by simple rules of thumb.",
+    ]}
+
+
+def _scenario_parse_llm(prompt: str, symbols: List[str], scope_label: str) -> dict:
+    ctx = {"whatIf": prompt, "symbols": symbols, "scope": scope_label}
+    sys = (
+        "You translate a natural-language investing what-if into structured assumptions for a "
+        "forward simulation. The baseline path is generated separately from REAL price history; "
+        "your job is only to estimate the INCREMENTAL impact of the user's assumptions. "
+        "Respond with a single JSON object and nothing else:\n"
+        '{"horizonDays": integer (21-1260, default 252), '
+        '"driftPct": number (total INCREMENTAL annualized total-return impact of all assumptions, '
+        'positive or negative, realistic magnitude, clamp to [-60, 60]), '
+        '"assumptions": [{"label": string (max 8 words), "detail": string (1 sentence with the reasoning), '
+        '"impactPct": number (this assumption\'s share of driftPct)}] (1-5 items), '
+        '"reasoning": string (2-4 sentences explaining how the assumptions drive the projected outcome), '
+        '"caveats": [string] (2-4 short caveats about model limits and uncertainty)}'
+    )
+    msg = ai.chat(
+        [
+            {"role": "system", "content": sys},
+            {"role": "user", "content": json.dumps(ctx)},
+        ],
+        response_format={"type": "json_object"},
+    )
+    content = (msg.content or "").strip()
+    if content.startswith("```"):
+        content = content.strip("`")
+        if content.lower().startswith("json"):
+            content = content[4:]
+    parsed = json.loads(content)
+    drift = float(parsed.get("driftPct", 0.0))
+    parsed["driftPct"] = max(-60.0, min(60.0, drift))
+    h = int(parsed.get("horizonDays", 252) or 252)
+    parsed["horizonDays"] = max(21, min(1260, h))
+    if not parsed.get("assumptions"):
+        raise ValueError("no assumptions parsed")
+    return parsed
+
+
+def build_scenario(params: dict) -> dict:
+    """What-if / scenario reasoning grounded in the simulation engine.
+
+    Parses a natural-language what-if into structured assumptions (AI preferred,
+    heuristic fallback), runs a baseline forward projection from REAL returns via
+    the Monte Carlo engine, and layers the assumptions' estimated drift on top to
+    produce a scenario projection with inputs, outcome, reasoning and caveats.
+    """
+    prompt = (params.get("prompt") or params.get("query") or "").strip()
+    symbol = (params.get("symbol") or "").upper().strip()
+    sector = params.get("sector")
+
+    symbols: List[str] = []
+    weights: Optional[List[float]] = None
+    if symbol:
+        symbols = [symbol]
+    elif params.get("symbols"):
+        symbols = [str(s).upper() for s in params["symbols"]][:6]
+    elif sector:
+        symbols = repo.symbols_in_sector(sector)[:5]
+
+    proxy_note = None
+    if not symbols:
+        symbols = ["NVDA", "MSFT", "AAPL", "GOOGL", "AMZN"]
+        proxy_note = "No specific asset detected; using a mega-cap basket as a market proxy."
+
+    scope_label = (
+        repo.get_company(symbols[0])["name"] if len(symbols) == 1 and repo.get_company(symbols[0])
+        else (repo.sector_name(sector) if sector else f"{len(symbols)}-name basket")
+    )
+
+    # 1) Parse assumptions (AI preferred, heuristic fallback).
+    parsed = None
+    basis = "grounded"
+    if ai.ai_available():
+        try:
+            parsed = _scenario_parse_llm(prompt, symbols, scope_label)
+        except Exception:
+            parsed = None
+    if parsed is None:
+        parsed = _scenario_parse_heuristic(prompt, symbols)
+        basis = "estimated"
+
+    horizon = int(parsed.get("horizonDays", 252) or 252)
+    drift_pct = float(parsed.get("driftPct", 0.0))
+
+    # 2) Build a baseline return series from REAL price history.
+    series: List[List[float]] = []
+    used_symbols: List[str] = []
+    as_of = None
+    source = "mock"
+    for s in symbols:
+        meta = repo.price_series_meta(s, days=400)
+        pts = meta.get("points") or []
+        closes = [p["c"] for p in pts if p.get("c")]
+        if len(closes) >= 6:
+            rets = [(closes[i] / closes[i - 1] - 1.0) for i in range(1, len(closes))]
+            series.append(rets)
+            used_symbols.append(s)
+            if meta.get("source") == "live":
+                source = "live"
+            if meta.get("asOf"):
+                as_of = meta["asOf"] if as_of is None else max(as_of, meta["asOf"])
+
+    projection = None
+    if series:
+        try:
+            basket = engine.combine_returns(series, weights)
+            projection = engine.project_scenario(
+                basket.tolist(), drift_pct, horizon=horizon, method="bootstrap",
+            )
+        except Exception:
+            projection = None
+
+    if projection is None:
+        # Pure AI-reasoned outcome with no grounded path (degraded, but explicit).
+        basis = "estimated"
+
+    caveats = list(parsed.get("caveats") or [])
+    if proxy_note:
+        caveats.insert(0, proxy_note)
+    if basis == "estimated" and "AI unavailable" not in " ".join(caveats):
+        caveats.append("Scenario delta is an estimate layered on the baseline, not a guaranteed outcome.")
+    if not caveats:
+        caveats = ["Projections are illustrative, assume the stated shock in isolation, and exclude transaction costs."]
+
+    return {
+        "prompt": prompt or "Scenario analysis",
+        "scope": scope_label,
+        "symbols": used_symbols or symbols,
+        "horizonDays": horizon,
+        "basis": basis if projection else "estimated",
+        "driftPct": round(drift_pct, 1),
+        "assumptions": parsed.get("assumptions") or [],
+        "reasoning": parsed.get("reasoning") or (
+            f"Assumptions sum to an estimated {drift_pct:+.1f}% annualized impact, applied on top of a "
+            "baseline projected from real return history."
+        ),
+        "caveats": caveats[:5],
+        "projection": projection,
+        "asOf": as_of,
+        "source": source if projection else _live_source(),
+    }
+
+
+_reg(SkillDef(
+    "analyst-report", "AI Analyst Report", "analyst_report",
+    "Produces a deep, structured analyst write-up for a ticker (or sector): a headline, an explicit "
+    "bull/bear/neutral STANCE with a conviction score, a multi-sentence THESIS, and sections for "
+    "DRIVERS, RISKS, CATALYSTS, a VALUATION read, and a clear actionable CALL — all grounded in the "
+    "terminal's own figures (price, returns, multiples, peers, news, catalysts). Use when the user "
+    "asks for an 'analyst take', 'deep analysis', 'write-up', 'bull/bear case', 'investment thesis', "
+    "'should I buy/sell X', or 'give me your view on X'. This is ADDITIVE to the lighter `analysis` panel.",
+    [
+        {"name": "gather_grounding", "description": "Collect price, returns, multiples, peers, news and catalysts for the scope.", "expectedOutput": "A grounding context object."},
+        {"name": "write_thesis", "description": "Use the LLM to write a structured thesis with stance and conviction.", "expectedOutput": "A headline, stance, conviction and thesis."},
+        {"name": "structure_sections", "description": "Produce drivers, risks, catalysts, a valuation read and a call.", "expectedOutput": "Sectioned analyst content."},
+    ],
+    build_analyst_report, "Analyst Report",
+))
+_reg(SkillDef(
+    "scenario", "What-If Scenario", "scenario",
+    "Parses a natural-language what-if ('if rates fall 100bps then...', 'if NVDA margins compress to "
+    "40%', 'what if I rotate into semis') into structured assumptions, runs a BASELINE forward "
+    "projection from real return history through the Monte Carlo engine, and layers the assumptions' "
+    "estimated drift on top to produce a SCENARIO projection. Renders inputs, baseline vs scenario "
+    "outcome, divergent projected paths, reasoning and caveats. Use when the user poses a hypothetical, "
+    "says 'what if', 'if I do X then Y', 'scenario where', 'suppose', or asks to stress a shock. "
+    "Degrades cleanly to a reasoned estimate on AI timeout.",
+    [
+        {"name": "parse_assumptions", "description": "Translate the what-if into structured assumptions and an incremental drift estimate.", "expectedOutput": "Assumptions with per-item impact and a horizon."},
+        {"name": "project_baseline", "description": "Build a baseline forward projection from real returns via Monte Carlo.", "expectedOutput": "A grounded baseline path and distribution."},
+        {"name": "apply_scenario", "description": "Layer the estimated drift on the baseline to produce the scenario path.", "expectedOutput": "A scenario projection with delta vs baseline."},
+    ],
+    build_scenario, "What-If Scenario",
+))
+
+
 def skill_catalog() -> dict:
     return {
         "skills": [
