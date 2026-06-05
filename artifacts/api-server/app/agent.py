@@ -879,6 +879,211 @@ def _answer_question(query: str, sid: str, panels: List[dict]) -> str:
     return _answer_fallback(panels)
 
 
+# --------------------- panel-data serialization for grounding ---------------------
+# These helpers turn a panel's `data` dict into a short, bounded text summary so
+# the question-answering model can read the actual figures the user sees (a
+# backtest's stats, equity curve, worst drawdown, notable trades, etc.) instead
+# of just the title and type. Everything is capped so latency and token use stay
+# reasonable even when many panels are on screen or a series is very long.
+_SER_MAX_LIST = 6           # generic list items surfaced
+_SER_MAX_LABELVAL = 16      # label/value rows surfaced (fundamentals, comparison)
+_SER_MAX_STR = 200          # long strings truncated to this
+_SER_MAX_PANEL_CHARS = 1100  # hard cap on one panel's data summary
+_SER_MAX_TOTAL_CHARS = 6000  # hard cap across all panels in one prompt
+
+
+def _ser_scalar(v) -> str:
+    if isinstance(v, bool):
+        return "yes" if v else "no"
+    if isinstance(v, float):
+        if v != v or v in (float("inf"), float("-inf")):
+            return "n/a"
+        av = abs(v)
+        if av != 0 and (av < 1e-4 or av >= 1e7):
+            return f"{v:.3e}"
+        s = f"{v:.4f}".rstrip("0").rstrip(".")
+        return s or "0"
+    if isinstance(v, int):
+        return str(v)
+    s = str(v)
+    return s if len(s) <= _SER_MAX_STR else s[:_SER_MAX_STR] + "…"
+
+
+def _ser_dict(d: dict, max_keys: int = 24) -> str:
+    """Flatten a dict of scalars into `k=v` pairs (used for stat blocks)."""
+    parts: List[str] = []
+    for k, v in list(d.items())[:max_keys]:
+        if v is None:
+            continue
+        if isinstance(v, (str, int, float, bool)):
+            parts.append(f"{k}={_ser_scalar(v)}")
+    return ", ".join(parts)
+
+
+def _ser_list(key: str, lst: list) -> str:
+    n = len(lst)
+    if n == 0:
+        return ""
+    first = lst[0]
+    if isinstance(first, (str, int, float, bool)):
+        sample = ", ".join(_ser_scalar(x) for x in lst[:_SER_MAX_LIST])
+        more = f", …(+{n - _SER_MAX_LIST} more)" if n > _SER_MAX_LIST else ""
+        return f"{key}[{n}]: {sample}{more}"
+    if isinstance(first, dict):
+        keys = set(first.keys())
+        # Label/value rows (fundamentals metrics, comparison values) -> pairs.
+        if {"label", "value"} <= keys:
+            rows = [f"{it.get('label')}={it.get('value')}" for it in lst[:_SER_MAX_LABELVAL]]
+            more = f", …(+{n - _SER_MAX_LABELVAL} more)" if n > _SER_MAX_LABELVAL else ""
+            return f"{key}[{n}]: " + ", ".join(rows) + more
+        # Long time series -> just the endpoints (avoid dumping the whole curve).
+        if "t" in keys and n > _SER_MAX_LIST:
+            return f"{key}[{n}]: first {{{_ser_dict(first, 6)}}} … last {{{_ser_dict(lst[-1], 6)}}}"
+        sample = " | ".join("{" + _ser_dict(it, 6) + "}" for it in lst[:_SER_MAX_LIST])
+        more = f" …(+{n - _SER_MAX_LIST} more)" if n > _SER_MAX_LIST else ""
+        return f"{key}[{n}]: {sample}{more}"
+    return f"{key}[{n}]"
+
+
+def _ser_generic(data: dict) -> str:
+    """Degrade-gracefully serializer for any panel: scalars, stat blocks, lists."""
+    parts: List[str] = []
+    for k, v in data.items():
+        if v is None:
+            continue
+        if isinstance(v, (str, int, float, bool)):
+            parts.append(f"{k}={_ser_scalar(v)}")
+        elif isinstance(v, dict):
+            inner = _ser_dict(v)
+            if inner:
+                parts.append(f"{k}: {{{inner}}}")
+        elif isinstance(v, list):
+            s = _ser_list(k, v)
+            if s:
+                parts.append(s)
+    return "; ".join(parts)
+
+
+def _ser_curve(curve: list) -> str:
+    """Summarize a backtest equity curve: start/end (+return), peak, trough."""
+    out: List[str] = []
+    for key, label in (("strategy", "strategy"), ("benchmark", "benchmark")):
+        vals = [(c.get("t"), c.get(key)) for c in curve if isinstance(c.get(key), (int, float))]
+        if not vals:
+            continue
+        start = vals[0][1]
+        end = vals[-1][1]
+        peak = max(vals, key=lambda x: x[1])
+        trough = min(vals, key=lambda x: x[1])
+        ret = (end / start - 1.0) * 100.0 if start else 0.0
+        out.append(
+            f"{label} equity {_ser_scalar(start)}→{_ser_scalar(end)} ({ret:+.1f}%), "
+            f"peak {_ser_scalar(peak[1])} on {peak[0]}, trough {_ser_scalar(trough[1])} on {trough[0]}"
+        )
+    return "; ".join(out)
+
+
+def _ser_trades(trades: list) -> str:
+    n = len(trades)
+    if n == 0:
+        return "no trades"
+    buys = sum(1 for t in trades if t.get("action") == "BUY")
+    sells = sum(1 for t in trades if t.get("action") == "SELL")
+
+    def _mag(t: dict) -> float:
+        try:
+            return abs(float(t.get("toPos", 0)) - float(t.get("fromPos", 0)))
+        except (TypeError, ValueError):
+            return 0.0
+
+    notable = sorted(trades, key=_mag, reverse=True)[:5]
+    rows = ", ".join(
+        f"{t.get('action')} @ {_ser_scalar(t.get('price'))} on {t.get('t')} "
+        f"(pos {_ser_scalar(t.get('fromPos'))}→{_ser_scalar(t.get('toPos'))})"
+        for t in notable
+    )
+    return f"{n} trades ({buys} BUY/{sells} SELL); notable: {rows}"
+
+
+def _ser_backtest(data: dict) -> str:
+    parts: List[str] = []
+    head = []
+    if data.get("symbol"):
+        head.append(f"symbol={data['symbol']}")
+    if data.get("strategy"):
+        head.append(f"strategy={data['strategy']}")
+    if head:
+        parts.append(", ".join(head))
+    stats = data.get("stats")
+    if isinstance(stats, dict) and stats:
+        parts.append("stats: " + _ser_dict(stats))
+    curve = data.get("curve") or []
+    if curve:
+        c = _ser_curve(curve)
+        if c:
+            parts.append(c)
+    dd = data.get("drawdown") or []
+    if dd:
+        try:
+            worst = min(
+                dd,
+                key=lambda x: x.get("dd", 0.0) if isinstance(x.get("dd"), (int, float)) else 0.0,
+            )
+            parts.append(f"worst drawdown {_ser_scalar(worst.get('dd'))}% on {worst.get('t')}")
+        except (TypeError, ValueError):
+            pass
+    parts.append(_ser_trades(data.get("tradeLog") or []))
+    return "; ".join(p for p in parts if p)
+
+
+_PANEL_SERIALIZERS = {
+    "backtest": _ser_backtest,
+}
+
+
+def _serialize_panel(panel: dict) -> str:
+    """Bounded text summary of a panel's meaningful values for grounded answers."""
+    ptype = panel.get("type", "")
+    title = panel.get("title", "")
+    label = _TYPE_LABELS.get(ptype, ptype)
+    header = f"{title} [{ptype}]" if title else f"[{ptype}]"
+    if panel.get("status") == "error":
+        note = panel.get("note") or "could not be built"
+        return f"{header}: ({note})"
+    data = panel.get("data")
+    if not isinstance(data, dict) or not data:
+        return f"{header}: {label} (no detailed data)"
+    try:
+        body = _PANEL_SERIALIZERS.get(ptype, _ser_generic)(data)
+    except Exception:
+        body = ""
+    if not body:
+        body = label
+    if len(body) > _SER_MAX_PANEL_CHARS:
+        body = body[:_SER_MAX_PANEL_CHARS] + "…"
+    extras = []
+    if panel.get("asOf"):
+        extras.append(f"asOf={panel['asOf']}")
+    if panel.get("source"):
+        extras.append(f"source={panel['source']}")
+    tail = f" ({', '.join(extras)})" if extras else ""
+    return f"{header}: {body}{tail}"
+
+
+def _panels_context(panels: List[dict]) -> str:
+    """Join per-panel summaries under a shared total-size budget."""
+    blocks: List[str] = []
+    total = 0
+    for i, p in enumerate(panels):
+        s = _serialize_panel(p)
+        if blocks and total + len(s) > _SER_MAX_TOTAL_CHARS:
+            blocks.append(f"(+{len(panels) - i} more panels omitted to save space)")
+            break
+        blocks.append(s)
+        total += len(s)
+    return "\n".join(f"- {b}" for b in blocks)
+
+
 def _answer_question_llm(query: str, sid: str, panels: List[dict]) -> str:
     sys = (
         "You are the analyst assistant inside an agentic market terminal. The user is asking a "
@@ -888,17 +1093,22 @@ def _answer_question_llm(query: str, sid: str, panels: List[dict]) -> str:
         "finance/quant knowledge to definitions (e.g. Sortino ratio, Monte Carlo VaR, IV vs HV, "
         "drawdown, beta). "
         "If the user asks about what they are seeing / this dashboard / these panels, ground your "
-        "answer in the panels currently on screen (listed below): explain what they collectively "
-        "show and how they relate. Never invent panels or data that are not listed. If there are no "
-        "panels on screen and the user asks about the screen, say the dashboard is empty and invite "
-        "them to ask for something to build."
+        "answer in the panels currently on screen (listed below WITH their underlying data): "
+        "explain what they collectively show and how they relate. "
+        "When the user asks about specific figures — e.g. a backtest's Sharpe, Sortino, CAGR, max "
+        "drawdown, win rate, total return, benchmark comparison, the worst-drawdown date, or notable "
+        "trades — answer with the EXACT values from the relevant panel's data below. Never invent "
+        "panels, figures, or data that are not provided. If a value the user asks about is not in "
+        "the panel data, say it isn't shown rather than guessing. If there are no panels on screen "
+        "and the user asks about the screen, say the dashboard is empty and invite them to ask for "
+        "something to build."
     )
     messages = [{"role": "system", "content": sys}]
     for h in state.get_history(sid)[-6:]:
         messages.append({"role": h["role"], "content": h["content"]})
     if panels:
-        shown = "; ".join(f'{p.get("title")} ({p["type"]})' for p in panels)
-        messages.append({"role": "system", "content": f"Panels currently on screen: {shown}."})
+        ctx = _panels_context(panels)
+        messages.append({"role": "system", "content": f"Panels currently on screen with their data:\n{ctx}"})
     else:
         messages.append({"role": "system", "content": "There are no panels on screen right now."})
     messages.append({"role": "user", "content": query})
