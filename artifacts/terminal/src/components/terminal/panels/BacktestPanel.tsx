@@ -15,6 +15,18 @@ import {
 export function BacktestPanel({ data }: { data: BacktestData }) {
   const { stats, curve, drawdown } = data;
 
+  const closedTrades = (data.tradeLog ?? []).filter(
+    (t) => typeof t.pnl === "number" && t.pnl !== 0,
+  );
+  const bestTrade = closedTrades.length
+    ? closedTrades.reduce((a, b) => ((b.pnl ?? 0) > (a.pnl ?? 0) ? b : a))
+    : null;
+  const worstTrade = closedTrades.length
+    ? closedTrades.reduce((a, b) => ((b.pnl ?? 0) < (a.pnl ?? 0) ? b : a))
+    : null;
+
+  const fmtPts = (v?: number) => `${(v ?? 0) >= 0 ? "+" : ""}${(v ?? 0).toFixed(2)}`;
+
   const CurveTooltip = ({ active, payload, label }: any) => {
     if (active && payload?.length) {
       return (
@@ -70,6 +82,31 @@ export function BacktestPanel({ data }: { data: BacktestData }) {
           </div>
         ))}
       </div>
+
+      {(bestTrade || worstTrade) && (
+        <div className="grid grid-cols-2 gap-2 shrink-0">
+          {[
+            { label: "Best Trade", trade: bestTrade, color: "text-emerald-400" },
+            { label: "Worst Trade", trade: worstTrade, color: "text-red-400" },
+          ].map(({ label, trade, color }) => (
+            <div key={label} className="border border-border p-2">
+              <div className="text-[9px] text-muted-foreground uppercase tracking-widest mb-0.5">{label}</div>
+              {trade ? (
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className={`text-sm font-bold font-mono ${color}`}>
+                    {fmtPts(trade.pnl)} <span className="text-[10px]">pts</span>
+                  </span>
+                  <span className="text-[10px] font-mono text-muted-foreground">
+                    {fmtPts(trade.pnlPct)}% · {trade.action} @ {trade.price} · {trade.t}
+                  </span>
+                </div>
+              ) : (
+                <div className="text-sm font-mono text-muted-foreground">—</div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="flex-1 min-h-0 flex flex-col gap-2">
         <div className="flex-[2] min-h-0">

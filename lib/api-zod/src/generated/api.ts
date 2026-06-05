@@ -218,7 +218,9 @@ export const GetDefaultDashboardResponse = zod.object({
   "action": zod.string(),
   "price": zod.number(),
   "fromPos": zod.number(),
-  "toPos": zod.number()
+  "toPos": zod.number(),
+  "pnl": zod.number().optional().describe('Realized P&L on the portion closed by this trade, in points on the rebased capital base.'),
+  "pnlPct": zod.number().optional().describe('Percent return on the closed leg of this trade.')
 })).optional()
 }),zod.object({
   "symbol": zod.string(),
@@ -584,7 +586,9 @@ export const OrchestrateResponse = zod.object({
   "action": zod.string(),
   "price": zod.number(),
   "fromPos": zod.number(),
-  "toPos": zod.number()
+  "toPos": zod.number(),
+  "pnl": zod.number().optional().describe('Realized P&L on the portion closed by this trade, in points on the rebased capital base.'),
+  "pnlPct": zod.number().optional().describe('Percent return on the closed leg of this trade.')
 })).optional()
 }),zod.object({
   "symbol": zod.string(),
@@ -981,7 +985,9 @@ export const RefinePanelResponse = zod.object({
   "action": zod.string(),
   "price": zod.number(),
   "fromPos": zod.number(),
-  "toPos": zod.number()
+  "toPos": zod.number(),
+  "pnl": zod.number().optional().describe('Realized P&L on the portion closed by this trade, in points on the rebased capital base.'),
+  "pnlPct": zod.number().optional().describe('Percent return on the closed leg of this trade.')
 })).optional()
 }),zod.object({
   "symbol": zod.string(),

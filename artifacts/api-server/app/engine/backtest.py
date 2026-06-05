@@ -90,20 +90,58 @@ def run_backtest(
     ]
     drawdown = [{"t": dates[i], "dd": round(float(dd[i]), 3)} for i in range(n)]
 
-    # Trade log: a row whenever the held position changes.
+    # Trade log: a row whenever the held position changes, with realized P&L
+    # booked on the portion of the position each trade closes. A round-trip is
+    # opened when exposure is added (entry price is weighted-averaged) and
+    # realized when exposure is reduced, closed, or flipped. `pnl` is in points
+    # on the rebased capital base (so on a 100 base it reads like dollars),
+    # `pnlPct` is the percent return on the closed leg. Trades that only open or
+    # add to a position carry pnl=0.0.
     trade_log: List[dict] = []
+    entry_price = 0.0  # average entry price of the currently open position
     for i in range(1, n):
-        if pos_change[i] > 0:
-            prev = held[i - 1]
-            cur = held[i]
-            action = "BUY" if cur > prev else "SELL" if cur < prev else "FLAT"
-            trade_log.append({
-                "t": dates[i],
-                "action": action,
-                "price": round(float(closes[i]), 2),
-                "fromPos": round(float(prev), 2),
-                "toPos": round(float(cur), 2),
-            })
+        if pos_change[i] <= 0:
+            continue
+        prev = float(held[i - 1])
+        cur = float(held[i])
+        price = float(closes[i])
+        action = "BUY" if cur > prev else "SELL"
+
+        realized = 0.0      # P&L in points on the `rebase` capital base
+        realized_pct = 0.0  # percent return on the closed leg
+
+        if prev == 0.0:
+            # opening a fresh position
+            entry_price = price
+        elif (prev > 0 and cur > prev) or (prev < 0 and cur < prev):
+            # adding in the same direction -> weighted-average the entry price
+            added = abs(cur - prev)
+            entry_price = (entry_price * abs(prev) + price * added) / abs(cur)
+        else:
+            # reducing, closing, or flipping -> realize on the closed portion
+            sign = 1.0 if prev > 0 else -1.0
+            same_side = (prev > 0 and cur >= 0) or (prev < 0 and cur <= 0)
+            closed = (abs(prev) - abs(cur)) if same_side else abs(prev)
+            if entry_price > 0:
+                move = price / entry_price - 1.0
+                realized_pct = move * sign * 100.0
+                realized = closed * move * sign * rebase
+            if not same_side:
+                # flipped past flat -> the new opposite leg opens at this price
+                entry_price = price
+            elif cur == 0.0:
+                entry_price = 0.0
+            # else: partial reduce on the same side -> entry_price unchanged
+
+        trade_log.append({
+            "t": dates[i],
+            "action": action,
+            "price": round(price, 2),
+            "fromPos": round(prev, 2),
+            "toPos": round(cur, 2),
+            "pnl": round(realized, 2),
+            "pnlPct": round(realized_pct, 2),
+        })
 
     years = max((n - 1) / stats.TRADING_DAYS, 1e-9)
     annual_turnover = float(pos_change.sum()) / years

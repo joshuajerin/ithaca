@@ -1179,7 +1179,42 @@ def _ser_trades(trades: list) -> str:
         return "no trades"
     buys = sum(1 for t in trades if t.get("action") == "BUY")
     sells = sum(1 for t in trades if t.get("action") == "SELL")
+    summary = f"{n} trades ({buys} BUY/{sells} SELL)"
 
+    def _pnl(t: dict) -> float:
+        try:
+            return float(t.get("pnl") or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _pnl_pct(t: dict) -> float:
+        try:
+            return float(t.get("pnlPct") or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    # Rank realized P&L by closed round-trips (trades that booked a gain/loss).
+    closed = [t for t in trades if _pnl(t) != 0.0]
+    if closed:
+        total = sum(_pnl(t) for t in closed)
+        wins = sum(1 for t in closed if _pnl(t) > 0)
+        best = max(closed, key=_pnl)
+        worst = min(closed, key=_pnl)
+
+        def _fmt(t: dict) -> str:
+            return (
+                f"{t.get('action')} @ {_ser_scalar(t.get('price'))} on {t.get('t')} "
+                f"(P&L {_pnl(t):+.2f} pts / {_pnl_pct(t):+.2f}% on a 100 capital base)"
+            )
+
+        summary += (
+            f"; {len(closed)} closed round-trips, {wins} winners; "
+            f"total realized P&L {total:+.2f} pts (points on a 100 capital base, i.e. dollars per $100); "
+            f"biggest winner: {_fmt(best)}; biggest loser: {_fmt(worst)}"
+        )
+        return summary
+
+    # No closed round-trips (e.g. a single still-open position) -> rank by size.
     def _mag(t: dict) -> float:
         try:
             return abs(float(t.get("toPos", 0)) - float(t.get("fromPos", 0)))
@@ -1192,7 +1227,7 @@ def _ser_trades(trades: list) -> str:
         f"(pos {_ser_scalar(t.get('fromPos'))}→{_ser_scalar(t.get('toPos'))})"
         for t in notable
     )
-    return f"{n} trades ({buys} BUY/{sells} SELL); notable: {rows}"
+    return f"{summary}; no closed round-trips yet; notable by size: {rows}"
 
 
 def _ser_backtest(data: dict) -> str:

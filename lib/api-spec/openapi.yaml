@@ -614,6 +614,12 @@ components:
           type: number
         toPos:
           type: number
+        pnl:
+          type: number
+          description: Realized P&L on the portion closed by this trade, in points on the rebased capital base.
+        pnlPct:
+          type: number
+          description: Percent return on the closed leg of this trade.
     BacktestData:
       type: object
       required: [symbol, strategy, curve, drawdown, stats]

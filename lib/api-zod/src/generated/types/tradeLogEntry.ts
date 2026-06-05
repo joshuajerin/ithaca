@@ -12,4 +12,8 @@ export interface TradeLogEntry {
   price: number;
   fromPos: number;
   toPos: number;
+  /** Realized P&L on the portion closed by this trade, in points on the rebased capital base. */
+  pnl?: number;
+  /** Percent return on the closed leg of this trade. */
+  pnlPct?: number;
 }

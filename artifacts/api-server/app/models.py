@@ -603,6 +603,8 @@ class TradeLogEntry(BaseModel):
     price: float
     fromPos: float
     toPos: float
+    pnl: Optional[float] = None
+    pnlPct: Optional[float] = None
 
 
 class BacktestData(BaseModel):
