@@ -17,6 +17,27 @@ log = logging.getLogger(__name__)
 
 RANGE_DAYS = {"1M": 30, "3M": 90, "6M": 180, "1Y": 250, "YTD": 120}
 
+# Common acronyms that should stay upper-cased in free-text topic labels so a
+# query like "ai chip shortage" reads as "AI Chip Shortage" rather than the
+# default title-case "Ai Chip Shortage". Display-only — never affects matching.
+TOPIC_ACRONYMS = {
+    "AI", "ML", "EV", "IPO", "GDP", "CPI", "PPI", "PMI", "ETF", "ESG",
+    "IoT", "AR", "VR", "GPU", "CPU", "SaaS", "EPS", "FOMC", "ECB", "BOJ",
+    "OPEC", "SEC", "FDA", "M&A", "5G", "6G", "API", "EU", "UK", "US",
+    "USA", "PCE", "QE", "LLM", "VC", "PE", "REIT", "FX", "NFT",
+}
+_ACRONYM_LOOKUP = {a.lower(): a for a in TOPIC_ACRONYMS}
+
+
+def topic_label(scope: Optional[str]) -> str:
+    """Title-case a free-text topic, but keep common acronyms upper-cased."""
+    if not scope or not scope.strip():
+        return "Markets"
+    words = []
+    for word in scope.strip().split():
+        words.append(_ACRONYM_LOOKUP.get(word.lower(), word.title()))
+    return " ".join(words)
+
 
 def _live_source() -> str:
     return "live" if db.db_available() else "mock"
@@ -158,7 +179,7 @@ def build_news(params: dict) -> dict:
         company = repo.get_company(scope.upper())
         label = company["name"] if company else scope.upper()
     elif scope_type == "topic":
-        label = scope.strip().title() if scope else "Markets"
+        label = topic_label(scope)
     else:
         sid = repo.resolve_sector(scope) or scope
         label = repo.sector_name(sid)
