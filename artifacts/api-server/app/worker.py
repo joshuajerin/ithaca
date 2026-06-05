@@ -63,6 +63,10 @@ def _seed_universe() -> None:
         "ALTER TABLE universe ADD COLUMN IF NOT EXISTS exchange TEXT",
         "ALTER TABLE universe ADD COLUMN IF NOT EXISTS industry TEXT",
         "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS is_live BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS revenue_growth DOUBLE PRECISION",
+        "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS earnings_date DATE",
+        "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS ex_dividend_date DATE",
+        "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS dividend_date DATE",
     ):
         db.execute(ddl)
 
@@ -170,9 +174,10 @@ def _upsert_fundamentals(d: dict) -> None:
     db.execute(
         """
         INSERT INTO fundamentals (symbol, name, price, change_pct, market_cap,
-            pe_ratio, volume, revenue, net_margin, eps, dividend_yield, beta,
-            week52_high, week52_low, description, is_live, updated_at)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, TRUE, now())
+            pe_ratio, volume, revenue, net_margin, revenue_growth, eps,
+            dividend_yield, beta, week52_high, week52_low, description,
+            is_live, updated_at)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, TRUE, now())
         ON CONFLICT (symbol) DO UPDATE SET
           name = COALESCE(EXCLUDED.name, fundamentals.name),
           price = COALESCE(EXCLUDED.price, fundamentals.price),
@@ -182,6 +187,7 @@ def _upsert_fundamentals(d: dict) -> None:
           volume = COALESCE(EXCLUDED.volume, fundamentals.volume),
           revenue = COALESCE(EXCLUDED.revenue, fundamentals.revenue),
           net_margin = COALESCE(EXCLUDED.net_margin, fundamentals.net_margin),
+          revenue_growth = COALESCE(EXCLUDED.revenue_growth, fundamentals.revenue_growth),
           eps = COALESCE(EXCLUDED.eps, fundamentals.eps),
           dividend_yield = COALESCE(EXCLUDED.dividend_yield, fundamentals.dividend_yield),
           beta = COALESCE(EXCLUDED.beta, fundamentals.beta),
@@ -193,8 +199,9 @@ def _upsert_fundamentals(d: dict) -> None:
         """,
         (d.get("symbol"), d.get("name"), d.get("price"),
          d.get("changePct"), d.get("marketCap"), d.get("peRatio"), d.get("volume"),
-         d.get("revenue"), d.get("netMargin"), d.get("eps"), d.get("dividendYield"),
-         d.get("beta"), d.get("week52High"), d.get("week52Low"), d.get("description")),
+         d.get("revenue"), d.get("netMargin"), d.get("revenueGrowth"), d.get("eps"),
+         d.get("dividendYield"), d.get("beta"), d.get("week52High"),
+         d.get("week52Low"), d.get("description")),
     )
     if d.get("sector"):
         db.execute(
@@ -202,6 +209,26 @@ def _upsert_fundamentals(d: dict) -> None:
             "industry = COALESCE(%s, industry), updated_at = now() WHERE symbol = %s",
             (d["sector"], d.get("name"), d.get("industry"), d.get("symbol")),
         )
+
+
+def _upsert_calendar(c: dict) -> None:
+    """Persist upcoming earnings/dividend dates from the live calendar feed.
+    Only overwrites a column when the new value is present so a transient empty
+    calendar never wipes a previously-known date."""
+    db.execute(
+        """
+        INSERT INTO fundamentals (symbol, earnings_date, ex_dividend_date,
+                                  dividend_date, updated_at)
+        VALUES (%s, %s, %s, %s, now())
+        ON CONFLICT (symbol) DO UPDATE SET
+          earnings_date = COALESCE(EXCLUDED.earnings_date, fundamentals.earnings_date),
+          ex_dividend_date = COALESCE(EXCLUDED.ex_dividend_date, fundamentals.ex_dividend_date),
+          dividend_date = COALESCE(EXCLUDED.dividend_date, fundamentals.dividend_date),
+          updated_at = now()
+        """,
+        (c.get("symbol"), c.get("earningsDate"), c.get("exDividendDate"),
+         c.get("dividendDate")),
+    )
 
 
 def _upsert_news(items: list) -> None:
@@ -266,6 +293,14 @@ async def _ingest_fundamentals(symbol: str) -> None:
         await asyncio.to_thread(_upsert_fundamentals, d)
     except Exception as exc:  # noqa: BLE001
         log.warning("fundamentals ingest failed for %s: %s", symbol, exc)
+    # Earnings/dividend calendar is a separate (best-effort) call on the same
+    # slow cadence so a missing calendar never blocks the fundamentals snapshot.
+    try:
+        cal = await _net(f_src.fetch_calendar, ysym)
+        cal["symbol"] = symbol
+        await asyncio.to_thread(_upsert_calendar, cal)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("calendar ingest failed for %s: %s", symbol, exc)
 
 
 async def _ingest_news_for(symbols: List[str], sector: Optional[str]) -> None:

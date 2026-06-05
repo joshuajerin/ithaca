@@ -4381,6 +4381,140 @@ _reg(SkillDef(
 ))
 
 
+def _resolve_revenue_growth(symbol: str, company: dict) -> Optional[float]:
+    """Live YoY revenue growth from the ingested fundamentals snapshot, falling
+    back to the curated default when the live value is unavailable."""
+    rg = company.get("revenueGrowth")
+    if rg is not None:
+        return rg
+    return data.get_revenue_growth(symbol)
+
+
+def _parse_iso_date(v) -> Optional[date]:
+    if not v:
+        return None
+    try:
+        return date.fromisoformat(str(v)[:10])
+    except (TypeError, ValueError):
+        return None
+
+
+def _company_catalysts(symbol: str, company: dict) -> List[dict]:
+    """Assemble the catalyst list, preferring real earnings/dividend dates from
+    the live calendar feed and merging the curated editorial events behind them.
+
+    Falls back entirely to the curated catalysts when no live date is available.
+    """
+    today = date.today()
+    live: List[dict] = []
+
+    ed = _parse_iso_date(company.get("earningsDate"))
+    if ed and ed >= today:
+        live.append({
+            "event": "Next Earnings Report", "date": ed.isoformat(), "impact": "High",
+            "description": "Scheduled quarterly earnings date from the live earnings calendar; "
+                           "the magnitude of any beat or miss typically sets the near-term tone.",
+        })
+    xd = _parse_iso_date(company.get("exDividendDate"))
+    if xd and xd >= today:
+        live.append({
+            "event": "Ex-Dividend Date", "date": xd.isoformat(), "impact": "Low",
+            "description": "Shares begin trading ex-dividend; holders of record on this date "
+                           "receive the upcoming payout.",
+        })
+    dd = _parse_iso_date(company.get("dividendDate"))
+    if dd and dd >= today:
+        live.append({
+            "event": "Dividend Payment", "date": dd.isoformat(), "impact": "Low",
+            "description": "Declared dividend payment date from the live calendar feed.",
+        })
+
+    static = data.get_catalysts(symbol)
+    if not live:
+        return static  # fallback-only: no live calendar data
+
+    # Live earnings supersedes any curated earnings entry; keep the rest of the
+    # editorial events (conferences, regulatory) since no free API supplies them.
+    merged = list(live)
+    for c in static:
+        if "earning" in (c.get("event") or "").lower():
+            continue
+        merged.append(c)
+
+    merged.sort(key=lambda c: _parse_iso_date(c.get("date")) or date.max)
+    return merged[:6]
+
+
+def _daily_returns_by_date(points: List[dict]) -> Dict[str, float]:
+    """Map of ISO date -> daily simple return from a chronological close series."""
+    out: Dict[str, float] = {}
+    prev: Optional[float] = None
+    for pt in points:
+        c = pt.get("c")
+        t = pt.get("t")
+        if c is None or t is None:
+            continue
+        if prev is not None and prev > 0:
+            out[t] = (c - prev) / prev
+        prev = c
+    return out
+
+
+def _pearson(xs: List[float], ys: List[float]) -> Optional[float]:
+    n = len(xs)
+    if n < 2:
+        return None
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    cov = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    vx = sum((x - mx) ** 2 for x in xs)
+    vy = sum((y - my) ** 2 for y in ys)
+    if vx <= 0 or vy <= 0:
+        return None
+    return cov / math.sqrt(vx * vy)
+
+
+def _company_correlations(symbol: str, peer_syms: List[str]) -> Optional[List[dict]]:
+    """Rolling ~3M correlation of the subject's daily returns vs each peer's,
+    computed from real OHLCV history. Returns None when the subject (or every
+    peer) lacks live price history, so the caller can fall back to curated KPIs.
+    """
+    syms = [symbol] + [p for p in peer_syms if p and p != symbol]
+    if len(syms) < 2:
+        return None
+    bulk = repo.closes_bulk(syms, days=90)
+    series = bulk.get("series") or {}
+    sources = bulk.get("sources") or {}
+
+    if sources.get(symbol) != "live":
+        return None
+    subj = _daily_returns_by_date(series.get(symbol) or [])
+    if len(subj) < 20:
+        return None
+
+    out: List[dict] = []
+    for p in peer_syms:
+        if p == symbol or sources.get(p) != "live":
+            continue
+        peer = _daily_returns_by_date(series.get(p) or [])
+        keys = sorted(set(subj) & set(peer))
+        if len(keys) < 20:
+            continue
+        r = _pearson([subj[k] for k in keys], [peer[k] for k in keys])
+        if r is None:
+            continue
+        out.append({
+            "metric": f"{p} price returns",
+            "correlation": round(r, 2),
+            "direction": "positive" if r >= 0 else "negative",
+        })
+
+    if not out:
+        return None
+    out.sort(key=lambda c: abs(c["correlation"]), reverse=True)
+    return out[:5]
+
+
 def _company_analytics_fallback(symbol: str, company: dict) -> dict:
     """Rules-based price drivers when AI is unavailable."""
     chg = company["changePct"]
@@ -4413,7 +4547,7 @@ def _company_analytics_fallback(symbol: str, company: dict) -> dict:
         drivers.append({"title": "Unprofitable on a net basis", "tag": "bearish",
                         "explanation": f"Negative net margin of {company['netMargin']:.1f}% raises cash-burn concerns."})
 
-    rev_growth = data.get_revenue_growth(symbol) or 0.0
+    rev_growth = _resolve_revenue_growth(symbol, company) or 0.0
     if rev_growth > 20:
         drivers.append({"title": "High revenue growth", "tag": "bullish",
                         "explanation": f"Revenue growing {rev_growth:.1f}% YoY — well above average, justifying a growth premium."})
@@ -4441,13 +4575,13 @@ def build_company_analytics(params: dict) -> dict:
     # --- Peers & competitive comparison ---
     peer_syms = data.get_peers(symbol)
     all_syms = [symbol] + peer_syms
-    rev_growth = data.get_revenue_growth(symbol)
+    rev_growth = _resolve_revenue_growth(symbol, company)
     peers_table = []
     for sym in all_syms:
         c = repo.get_company(sym)
         if not c:
             continue
-        rg = data.get_revenue_growth(sym)
+        rg = _resolve_revenue_growth(sym, c)
         mc_b = round(c["marketCap"] / 1_000_000_000, 1)
         peers_table.append({
             "symbol": sym,
@@ -4459,11 +4593,11 @@ def build_company_analytics(params: dict) -> dict:
             "marketCapB": mc_b,
         })
 
-    # --- KPI correlations ---
-    correlations = data.get_kpi_correlations(symbol)
+    # --- KPI correlations (live rolling price correlations, curated fallback) ---
+    correlations = _company_correlations(symbol, peer_syms) or data.get_kpi_correlations(symbol)
 
-    # --- Catalysts ---
-    catalysts = data.get_catalysts(symbol)
+    # --- Catalysts (live earnings/dividend calendar merged with curated events) ---
+    catalysts = _company_catalysts(symbol, company)
 
     # --- Price drivers (AI preferred, rules fallback) ---
     if ai.ai_available():

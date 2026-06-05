@@ -48,8 +48,10 @@ def get_company(symbol: str) -> Optional[dict]:
                 SELECT f.symbol, f.name, u.sector AS sector,
                        u.country AS country, u.exchange AS exchange,
                        f.price, f.change_pct, f.market_cap, f.pe_ratio, f.volume,
-                       f.revenue, f.net_margin, f.eps, f.dividend_yield, f.beta,
+                       f.revenue, f.net_margin, f.revenue_growth, f.eps,
+                       f.dividend_yield, f.beta,
                        f.week52_high, f.week52_low, f.description, f.is_live,
+                       f.earnings_date, f.ex_dividend_date, f.dividend_date,
                        f.updated_at
                 FROM fundamentals f
                 LEFT JOIN universe u ON u.symbol = f.symbol
@@ -84,6 +86,7 @@ def _company_from_row(row: dict) -> dict:
         "volume": _num(row.get("volume")),
         "revenue": row.get("revenue"),
         "netMargin": _num(row.get("net_margin")),
+        "revenueGrowth": _num(row.get("revenue_growth")) if row.get("revenue_growth") is not None else None,
         "eps": _num(row.get("eps")),
         "dividendYield": _num(row.get("dividend_yield")),
         "beta": _num(row.get("beta")),
@@ -92,6 +95,9 @@ def _company_from_row(row: dict) -> dict:
         "description": row.get("description") or "",
         "country": row.get("country"),
         "exchange": row.get("exchange"),
+        "earningsDate": _iso(row.get("earnings_date")),
+        "exDividendDate": _iso(row.get("ex_dividend_date")),
+        "dividendDate": _iso(row.get("dividend_date")),
         "_asOf": _iso(row.get("updated_at")),
         "_source": "live" if row.get("is_live") else "mock",
     }
@@ -119,8 +125,10 @@ def companies_bulk(symbols: List[str]) -> Dict[str, dict]:
                 SELECT f.symbol, f.name, u.sector AS sector,
                        u.country AS country, u.exchange AS exchange,
                        f.price, f.change_pct, f.market_cap, f.pe_ratio, f.volume,
-                       f.revenue, f.net_margin, f.eps, f.dividend_yield, f.beta,
+                       f.revenue, f.net_margin, f.revenue_growth, f.eps,
+                       f.dividend_yield, f.beta,
                        f.week52_high, f.week52_low, f.description, f.is_live,
+                       f.earnings_date, f.ex_dividend_date, f.dividend_date,
                        f.updated_at
                 FROM fundamentals f
                 LEFT JOIN universe u ON u.symbol = f.symbol

@@ -1383,7 +1383,10 @@ PEER_MAPPINGS: Dict[str, List[str]] = {
     "NOW":  ["CRM", "MSFT", "META"],
 }
 
-# Annual revenue growth % per ticker (fabricated-but-plausible)
+# Annual revenue growth % per ticker. FALLBACK-ONLY default: the live value is
+# computed from the yfinance fundamentals snapshot (`revenueGrowth`) and stored
+# on the fundamentals table; these curated figures are used only when no live
+# data is available.
 REVENUE_GROWTH: Dict[str, float] = {
     "NVDA": 122.4, "AMD": 18.1, "INTC": -8.7, "TSM": 28.4,
     "AVGO": 43.2,  "ASML": 9.5,  "MU":   61.3, "QCOM": 7.4,
@@ -1393,7 +1396,10 @@ REVENUE_GROWTH: Dict[str, float] = {
     "PLTR": 27.0,  "SNOW": 32.9,  "CRM":  9.8,  "NOW":  22.3,
 }
 
-# KPI correlations: which fundamental metrics most closely track this stock's price
+# KPI correlations: which fundamental metrics most closely track this stock's
+# price. FALLBACK-ONLY default: when live OHLCV history exists the builder
+# computes real rolling return correlations vs peers; these curated values are
+# used only when live price series are unavailable.
 KPI_CORRELATIONS: Dict[str, List[dict]] = {
     "NVDA": [
         {"metric": "Data Center Revenue YoY", "correlation": 0.94, "direction": "positive"},
@@ -1565,7 +1571,10 @@ KPI_CORRELATIONS: Dict[str, List[dict]] = {
     ],
 }
 
-# Upcoming catalysts per ticker
+# Upcoming catalysts per ticker. FALLBACK-ONLY default: the builder sources real
+# earnings/dividend dates from the live yfinance calendar feed (stored on the
+# fundamentals table) and merges them ahead of these curated editorial events;
+# this whole set is used as-is only when no live calendar data is available.
 _TODAY = date.today()
 
 
@@ -1753,17 +1762,27 @@ def get_peers(symbol: str) -> List[str]:
 
 
 def get_kpi_correlations(symbol: str) -> List[dict]:
-    """Return KPI correlation list for a given symbol."""
+    """Return the FALLBACK KPI correlation list for a given symbol.
+
+    Used only when the builder cannot compute live rolling return correlations.
+    """
     return KPI_CORRELATIONS.get(symbol.upper(), [])
 
 
 def get_catalysts(symbol: str) -> List[dict]:
-    """Return upcoming catalyst list for a given symbol."""
+    """Return the FALLBACK catalyst list for a given symbol.
+
+    The builder prefers real earnings/dividend dates from the live calendar feed
+    and merges these curated editorial events behind them.
+    """
     return CATALYSTS.get(symbol.upper(), [])
 
 
 def get_revenue_growth(symbol: str) -> Optional[float]:
-    """Return annual revenue growth % for a given symbol."""
+    """Return the FALLBACK annual revenue growth % for a given symbol.
+
+    Used only when the live ``revenueGrowth`` snapshot is unavailable.
+    """
     return REVENUE_GROWTH.get(symbol.upper())
 
 
