@@ -56,3 +56,22 @@ with a paper book marked to REAL prices. Layers:
 - **Terminal vite build needs `PORT` and `BASE_PATH` env** or config load fails:
   `PORT=3000 BASE_PATH=/terminal pnpm --filter @workspace/terminal build`. The
   dev workflow runs HMR so source edits are live without a rebuild.
+
+## Testing the lifecycle offline (tests/test_strategy*.py)
+- Force the in-memory store by patching `strategy_store.db.db_available -> False`
+  AND resetting `strategy_store._schema_ready=False` + `_mem.clear()`; restore in
+  a finally. (`pytest` is not installed — mirror the runnable-as-script pattern.)
+- Stub the data layer so nothing hits network/live DB: `repo.get_company`
+  (return `{symbol,name,price}`), `repo.price_closes_bulk` (return
+  `{series:{SYM:[{t,c}...]}, source, asOf}`), `repo.all_symbols`,
+  `repo.get_all_companies`. Patching the `repo` module attrs hits both
+  `strategy.py` and `agent.py` (same module object).
+- Make close-series dates start at `date.today()` so `nav_curve` keeps them
+  (`>= inception`); a fresh paper book has `ageDays=0 < minDays=5`, a
+  deterministic promotion BLOCK regardless of stats — good for the gate test.
+- Agent intent handler: stub `harness.run_skill` to a trivial panel dict to
+  isolate `_handle_lifecycle` from the data-heavy panel builders.
+- FastAPI: `TestClient(app)` WITHOUT a `with` block skips the app lifespan
+  (background worker); strategy routes + skill registry are import-time so they
+  still work. A blocked transition returns 200 with `ok:false` (not an
+  HTTPException); only unknown id is a 404.
