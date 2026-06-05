@@ -10,7 +10,7 @@ points and for the live/mock fallback decision.
 """
 from __future__ import annotations
 
-from . import attribution, execution, optimize, riskmodel
+from . import attribution, execution, optimize, paperbook, riskmodel
 from .attribution import (
     active_stats,
     align_benchmark_returns,
@@ -109,6 +109,7 @@ __all__ = [
     "signal_label",
     "spearman_ic",
     "execution",
+    "paperbook",
     "generate_orders",
     "simulate_all",
     "square_root_impact",

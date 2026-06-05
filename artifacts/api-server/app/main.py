@@ -149,6 +149,57 @@ def refine(req: models.RefineRequest):
     return updated
 
 
+class StrategyCreateRequest(BaseModel):
+    name: str | None = None
+    signal: str | None = None
+    symbols: list[str] | None = None
+    weights: list[float] | None = None
+    sector: str | None = None
+    capital: float | None = None
+    promotionCriteria: dict | None = None
+    notes: str | None = None
+    paper: bool = False
+
+
+class StrategyTransitionRequest(BaseModel):
+    stage: str
+    force: bool = False
+
+
+@api.get("/strategies")
+def list_strategies():
+    from . import strategy
+    return strategy.desk_payload()
+
+
+@api.post("/strategies")
+def create_strategy(req: StrategyCreateRequest):
+    from . import strategy
+    try:
+        view = strategy.create_strategy(
+            name=req.name, signal=req.signal, symbols=req.symbols, weights=req.weights,
+            sector=req.sector, capital=req.capital, promotion_criteria=req.promotionCriteria,
+            notes=req.notes, paper=req.paper,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"could not create strategy: {exc}")
+    return view
+
+
+@api.post("/strategies/{strategy_id}/transition")
+def transition_strategy(strategy_id: str, req: StrategyTransitionRequest):
+    from . import strategy, strategy_store
+    view = strategy_store.get_strategy(strategy_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="strategy not found")
+    stage = (req.stage or "").strip().lower()
+    if stage == "demote":
+        updated, ok, message = strategy.demote(view)
+    else:
+        updated, ok, message = strategy.transition(view, stage, force=req.force)
+    return {"ok": ok, "message": message, "strategy": updated}
+
+
 @api.get("/generated-panels")
 def get_generated_panels():
     """Return the source of every AI-generated panel component.

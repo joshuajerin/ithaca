@@ -3868,6 +3868,21 @@ def build_data_quality(params: dict) -> dict:
     }
 
 
+def build_strategy_desk(params: dict) -> dict:
+    """Strategy lifecycle desk: roster of every strategy across the research →
+    backtest → paper → live lifecycle plus a marked paper-book detail for one.
+
+    Pure orchestration over the lifecycle service — every P&L number is the book
+    marked to REAL prices, and the NAV history is reconstructed from real closes
+    since inception (no synthetic curve)."""
+    from . import strategy
+
+    selected = params.get("strategy") or params.get("strategyName") or params.get("name")
+    payload = strategy.desk_payload(selected)
+    payload["title"] = "Strategy Desk"
+    return payload
+
+
 # ----------------------------- registry -----------------------------
 class SkillDef:
     def __init__(self, id, name, panel_type, description, subskills, builder, default_title):
@@ -3887,6 +3902,20 @@ def _reg(skill: SkillDef):
     SKILLS[skill.panel_type] = skill
 
 
+_reg(SkillDef(
+    "strategy-desk", "Strategy Lifecycle Desk", "strategy_desk",
+    "Lists every systematic strategy across the research → backtest → paper → live "
+    "lifecycle with its stage, exposures and live (real-price) P&L, plus a marked "
+    "paper-book detail (positions, NAV/P&L curve, realized stats, promotion check) "
+    "for one strategy. Use for 'show the desk', 'my strategies', 'the paper book', "
+    "'strategy lifecycle'. Pass `strategy` to focus one by name.",
+    [
+        {"name": "load_registry", "description": "Read the persisted strategy registry.", "expectedOutput": "All strategies with their lifecycle stage."},
+        {"name": "mark_books", "description": "Mark each paper/live book to real prices.", "expectedOutput": "Per-strategy exposures and P&L."},
+        {"name": "assemble_desk", "description": "Build the roster plus a selected strategy detail.", "expectedOutput": "A desk payload."},
+    ],
+    build_strategy_desk, "Strategy Desk",
+))
 _reg(SkillDef(
     "price-chart", "Live Price Charts", "price_chart",
     "Renders an OHLCV price history for a single ticker over a chosen window, "

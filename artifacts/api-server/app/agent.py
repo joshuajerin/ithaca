@@ -12,7 +12,7 @@ import re
 import uuid
 from typing import List, Optional
 
-from . import ai, data, dynamic_skills, engine, harness, repo, skills, state
+from . import ai, data, dynamic_skills, engine, harness, repo, skills, state, strategy, strategy_store
 
 
 # ----------------------------- tool schemas -----------------------------
@@ -528,6 +528,22 @@ def _tools() -> list:
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }},
         }},
+        {"type": "function", "function": {
+            "name": "add_strategy_desk",
+            "description": (
+                "Add the STRATEGY LIFECYCLE DESK: a roster of every systematic strategy across the "
+                "research → backtest → paper → live lifecycle with its stage, exposures and live "
+                "(real-price) P&L, plus a marked paper-book detail (positions, NAV/P&L curve, realized "
+                f"stats, promotion check) for one strategy. {sizing} Use for 'show the desk', 'my "
+                "strategies', 'the paper book', 'strategy lifecycle', or after a lifecycle action. Pass "
+                "`strategy` to focus a specific one by name. This shows existing strategies; it does NOT "
+                "create, paper-trade, promote, demote or retire — those are handled separately."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "strategy": {"type": "string", "description": "Optional strategy name to focus the detail block on."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
     ]
 
 
@@ -577,6 +593,7 @@ _TOOL_TO_TYPE = {
     "add_analyst_report": "analyst_report",
     "add_scenario": "scenario",
     "add_risk_monitor": "risk_monitor",
+    "add_strategy_desk": "strategy_desk",
 }
 
 
@@ -683,6 +700,11 @@ def _system_prompt() -> str:
         "This is the risk DESK (exposures + limits + crisis & shock stress); use add_risk_model instead when "
         "the user only wants factor-vs-specific risk decomposition/MCTR, and add_scenario for a narrative "
         "what-if projection.\n"
+        "- For STRATEGY LIFECYCLE / paper-book / 'desk' requests that only VIEW state ('show the desk', "
+        "'my strategies', 'the paper book', 'strategy lifecycle', 'how is the momentum strategy doing'), "
+        "use add_strategy_desk (pass `strategy` to focus one). Lifecycle ACTIONS — create / paper-trade / "
+        "promote / demote / retire a strategy — are handled before you are called, so do not try to "
+        "perform them; just present the desk.\n"
         "- Decide each panel's width (3-12 grid columns) and height (2-6 row units). Make the "
         "primary panel larger; supporting panels narrower. A full-width hero is width 12.\n"
         "- Only use tickers and sectors that exist in the dataset.\n"
@@ -693,6 +715,148 @@ def _system_prompt() -> str:
         "code (e.g. D05 for DBS, O39 for OCBC, Z74 for Singtel) with no .SI suffix.\n"
         f"- Valid sectors: {', '.join(data.SECTORS.keys())}."
     )
+
+
+# ----------------------------- strategy lifecycle -----------------------------
+# Lifecycle ACTIONS (create / paper-trade / promote / demote / retire) mutate the
+# persisted registry, so they are handled deterministically BEFORE the normal
+# panel-composition flow — this keeps them reliable in both the Console and Voice
+# Mode and independent of the LLM. Pure VIEW requests ("show the desk") fall
+# through to the standard skill path (strategy_desk).
+_SIGNAL_KEYWORDS = (
+    ("momentum", ("momentum", "trend")),
+    ("short_reversal", ("reversal", "mean reversion", "reversion")),
+    ("low_volatility", ("low vol", "low volatility")),
+    ("value", ("value", "earnings yield", "cheap")),
+    ("quality", ("quality", "net margin", "profitab")),
+)
+
+
+def _signal_in_query(q: str) -> Optional[str]:
+    for key, kws in _SIGNAL_KEYWORDS:
+        if any(k in q for k in kws):
+            return key
+    return None
+
+
+def _lifecycle_action(q: str) -> Optional[str]:
+    if re.search(r"\bretire\b|\bdecommission\b|\bshut down\b|\barchive\b|\bkill the\b", q):
+        return "retire"
+    if re.search(r"\bpromote\b|\bgo[es]? live\b|\b(push|move|take|send|put)\b[^.]*\blive\b", q):
+        return "promote"
+    if re.search(r"\bdemote\b|\bmove\b[^.]*\bback\b|\brevert\b[^.]*\bpaper\b|\bstep\b[^.]*\bdown\b", q):
+        return "demote"
+    if re.search(r"\bpaper[- ]?trad\w*\b|\bstart paper\b|\badd\b[^.]*\bpaper book\b", q):
+        return "paper"
+    if re.search(r"\b(create|register|set up|build|spin up|make)\b[^.]*\bstrateg", q) or re.search(r"\bnew strateg", q):
+        return "create"
+    return None
+
+
+def _extract_strategy_name(q: str) -> Optional[str]:
+    m = re.search(r'(?:called|named)\s+"?([A-Za-z0-9 _-]{2,40})"?', q)
+    if m:
+        return m.group(1).strip().strip('"')
+    m = re.search(r'"([^"]{2,40})"', q)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
+def _resolve_target_strategy(query: str, signal: Optional[str]) -> Optional[dict]:
+    """Find the strategy a lifecycle command refers to: by explicit name tokens,
+    by signal, else the single / most recently touched one (handles 'it')."""
+    strategies = strategy_store.list_strategies()
+    if not strategies:
+        return None
+    ql = query.lower()
+    best = None
+    best_len = -1
+    for s in strategies:
+        nm = (s.get("name") or "").lower()
+        toks = [t for t in re.split(r"[^a-z0-9]+", nm)
+                if len(t) > 2 and t not in ("the", "strategy")]
+        if toks and all(t in ql for t in toks) and len(nm) > best_len:
+            best, best_len = s, len(nm)
+    if best:
+        return best
+    if signal:
+        for s in strategies:
+            if s.get("signal") == signal:
+                return s
+    if len(strategies) == 1:
+        return strategies[0]
+    return max(strategies, key=lambda s: s.get("updatedAt") or "")
+
+
+def _handle_lifecycle(query: str, sid: str, voice: bool) -> Optional[dict]:
+    q = query.lower()
+    action = _lifecycle_action(q)
+    if not action:
+        return None
+    signal = _signal_in_query(q)
+    symbols = _extract_symbols(query)
+    target: Optional[dict] = None
+    msg = ""
+
+    try:
+        if action == "create":
+            target = strategy.create_strategy(
+                name=_extract_strategy_name(query), signal=signal,
+                symbols=symbols or None, paper=bool(re.search(r"\bpaper", q)),
+            )
+            if target.get("stage") == "paper":
+                msg = (f"Created {target['name']} and started paper-trading it with a "
+                       f"${int(target['capital']):,} book.")
+            else:
+                msg = f"Created {target['name']} in research."
+        else:
+            target = _resolve_target_strategy(query, signal)
+            if target is None:
+                if action == "paper" and (signal or symbols):
+                    target = strategy.create_strategy(signal=signal, symbols=symbols or None, paper=True)
+                    msg = f"Created and started paper-trading {target['name']}."
+                else:
+                    return {
+                        "sessionId": sid, "intent": "build", "panels": state.get_dashboard(sid),
+                        "summary": "You don't have any strategies yet — say e.g. "
+                                   "'create a momentum strategy' or 'paper-trade the value strategy'.",
+                    }
+            elif action == "paper":
+                target = strategy.paper_trade(target)
+                msg = f"{target['name']} is now paper-trading a ${int(target['capital']):,} book."
+            elif action == "promote":
+                force = bool(re.search(r"\bforce\b|\boverride\b|\banyway\b", q))
+                target, _ok, msg = strategy.transition(target, "live", force=force)
+            elif action == "demote":
+                target, _ok, msg = strategy.demote(target)
+            elif action == "retire":
+                target, _ok, msg = strategy.transition(target, "retired")
+    except Exception:  # noqa: BLE001 — lifecycle must never 500 the orchestrate path
+        return None
+
+    cursor = {"x": 0, "y": 0, "rowH": 0}
+    panels: List[dict] = []
+
+    def add(panel_type, params, w, h, title=None):
+        panels.append(harness.run_skill(panel_type, params, harness.pack_layout(w, h, cursor), title=title))
+
+    add("strategy_desk", {"strategy": target["name"]}, 12, 5)
+    wmap = target.get("targetWeights") or {}
+    # Link the desk into the Risk Management + Attribution pillars for the book.
+    if target.get("stage") in ("paper", "live") and wmap:
+        syms = list(wmap.keys())
+        ws = [wmap[s] for s in syms]
+        add("risk_monitor", {"symbols": syms, "weights": ws, "portfolio_name": target["name"]}, 12, 6)
+        add("factor_analysis", {"symbols": syms}, 12, 5)
+
+    state.set_dashboard(sid, panels)
+    state.append_history(sid, "user", query)
+    state.append_history(sid, "assistant", msg)
+    result: dict = {"sessionId": sid, "summary": msg, "panels": panels, "intent": "build"}
+    if voice:
+        result["narration"] = _build_narration(query, msg, panels)
+    return result
 
 
 def orchestrate(query: str, session_id: Optional[str], voice: bool = False) -> dict:
@@ -710,6 +874,12 @@ def orchestrate(query: str, session_id: Optional[str], voice: bool = False) -> d
         base = state.get_dashboard(sid)
     if reset:
         base = []
+
+    # Lifecycle mutations (paper-trade / promote / demote / retire / create) are
+    # handled here, deterministically, before the panel-composition flow.
+    lifecycle = _handle_lifecycle(query, sid, voice)
+    if lifecycle is not None:
+        return lifecycle
 
     # A message can either ask a question (answer it in chat, leave the dashboard
     # untouched) or be a build/modify request (compose panels as before). Voice
@@ -1575,6 +1745,7 @@ _TYPE_LABELS = {
     "analyst_report": "an analyst report",
     "scenario": "a what-if scenario",
     "risk_monitor": "a risk monitor",
+    "strategy_desk": "the strategy desk",
 }
 
 
@@ -1748,6 +1919,11 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         "how should i allocate", "asset allocation", "position sizing", "size my positions",
         "efficient frontier", "tangency portfolio",
     ])
+    wants_desk = any(k in q for k in [
+        "strategy desk", "the desk", "show the desk", "my strategies", "strategy lifecycle",
+        "paper book", "paper-book", "strategy registry", "strategy roster", "live book",
+        "strategy book", "the book",
+    ])
     wants_backtest = any(k in q for k in ["backtest", "back test", "back-test", "momentum strategy", "strategy", "sharpe", "cagr", "drawdown"])
     wants_montecarlo = any(k in q for k in ["monte carlo", "montecarlo", "monte-carlo", "simulate", "simulation", "forward project", "project price", "scenario analysis", "probability of loss", "forecast price", "gbm", "geometric brownian", "bootstrap"])
     wants_correlation = any(k in q for k in ["correlation", "correlat", "hedge ratio", "co-movement", "diversif", "beta table"])
@@ -1788,6 +1964,10 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         "ic decay", "signal turnover", "quantile spread", "decile spread", "long-short spread",
         "long short spread", "predict returns", "cross-sectional", "cross sectional",
     ]) or (_mentions_signal and len(_signals_found) >= 1)
+
+    if wants_desk:
+        add("strategy_desk", {}, 12, 5)
+        return panels, "Here's the strategy desk: every strategy across the lifecycle with live P&L."
 
     if wants_order_book and symbols:
         sym = symbols[0]
