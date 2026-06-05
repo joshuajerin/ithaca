@@ -166,6 +166,10 @@ class StrategyTransitionRequest(BaseModel):
     force: bool = False
 
 
+class StrategyRebalanceRequest(BaseModel):
+    costBps: float | None = None
+
+
 @api.get("/strategies")
 def list_strategies():
     from . import strategy
@@ -198,6 +202,17 @@ def transition_strategy(strategy_id: str, req: StrategyTransitionRequest):
     else:
         updated, ok, message = strategy.transition(view, stage, force=req.force)
     return {"ok": ok, "message": message, "strategy": updated}
+
+
+@api.post("/strategies/{strategy_id}/rebalance")
+def rebalance_strategy(strategy_id: str, req: StrategyRebalanceRequest | None = None):
+    from . import strategy, strategy_store
+    view = strategy_store.get_strategy(strategy_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="strategy not found")
+    cost_bps = (req.costBps if req and req.costBps is not None else strategy.DEFAULT_COST_BPS)
+    updated, info = strategy.rebalance(view, cost_bps=cost_bps)
+    return {"ok": bool(info.get("applied")), "rebalance": info, "strategy": updated}
 
 
 @api.get("/generated-panels")

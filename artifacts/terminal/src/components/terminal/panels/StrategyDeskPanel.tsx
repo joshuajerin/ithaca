@@ -71,6 +71,13 @@ interface Detail {
   promotionCriteria?: Record<string, number> | null;
   promotion?: { pass: boolean; checks: Check[] } | null;
   stageHistory?: { stage: string; at: string }[] | null;
+  lastRebalance?: {
+    at?: string | null;
+    trades?: number | null;
+    turnoverPct?: number | null;
+    costUsd?: number | null;
+    costBps?: number | null;
+  } | null;
 }
 interface StrategyDeskData {
   strategies: RosterRow[];
@@ -204,6 +211,34 @@ export function StrategyDeskPanel({ data }: { data: StrategyDeskData }) {
           </div>
 
           <div className="flex-1 overflow-y-auto pr-1 min-h-0">
+            {detail.lastRebalance && detail.lastRebalance.at && (
+              <div className="mb-3 rounded-sm border border-border/60 bg-white/[0.02] px-2 py-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="editorial-label text-[8px] text-muted-foreground">
+                    Last Rebalance · {detail.lastRebalance.at}
+                  </span>
+                  {detail.lastRebalance.costBps != null && (
+                    <span className="editorial-label text-[7.5px] text-muted-foreground">
+                      {detail.lastRebalance.costBps}bps model
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-baseline gap-4 mt-1">
+                  <span className="tabular-nums text-[11px]">
+                    {detail.lastRebalance.trades ?? 0}{" "}
+                    <span className="text-muted-foreground text-[9px]">trades</span>
+                  </span>
+                  <span className="tabular-nums text-[11px]">
+                    {(detail.lastRebalance.turnoverPct ?? 0).toFixed(1)}%{" "}
+                    <span className="text-muted-foreground text-[9px]">turnover</span>
+                  </span>
+                  <span className="tabular-nums text-[11px]">
+                    {fmtUsd(detail.lastRebalance.costUsd ?? 0)}{" "}
+                    <span className="text-muted-foreground text-[9px]">cost</span>
+                  </span>
+                </div>
+              </div>
+            )}
             {curve.length > 1 && (
               <div className="h-[110px] mb-3">
                 <div className="editorial-label text-[8px] text-muted-foreground mb-1">P&L Since Inception (real closes)</div>

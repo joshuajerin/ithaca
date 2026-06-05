@@ -748,6 +748,13 @@ def _lifecycle_action(q: str) -> Optional[str]:
         return "demote"
     if re.search(r"\bpaper[- ]?trad\w*\b|\bstart paper\b|\badd\b[^.]*\bpaper book\b", q):
         return "paper"
+    # Rebalance is only a lifecycle action when it clearly refers to a strategy
+    # (the word "strateg", "book", or a signal keyword) — otherwise "rebalance a
+    # portfolio" must fall through to the portfolio-optimization path.
+    if re.search(r"\brebalanc\w*\b", q) and (
+        re.search(r"\bstrateg|\bbook\b", q) or _signal_in_query(q) is not None
+    ):
+        return "rebalance"
     if re.search(r"\b(create|register|set up|build|spin up|make)\b[^.]*\bstrateg", q) or re.search(r"\bnew strateg", q):
         return "create"
     return None
@@ -832,6 +839,19 @@ def _handle_lifecycle(query: str, sid: str, voice: bool) -> Optional[dict]:
                 target, _ok, msg = strategy.demote(target)
             elif action == "retire":
                 target, _ok, msg = strategy.transition(target, "retired")
+            elif action == "rebalance":
+                target, info = strategy.rebalance(target)
+                if info.get("applied"):
+                    label = engine.signal_label(target.get("signal") or "momentum")
+                    if info.get("established"):
+                        msg = (f"Built {target['name']}'s book from the latest {label} targets — "
+                               f"{info['trades']} positions, ${info['costUsd']:,.0f} modeled cost.")
+                    else:
+                        msg = (f"Rebalanced {target['name']} to its latest {label} targets — "
+                               f"{info['trades']} trades, {info['turnoverPct']:.1f}% turnover, "
+                               f"${info['costUsd']:,.0f} modeled cost.")
+                else:
+                    msg = f"Couldn't rebalance {target['name']}: {info.get('reason', 'no trades generated')}."
     except Exception:  # noqa: BLE001 — lifecycle must never 500 the orchestrate path
         return None
 

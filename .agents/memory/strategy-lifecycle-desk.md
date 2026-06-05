@@ -21,6 +21,19 @@ with a paper book marked to REAL prices. Layers:
   `wants_desk` only VIEW the desk.
 - **Frontend**: `StrategyDeskPanel.tsx`, passthrough panel (no openapi model).
 
+## Rebalance
+- `strategy.rebalance(view, cost_bps)` re-derives targets from the **signal**
+  (not the original explicit symbols/sector — those aren't persisted), diffs the
+  marked book via `engine.generate_orders`, applies trades, and re-anchors entry
+  prices + inception to today so the marked-book/NAV model stays consistent.
+  Reports one-way turnover (`0.5*Σ|Δw|`) + modeled bps cost; stashes a
+  `lastRebalance` summary on `construction` (JSON, no schema change) and logs a
+  `{event:"rebalance"}` stage-history entry.
+- **Routing trap**: "rebalance" is also a portfolio-optimizer keyword. The
+  lifecycle handler runs first, so `_lifecycle_action` only returns "rebalance"
+  when the query also says strateg/book or names a signal — otherwise "rebalance
+  a portfolio" must fall through to `add_portfolio`/optimizer.
+
 ## Gotchas (cost >1 attempt)
 - **`drizzle push` is destructive here**: pushing drops unrelated columns on
   `fundamentals`/`universe` and needs a TTY. Do NOT push for this table — the

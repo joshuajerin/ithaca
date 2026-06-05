@@ -27,6 +27,8 @@ log = logging.getLogger(__name__)
 DEFAULT_CAPITAL = 1_000_000.0
 DEFAULT_TOP_N = 8
 _UNIVERSE_CAP = 40
+# Modeled one-side transaction cost applied to traded notional on a rebalance.
+DEFAULT_COST_BPS = 5.0
 
 # Ordered promotion ladder; retired is terminal and reachable from anywhere.
 STAGE_ORDER = ["research", "backtest", "paper", "live"]
@@ -243,6 +245,147 @@ def paper_trade(view: dict) -> dict:
         history.append({"stage": "paper", "at": date.today().isoformat()})
     view["stageHistory"] = history
     view["stage"] = "paper"
+    return _persist(view)
+
+
+def _current_weights(positions: List[dict], prices: Dict[str, float], book_val: float) -> Dict[str, float]:
+    """Current per-name weight fractions from marked positions over book value."""
+    out: Dict[str, float] = {}
+    if book_val <= 0:
+        return out
+    for p in positions:
+        s = (p.get("symbol") or "").upper()
+        px = prices.get(s)
+        if px and px > 0:
+            out[s] = (float(p.get("shares") or 0.0) * px) / book_val
+    return out
+
+
+def rebalance(view: dict, cost_bps: float = DEFAULT_COST_BPS) -> Tuple[dict, dict]:
+    """Re-derive target weights, diff against the current book and apply the trades.
+
+    Returns ``(view, info)`` where ``info`` carries the realized turnover, the
+    modeled transaction cost and the trade list. The book's value continuity is
+    preserved (the trades are notional-neutral apart from the modeled cost); the
+    P&L baseline is re-anchored to the rebalance date because the marked-book and
+    NAV model assume a single set of positions held since inception.
+    """
+    sig = engine.normalize_signal(view.get("signal") or "momentum")
+    new_w, picks, excluded, label = derive_target_weights(sig, None, None, None)
+    if not new_w:
+        return view, {"applied": False, "reason": "could not derive new target weights from the signal"}
+
+    positions = view.get("positions") or []
+    # No existing book — a rebalance just establishes one from the fresh targets.
+    if not positions:
+        view["targetWeights"] = new_w
+        cons = dict(view.get("construction") or {})
+        cons["picks"] = picks
+        if excluded:
+            cons["excluded"] = excluded
+        view["construction"] = cons
+        saved = paper_trade(view)
+        capital = float(saved.get("capital") or DEFAULT_CAPITAL)
+        invested = capital - float(saved.get("cash") or 0.0)
+        cost = round(invested * (cost_bps / 10_000.0), 2)
+        info = {
+            "applied": True,
+            "established": True,
+            "trades": len(saved.get("positions") or []),
+            "turnoverPct": 100.0,
+            "costUsd": cost,
+            "costBps": cost_bps,
+            "at": date.today().isoformat(),
+        }
+        return _record_rebalance(saved, info), info
+
+    cash = float(view.get("cash") or 0.0)
+    cur_syms = [(p.get("symbol") or "").upper() for p in positions]
+    all_syms = list({*cur_syms, *new_w.keys()})
+    prices = _price_map(all_syms)
+    book_val = engine.paperbook.book_value(positions, cash, prices)
+    cur_w = _current_weights(positions, prices, book_val)
+
+    orders = engine.generate_orders(new_w, cur_w, prices, book_val)
+
+    pos_by_sym: Dict[str, dict] = {(p.get("symbol") or "").upper(): dict(p) for p in positions}
+    traded_notional = 0.0
+    cash_delta = 0.0
+    for o in orders:
+        s = o["symbol"]
+        signed = o["shares"] if o["side"] == "buy" else -o["shares"]
+        traded_notional += o["notional"]
+        cash_delta += -o["notional"] if o["side"] == "buy" else o["notional"]
+        existing = pos_by_sym.get(s)
+        new_shares = (float(existing["shares"]) if existing else 0.0) + signed
+        if new_shares <= 1e-6:
+            pos_by_sym.pop(s, None)
+        else:
+            pos_by_sym[s] = {"symbol": s, "shares": new_shares, "entryPrice": o["price"]}
+
+    cost = round(traded_notional * (cost_bps / 10_000.0), 2)
+    new_cash = round(cash + cash_delta - cost, 2)
+
+    # Re-anchor entry prices to the current mark so the marked-book / NAV model
+    # stays internally consistent from the rebalance date forward.
+    new_positions: List[dict] = []
+    for s, p in pos_by_sym.items():
+        px = prices.get(s) or float(p.get("entryPrice") or 0.0)
+        new_positions.append({"symbol": s, "shares": round(float(p["shares"]), 4), "entryPrice": round(px, 4)})
+
+    # One-way turnover = 0.5 * sum(|target - current|); equals half the gross
+    # traded notional over book value.
+    turnover_pct = round((traded_notional / book_val) * 50.0, 2) if book_val > 0 else 0.0
+
+    cons = dict(view.get("construction") or {})
+    cons["picks"] = picks
+    if excluded:
+        cons["excluded"] = excluded
+    view["construction"] = cons
+    view["targetWeights"] = new_w
+    view["positions"] = new_positions
+    view["cash"] = new_cash
+    view["inceptionDate"] = date.today().isoformat()
+
+    info = {
+        "applied": True,
+        "established": False,
+        "trades": len(orders),
+        "turnoverPct": turnover_pct,
+        "costUsd": cost,
+        "costBps": cost_bps,
+        "tradedNotional": round(traded_notional, 2),
+        "orders": [
+            {"symbol": o["symbol"], "side": o["side"], "deltaWeight": o["deltaWeight"],
+             "notional": round(o["notional"], 2)}
+            for o in orders
+        ],
+        "at": date.today().isoformat(),
+    }
+    return _record_rebalance(view, info), info
+
+
+def _record_rebalance(view: dict, info: dict) -> dict:
+    """Stash the rebalance summary on construction and log a stage-history event."""
+    cons = dict(view.get("construction") or {})
+    cons["lastRebalance"] = {
+        "at": info.get("at"),
+        "trades": info.get("trades"),
+        "turnoverPct": info.get("turnoverPct"),
+        "costUsd": info.get("costUsd"),
+        "costBps": info.get("costBps"),
+    }
+    view["construction"] = cons
+    history = list(view.get("stageHistory") or [])
+    history.append({
+        "stage": view.get("stage") or "paper",
+        "at": info.get("at"),
+        "event": "rebalance",
+        "turnoverPct": info.get("turnoverPct"),
+        "costUsd": info.get("costUsd"),
+        "trades": info.get("trades"),
+    })
+    view["stageHistory"] = history
     return _persist(view)
 
 
@@ -534,6 +677,7 @@ def desk_payload(selected_key: Optional[str] = None) -> dict:
             "promotionCriteria": selected.get("promotionCriteria"),
             "promotion": evaluate_promotion(selected, m) if selected.get("stage") == "paper" else None,
             "stageHistory": selected.get("stageHistory"),
+            "lastRebalance": (selected.get("construction") or {}).get("lastRebalance"),
         }
 
     return {
