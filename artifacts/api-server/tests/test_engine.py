@@ -419,6 +419,185 @@ def test_benchmark_fetch_window_covers_requested_range():
         skills._BENCH_CACHE.clear()
 
 
+# --------------------------- signal builder edge cases ---------------------------
+# The pure engine is covered above; these exercise the end-to-end builders
+# (build_signal_research / build_signal_scorecard) on bad or thin market data so
+# the panels degrade gracefully — a clean error/low-coverage state — instead of
+# crashing, leaking NaN/Inf, or silently imputing missing data.
+import datetime as _dt  # noqa: E402
+
+
+def _signal_series(symbols, n, drift=0.001, flat=False, base=100.0):
+    """A dated close series per symbol. Each name gets a distinct drift unless
+    `flat` is set, in which case every close is identical (degenerate)."""
+    base_d = _dt.date(2024, 1, 1)
+    dates = [(base_d + _dt.timedelta(days=i)).isoformat() for i in range(n)]
+    out = {}
+    for k, s in enumerate(symbols):
+        d = 0.0 if flat else drift * (k + 1)
+        closes = [base]
+        for _ in range(1, n):
+            closes.append(closes[-1] * (1.0 + d))
+        out[s] = [{"t": dd, "c": c} for dd, c in zip(dates, closes)]
+    return out
+
+
+def _patch_signal_repo(series, companies=None, label="test universe"):
+    """Point the signal builders at an in-memory cross-section. Returns a
+    restore() that puts the real repo / universe resolver back."""
+    from app import skills
+
+    syms = list(series.keys())
+    orig_resolve = skills._resolve_signal_universe
+    orig_bulk = skills.repo.price_closes_bulk
+    orig_companies = skills.repo.companies_bulk
+
+    skills._resolve_signal_universe = lambda params: (syms, label)
+    skills.repo.price_closes_bulk = lambda symbols, days=400: {
+        "series": series, "asOf": "2024-06-01", "source": "mock",
+    }
+    skills.repo.companies_bulk = lambda symbols: (companies or {})
+
+    def restore():
+        skills._resolve_signal_universe = orig_resolve
+        skills.repo.price_closes_bulk = orig_bulk
+        skills.repo.companies_bulk = orig_companies
+
+    return restore
+
+
+def _all_finite(obj) -> bool:
+    if isinstance(obj, float):
+        return math.isfinite(obj)
+    if isinstance(obj, dict):
+        return all(_all_finite(v) for v in obj.values())
+    if isinstance(obj, (list, tuple)):
+        return all(_all_finite(v) for v in obj)
+    return True
+
+
+def _validate_panel(model_name, payload):
+    """Strip the envelope freshness fields and validate the data payload against
+    its panel model — the real 'this panel can render' guarantee."""
+    from app import models
+
+    data = dict(payload)
+    data.pop("asOf", None)
+    data.pop("source", None)
+    getattr(models, model_name).model_validate(data)
+
+
+def test_build_signal_research_raises_on_thin_universe():
+    from app import skills
+
+    # Fewer names than quantiles: a cross-sectional signal is not defined.
+    restore = _patch_signal_repo(_signal_series(["A", "B", "C"], 300))
+    try:
+        raised = False
+        try:
+            skills.build_signal_research({"signal": "momentum"})
+        except ValueError:
+            raised = True
+        assert raised, "expected ValueError on a sub-quantile universe"
+    finally:
+        restore()
+
+
+def test_build_signal_scorecard_raises_on_thin_universe():
+    from app import skills
+
+    restore = _patch_signal_repo(_signal_series(["A", "B", "C"], 300))
+    try:
+        raised = False
+        try:
+            skills.build_signal_scorecard({"signals": ["momentum", "value"]})
+        except ValueError:
+            raised = True
+        assert raised, "expected ValueError on a sub-quantile universe"
+    finally:
+        restore()
+
+
+def test_build_signal_research_raises_when_all_names_excluded():
+    from app import skills
+
+    # A fundamental signal where EVERY name lacks the required field. Nothing may
+    # be imputed, so there is no usable cross-section -> clean failure.
+    syms = list("ABCDEF")
+    series = _signal_series(syms, 300)
+    companies = {s: {"peRatio": None, "netMargin": None} for s in syms}
+    restore = _patch_signal_repo(series, companies=companies)
+    try:
+        raised = False
+        try:
+            skills.build_signal_research({"signal": "value"})
+        except ValueError:
+            raised = True
+        assert raised, "expected ValueError when every name is excluded (no P/E)"
+    finally:
+        restore()
+
+
+def test_build_signal_research_raises_on_short_history():
+    from app import skills
+
+    # Every name has only a handful of bars — below the engine's minimum.
+    restore = _patch_signal_repo(_signal_series(list("ABCDEF"), 3))
+    try:
+        raised = False
+        try:
+            skills.build_signal_research({"signal": "momentum"})
+        except ValueError:
+            raised = True
+        assert raised, "expected ValueError on universally short price history"
+    finally:
+        restore()
+
+
+def test_build_signal_research_flat_series_is_clean_low_coverage():
+    from app import skills
+
+    # Degenerate (perfectly flat) prices: the signal is computable (so names are
+    # NOT excluded / imputed) but uninformative. IC must report n=0 and the
+    # spread stats must be flat zeros — never NaN, never a fabricated edge.
+    restore = _patch_signal_repo(_signal_series(list("ABCDEF"), 300, flat=True))
+    try:
+        res = skills.build_signal_research({"signal": "momentum"})
+        assert res["included"] == 6
+        assert res["excluded"] == 0          # nothing imputed, nothing dropped
+        assert res["ic"]["n"] == 0           # no informative IC observations
+        assert res["spreadStats"] == {"totalReturn": 0.0, "sharpe": 0.0, "cagr": 0.0}
+        assert _all_finite(res), "flat-series payload leaked a NaN/Inf"
+        _validate_panel("SignalResearchData", res)
+    finally:
+        restore()
+
+
+def test_build_signal_scorecard_degrades_on_bad_coverage():
+    from app import skills
+
+    # The scorecard must never crash on a bad signal: each uncomputable signal
+    # becomes a zeroed, finite row (clean low-coverage), and the panel validates.
+    syms = list("ABCDEF")
+    cases = [
+        ("all-excluded", _signal_series(syms, 300),
+         {s: {"peRatio": None, "netMargin": None} for s in syms}, ["value", "quality"]),
+        ("short-history", _signal_series(syms, 3), None, ["momentum"]),
+        ("flat-series", _signal_series(syms, 300, flat=True), None, ["momentum", "low_volatility"]),
+    ]
+    for name, series, companies, signals in cases:
+        restore = _patch_signal_repo(series, companies=companies)
+        try:
+            res = skills.build_signal_scorecard({"signals": signals})
+            assert len(res["rows"]) == len(signals), name
+            for row in res["rows"]:
+                assert row["meanIC"] == 0.0, f"{name}: fabricated IC on no coverage"
+            assert _all_finite(res), f"{name}: payload leaked a NaN/Inf"
+            _validate_panel("SignalScorecardData", res)
+        finally:
+            restore()
+
+
 def _run_all():
     funcs = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
