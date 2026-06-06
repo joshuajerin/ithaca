@@ -22,6 +22,7 @@ from .sources import fundamentals as f_src
 from .sources import news as n_src
 from .sources import prices as p_src
 from .sources import sentiment as s_src
+from .sources._resilient import CircuitOpenError
 
 log = logging.getLogger("terminal.worker")
 
@@ -281,6 +282,8 @@ async def _ingest_prices(symbol: str) -> None:
             quote = dict(res["quote"])
             quote["symbol"] = symbol
             await asyncio.to_thread(_upsert_quote, quote)
+    except CircuitOpenError as exc:
+        log.debug("price ingest skipped for %s: %s", symbol, exc)
     except Exception as exc:  # noqa: BLE001
         log.warning("price ingest failed for %s: %s", symbol, exc)
 
@@ -291,6 +294,8 @@ async def _ingest_fundamentals(symbol: str) -> None:
         d = await _net(f_src.fetch_fundamentals, ysym)
         d["symbol"] = symbol
         await asyncio.to_thread(_upsert_fundamentals, d)
+    except CircuitOpenError as exc:
+        log.debug("fundamentals ingest skipped for %s: %s", symbol, exc)
     except Exception as exc:  # noqa: BLE001
         log.warning("fundamentals ingest failed for %s: %s", symbol, exc)
     # Earnings/dividend calendar is a separate (best-effort) call on the same
@@ -311,6 +316,8 @@ async def _ingest_news_for(symbols: List[str], sector: Optional[str]) -> None:
         items = n_src.dedupe(items or [])
         if items:
             await asyncio.to_thread(_upsert_news, items)
+    except CircuitOpenError as exc:
+        log.debug("news ingest skipped for %s: %s", symbols, exc)
     except Exception as exc:  # noqa: BLE001
         log.warning("news ingest failed for %s: %s", symbols, exc)
 
@@ -323,6 +330,8 @@ async def _ingest_market_news() -> None:
         items = n_src.dedupe(items or [])
         if items:
             await asyncio.to_thread(_upsert_news, items)
+    except CircuitOpenError as exc:
+        log.debug("market news ingest skipped: %s", exc)
     except Exception as exc:  # noqa: BLE001
         log.warning("market news ingest failed: %s", exc)
 

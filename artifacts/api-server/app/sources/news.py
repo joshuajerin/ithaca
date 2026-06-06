@@ -22,6 +22,7 @@ from urllib.parse import quote_plus
 import feedparser
 import httpx
 
+from ._resilient import request as _request
 from .sentiment import classify_headline
 
 _RSS = "https://feeds.finance.yahoo.com/rss/2.0/headline"
@@ -29,6 +30,10 @@ _GOOGLE_SEARCH = "https://news.google.com/rss/search"
 _GOOGLE_BUSINESS = "https://news.google.com/rss/headlines/section/topic/BUSINESS"
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; AgenticTerminal/1.0)"}
 _TIMEOUT = httpx.Timeout(12.0)
+# Yahoo RSS and Google News are different hosts that throttle independently, so
+# they each get their own breaker.
+_SOURCE_YAHOO = "yahoo-rss"
+_SOURCE_GOOGLE = "google-news"
 
 
 def fetch_news(
@@ -42,7 +47,7 @@ def fetch_news(
     if not syms:
         return []
     params = {"s": ",".join(syms), "region": "US", "lang": "en-US"}
-    feed = _get_feed(_RSS, params=params, timeout=timeout)
+    feed = _get_feed(_SOURCE_YAHOO, _RSS, params=params, timeout=timeout)
     items: List[Dict] = []
     for entry in feed.entries[:limit]:
         item = _normalize(entry, fallback_tickers=syms, sector=sector,
@@ -62,7 +67,7 @@ def fetch_topic_news(
     if not q:
         return []
     url = f"{_GOOGLE_SEARCH}?q={quote_plus(q)}&hl=en-US&gl=US&ceid=US:en"
-    feed = _get_feed(url, timeout=timeout)
+    feed = _get_feed(_SOURCE_GOOGLE, url, timeout=timeout)
     items: List[Dict] = []
     for entry in feed.entries[:limit]:
         item = _normalize(entry, fallback_tickers=[], sector=None,
@@ -75,7 +80,7 @@ def fetch_topic_news(
 def fetch_market_news(limit: int = 30, timeout: Optional[float] = None) -> List[Dict]:
     """Broad market/business headlines via Google News RSS. Raises on network error."""
     url = f"{_GOOGLE_BUSINESS}?hl=en-US&gl=US&ceid=US:en"
-    feed = _get_feed(url, timeout=timeout)
+    feed = _get_feed(_SOURCE_GOOGLE, url, timeout=timeout)
     items: List[Dict] = []
     for entry in feed.entries[:limit]:
         item = _normalize(entry, fallback_tickers=[], sector=None,
@@ -106,12 +111,12 @@ def dedupe(items: List[Dict]) -> List[Dict]:
 
 
 # ----------------------------- internals -----------------------------
-def _get_feed(url: str, params: Optional[dict] = None, timeout: Optional[float] = None):
+def _get_feed(source: str, url: str, params: Optional[dict] = None,
+              timeout: Optional[float] = None):
     to = httpx.Timeout(timeout) if timeout is not None else _TIMEOUT
-    with httpx.Client(timeout=to, headers=_HEADERS, follow_redirects=True) as client:
-        resp = client.get(url, params=params)
-        resp.raise_for_status()
-        return feedparser.parse(resp.content)
+    resp = _request(source, url, params=params, headers=_HEADERS,
+                    timeout=to, follow_redirects=True)
+    return feedparser.parse(resp.content)
 
 
 def _normalize(entry, fallback_tickers: List[str], sector: Optional[str],

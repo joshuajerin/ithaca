@@ -9,17 +9,31 @@ from typing import Dict, Optional
 
 import yfinance as yf
 
+from ._resilient import guard as _guard
 from .sectors import map_sector
+
+# yfinance does its own HTTP, so it shares no breaker with the chart endpoint; a
+# throttle there should not pause the chart sources and vice versa.
+_SOURCE = "yfinance"
+
+
+def _fetch_info(sym: str) -> Dict:
+    """Fetch yfinance `.info`, raising a clean ValueError when there's no data.
+
+    Kept separate so the resilient ``guard`` can retry only on throttles while a
+    genuine "no data for this symbol" propagates immediately.
+    """
+    info = yf.Ticker(sym).info or {}
+    if not info.get("regularMarketPrice") and not info.get("currentPrice") \
+            and not info.get("marketCap"):
+        raise ValueError(f"no fundamentals for {sym}")
+    return info
 
 
 def fetch_fundamentals(symbol: str) -> Dict:
     """Return a normalized fundamentals dict for `symbol`. Raises on failure."""
     sym = symbol.upper()
-    ticker = yf.Ticker(sym)
-    info = ticker.info or {}
-    if not info.get("regularMarketPrice") and not info.get("currentPrice") \
-            and not info.get("marketCap"):
-        raise ValueError(f"no fundamentals for {sym}")
+    info = _guard(_SOURCE, _fetch_info, sym)
 
     price = info.get("currentPrice") or info.get("regularMarketPrice")
     prev = info.get("regularMarketPreviousClose") or info.get("previousClose")

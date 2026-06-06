@@ -11,9 +11,14 @@ from typing import Dict, List, Optional
 
 import httpx
 
+from ._resilient import request as _request
+
 _BASE = "https://query1.finance.yahoo.com/v8/finance/chart/"
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; AgenticTerminal/1.0)"}
 _TIMEOUT = httpx.Timeout(12.0)
+# All three fetchers hit the same host, so they share one breaker: throttling is
+# host-wide, and a cooldown should pause every chart call, not just one shape.
+_SOURCE = "yahoo-chart"
 
 # Intraday resolutions Yahoo's chart endpoint serves, mapped to the windows it
 # will actually honor for each (longest last). These mirror real upstream limits:
@@ -58,10 +63,8 @@ def fetch_price_history(symbol: str, range_: str = "6mo", interval: str = "1d") 
     """
     url = f"{_BASE}{symbol.upper()}"
     params = {"range": range_, "interval": interval, "includePrePost": "false"}
-    with httpx.Client(timeout=_TIMEOUT, headers=_HEADERS) as client:
-        resp = client.get(url, params=params)
-        resp.raise_for_status()
-        payload = resp.json()
+    resp = _request(_SOURCE, url, params=params, headers=_HEADERS, timeout=_TIMEOUT)
+    payload = resp.json()
 
     result = (payload.get("chart") or {}).get("result") or []
     if not result:
@@ -132,10 +135,8 @@ def fetch_daily_closes(symbol: str, start: str, end: str) -> Dict[str, float]:
 
     url = f"{_BASE}{symbol.upper()}"
     params = {"interval": "1d", "period1": p1, "period2": p2, "includePrePost": "false"}
-    with httpx.Client(timeout=_TIMEOUT, headers=_HEADERS) as client:
-        resp = client.get(url, params=params)
-        resp.raise_for_status()
-        payload = resp.json()
+    resp = _request(_SOURCE, url, params=params, headers=_HEADERS, timeout=_TIMEOUT)
+    payload = resp.json()
 
     result = (payload.get("chart") or {}).get("result") or []
     if not result:
@@ -188,10 +189,8 @@ def fetch_intraday(symbol: str, interval: str = "5m", range_: Optional[str] = No
         params["period2"] = now
     else:
         params["range"] = rng
-    with httpx.Client(timeout=_TIMEOUT, headers=_HEADERS) as client:
-        resp = client.get(url, params=params)
-        resp.raise_for_status()
-        payload = resp.json()
+    resp = _request(_SOURCE, url, params=params, headers=_HEADERS, timeout=_TIMEOUT)
+    payload = resp.json()
 
     result = (payload.get("chart") or {}).get("result") or []
     if not result:
