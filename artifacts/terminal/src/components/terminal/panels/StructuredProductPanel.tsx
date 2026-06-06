@@ -1,4 +1,10 @@
 import React from "react";
+import {
+  priceStructuredProduct,
+  productTypeFromLabel,
+  type PricerInputs,
+} from "@/lib/structuredProductPricer";
+
 interface StructuredProductPanelProps {
   data: any;
 }
@@ -15,13 +21,109 @@ function MetricRow({ label, value, sub }: { label: string; value: string; sub?: 
   );
 }
 
+function InputRow({
+  label,
+  value,
+  suffix,
+  step,
+  min,
+  max,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  suffix?: string;
+  step?: number;
+  min?: number;
+  max?: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div className="flex justify-between items-center py-1 border-b border-border/40">
+      <span className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</span>
+      <div className="flex items-baseline gap-0.5">
+        <input
+          type="number"
+          value={Number.isFinite(value) ? value : ""}
+          step={step}
+          min={min}
+          max={max}
+          onChange={(e) => onChange(parseFloat(e.target.value))}
+          className="w-16 bg-transparent border border-border/60 rounded px-1 py-0.5 text-right text-xs font-bold font-mono focus:outline-none focus:ring-1 focus:ring-ring focus:border-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        />
+        {suffix && <span className="text-[10px] text-muted-foreground w-3">{suffix}</span>}
+      </div>
+    </div>
+  );
+}
+
 export function StructuredProductPanel({ data }: StructuredProductPanelProps) {
+  const S: number = data.spotPrice;
+  const baseIv: number = data.impliedVol / 100;
+  const productType = productTypeFromLabel(data.productType);
+
+  const defaults: PricerInputs = React.useMemo(
+    () => ({
+      barrierPct: data.barrierPct,
+      tenorMonths: Math.round(data.tenor * 12),
+      notional: data.notional,
+      strikePct: Math.round((data.strike / S) * 100),
+    }),
+    [data.barrierPct, data.tenor, data.notional, data.strike, S],
+  );
+
+  const [inputs, setInputs] = React.useState<PricerInputs>(defaults);
+
+  React.useEffect(() => {
+    setInputs(defaults);
+  }, [defaults]);
+
+  const setField = (field: keyof PricerInputs) => (v: number) =>
+    setInputs((prev) => ({ ...prev, [field]: v }));
+
+  const dirty =
+    inputs.barrierPct !== defaults.barrierPct ||
+    inputs.tenorMonths !== defaults.tenorMonths ||
+    inputs.notional !== defaults.notional ||
+    inputs.strikePct !== defaults.strikePct;
+
+  const valid =
+    Number.isFinite(inputs.barrierPct) &&
+    Number.isFinite(inputs.tenorMonths) &&
+    inputs.tenorMonths > 0 &&
+    Number.isFinite(inputs.notional) &&
+    inputs.notional > 0 &&
+    Number.isFinite(inputs.strikePct) &&
+    inputs.strikePct > 0 &&
+    inputs.barrierPct > 0;
+
+  const priced = React.useMemo(() => {
+    if (!valid) return null;
+    return priceStructuredProduct(S, baseIv, productType, inputs);
+  }, [S, baseIv, productType, inputs, valid]);
+
+  // Use freshly computed values when valid; otherwise fall back to server data.
+  const view = priced ?? {
+    barrier: data.barrier,
+    barrierPct: data.barrierPct,
+    tenor: data.tenor,
+    notional: data.notional,
+    strike: data.strike,
+    bsPrice: data.bsPrice,
+    fairValue: data.fairValue,
+    delta: data.delta,
+    gamma: data.gamma,
+    vega: data.vega,
+    theta: data.theta,
+    scenarios: data.scenarios,
+  };
+
   const barrierBreached = (move: number) => {
-    if (data.productType.toLowerCase().includes("down")) {
-      return data.spotPrice * (1 + move / 100) <= data.barrier;
+    if (productType.includes("down")) {
+      return S * (1 + move / 100) <= view.barrier;
     }
-    if (data.productType.toLowerCase().includes("up")) {
-      return data.spotPrice * (1 + move / 100) >= data.barrier;
+    if (productType.includes("up")) {
+      return S * (1 + move / 100) >= view.barrier;
     }
     return false;
   };
@@ -41,57 +143,84 @@ export function StructuredProductPanel({ data }: StructuredProductPanelProps) {
             {data.productType}
           </span>
         </div>
-        <div className="text-right">
-          <span className="text-xs text-muted-foreground mr-1">Fair Value</span>
-          <span className="text-sm font-bold font-mono">
-            ${data.fairValue.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-          </span>
+        <div className="flex items-baseline gap-3">
+          {dirty && (
+            <button
+              type="button"
+              onClick={() => setInputs(defaults)}
+              className="text-[9px] text-muted-foreground uppercase tracking-wider border border-border/60 rounded px-1.5 py-0.5 hover:bg-accent hover:text-accent-foreground transition-colors"
+            >
+              Reset
+            </button>
+          )}
+          <div className="text-right">
+            <span className="text-xs text-muted-foreground mr-1">Fair Value</span>
+            <span className="text-sm font-bold font-mono">
+              ${view.fairValue.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+            </span>
+          </div>
         </div>
       </div>
 
       <div className="flex gap-3 flex-1 min-h-0">
         {/* Left: pricer inputs + greeks */}
-        <div className="w-36 shrink-0 flex flex-col gap-0">
+        <div className="w-40 shrink-0 flex flex-col gap-0 overflow-auto min-h-0">
           <div className="text-[9px] text-muted-foreground uppercase tracking-widest mb-1">
             Inputs
           </div>
-          <MetricRow label="Spot" value={`$${data.spotPrice.toFixed(2)}`} />
-          <MetricRow label="Strike" value={`$${data.strike.toFixed(2)}`} />
-          <MetricRow
+          <MetricRow label="Spot" value={`$${S.toFixed(2)}`} />
+          <InputRow
+            label="Strike"
+            value={inputs.strikePct}
+            suffix="%"
+            step={1}
+            min={1}
+            onChange={setField("strikePct")}
+          />
+          <InputRow
             label="Barrier"
-            value={`$${data.barrier.toFixed(2)}`}
-            sub={`${data.barrierPct.toFixed(0)}%`}
+            value={inputs.barrierPct}
+            suffix="%"
+            step={1}
+            min={1}
+            onChange={setField("barrierPct")}
           />
-          <MetricRow
+          <InputRow
             label="Tenor"
-            value={`${data.tenor >= 1 ? `${data.tenor.toFixed(0)}Y` : `${Math.round(data.tenor * 12)}M`}`}
+            value={inputs.tenorMonths}
+            suffix="M"
+            step={1}
+            min={1}
+            onChange={setField("tenorMonths")}
           />
-          <MetricRow
+          <InputRow
             label="Notional"
-            value={`$${(data.notional / 1000).toFixed(0)}K`}
+            value={inputs.notional}
+            step={10000}
+            min={0}
+            onChange={setField("notional")}
           />
           <MetricRow label="IV" value={`${data.impliedVol.toFixed(1)}%`} />
+          <MetricRow label="Strike $" value={`$${view.strike.toFixed(2)}`} />
+          <MetricRow label="Barrier $" value={`$${view.barrier.toFixed(2)}`} />
 
           <div className="text-[9px] text-muted-foreground uppercase tracking-widest mt-2 mb-1">
             Greeks
           </div>
           <MetricRow
             label="Delta"
-            value={`${data.delta >= 0 ? "+" : ""}${data.delta.toFixed(3)}`}
+            value={`${view.delta >= 0 ? "+" : ""}${view.delta.toFixed(3)}`}
           />
-          <MetricRow
-            label="Gamma"
-            value={data.gamma.toFixed(5)}
-          />
+          <MetricRow label="Gamma" value={view.gamma.toFixed(5)} />
           <MetricRow
             label="Vega"
-            value={`${data.vega >= 0 ? "+" : ""}${data.vega.toFixed(3)}`}
+            value={`${view.vega >= 0 ? "+" : ""}${view.vega.toFixed(3)}`}
           />
           <MetricRow
             label="Theta"
-            value={`${data.theta >= 0 ? "+" : ""}${data.theta.toFixed(3)}`}
+            value={`${view.theta >= 0 ? "+" : ""}${view.theta.toFixed(3)}`}
           />
-          <MetricRow label="BS Vanilla" value={`$${data.bsPrice.toFixed(2)}`} />
+          <MetricRow label="BS Vanilla" value={`$${view.bsPrice.toFixed(2)}`} />
         </div>
 
         {/* Right: scenario table */}
@@ -99,6 +228,11 @@ export function StructuredProductPanel({ data }: StructuredProductPanelProps) {
           <div className="text-[9px] text-muted-foreground uppercase tracking-widest mb-1">
             Scenario Analysis
           </div>
+          {!valid && (
+            <div className="text-[10px] text-amber-500 mb-1">
+              Enter positive values for barrier, tenor, notional and strike to re-price.
+            </div>
+          )}
           <table className="w-full text-[10px]">
             <thead>
               <tr className="text-muted-foreground uppercase">
@@ -110,7 +244,7 @@ export function StructuredProductPanel({ data }: StructuredProductPanelProps) {
               </tr>
             </thead>
             <tbody>
-              {data.scenarios.map((s: any, i: number) => {
+              {view.scenarios.map((s: any, i: number) => {
                 const knocked = barrierBreached(s.spotMove);
                 const positive = s.pnl > 0;
                 return (
