@@ -1,15 +1,17 @@
 import React from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { CheckCircle2, AlertTriangle, Clock, CircleDashed } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Clock, CircleDashed, Ban } from "lucide-react";
 
 interface QualitySeries {
   symbol: string;
   name: string;
   interval: string;
+  intervalLabel?: string;
   source: string;
   asOf?: string | null;
-  status: "ok" | "warn" | "stale" | "mock";
+  status: "ok" | "warn" | "stale" | "mock" | "unavailable";
+  reason?: string | null;
   rows: number;
   gaps: number;
   duplicates: number;
@@ -25,12 +27,15 @@ interface QualitySeries {
 
 interface DataQualityData {
   title: string;
+  interval?: string;
+  intervalLabel?: string;
   series: QualitySeries[];
   summary: {
     seriesCount: number;
     okCount: number;
     issueCount: number;
     mockCount: number;
+    unavailableCount?: number;
     asOf?: string | null;
   };
   source: string;
@@ -41,6 +46,7 @@ const STATUS: Record<string, { icon: React.ElementType; cls: string; label: stri
   warn: { icon: AlertTriangle, cls: "text-amber-400", label: "Issues" },
   stale: { icon: Clock, cls: "text-amber-400", label: "Stale" },
   mock: { icon: CircleDashed, cls: "text-muted-foreground/50", label: "Mock" },
+  unavailable: { icon: Ban, cls: "text-muted-foreground/50", label: "N/A" },
 };
 
 function Stat({ label, value, accent }: { label: string; value: string | number; accent?: boolean }) {
@@ -79,11 +85,14 @@ export function DataQualityPanel({ data }: { data: DataQualityData }) {
   const s = data.summary;
   return (
     <div className="flex flex-col h-full w-full">
-      <div className="grid grid-cols-4 gap-4 shrink-0 pb-4">
+      <div className={`grid ${(s.unavailableCount ?? 0) > 0 ? "grid-cols-5" : "grid-cols-4"} gap-4 shrink-0 pb-4`}>
         <Stat label="Series" value={s.seriesCount} accent />
         <Stat label="Clean" value={s.okCount} accent={s.okCount > 0} />
         <Stat label="Flagged" value={s.issueCount} accent={s.issueCount > 0} />
         <Stat label="Mock" value={s.mockCount} />
+        {(s.unavailableCount ?? 0) > 0 && (
+          <Stat label="N/A" value={s.unavailableCount ?? 0} />
+        )}
       </div>
 
       <ScrollArea className="flex-1 min-h-0 border-t border-border -mx-1">
@@ -91,6 +100,7 @@ export function DataQualityPanel({ data }: { data: DataQualityData }) {
           <TableHeader>
             <TableRow className="border-border hover:bg-transparent">
               <TableHead className="editorial-label text-[8px] h-7">Series</TableHead>
+              <TableHead className="editorial-label text-[8px] h-7">Res</TableHead>
               <TableHead className="editorial-label text-[8px] h-7 text-center">Rows</TableHead>
               <TableHead className="editorial-label text-[8px] h-7 text-center">Gaps</TableHead>
               <TableHead className="editorial-label text-[8px] h-7 text-center">Dup</TableHead>
@@ -105,13 +115,23 @@ export function DataQualityPanel({ data }: { data: DataQualityData }) {
             {data.series.map((row) => {
               const st = STATUS[row.status] || STATUS.mock;
               const Icon = st.icon;
+              const unavailable = row.status === "unavailable";
               return (
                 <TableRow key={row.symbol} className="border-border/50 hover:bg-white/[0.02]">
                   <TableCell className="py-1.5">
                     <div className="font-serif text-sm">{row.symbol}</div>
                     <div className="editorial-label text-[7.5px] text-muted-foreground truncate max-w-[130px]">
-                      {row.lastDate ? `to ${String(row.lastDate).slice(0, 10)}` : row.name}
+                      {unavailable
+                        ? (row.reason || "not available")
+                        : row.lastDate
+                          ? `to ${String(row.lastDate).slice(0, 10)}`
+                          : row.name}
                     </div>
+                  </TableCell>
+                  <TableCell className="py-1.5">
+                    <span className="editorial-label text-[8px] text-muted-foreground whitespace-nowrap">
+                      {row.intervalLabel || row.interval}
+                    </span>
                   </TableCell>
                   <TableCell className="py-1.5 text-center"><Cell n={row.rows} /></TableCell>
                   <TableCell className="py-1.5 text-center"><Cell n={row.gaps} /></TableCell>
@@ -131,7 +151,10 @@ export function DataQualityPanel({ data }: { data: DataQualityData }) {
                     </div>
                   </TableCell>
                   <TableCell className="py-1.5">
-                    <div className={`flex items-center justify-end gap-1 ${st.cls}`}>
+                    <div
+                      className={`flex items-center justify-end gap-1 ${st.cls}`}
+                      title={unavailable ? (row.reason || "not available") : undefined}
+                    >
                       <Icon className="w-3 h-3" strokeWidth={1.75} />
                       <span className="editorial-label text-[8px]">{st.label}</span>
                     </div>

@@ -4388,9 +4388,59 @@ def _quality_status(source: str, q: dict) -> str:
     return "ok"
 
 
+def _empty_quality() -> dict:
+    """Zeroed quality fields so an unavailable row carries the full shape."""
+    return {
+        "rows": 0, "gaps": 0, "duplicates": 0, "nanRows": 0,
+        "zeroVolume": 0, "droppedRows": 0, "firstDate": None,
+        "lastDate": None, "stale": False, "staleSeconds": None, "issues": [],
+    }
+
+
+def _intraday_quality_row(sym: str, name: str, interval: str, rng: Optional[str]) -> dict:
+    """Audit one symbol's intraday series at `interval`, validating the live bars
+    fetched from Yahoo. Returns a clean `unavailable` row (never daily/synthetic
+    data) when the resolution/window isn't served or the fetch fails."""
+    ysym = data.yahoo_symbol(sym)
+    cache_key = f"intraday:{ysym}:{interval}:{rng or 'default'}"
+    base = {
+        "symbol": sym, "name": name, "interval": interval,
+        "intervalLabel": _INTERVAL_LABELS.get(interval, interval),
+    }
+    try:
+        res = cache.cached(
+            cache_key, 60.0,
+            lambda: p_src.fetch_intraday(ysym, interval, rng),
+        )
+    except p_src.IntradayUnavailable as exc:
+        return {**base, "source": "unavailable", "asOf": None,
+                "status": "unavailable", "reason": str(exc), **_empty_quality()}
+    except Exception as exc:  # noqa: BLE001 - any upstream failure -> clean state
+        return {**base, "source": "unavailable", "asOf": None,
+                "status": "unavailable",
+                "reason": f"Upstream fetch failed: {exc}", **_empty_quality()}
+
+    served_iv = res.get("interval") or interval
+    as_of = res.get("asOf")
+    q = quality.validate_series(res["points"], interval=served_iv, as_of=as_of)
+    return {
+        **base,
+        "interval": served_iv,
+        "intervalLabel": _INTERVAL_LABELS.get(served_iv, served_iv),
+        "source": "live", "asOf": as_of, "reason": None,
+        "status": _quality_status("live", q),
+        **q,
+    }
+
+
 def build_data_quality(params: dict) -> dict:
     """Data-quality report over real OHLCV series: gaps, stale, NaN/zero-volume
-    bars and duplicate timestamps, each row tagged with its provenance."""
+    bars and duplicate timestamps, each row tagged with its provenance.
+
+    Audits the daily (1d) series by default. Pass an intraday `interval`
+    (e.g. 5m) to validate the minute/hour bars instead — missing bars, duplicate
+    timestamps and zero-volume gaps that only surface intraday. Symbols whose
+    intraday window isn't served are reported as a clean `unavailable` row."""
     symbol = params.get("symbol")
     sector = params.get("sector")
     try:
@@ -4398,6 +4448,14 @@ def build_data_quality(params: dict) -> dict:
     except (TypeError, ValueError):
         days = 120
     days = max(20, min(days, 400))
+
+    interval = (params.get("interval") or params.get("resolution") or "1d").lower()
+    intraday = interval != "1d"
+    if intraday and interval not in p_src.INTRADAY_RANGES:
+        # Unknown resolution -> fall back to the daily audit rather than error.
+        interval, intraday = "1d", False
+    rng = params.get("range") or params.get("window")
+    rng = rng.lower() if isinstance(rng, str) else None
 
     if symbol:
         syms = [symbol.upper()]
@@ -4410,36 +4468,48 @@ def build_data_quality(params: dict) -> dict:
         syms = repo.prompt_symbols(8)
         title = "Data Quality — Core Coverage"
 
+    interval_label = _INTERVAL_LABELS.get(interval, interval) if intraday else "daily"
+    if intraday:
+        title += f" · {interval_label}"
+
     series: List[dict] = []
     latest: Optional[str] = None
     for sym in syms:
         repo.note_symbol(sym)
-        meta = repo.price_series_meta(sym, days=days)
         company = repo.get_company(sym)
         nm = company["name"] if company else sym
-        source = meta.get("source") or "mock"
-        as_of = meta.get("asOf")
-        q = quality.validate_series(meta["points"], interval="1d", as_of=as_of)
-        status = _quality_status(source, q)
+        if intraday:
+            row = _intraday_quality_row(sym, nm, interval, rng)
+        else:
+            meta = repo.price_series_meta(sym, days=days)
+            source = meta.get("source") or "mock"
+            as_of = meta.get("asOf")
+            q = quality.validate_series(meta["points"], interval="1d", as_of=as_of)
+            row = {
+                "symbol": sym, "name": nm, "interval": "1d",
+                "intervalLabel": "daily", "source": source, "asOf": as_of,
+                "reason": None, "status": _quality_status(source, q), **q,
+            }
+        as_of = row.get("asOf")
         if as_of and (latest is None or as_of > latest):
             latest = as_of
-        series.append({
-            "symbol": sym, "name": nm, "interval": "1d",
-            "source": source, "asOf": as_of, "status": status,
-            **q,
-        })
+        series.append(row)
 
     ok = sum(1 for s in series if s["status"] == "ok")
     issues = sum(1 for s in series if s["status"] in ("warn", "stale"))
     mock = sum(1 for s in series if s["status"] == "mock")
+    unavailable = sum(1 for s in series if s["status"] == "unavailable")
     return {
         "title": title,
+        "interval": interval,
+        "intervalLabel": interval_label,
         "series": series,
         "summary": {
             "seriesCount": len(series),
             "okCount": ok,
             "issueCount": issues,
             "mockCount": mock,
+            "unavailableCount": unavailable,
             "asOf": latest,
         },
         "asOf": latest,
@@ -5291,12 +5361,15 @@ _reg(SkillDef(
     "Audits the OHLCV series behind one symbol, a sector, or the core set and "
     "reports data-quality findings: missing periods (gaps), stale freshness, "
     "rows with missing OHLC, zero-volume bars and duplicate timestamps, each "
-    "tagged with its provenance. Use when the user asks about data quality, data "
-    "gaps, stale data, freshness, or whether the data can be trusted.",
+    "tagged with its provenance. Audits the daily series by default; pass an "
+    "intraday `interval` (e.g. 1m, 5m, 15m, 30m, 1h) to audit minute/hour bars "
+    "instead, with an optional `range` window. Use when the user asks about data "
+    "quality, data gaps, stale data, freshness, intraday/minute-bar quality, or "
+    "whether the data can be trusted.",
     [
-        {"name": "select_series", "description": "Choose the symbol(s) whose series to audit.", "expectedOutput": "A set of series to validate."},
+        {"name": "select_series", "description": "Choose the symbol(s) and resolution to audit.", "expectedOutput": "A set of series to validate at a daily or intraday interval."},
         {"name": "run_checks", "description": "Detect gaps, staleness, NaN/zero-volume and duplicate timestamps.", "expectedOutput": "Per-series quality counts and issues."},
-        {"name": "summarize", "description": "Aggregate clean vs flagged vs mock series.", "expectedOutput": "A quality summary."},
+        {"name": "summarize", "description": "Aggregate clean vs flagged vs mock vs unavailable series.", "expectedOutput": "A quality summary."},
     ],
     build_data_quality, "Data Quality",
 ))
