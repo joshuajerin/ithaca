@@ -5,11 +5,15 @@ import { Sparkline } from "../Sparkline";
 
 interface PriceChartPanelProps {
   data: PriceChartData;
+  onSelectRange?: (range: string) => void;
 }
 
-export function PriceChartPanel({ data }: PriceChartPanelProps) {
+const DEFAULT_RANGES = ["1M", "3M", "6M", "1Y"];
+
+export function PriceChartPanel({ data, onSelectRange }: PriceChartPanelProps) {
   const isPositive = data.change >= 0;
   const spark = data.points.map((p) => p.c);
+  const ranges = (data.ranges && data.ranges.length ? data.ranges : DEFAULT_RANGES);
 
   // Create a minimal tooltip
   const CustomTooltip = ({ active, payload, label }: any) => {
@@ -51,6 +55,29 @@ export function PriceChartPanel({ data }: PriceChartPanelProps) {
           <div className="editorial-label text-[8px] text-muted-foreground mt-0.5">over {data.range}</div>
         </div>
       </div>
+
+      {onSelectRange && (
+        <div className="flex items-center gap-1.5 mb-3 shrink-0">
+          {ranges.map((r) => {
+            const active = r === data.range;
+            return (
+              <button
+                key={r}
+                type="button"
+                onClick={() => { if (!active) onSelectRange(r); }}
+                aria-pressed={active}
+                className={`editorial-label text-[9px] px-2 py-1 border transition-colors ${
+                  active
+                    ? "border-white text-white"
+                    : "border-border text-muted-foreground hover:text-white hover:border-white"
+                }`}
+              >
+                {r}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <div className="border-t border-border flex-1 w-full min-h-0 pt-3">
         <ResponsiveContainer width="100%" height="100%">

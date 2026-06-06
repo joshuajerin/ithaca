@@ -80,6 +80,7 @@ export interface PriceChartData {
   change: number;
   changePct: number;
   range: string;
+  ranges?: string[];
   points: PricePoint[];
 }
 

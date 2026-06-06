@@ -104,6 +104,15 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
     setRefineText("");
   };
 
+  // Switch the price chart window. Round-trips through the same refine path the
+  // agent uses: instruction carries the current symbol + requested range so the
+  // backend rebuilds the panel over the chosen window.
+  const handleSelectRange = async (range: string) => {
+    const symbol = (panel.data as any)?.symbol;
+    const instruction = symbol ? `${symbol} ${range}` : range;
+    await submitRefine(instruction);
+  };
+
   const renderContent = () => {
     if (panel.status === "loading" || refineMutation.isPending) {
       return (
@@ -124,7 +133,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
     }
 
     switch (panel.type) {
-      case "price_chart": return <PriceChartPanel data={panel.data as any} />;
+      case "price_chart": return <PriceChartPanel data={panel.data as any} onSelectRange={handleSelectRange} />;
       case "news": return <NewsPanel data={panel.data as any} />;
       case "analysis": return <AnalysisPanel data={panel.data as any} />;
       case "fundamentals": return <FundamentalsPanel data={panel.data as any} />;

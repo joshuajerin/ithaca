@@ -135,8 +135,11 @@ def build_price_chart(params: dict) -> dict:
     if not company:
         raise ValueError(f"Unknown symbol: {symbol}")
     rng = (params.get("range") or "3M").upper()
-    days = RANGE_DAYS.get(rng, 90)
-    points = repo.price_series(symbol, days=days)
+    if rng not in RANGE_DAYS:
+        rng = "3M"
+    # Pass the selected window straight to the data layer so it slices the stored
+    # OHLCV to the requested range (range round-trips: chart picker → skill → repo).
+    points = repo.price_series(symbol, rng=rng)
     first = points[0]["c"] if points else company["price"]
     last = company["price"]
     change = round(last - first, 2)
@@ -149,6 +152,7 @@ def build_price_chart(params: dict) -> dict:
         "change": change,
         "changePct": change_pct,
         "range": rng,
+        "ranges": list(RANGE_DAYS.keys()),
         "points": points,
         "asOf": company.get("_asOf"),
         "source": company.get("_source"),

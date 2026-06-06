@@ -372,7 +372,25 @@ def list_sectors() -> List[dict]:
 
 
 # ----------------------------- prices -----------------------------
-def price_series(symbol: str, days: int = 90) -> List[dict]:
+# Canonical chart-window → trading-days mapping. Kept here (not imported from
+# skills) so the data layer owns range resolution and skills/agent can round-trip
+# a user-selected window straight through to the stored OHLCV query.
+RANGE_DAYS = {"1M": 30, "3M": 90, "6M": 180, "1Y": 250, "YTD": 120}
+
+
+def resolve_range_days(rng: Optional[str], days: int = 90) -> int:
+    """Resolve a chart range label (e.g. "1M"/"6M"/"1Y") to a day count.
+
+    Falls back to ``days`` when no/unknown range is given so existing callers
+    that pass ``days`` directly keep working unchanged.
+    """
+    if rng:
+        return RANGE_DAYS.get(rng.upper(), days)
+    return days
+
+
+def price_series(symbol: str, days: int = 90, rng: Optional[str] = None) -> List[dict]:
+    days = resolve_range_days(rng, days)
     sym = (symbol or "").upper()
     if db.db_available():
         try:
@@ -402,13 +420,14 @@ def price_series(symbol: str, days: int = 90) -> List[dict]:
     return data.price_series(sym, days=days)
 
 
-def price_series_meta(symbol: str, days: int = 90) -> dict:
+def price_series_meta(symbol: str, days: int = 90, rng: Optional[str] = None) -> dict:
     """Like `price_series` but reports provenance for freshness metadata.
 
     Returns {"points": [...], "source": "live"|"mock", "asOf": iso|None}. The
     series is "live" only when it came from real OHLCV rows in the DB; otherwise
     it falls back to the deterministic curated mock series.
     """
+    days = resolve_range_days(rng, days)
     sym = (symbol or "").upper()
     if db.db_available():
         try:

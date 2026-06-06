@@ -2767,12 +2767,17 @@ def _refine_params_llm(panel_type: str, panel: dict, instruction: str) -> dict:
 def _refine_params_heuristic(panel_type: str, panel: dict, instruction: str) -> dict:
     syms = _extract_symbols(instruction)
     sector = repo.resolve_sector(instruction)
-    if panel_type in ("price_chart", "fundamentals", "supply_chain", "dcf_model", "earnings_transcript") and syms:
-        params = {"symbol": syms[0]}
-        for r in ["1M", "3M", "6M", "1Y", "YTD"]:
-            if r.lower() in instruction.lower():
-                params["range"] = r
-        return params
+    if panel_type in ("price_chart", "fundamentals", "supply_chain", "dcf_model", "earnings_transcript"):
+        d = panel.get("data") or {}
+        sym = syms[0] if syms else d.get("symbol")
+        if sym:
+            params = {"symbol": sym}
+            # Range round-trips even when the instruction is just a window
+            # (e.g. the chart's "1Y" picker) — keep the current symbol, swap range.
+            for r in ["1M", "3M", "6M", "1Y", "YTD"]:
+                if r.lower() in instruction.lower():
+                    params["range"] = r
+            return params
     if panel_type == "comparison" and len(syms) >= 2:
         return {"symbols": syms}
     if panel_type in ("news", "analysis", "sentiment"):

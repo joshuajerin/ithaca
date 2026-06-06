@@ -87,6 +87,7 @@ export const GetDefaultDashboardResponse = zod.object({
   "change": zod.number(),
   "changePct": zod.number(),
   "range": zod.string(),
+  "ranges": zod.array(zod.string()).optional(),
   "points": zod.array(zod.object({
   "t": zod.string(),
   "o": zod.number(),
@@ -455,6 +456,7 @@ export const OrchestrateResponse = zod.object({
   "change": zod.number(),
   "changePct": zod.number(),
   "range": zod.string(),
+  "ranges": zod.array(zod.string()).optional(),
   "points": zod.array(zod.object({
   "t": zod.string(),
   "o": zod.number(),
@@ -854,6 +856,7 @@ export const RefinePanelResponse = zod.object({
   "change": zod.number(),
   "changePct": zod.number(),
   "range": zod.string(),
+  "ranges": zod.array(zod.string()).optional(),
   "points": zod.array(zod.object({
   "t": zod.string(),
   "o": zod.number(),

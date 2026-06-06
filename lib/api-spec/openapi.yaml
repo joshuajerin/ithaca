@@ -297,6 +297,10 @@ components:
           type: number
         range:
           type: string
+        ranges:
+          type: array
+          items:
+            type: string
         points:
           type: array
           items:

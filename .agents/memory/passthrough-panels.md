@@ -38,3 +38,12 @@ to misread as a builder bug. Always verify the new type via orchestrate, not jus
 
 **Always restart `artifacts/api-server: API Server`** after backend changes — it runs
 WITHOUT `--reload`.
+
+**Opposite gotcha — adding a FIELD to an EXISTING typed panel:** types in `DATA_MODELS`
+(e.g. `price_chart` → `PriceChartData`) are validated by the hand-maintained pydantic
+models in `app/models.py`. A new key your builder returns is **silently stripped** from
+the HTTP response if it isn't on that pydantic model — the field just shows up `None`/missing
+on the client with no error. For typed panels you must add the field in THREE places in
+lockstep: `app/models.py` (pydantic, the one that actually gates the response),
+`lib/api-spec/openapi.yaml` + rerun `pnpm --filter @workspace/api-spec run codegen` (for the
+typed TS client). The openapi/codegen alone is NOT enough; models.py is the real filter.

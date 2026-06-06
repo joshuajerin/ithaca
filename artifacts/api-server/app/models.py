@@ -74,6 +74,7 @@ class PriceChartData(BaseModel):
     change: float
     changePct: float
     range: str
+    ranges: List[str] = []
     points: List[PricePoint]
 
 
