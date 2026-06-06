@@ -3502,6 +3502,162 @@ _SUPPLY_CHAIN_DB: dict = {
 }
 
 
+# Geopolitical concentration risk per sourcing region (0.0 = stable, 1.0 = acute).
+# Reflects supply-chain fragility from cross-strait tension, sanctions exposure,
+# export controls and single-jurisdiction dependence.
+_GEO_RISK: dict = {
+    "TW": 0.95,   # Taiwan Strait / cross-strait tension
+    "CN": 0.90,   # export controls, sanctions exposure
+    "HK": 0.80,
+    "RU": 0.95,   # sanctions
+    "IL": 0.60,   # regional conflict
+    "KR": 0.55,   # DPRK proximity
+    "IN": 0.35,
+    "JP": 0.25,
+    "NL": 0.20,
+    "DE": 0.20,
+    "FR": 0.20,
+    "IE": 0.15,
+    "US": 0.10,
+    "Global": 0.05,  # diversified / multi-region
+}
+
+_COUNTRY_NAME: dict = {
+    "TW": "Taiwan",
+    "CN": "China",
+    "HK": "Hong Kong",
+    "RU": "Russia",
+    "IL": "Israel",
+    "KR": "South Korea",
+    "IN": "India",
+    "JP": "Japan",
+    "NL": "Netherlands",
+    "DE": "Germany",
+    "FR": "France",
+    "IE": "Ireland",
+    "US": "United States",
+    "Global": "Global",
+}
+
+# Numeric risk-value thresholds -> ordinal label.
+_RISK_BANDS: list = [
+    (90.0, "Critical"),
+    (55.0, "High"),
+    (28.0, "Medium"),
+    (0.0, "Low"),
+]
+_RISK_ORDER: dict = {"Low": 0, "Medium": 1, "High": 2, "Critical": 3}
+
+
+def _country_name(code: str) -> str:
+    return _COUNTRY_NAME.get(code, code)
+
+
+def _score_supply_node(exposure: float, country: str) -> dict:
+    """Score one supplier/customer dependency for concentration + geopolitical risk.
+
+    Combines how much the subject depends on the node (exposure) with how
+    geopolitically fragile its sourcing region is. A 100% single-source
+    dependency in Taiwan reads Critical; a diversified 10% buyer reads Low.
+    """
+    geo = _GEO_RISK.get(country, 0.40)
+    single_source = exposure >= 90.0
+    risk_value = exposure * (0.55 + 0.65 * geo)
+
+    label = "Low"
+    for threshold, name in _RISK_BANDS:
+        if risk_value >= threshold:
+            label = name
+            break
+
+    # Single-source dependencies are structurally fragile regardless of region:
+    # floor them at High, and at Critical when the region is also sensitive.
+    if single_source:
+        floor = "Critical" if geo >= 0.70 else "High"
+        if _RISK_ORDER[floor] > _RISK_ORDER[label]:
+            label = floor
+
+    return {
+        "riskScore": label,
+        "riskValue": round(risk_value, 1),
+        "geoRisk": round(geo, 2),
+        "singleSource": single_source,
+    }
+
+
+def _annotate_supply_chain_risk(result: dict) -> dict:
+    """Attach per-node risk scores and a top-3 concentration risk summary."""
+    nodes = result.get("nodes", [])
+    table = result.get("table", [])
+
+    for node in nodes:
+        if node.get("role") == "subject":
+            continue
+        node.update(_score_supply_node(float(node.get("exposure", 0.0)), node.get("country", "")))
+    for row in table:
+        row.update(_score_supply_node(float(row.get("exposure", 0.0)), row.get("country", "")))
+
+    # Country concentration on the supply side: share of total supplier exposure
+    # sourced from each region. Highlights single-jurisdiction dependence.
+    supplier_rows = [r for r in table if r.get("role") == "supplier"]
+    total_supplier_exp = sum(float(r.get("exposure", 0.0)) for r in supplier_rows) or 1.0
+    by_country: dict = {}
+    for r in supplier_rows:
+        c = r.get("country", "")
+        by_country[c] = by_country.get(c, 0.0) + float(r.get("exposure", 0.0))
+    country_concentration = [
+        {
+            "country": c,
+            "countryName": _country_name(c),
+            "sharePct": round(100.0 * exp / total_supplier_exp, 1),
+            "geoRisk": round(_GEO_RISK.get(c, 0.40), 2),
+        }
+        for c, exp in by_country.items()
+    ]
+    country_concentration.sort(key=lambda x: x["sharePct"], reverse=True)
+
+    # Build candidate risk items, then rank by severity for the summary bar.
+    candidates: list = []
+    for r in table:
+        candidates.append({
+            "kind": "node",
+            "title": r.get("name", ""),
+            "detail": f"{round(float(r.get('exposure', 0.0)))}% {r.get('category', r.get('role', ''))} · {_country_name(r.get('country', ''))}",
+            "level": r.get("riskScore", "Low"),
+            "riskValue": r.get("riskValue", 0.0),
+        })
+    # Add a region-concentration item for the dominant geopolitically-sensitive hub.
+    for cc in country_concentration:
+        if cc["sharePct"] >= 40.0 and cc["geoRisk"] >= 0.50:
+            level = "Critical" if (cc["sharePct"] >= 60.0 and cc["geoRisk"] >= 0.70) else "High"
+            candidates.append({
+                "kind": "country",
+                "title": f"{cc['countryName']} concentration",
+                "detail": f"{cc['sharePct']:.0f}% of supplier exposure sourced from {cc['countryName']}",
+                "level": level,
+                "riskValue": cc["sharePct"] + cc["geoRisk"] * 50.0,
+            })
+            break
+
+    candidates.sort(key=lambda x: (_RISK_ORDER.get(x["level"], 0), x["riskValue"]), reverse=True)
+    top_risks = [c for c in candidates if _RISK_ORDER.get(c["level"], 0) >= _RISK_ORDER["Medium"]][:3]
+    if not top_risks:
+        top_risks = candidates[:3]
+
+    counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0}
+    for node in nodes:
+        if node.get("role") == "subject":
+            continue
+        counts[node.get("riskScore", "Low")] = counts.get(node.get("riskScore", "Low"), 0) + 1
+
+    result["riskSummary"] = {
+        "topRisks": top_risks,
+        "countryConcentration": country_concentration[:5],
+        "counts": counts,
+    }
+    return result
+
+
 def _rng_next(seed: int) -> tuple[int, float]:
     seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
     return seed, seed / 0x7FFFFFFF
@@ -3605,9 +3761,10 @@ def build_supply_chain(params: dict) -> dict:
             nodes.append({"id": nid, "name": c["name"], "symbol": c.get("symbol"), "role": "customer", "exposure": c["exposure"], "country": c["country"]})
             edges.append({"source": symbol, "target": nid, "weight": c["exposure"]})
             table.append({"name": c["name"], "symbol": c.get("symbol"), "role": "customer", "exposure": c["exposure"], "country": c["country"], "category": c["category"]})
-        return {"symbol": symbol, "name": company["name"], "nodes": nodes, "edges": edges, "table": table}
+        result = {"symbol": symbol, "name": company["name"], "nodes": nodes, "edges": edges, "table": table}
+        return _annotate_supply_chain_risk(result)
 
-    return _generate_supply_chain(symbol, company)
+    return _annotate_supply_chain_risk(_generate_supply_chain(symbol, company))
 
 
 # ----------------------------- DCF builder -----------------------------

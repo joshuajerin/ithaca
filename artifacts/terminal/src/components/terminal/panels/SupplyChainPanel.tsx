@@ -1,7 +1,16 @@
 import React, { useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
-interface SCNode {
+type RiskLevel = "Low" | "Medium" | "High" | "Critical";
+
+interface SCRisk {
+  riskScore?: RiskLevel;
+  riskValue?: number;
+  geoRisk?: number;
+  singleSource?: boolean;
+}
+
+interface SCNode extends SCRisk {
   id: string;
   name: string;
   symbol?: string | null;
@@ -16,7 +25,7 @@ interface SCEdge {
   weight: number;
 }
 
-interface SCTableRow {
+interface SCTableRow extends SCRisk {
   name: string;
   symbol?: string | null;
   role: string;
@@ -25,13 +34,51 @@ interface SCTableRow {
   category: string;
 }
 
+interface SCTopRisk {
+  kind: string;
+  title: string;
+  detail: string;
+  level: RiskLevel;
+  riskValue: number;
+}
+
+interface SCCountryConcentration {
+  country: string;
+  countryName: string;
+  sharePct: number;
+  geoRisk: number;
+}
+
+interface SCRiskSummary {
+  topRisks: SCTopRisk[];
+  countryConcentration: SCCountryConcentration[];
+  counts: Record<RiskLevel, number>;
+}
+
 interface SupplyChainData {
   symbol: string;
   name: string;
   nodes: SCNode[];
   edges: SCEdge[];
   table: SCTableRow[];
+  riskSummary?: SCRiskSummary;
 }
+
+const RISK_ORDER: Record<RiskLevel, number> = { Low: 0, Medium: 1, High: 2, Critical: 3 };
+
+// Graph highlight: only nodes above the threshold (High / Critical) get an
+// alarming amber/red override; Low/Medium keep their role colour.
+const RISK_GRAPH_COLOR: Partial<Record<RiskLevel, string>> = {
+  Critical: "#f87171",
+  High: "#fb923c",
+};
+
+const RISK_BADGE: Record<RiskLevel, string> = {
+  Critical: "bg-red-500/15 text-red-400 border-red-500/40",
+  High: "bg-orange-500/15 text-orange-400 border-orange-500/40",
+  Medium: "bg-yellow-500/10 text-yellow-500 border-yellow-500/30",
+  Low: "bg-white/5 text-muted-foreground border-border",
+};
 
 const ROLE_COLOR: Record<string, string> = {
   subject: "#ffffff",
@@ -86,7 +133,9 @@ function SupplyChainSVG({ nodes, edges, subjectId }: { nodes: SCNode[]; edges: S
         if (!s || !t) return null;
         const isHov = hovered === e.source || hovered === e.target;
         const opacity = hovered ? (isHov ? 0.9 : 0.15) : 0.4;
-        const stroke = nodes.find(n => n.id === e.source)?.role === "supplier" ? "#60a5fa" : "#34d399";
+        const counterparty = nodes.find(n => n.id === (e.source === subjectId ? e.target : e.source));
+        const riskStroke = counterparty?.riskScore ? RISK_GRAPH_COLOR[counterparty.riskScore] : undefined;
+        const stroke = riskStroke || (nodes.find(n => n.id === e.source)?.role === "supplier" ? "#60a5fa" : "#34d399");
         return (
           <line
             key={i}
@@ -102,7 +151,9 @@ function SupplyChainSVG({ nodes, edges, subjectId }: { nodes: SCNode[]; edges: S
         const pos = posMap[n.id];
         if (!pos) return null;
         const r = getRadius(n);
-        const color = ROLE_COLOR[n.role] || "#888";
+        const riskColor = n.role !== "subject" && n.riskScore ? RISK_GRAPH_COLOR[n.riskScore] : undefined;
+        const color = riskColor || ROLE_COLOR[n.role] || "#888";
+        const isHighRisk = !!riskColor;
         const isHov = hovered === n.id;
         const opacity = hovered ? (isHov ? 1 : 0.3) : 0.85;
         const isLeft = pos.x < cx;
@@ -115,13 +166,23 @@ function SupplyChainSVG({ nodes, edges, subjectId }: { nodes: SCNode[]; edges: S
             onMouseLeave={() => setHovered(null)}
             style={{ cursor: "pointer" }}
           >
+            {isHighRisk && (
+              <circle
+                cx={pos.x} cy={pos.y} r={r + 3.5}
+                fill="none"
+                stroke={color}
+                strokeOpacity={opacity * 0.5}
+                strokeWidth={1}
+                strokeDasharray="2 2"
+              />
+            )}
             <circle
               cx={pos.x} cy={pos.y} r={r}
               fill={color}
-              fillOpacity={opacity * (n.role === "subject" ? 0.2 : 0.15)}
+              fillOpacity={opacity * (n.role === "subject" ? 0.2 : (isHighRisk ? 0.25 : 0.15))}
               stroke={color}
               strokeOpacity={opacity}
-              strokeWidth={n.role === "subject" ? 2 : 1}
+              strokeWidth={n.role === "subject" ? 2 : (isHighRisk ? 1.8 : 1)}
             />
             <text
               x={labelX}
@@ -143,7 +204,7 @@ function SupplyChainSVG({ nodes, edges, subjectId }: { nodes: SCNode[]; edges: S
                 fill="#888"
                 fillOpacity={0.9}
               >
-                {n.exposure}% exposure
+                {n.exposure}% exposure{n.riskScore ? ` · ${n.riskScore} risk` : ""}
               </text>
             )}
           </g>
@@ -180,10 +241,40 @@ export function SupplyChainPanel({ data }: { data: SupplyChainData }) {
         </div>
       </div>
 
-      <div className="flex gap-2 mb-2 shrink-0">
+      {data.riskSummary && data.riskSummary.topRisks.length > 0 && (
+        <div className="mb-2 shrink-0 rounded border border-border/60 bg-white/[0.02] px-2 py-1.5">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[9px] uppercase tracking-widest text-muted-foreground font-bold">Top Concentration Risks</span>
+            <div className="flex gap-1">
+              {(["Critical", "High", "Medium"] as const).map(l =>
+                (data.riskSummary!.counts[l] ?? 0) > 0 ? (
+                  <span key={l} className={`text-[8px] leading-none px-1 py-0.5 rounded border ${RISK_BADGE[l]}`}>
+                    {data.riskSummary!.counts[l]} {l}
+                  </span>
+                ) : null
+              )}
+            </div>
+          </div>
+          <div className="space-y-0.5">
+            {data.riskSummary.topRisks.map((t, i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <span className={`text-[8px] leading-none uppercase font-bold px-1 py-0.5 rounded border shrink-0 ${RISK_BADGE[t.level]}`}>
+                  {t.level}
+                </span>
+                <span className="text-[10px] text-white font-medium shrink-0">{t.title}</span>
+                <span className="text-[9px] text-muted-foreground truncate">{t.detail}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2 mb-2 shrink-0">
         <span className="flex items-center gap-1 text-[9px] text-blue-400"><span className="w-2 h-2 rounded-full bg-blue-400/60 inline-block" />Supplier</span>
         <span className="flex items-center gap-1 text-[9px] text-emerald-400"><span className="w-2 h-2 rounded-full bg-emerald-400/60 inline-block" />Customer</span>
         <span className="flex items-center gap-1 text-[9px] text-white"><span className="w-2 h-2 rounded-full bg-white/60 inline-block" />Subject</span>
+        <span className="flex items-center gap-1 text-[9px] text-orange-400"><span className="w-2 h-2 rounded-full bg-orange-400/70 inline-block" />High risk</span>
+        <span className="flex items-center gap-1 text-[9px] text-red-400"><span className="w-2 h-2 rounded-full bg-red-400/70 inline-block" />Critical</span>
       </div>
 
       {tab === "graph" ? (
@@ -193,18 +284,28 @@ export function SupplyChainPanel({ data }: { data: SupplyChainData }) {
             <div>
               <div className="text-blue-400 uppercase tracking-wider mb-1 font-bold">Top Suppliers</div>
               {suppliers.slice(0, 3).map((r, i) => (
-                <div key={i} className="flex justify-between text-muted-foreground hover:text-white transition-colors py-0.5">
-                  <span className="truncate max-w-[120px]">{r.name}</span>
-                  <span className="text-blue-400 font-mono ml-1">{r.exposure}%</span>
+                <div key={i} className="flex items-center justify-between text-muted-foreground hover:text-white transition-colors py-0.5">
+                  <span className="truncate max-w-[90px]">{r.name}</span>
+                  <span className="flex items-center gap-1 ml-1">
+                    {r.riskScore && r.riskScore !== "Low" && (
+                      <span className={`text-[7px] leading-none uppercase font-bold px-1 py-0.5 rounded border ${RISK_BADGE[r.riskScore]}`}>{r.riskScore[0]}</span>
+                    )}
+                    <span className="text-blue-400 font-mono">{r.exposure}%</span>
+                  </span>
                 </div>
               ))}
             </div>
             <div>
               <div className="text-emerald-400 uppercase tracking-wider mb-1 font-bold">Top Customers</div>
               {customers.slice(0, 3).map((r, i) => (
-                <div key={i} className="flex justify-between text-muted-foreground hover:text-white transition-colors py-0.5">
-                  <span className="truncate max-w-[120px]">{r.name}</span>
-                  <span className="text-emerald-400 font-mono ml-1">{r.exposure}%</span>
+                <div key={i} className="flex items-center justify-between text-muted-foreground hover:text-white transition-colors py-0.5">
+                  <span className="truncate max-w-[90px]">{r.name}</span>
+                  <span className="flex items-center gap-1 ml-1">
+                    {r.riskScore && r.riskScore !== "Low" && (
+                      <span className={`text-[7px] leading-none uppercase font-bold px-1 py-0.5 rounded border ${RISK_BADGE[r.riskScore]}`}>{r.riskScore[0]}</span>
+                    )}
+                    <span className="text-emerald-400 font-mono">{r.exposure}%</span>
+                  </span>
                 </div>
               ))}
             </div>
@@ -218,11 +319,14 @@ export function SupplyChainPanel({ data }: { data: SupplyChainData }) {
                 <th className="text-left text-[10px] text-muted-foreground uppercase py-1.5 pr-2">Name</th>
                 <th className="text-left text-[10px] text-muted-foreground uppercase py-1.5 pr-2">Role</th>
                 <th className="text-left text-[10px] text-muted-foreground uppercase py-1.5 pr-2">Category</th>
+                <th className="text-left text-[10px] text-muted-foreground uppercase py-1.5 pr-2">Risk</th>
                 <th className="text-right text-[10px] text-muted-foreground uppercase py-1.5">Exposure</th>
               </tr>
             </thead>
             <tbody>
-              {data.table.map((row, i) => (
+              {[...data.table]
+                .sort((a, b) => (b.riskValue ?? 0) - (a.riskValue ?? 0))
+                .map((row, i) => (
                 <tr key={i} className="border-b border-border/30 hover:bg-white/5 transition-colors">
                   <td className="py-1.5 pr-2">
                     <span className="font-bold">{row.name}</span>
@@ -232,6 +336,14 @@ export function SupplyChainPanel({ data }: { data: SupplyChainData }) {
                     {row.role}
                   </td>
                   <td className="py-1.5 pr-2 text-muted-foreground text-[10px]">{row.category}</td>
+                  <td className="py-1.5 pr-2">
+                    {row.riskScore && (
+                      <span className={`inline-flex items-center gap-1 text-[9px] uppercase font-bold px-1.5 py-0.5 rounded border ${RISK_BADGE[row.riskScore]}`}>
+                        {row.riskScore}
+                        {row.singleSource && <span className="text-[7px] opacity-80">SOLE</span>}
+                      </span>
+                    )}
+                  </td>
                   <td className={`py-1.5 text-right font-mono font-bold ${ROLE_TEXT[row.role] || "text-white"}`}>
                     {row.exposure}%
                   </td>

@@ -878,6 +878,10 @@ class SupplyChainNode(BaseModel):
     role: str
     exposure: float
     country: str
+    riskScore: Optional[str] = None  # Low | Medium | High | Critical
+    riskValue: Optional[float] = None
+    geoRisk: Optional[float] = None
+    singleSource: Optional[bool] = None
 
 
 class SupplyChainEdge(BaseModel):
@@ -893,6 +897,31 @@ class SupplyChainTableRow(BaseModel):
     exposure: float
     country: str
     category: str
+    riskScore: Optional[str] = None
+    riskValue: Optional[float] = None
+    geoRisk: Optional[float] = None
+    singleSource: Optional[bool] = None
+
+
+class SupplyChainTopRisk(BaseModel):
+    kind: str
+    title: str
+    detail: str
+    level: str
+    riskValue: float
+
+
+class SupplyChainCountryConcentration(BaseModel):
+    country: str
+    countryName: str
+    sharePct: float
+    geoRisk: float
+
+
+class SupplyChainRiskSummary(BaseModel):
+    topRisks: List[SupplyChainTopRisk]
+    countryConcentration: List[SupplyChainCountryConcentration]
+    counts: Dict[str, int]
 
 
 class SupplyChainData(BaseModel):
@@ -901,6 +930,7 @@ class SupplyChainData(BaseModel):
     nodes: List[SupplyChainNode]
     edges: List[SupplyChainEdge]
     table: List[SupplyChainTableRow]
+    riskSummary: Optional[SupplyChainRiskSummary] = None
 
 
 # --- dcf_model ---
