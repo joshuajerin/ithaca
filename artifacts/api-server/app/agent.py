@@ -213,6 +213,14 @@ def _tools() -> list:
             }},
         }},
         {"type": "function", "function": {
+            "name": "add_sovereign_compare",
+            "description": f"Overlay 2–4 sovereign yield curves (US/UK/DE/JP) on one chart with cross-currency 2Y/10Y/30Y spreads. Use to compare government bond curves across countries/currencies (e.g. UST vs Bund). {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "regions": {"type": "array", "items": {"type": "string", "enum": ["US", "UK", "DE", "JP"]}, "description": "Sovereign issuers to overlay (2–4). e.g. [\"US\", \"DE\"]. Defaults to US vs DE."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["regions"]},
+        }},
+        {"type": "function", "function": {
             "name": "add_bond_rv",
             "description": f"Add a bond relative-value panel: Z-spread, OAS and asset-swap vs peers. {sizing}",
             "parameters": {"type": "object", "properties": {
@@ -596,6 +604,7 @@ _TOOL_TO_TYPE = {
     "add_tca_report": "tca_report",
     "add_macro_dashboard": "macro_dashboard",
     "add_yield_curve": "yield_curve",
+    "add_sovereign_compare": "sovereign_compare",
     "add_bond_rv": "bond_rv",
     "add_cds_pricer": "cds_pricer",
     "add_cashflow_duration": "cashflow_duration",
@@ -681,7 +690,9 @@ def _system_prompt() -> str:
         "exchange ('NASDAQ'/'NYSE'/'SGX') to add_screener / add_heatmap, combined with sector when given.\n"
         "- For derivatives requests: vol surface → add_iv_surface; options strategy → add_options_strategy; "
         "VIX/vol curve → add_vol_term_structure; barrier/exotic → add_structured_product.\n"
-        "- For macro and fixed income: global view → add_macro_dashboard; yield curve → add_yield_curve; "
+        "- For macro and fixed income: global view → add_macro_dashboard; single-country yield curve → add_yield_curve; "
+        "comparing sovereign curves across countries/currencies (e.g. 'US vs German curve', 'UST vs Bund', "
+        "'Treasury vs Gilt 10Y spread') → add_sovereign_compare (pass the 2–4 region codes); "
         "bond RV → add_bond_rv; CDS → add_cds_pricer; duration/cash flows → add_cashflow_duration.\n"
         "- For microstructure/execution requests: order book → add_order_book; trade flow/unusual activity → add_trade_flow; "
         "TCA / execution simulation / slippage / market impact / VWAP-TWAP-POV / 'cost to trade into a portfolio' → add_tca_report "
@@ -1407,7 +1418,29 @@ def _answer_fallback(panels: List[dict]) -> str:
 # --------------------- context-aware panel relevance ---------------------
 # Panel types that are market-wide rather than tied to a single subject; they
 # can reasonably stay on screen even when the user switches focus.
-_SUBJECT_AGNOSTIC_TYPES = {"macro_dashboard", "yield_curve"}
+_SUBJECT_AGNOSTIC_TYPES = {"macro_dashboard", "yield_curve", "sovereign_compare"}
+
+# Keyword → sovereign region code, used by the heuristic fallback to detect
+# multi-country curve comparisons (e.g. "US vs German curve", "UST vs Bund").
+_SOVEREIGN_REGION_KEYWORDS = {
+    "US": [" us ", " u.s.", "ust", "treasury", "treasuries", "american"],
+    "DE": ["german", "germany", "bund", "bunds", " de "],
+    "UK": [" uk ", "gilt", "gilts", "british", "britain", "england"],
+    "JP": ["japan", "japanese", "jgb", "jgbs"],
+}
+
+
+def _detect_sovereign_regions(q: str) -> list:
+    """Detect sovereign region codes mentioned in a query, in order of first
+    appearance, deduplicated. Used to route multi-curve comparison requests."""
+    padded = f" {q} "
+    hits = []
+    for code, kws in _SOVEREIGN_REGION_KEYWORDS.items():
+        idx = min((padded.find(kw) for kw in kws if kw in padded), default=-1)
+        if idx >= 0:
+            hits.append((idx, code))
+    hits.sort()
+    return [code for _, code in hits]
 
 # Words that signal the new prompt builds on what's already shown (a genuine
 # follow-up) rather than switching to a brand-new subject.
@@ -1810,6 +1843,7 @@ _TYPE_LABELS = {
     "tca_report": "a TCA report",
     "macro_dashboard": "a macro dashboard",
     "yield_curve": "a yield curve",
+    "sovereign_compare": "a sovereign curve comparison",
     "bond_rv": "bond relative value",
     "cds_pricer": "a CDS pricer",
     "cashflow_duration": "cash flow & duration",
@@ -2079,6 +2113,14 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         "risk on", "risk off", "roro", "rates fx", "inflation dashboard", "china macro",
         "global risk", "mosaic",
     ])
+    sovereign_regions = _detect_sovereign_regions(q)
+    wants_sovereign_compare = (
+        any(k in q for k in ["sovereign", "cross-currency curve", "cross currency curve",
+                             "cross-country curve", "curve spread", "curve comparison",
+                             "compare curves", "compare sovereign"])
+        or (any(k in q for k in ["compare", "vs", "versus", "against", "overlay",
+                                 "spread between", " v "]) and len(sovereign_regions) >= 2)
+    )
     wants_yield_curve = any(k in q for k in ["yield curve", "treasury curve", "rates curve", "rate curve", "interest rate", "treasury yield", "yield spread", "2s10s", "inversion"])
     wants_bond_rv = any(k in q for k in ["bond rv", "bond relative value", "z-spread", "z spread", "oas", "asset swap", "asset-swap", "corporate bond", "credit spread"])
     wants_cds = any(k in q for k in ["cds", "credit default swap", "credit risk", "default swap", "survival prob"])
@@ -2340,6 +2382,14 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         return panels, f"Supply chain map and latest news for {name}."
 
     # --- Fixed income heuristics ---
+    if wants_sovereign_compare:
+        regions = sovereign_regions[:4]
+        if len(regions) < 2:
+            regions = ["US", "DE"]
+        add("sovereign_compare", {"regions": regions}, 8, 5)
+        names = " vs ".join(regions)
+        return panels, f"Sovereign curve comparison — {names} overlaid with cross-currency 2Y/10Y/30Y spreads."
+
     if wants_yield_curve:
         region = "US"
         for r in ["UK", "DE", "JP"]:

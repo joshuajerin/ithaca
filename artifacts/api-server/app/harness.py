@@ -23,6 +23,7 @@ DATA_MODELS = {
     "tca_report": models.TCARportData,
     "macro_dashboard": models.MacroDashboardData,
     "yield_curve": models.YieldCurveData,
+    "sovereign_compare": models.SovereignCompareData,
     "bond_rv": models.BondRVData,
     "cds_pricer": models.CDSPricerData,
     "cashflow_duration": models.CashFlowDurationData,

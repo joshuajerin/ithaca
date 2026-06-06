@@ -25,7 +25,7 @@ export const GetSkillsResponse = zod.object({
   "skills": zod.array(zod.object({
   "id": zod.string(),
   "name": zod.string(),
-  "panelType": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'risk_model', 'factor_exposures', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product', 'signal_research', 'signal_scorecard']),
+  "panelType": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'risk_model', 'factor_exposures', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'sovereign_compare', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product', 'signal_research', 'signal_scorecard']),
   "description": zod.string(),
   "subskills": zod.array(zod.object({
   "name": zod.string(),
@@ -67,7 +67,7 @@ export const GetDefaultDashboardResponse = zod.object({
   "summary": zod.string(),
   "panels": zod.array(zod.object({
   "id": zod.string(),
-  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'risk_model', 'factor_exposures', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product', 'signal_research', 'signal_scorecard']),
+  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'risk_model', 'factor_exposures', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'sovereign_compare', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product', 'signal_research', 'signal_scorecard']),
   "title": zod.string(),
   "layout": zod.object({
   "x": zod.number(),
@@ -436,7 +436,7 @@ export const OrchestrateResponse = zod.object({
   "summary": zod.string(),
   "panels": zod.array(zod.object({
   "id": zod.string(),
-  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'risk_model', 'factor_exposures', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product', 'signal_research', 'signal_scorecard']),
+  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'risk_model', 'factor_exposures', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'sovereign_compare', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product', 'signal_research', 'signal_scorecard']),
   "title": zod.string(),
   "layout": zod.object({
   "x": zod.number(),
@@ -836,7 +836,7 @@ export const RefinePanelBody = zod.object({
 
 export const RefinePanelResponse = zod.object({
   "id": zod.string(),
-  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'risk_model', 'factor_exposures', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product', 'signal_research', 'signal_scorecard']),
+  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'risk_model', 'factor_exposures', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'sovereign_compare', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product', 'signal_research', 'signal_scorecard']),
   "title": zod.string(),
   "layout": zod.object({
   "x": zod.number(),

@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import uuid
 from datetime import date, timedelta
 from typing import Callable, Dict, List, Optional
@@ -1182,28 +1183,55 @@ _AGO1Y_SPOT = [5.55, 5.52, 5.45, 5.25, 4.90, 4.75, 4.60, 4.65, 4.72, 4.88, 4.84]
 # 2Y ago (early hiking cycle)
 _AGO2Y_SPOT = [3.10, 3.55, 4.02, 4.30, 4.15, 3.98, 3.82, 3.85, 3.80, 3.90, 3.88]
 
+# Per-sovereign metadata used by both the single-curve and comparison panels.
+# `shift` is a parallel level shift (in %) off the US base curve; `twist` tilts
+# the curve around the 5Y point (in % per year) so each issuer has a distinct
+# slope and cross-market spreads vary realistically by tenor rather than being
+# constant across the curve.
+_SOVEREIGN_META = {
+    "US": {"name": "US Treasury", "issuer": "Treasury", "currency": "USD", "shift": 0.0, "twist": 0.0, "color": "#ffffff"},
+    "UK": {"name": "UK Gilt", "issuer": "Gilt", "currency": "GBP", "shift": 0.15, "twist": 0.012, "color": "#60a5fa"},
+    "DE": {"name": "German Bund", "issuer": "Bund", "currency": "EUR", "shift": -1.45, "twist": 0.008, "color": "#facc15"},
+    "JP": {"name": "Japan JGB", "issuer": "JGB", "currency": "JPY", "shift": -3.80, "twist": 0.022, "color": "#f472b6"},
+}
+
+_TWIST_PIVOT_YEARS = 5.0
+
+
+def _region_shift(region: str) -> float:
+    return _SOVEREIGN_META.get(region, {}).get("shift", 0.0)
+
+
+def _region_spot(region: str, i: int) -> float:
+    """Spot rate for a region at tenor index i: base curve + parallel shift +
+    a slope twist pivoting around the 5Y point."""
+    meta = _SOVEREIGN_META.get(region, {})
+    shift = meta.get("shift", 0.0)
+    twist = meta.get("twist", 0.0)
+    return round(_BASE_SPOT[i] + shift + twist * (_TENOR_YEARS[i] - _TWIST_PIVOT_YEARS), 3)
+
 
 def build_yield_curve(params: dict) -> dict:
     region = (params.get("region") or "US").upper()
     title = f"{region} Treasury Yield Curve"
 
     # Apply small per-region shifts for variety
-    shift = {"US": 0.0, "UK": 0.15, "DE": -1.45, "JP": -3.80}.get(region, 0.0)
+    shift = _region_shift(region)
 
     points = []
     for i, tenor in enumerate(_TENORS):
         points.append({
             "tenor": tenor,
-            "spot": round(_BASE_SPOT[i] + shift, 3),
+            "spot": _region_spot(region, i),
             "ago1y": round(_AGO1Y_SPOT[i] + shift, 3),
             "ago2y": round(_AGO2Y_SPOT[i] + shift, 3),
         })
 
-    # Key spreads
-    spot_2y = _BASE_SPOT[4] + shift
-    spot_10y = _BASE_SPOT[8] + shift
-    spot_30y = _BASE_SPOT[10] + shift
-    spot_3m = _BASE_SPOT[1] + shift
+    # Key spreads (read off the displayed twisted curve)
+    spot_2y = _region_spot(region, 4)
+    spot_10y = _region_spot(region, 8)
+    spot_30y = _region_spot(region, 10)
+    spot_3m = _region_spot(region, 1)
 
     spreads = [
         {"label": "2Y–10Y", "value": round(spot_10y - spot_2y, 2), "inverted": spot_10y < spot_2y},
@@ -1213,6 +1241,83 @@ def build_yield_curve(params: dict) -> dict:
 
     inverted = any(s["inverted"] for s in spreads[:2])
     return {"title": title, "points": points, "spreads": spreads, "inverted": inverted}
+
+
+# Key tenors highlighted in the cross-currency spread strip.
+_COMPARE_SPREAD_TENORS = ["2Y", "10Y", "30Y"]
+
+
+def _normalize_compare_regions(params: dict) -> list:
+    """Resolve the requested set of sovereign issuers (2–4 known codes)."""
+    raw = params.get("regions") or params.get("region")
+    if isinstance(raw, str):
+        candidates = [r for r in re.split(r"[\s,/&]+", raw) if r]
+    elif isinstance(raw, (list, tuple)):
+        candidates = list(raw)
+    else:
+        candidates = []
+
+    regions: list = []
+    for c in candidates:
+        code = str(c).strip().upper()
+        if code in _SOVEREIGN_META and code not in regions:
+            regions.append(code)
+
+    # Sensible default: the canonical UST vs Bund overlay.
+    if len(regions) < 2:
+        for fallback in ["US", "DE"]:
+            if fallback not in regions:
+                regions.append(fallback)
+            if len(regions) >= 2:
+                break
+
+    return regions[:4]
+
+
+def build_sovereign_compare(params: dict) -> dict:
+    regions = _normalize_compare_regions(params)
+
+    series = []
+    for code in regions:
+        meta = _SOVEREIGN_META[code]
+        series.append({
+            "code": code,
+            "name": meta["name"],
+            "currency": meta["currency"],
+            "color": meta["color"],
+        })
+
+    # One row per tenor with each region's spot flattened on so the chart can
+    # render a single <Line> per region.
+    points = []
+    rates_by_region = {code: {} for code in regions}
+    for i, tenor in enumerate(_TENORS):
+        row = {"tenor": tenor}
+        for code in regions:
+            spot = _region_spot(code, i)
+            row[code] = spot
+            rates_by_region[code][tenor] = spot
+        points.append(row)
+
+    # Cross-currency spreads at key tenors: base region minus each comparison
+    # region, expressed in basis points. Base is the first requested region.
+    base = regions[0]
+    spreads = []
+    for tenor in _COMPARE_SPREAD_TENORS:
+        for other in regions[1:]:
+            value = round((rates_by_region[base][tenor] - rates_by_region[other][tenor]) * 100, 1)
+            spreads.append({
+                "label": f"{base}–{other} {tenor}",
+                "tenor": tenor,
+                "value": value,
+                "base": base,
+                "other": other,
+            })
+
+    issuer_names = " vs ".join(_SOVEREIGN_META[c]["name"] for c in regions)
+    title = f"Sovereign Curve Comparison — {issuer_names}"
+
+    return {"title": title, "series": series, "points": points, "spreads": spreads}
 
 
 # Bond peer universe for relative-value comparison
@@ -4924,6 +5029,20 @@ _reg(SkillDef(
         {"name": "compute_spreads", "description": "Calculate 2Y-10Y, 2Y-30Y, and 3M-10Y spreads and flag inversion.", "expectedOutput": "Spread values and inversion flags."},
     ],
     build_yield_curve, "Yield Curve",
+))
+_reg(SkillDef(
+    "sovereign-compare", "Sovereign Curve Comparison", "sovereign_compare",
+    "Overlays 2–4 sovereign yield curves (US Treasury, UK Gilt, German Bund, Japan JGB) on a "
+    "single chart for cross-currency relative value, and shows the cross-market spreads at the "
+    "2Y, 10Y and 30Y tenors. Use when the user wants to compare sovereign curves across "
+    "countries or currencies, e.g. 'compare US and German curves', 'UST vs Bund', "
+    "'Treasury vs Gilt 10Y spread', or any multi-country government bond curve overlay.",
+    [
+        {"name": "select_regions", "description": "Resolve the 2–4 sovereign issuers to overlay (US, UK, DE, JP).", "expectedOutput": "An ordered list of region codes."},
+        {"name": "build_curves", "description": "Produce each issuer's spot curve across all tenors on a shared grid.", "expectedOutput": "Tenor rows with one spot rate per region."},
+        {"name": "compute_cross_spreads", "description": "Calculate the cross-currency 2Y, 10Y and 30Y spreads between the base region and each peer.", "expectedOutput": "Spread values in basis points by tenor."},
+    ],
+    build_sovereign_compare, "Sovereign Curve Comparison",
 ))
 _reg(SkillDef(
     "bond-rv", "Bond Relative Value", "bond_rv",

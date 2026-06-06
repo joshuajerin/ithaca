@@ -4,7 +4,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Dict, List, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class PanelType(str, Enum):
@@ -21,6 +21,7 @@ class PanelType(str, Enum):
     tca_report = "tca_report"
     macro_dashboard = "macro_dashboard"
     yield_curve = "yield_curve"
+    sovereign_compare = "sovereign_compare"
     bond_rv = "bond_rv"
     cds_pricer = "cds_pricer"
     cashflow_duration = "cashflow_duration"
@@ -365,6 +366,37 @@ class YieldCurveData(BaseModel):
     points: List[YieldCurvePoint]
     spreads: List[YieldCurveSpread]
     inverted: bool
+
+
+# --- sovereign_compare ---
+class SovereignCompareSeries(BaseModel):
+    code: str
+    name: str
+    currency: str
+    color: str
+
+
+class SovereignComparePoint(BaseModel):
+    # Per-region spot rates are flattened onto each point (keyed by region code,
+    # e.g. {"tenor": "10Y", "US": 4.52, "DE": 3.07}) so recharts can plot one
+    # <Line> per region directly.
+    model_config = ConfigDict(extra="allow")
+    tenor: str
+
+
+class SovereignCompareSpread(BaseModel):
+    label: str
+    tenor: str
+    value: float  # spread in basis points (base region minus comparison region)
+    base: str
+    other: str
+
+
+class SovereignCompareData(BaseModel):
+    title: str
+    series: List[SovereignCompareSeries]
+    points: List[SovereignComparePoint]
+    spreads: List[SovereignCompareSpread]
 
 
 # --- bond_rv ---

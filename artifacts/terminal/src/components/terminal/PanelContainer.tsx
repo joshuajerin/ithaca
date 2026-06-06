@@ -15,6 +15,7 @@ import { TradeFlowPanel } from "./panels/TradeFlowPanel";
 import { TCAPanelReport } from "./panels/TCAPanelReport";
 import { MacroDashboardPanel } from "./panels/MacroDashboardPanel";
 import { YieldCurvePanel } from "./panels/YieldCurvePanel";
+import { SovereignComparePanel } from "./panels/SovereignComparePanel";
 import { BondRVPanel } from "./panels/BondRVPanel";
 import { CDSPricerPanel } from "./panels/CDSPricerPanel";
 import { CashFlowPanel } from "./panels/CashFlowPanel";
@@ -146,6 +147,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "tca_report": return <TCAPanelReport data={panel.data as any} />;
       case "macro_dashboard": return <MacroDashboardPanel data={panel.data as any} />;
       case "yield_curve": return <YieldCurvePanel data={panel.data as any} />;
+      case "sovereign_compare": return <SovereignComparePanel data={panel.data as any} />;
       case "bond_rv": return <BondRVPanel data={panel.data as any} />;
       case "cds_pricer": return <CDSPricerPanel data={panel.data as any} />;
       case "cashflow_duration": return <CashFlowPanel data={panel.data as any} />;

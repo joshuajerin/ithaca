@@ -33,6 +33,7 @@ export const PanelType = {
   tca_report: 'tca_report',
   macro_dashboard: 'macro_dashboard',
   yield_curve: 'yield_curve',
+  sovereign_compare: 'sovereign_compare',
   bond_rv: 'bond_rv',
   cds_pricer: 'cds_pricer',
   cashflow_duration: 'cashflow_duration',

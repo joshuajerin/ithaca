@@ -235,6 +235,7 @@ components:
         - tca_report
         - macro_dashboard
         - yield_curve
+        - sovereign_compare
         - bond_rv
         - cds_pricer
         - cashflow_duration
