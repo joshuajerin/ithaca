@@ -4144,6 +4144,70 @@ def _build_ai_transcript(symbol: str, company: dict) -> dict:
     }
 
 
+# ----------------------------- earnings calendar builder -----------------------------
+def build_earnings_calendar(params: dict) -> dict:
+    """Upcoming scheduled earnings reports for a watchlist, tickers or a sector."""
+    symbols_param = params.get("symbols")
+    symbol = params.get("symbol")
+    sector_param = params.get("sector")
+    explicit_days = params.get("days") or params.get("horizon")
+
+    if symbol and not symbols_param:
+        symbols_param = [symbol]
+
+    if symbols_param:
+        syms = [str(s).upper() for s in symbols_param if data.get_company(str(s).upper())]
+        scope = ", ".join(syms[:4]) + ("…" if len(syms) > 4 else "")
+        title = f"Earnings Calendar — {scope}" if syms else "Earnings Calendar"
+        scope_label = "watchlist"
+        default_horizon = 120  # explicit names: always surface each one's next report
+    elif sector_param:
+        sid = data.resolve_sector(sector_param)
+        syms = data.symbols_in_sector(sid) if sid else []
+        title = f"Earnings Calendar — {data.sector_name(sid) if sid else sector_param}"
+        scope_label = "sector"
+        default_horizon = 120
+    else:
+        syms = list(data.CORE_SYMBOLS)
+        title = "Earnings Calendar — Watchlist"
+        scope_label = "watchlist"
+        default_horizon = 30
+
+    horizon = explicit_days if explicit_days is not None else default_horizon
+    try:
+        horizon = int(horizon)
+    except (TypeError, ValueError):
+        horizon = default_horizon
+    horizon = max(7, min(horizon, 120))
+
+    if not syms:
+        raise ValueError("No tracked symbols to build an earnings calendar for.")
+
+    rows = data.earnings_calendar(syms, horizon_days=horizon)
+
+    # Keep the panel readable while always preserving the soonest (imminent) names,
+    # which sit at the front after the date sort.
+    max_rows = 40
+    if len(rows) > max_rows:
+        rows = rows[:max_rows]
+
+    imminent = [r for r in rows if r["imminent"]]
+
+    return {
+        "title": title,
+        "rows": rows,
+        "imminent": imminent,
+        "imminentCount": len(imminent),
+        "nextReport": rows[0] if rows else None,
+        "horizonDays": horizon,
+        "count": len(rows),
+        "watchlistSize": len(syms),
+        "scope": scope_label,
+        "asOf": date.today().isoformat(),
+        "source": "Synthetic earnings schedule",
+    }
+
+
 # ----------------------------- M&A tracker builder -----------------------------
 _MA_DEALS = [
     {
@@ -4978,6 +5042,20 @@ _reg(SkillDef(
         {"name": "extract_key_quotes", "description": "Surface the highest-impact management statements.", "expectedOutput": "Up to 5 key quote cards."},
     ],
     build_earnings_transcript, "Earnings Transcript",
+))
+_reg(SkillDef(
+    "earnings-calendar", "Earnings Calendar", "earnings_calendar",
+    "Lists upcoming scheduled earnings report dates for a watchlist, a set of tickers, or a "
+    "sector — each row carries the company, report date, before/after-market timing, a live "
+    "countdown, the consensus EPS estimate and the fiscal quarter, and any company reporting "
+    "within 24 hours is flagged. Use when the user asks for the earnings calendar, upcoming "
+    "earnings, earnings dates/schedule, who reports next, or when a company reports.",
+    [
+        {"name": "resolve_watchlist", "description": "Resolve the set of tickers (explicit names, a sector, or the tracked watchlist).", "expectedOutput": "A list of tickers."},
+        {"name": "schedule_reports", "description": "Compute each name's next scheduled report date, timing and EPS estimate.", "expectedOutput": "Dated rows sorted by soonest report."},
+        {"name": "flag_imminent", "description": "Flag companies reporting within the next 24 hours.", "expectedOutput": "An imminent list plus the next report."},
+    ],
+    build_earnings_calendar, "Earnings Calendar",
 ))
 _reg(SkillDef(
     "signal-research", "Alpha Signal Research", "signal_research",

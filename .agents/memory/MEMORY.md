@@ -19,4 +19,5 @@
 - [Attribution benchmark must be REAL](attribution-benchmark.md) — attribution benchmarks must be real traded ETFs (never a synthetic universe); date-align to window, size fetch to range, report coverage.
 - [api-server Python test conventions](python-test-conventions.md) — standalone (no pytest) self-running suites; patch shared `db` module for live/mock, `httpx.Client`/`yf.Ticker` for adapter parsing.
 - [Supply chain risk scoring](supply-chain-risk.md) — concentration×geo risk score per node; built-in panels have a pydantic model in harness.DATA_MODELS that strips unknown fields (add fields to models.py too).
+- [Earnings calendar panel + alert](earnings-calendar-panel.md) — passthrough earnings_calendar type; explicit-symbol horizon=120 vs watchlist=30; Terminal.tsx imminent banner reuses formatEarningsCountdown.
 - [Strategy lifecycle & paper book desk](strategy-lifecycle-desk.md) — registry+paperbook+lifecycle; deterministic intent handler before LLM; runtime CREATE TABLE not drizzle push; mark has no weight (use exposures); vite build needs PORT+BASE_PATH.

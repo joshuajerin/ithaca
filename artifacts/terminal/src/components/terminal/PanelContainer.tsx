@@ -35,6 +35,7 @@ import { StructuredProductPanel } from "./panels/StructuredProductPanel";
 import { SupplyChainPanel } from "./panels/SupplyChainPanel";
 import { DCFPanel } from "./panels/DCFPanel";
 import { TranscriptPanel } from "./panels/TranscriptPanel";
+import { EarningsCalendarPanel } from "./panels/EarningsCalendarPanel";
 import { MACPanel } from "./panels/MACPanel";
 import { CompanyAnalyticsPanel } from "./panels/CompanyAnalyticsPanel";
 import { DataUniversePanel } from "./panels/DataUniversePanel";
@@ -156,6 +157,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "supply_chain": return <SupplyChainPanel data={panel.data as any} />;
       case "dcf_model": return <DCFPanel data={panel.data as any} />;
       case "earnings_transcript": return <TranscriptPanel data={panel.data as any} />;
+      case "earnings_calendar": return <EarningsCalendarPanel data={panel.data as any} />;
       case "ma_tracker": return <MACPanel data={panel.data as any} />;
       case "company_analytics": return <CompanyAnalyticsPanel data={panel.data as any} />;
       case "data_universe": return <DataUniversePanel data={panel.data as any} />;

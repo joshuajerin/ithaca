@@ -170,6 +170,25 @@ def _tools() -> list:
             }, "required": ["symbol"]},
         }},
         {"type": "function", "function": {
+            "name": "add_earnings_calendar",
+            "description": (
+                f"Add an earnings calendar panel listing upcoming scheduled earnings report dates "
+                f"for a watchlist, a set of tickers, or a sector. Each row has the company, report "
+                f"date, before/after-market timing, a live countdown, the consensus EPS estimate and "
+                f"the fiscal quarter; any company reporting within 24 hours is flagged. Use for "
+                f"'earnings calendar', 'upcoming earnings', 'earnings dates/schedule', 'who reports "
+                f"next', or 'when does X report'. {sizing}"
+            ),
+            "parameters": {"type": "object", "properties": {
+                "symbols": {"type": "array", "items": {"type": "string"},
+                            "description": f"Optional explicit tickers to track. Omit to use the tracked watchlist. From: {syms}"},
+                "symbol": {"type": "string", "description": "A single ticker to focus on."},
+                "sector": {"type": "string", "description": "Optional sector to list earnings for."},
+                "days": {"type": "integer", "description": "Horizon in days (default 30, max 120)."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
+        {"type": "function", "function": {
             "name": "add_macro_dashboard",
             "description": (
                 f"Add a macro/cross-asset dashboard panel. {sizing} "
@@ -601,6 +620,7 @@ _TOOL_TO_TYPE = {
     "add_supply_chain": "supply_chain",
     "add_dcf_model": "dcf_model",
     "add_earnings_transcript": "earnings_transcript",
+    "add_earnings_calendar": "earnings_calendar",
     "add_ma_tracker": "ma_tracker",
     "add_company_analytics": "company_analytics",
     "add_data_universe": "data_universe",
@@ -674,6 +694,8 @@ def _system_prompt() -> str:
         "- For supply chain requests ('suppliers', 'supply chain', 'vendors'), use add_supply_chain.\n"
         "- For DCF / valuation / intrinsic value requests, use add_dcf_model.\n"
         "- For earnings call / transcript / 'what did management say' requests, use add_earnings_transcript.\n"
+        "- For the earnings calendar / upcoming earnings / earnings dates / 'who reports next' / "
+        "'when does X report', use add_earnings_calendar.\n"
         "- For M&A / deal flow / mergers / acquisitions / arb spread requests, use add_ma_tracker.\n"
         "- For backtest / strategy / Sharpe / drawdown requests, use add_backtest. For Monte Carlo / "
         "simulation / forward projection / 'probability of loss' / scenario forecast requests, use add_monte_carlo.\n"
@@ -1812,6 +1834,7 @@ _TYPE_LABELS = {
     "supply_chain": "a supply chain map",
     "dcf_model": "a DCF model",
     "earnings_transcript": "an earnings transcript",
+    "earnings_calendar": "an earnings calendar",
     "ma_tracker": "an M&A tracker",
     "company_analytics": "a company analytics panel",
     "data_universe": "a data universe overview",
@@ -2183,6 +2206,14 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
     wants_supply_chain = any(k in q for k in ["supply chain", "supplier", "vendor", "customer", "who makes"])
     wants_dcf = any(k in q for k in ["dcf", "valuation", "intrinsic value", "fair value", "discounted cash flow"])
     wants_transcript = any(k in q for k in ["transcript", "earnings call", "what did management", "what did ceo", "call", "said on"])
+    wants_calendar = (
+        any(k in q for k in [
+            "earnings calendar", "earnings date", "earnings schedule", "earnings season",
+            "reporting season", "upcoming earnings", "next earnings", "reporting date",
+            "report date", "who reports", "reports next",
+        ])
+        or (("report" in q or "reporting" in q) and any(k in q for k in ["when", "next", "upcoming", "calendar", "date", "schedule"]))
+    )
     wants_ma = any(k in q for k in ["m&a", "merger", "acquisition", "deal", "arb spread", "takeover", "buyout"])
     wants_company_analytics = any(k in q for k in [
         "why is", "why is it", "what drives", "price driver", "company analytics",
@@ -2273,6 +2304,19 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
             ma_params["sector"] = sec
         add("ma_tracker", ma_params, 12, 5)
         return panels, "M&A deal tracker with arb spreads and deal statistics."
+
+    if wants_calendar:
+        cal_params: dict = {}
+        if symbols:
+            cal_params["symbols"] = symbols
+        elif sector:
+            cal_params["sector"] = sector
+        add("earnings_calendar", cal_params, 12, 5)
+        scope = (
+            ", ".join(symbols[:3]) + ("..." if len(symbols) > 3 else "")
+            if symbols else (repo.sector_name(sector) if sector else "your watchlist")
+        )
+        return panels, f"Upcoming earnings calendar for {scope} with live countdowns; any name reporting within 24 hours is flagged."
 
     if wants_transcript and symbols:
         sym = symbols[0]
@@ -2777,6 +2821,12 @@ def _refine_params_heuristic(panel_type: str, panel: dict, instruction: str) -> 
         elif sector:
             params["sector"] = sector
         return params
+    if panel_type == "earnings_calendar":
+        if syms:
+            return {"symbols": syms}
+        if sector:
+            return {"sector": sector}
+        return {}
     d = panel.get("data") or {}
     if panel_type in ("price_chart", "fundamentals", "supply_chain", "dcf_model", "earnings_transcript") and d.get("symbol"):
         return {"symbol": d["symbol"]}

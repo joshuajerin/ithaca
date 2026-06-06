@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 
 SECTORS = {
@@ -1834,3 +1834,93 @@ def news_for(scope_type: str, scope: str, limit: int = 40) -> List[dict]:
             "tickers": n["tickers"],
         })
     return out
+
+
+# ----------------------------- earnings calendar -----------------------------
+# Companies report quarterly. Each name's report day is derived deterministically
+# from its symbol seed so the schedule is stable across restarts, while always
+# rolling forward relative to today (no stale, hand-written dates). Timing
+# (before/after market) and the consensus EPS estimate are likewise deterministic
+# but fabricated-yet-plausible, consistent with the rest of this mock dataset.
+_EARNINGS_EPOCH = date(2000, 1, 3)  # a Monday, fixes the cycle phase
+_EARNINGS_CYCLE = 91  # ~ one fiscal quarter in days
+
+
+def _earnings_report_date(symbol: str, today: date) -> date:
+    """Next scheduled report date on or after ``today`` for ``symbol``."""
+    offset = _seed(symbol) % _EARNINGS_CYCLE
+    cycle_pos = (today - _EARNINGS_EPOCH).days % _EARNINGS_CYCLE
+    delta = (offset - cycle_pos) % _EARNINGS_CYCLE
+    report = today + timedelta(days=delta)
+    # Earnings land on business days — nudge a weekend date to the next Monday.
+    wd = report.weekday()
+    if wd == 5:
+        report += timedelta(days=2)
+    elif wd == 6:
+        report += timedelta(days=1)
+    return report
+
+
+def _earnings_timing(symbol: str) -> str:
+    return "bmo" if (_seed(symbol) // 7) % 2 == 0 else "amc"
+
+
+def _earnings_eps_estimate(company: dict) -> Optional[float]:
+    eps = company.get("eps")
+    if eps is None:
+        return None
+    factor = 0.90 + ((_seed(company["symbol"]) // 13) % 21) / 100.0  # 0.90..1.10
+    return round((eps / 4.0) * factor, 2)
+
+
+def _fiscal_quarter(report: date) -> str:
+    """Plausible label for the just-reported fiscal quarter (~1 month prior)."""
+    q_idx = (report.month - 2) // 3
+    year = report.year
+    if q_idx < 0:
+        q_idx = 3
+        year -= 1
+    return f"Q{q_idx + 1} FY{year}"
+
+
+def earnings_calendar(symbols: List[str], horizon_days: int = 30,
+                      today: Optional[date] = None) -> List[dict]:
+    """Build dated, sorted earnings rows for the given symbols within a horizon.
+
+    Each row carries the report date/time, before/after-market timing, the
+    consensus EPS estimate, the fiscal quarter, a live countdown (``hoursUntil``)
+    and an ``imminent`` flag (reporting within the next 24 hours).
+    """
+    today = today or date.today()
+    now = datetime.now()
+    rows: List[dict] = []
+    for sym in symbols:
+        c = COMPANIES.get(sym.upper())
+        if not c:
+            continue
+        report = _earnings_report_date(c["symbol"], today)
+        days_until = (report - today).days
+        if days_until > horizon_days:
+            continue
+        timing = _earnings_timing(c["symbol"])
+        hour, minute = (8, 0) if timing == "bmo" else (16, 15)
+        report_dt = datetime(report.year, report.month, report.day, hour, minute)
+        hours_until = round((report_dt - now).total_seconds() / 3600.0, 1)
+        rows.append({
+            "symbol": c["symbol"],
+            "name": c["name"],
+            "sector": c["sector"],
+            "sectorName": SECTORS.get(c["sector"], c["sector"]),
+            "reportDate": report.isoformat(),
+            "reportDateTime": report_dt.isoformat(),
+            "timing": timing,
+            "timingLabel": "Before Market Open" if timing == "bmo" else "After Market Close",
+            "epsEstimate": _earnings_eps_estimate(c),
+            "quarter": _fiscal_quarter(report),
+            "daysUntil": days_until,
+            "hoursUntil": hours_until,
+            "imminent": 0 <= hours_until <= 24,
+            "marketCap": c.get("marketCap"),
+        })
+    rows.sort(key=lambda r: r["reportDateTime"])
+    return rows

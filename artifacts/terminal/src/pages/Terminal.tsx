@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   useOrchestrate,
@@ -16,7 +16,11 @@ import { FeatureRequestModal } from "@/components/terminal/FeatureRequestModal";
 import { DotWaveCanvas } from "@/components/terminal/DotWaveCanvas";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
+import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles, CalendarClock, X } from "lucide-react";
+import {
+  formatEarningsCountdown,
+  type EarningsRow,
+} from "@/components/terminal/panels/EarningsCalendarPanel";
 
 // Phrases that mean "drive the terminal and walk me through it" — these route to
 // the AI navigator cursor instead of (or in addition to) a normal orchestration.
@@ -173,6 +177,39 @@ export default function Terminal() {
 
   const hasPanels = !!activeDashboard && activeDashboard.panels.length > 0;
 
+  // Earnings alert: surface a banner when any earnings_calendar panel on the
+  // active dashboard flags a watched company reporting within 24 hours.
+  const imminentReports = useMemo<EarningsRow[]>(() => {
+    if (!activeDashboard) return [];
+    const collected: EarningsRow[] = [];
+    for (const p of activeDashboard.panels) {
+      if (p.type === "earnings_calendar") {
+        const imm = ((p.data as any)?.imminent as EarningsRow[]) || [];
+        collected.push(...imm);
+      }
+    }
+    const seen = new Set<string>();
+    const uniq = collected.filter(r => {
+      if (seen.has(r.symbol)) return false;
+      seen.add(r.symbol);
+      return true;
+    });
+    uniq.sort((a, b) => a.hoursUntil - b.hoursUntil);
+    return uniq;
+  }, [activeDashboard]);
+
+  const imminentKey = imminentReports.map(r => r.symbol).join(",");
+  const [dismissedEarningsKey, setDismissedEarningsKey] = useState<string | null>(null);
+  const showEarningsBanner = imminentReports.length > 0 && dismissedEarningsKey !== imminentKey;
+
+  // A live clock so the banner countdown ticks while it is visible.
+  const [bannerNow, setBannerNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!showEarningsBanner) return;
+    const id = window.setInterval(() => setBannerNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [showEarningsBanner]);
+
   // Voice flow: transcript -> orchestrate(voice) -> narration segments.
   const processVoiceQuery = useCallback(
     async (text: string): Promise<NarrationSegment[]> => {
@@ -303,6 +340,43 @@ export default function Terminal() {
         </header>
 
         <div className="flex-1 relative flex flex-col">
+          <AnimatePresence>
+            {showEarningsBanner && (
+              <motion.div
+                key={`earnings-alert-${imminentKey}`}
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+                className="mx-4 sm:mx-8 mt-4 flex items-center gap-3 border border-amber-400/50 bg-amber-400/10 px-3 py-2"
+              >
+                <CalendarClock className="w-4 h-4 text-amber-400 shrink-0" strokeWidth={1.8} />
+                <div className="flex-1 min-w-0 text-[11px] leading-tight text-amber-200">
+                  <span className="font-bold uppercase tracking-wider text-amber-300">Earnings alert</span>
+                  {" — "}
+                  {imminentReports.length === 1
+                    ? `${imminentReports[0].name} (${imminentReports[0].symbol}) reports ${imminentReports[0].timingLabel.toLowerCase()}`
+                    : `${imminentReports.length} watched companies report within 24h`}
+                  {": "}
+                  {imminentReports.slice(0, 4).map((r, i) => (
+                    <span key={r.symbol}>
+                      {i > 0 && ", "}
+                      <span className="font-bold">{r.symbol}</span>{" "}
+                      <span className="nums-tabular">{formatEarningsCountdown(r.reportDateTime, bannerNow)}</span>
+                    </span>
+                  ))}
+                  {imminentReports.length > 4 && ` +${imminentReports.length - 4} more`}
+                </div>
+                <button
+                  onClick={() => setDismissedEarningsKey(imminentKey)}
+                  className="shrink-0 text-amber-400/70 hover:text-amber-300 transition-colors"
+                  aria-label="Dismiss earnings alert"
+                >
+                  <X className="w-3.5 h-3.5" strokeWidth={2} />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
           <AnimatePresence mode="wait">
             {hasPanels ? (
               <motion.div
