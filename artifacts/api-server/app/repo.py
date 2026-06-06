@@ -216,6 +216,136 @@ def symbols_in_sector(sid: str) -> List[str]:
     return data.symbols_in_sector(sid)
 
 
+# ----------------------------- country / exchange -----------------------------
+# Free-text aliases -> canonical values stored on `universe.country` /
+# `universe.exchange`. Used to turn requests like "SGX stocks" or "Singapore
+# market heatmap" into a concrete country/exchange filter.
+_EXCHANGE_ALIASES = {
+    "sgx": "SGX",
+    "nasdaq": "NASDAQ",
+    "nyse": "NYSE",
+}
+
+_COUNTRY_ALIASES = {
+    "united states": "United States",
+    "us": "United States",
+    "u.s.": "United States",
+    "usa": "United States",
+    "u.s.a.": "United States",
+    "america": "United States",
+    "american": "United States",
+    "singapore": "Singapore",
+    "singaporean": "Singapore",
+    "sg": "Singapore",
+}
+
+
+def resolve_exchange(text: Optional[str]) -> Optional[str]:
+    """Best-effort free-text -> canonical exchange code (e.g. 'SGX')."""
+    if not text:
+        return None
+    up = text.strip().upper()
+    if up in ("SGX", "NASDAQ", "NYSE"):
+        return up
+    t = text.strip().lower()
+    if t in _EXCHANGE_ALIASES:
+        return _EXCHANGE_ALIASES[t]
+    for alias, ex in _EXCHANGE_ALIASES.items():
+        if re.search(rf"\b{re.escape(alias)}\b", t):
+            return ex
+    return None
+
+
+def resolve_country(text: Optional[str]) -> Optional[str]:
+    """Best-effort free-text -> canonical country (e.g. 'Singapore')."""
+    if not text:
+        return None
+    t = text.strip().lower()
+    if t in _COUNTRY_ALIASES:
+        return _COUNTRY_ALIASES[t]
+    for alias, co in _COUNTRY_ALIASES.items():
+        if re.search(rf"\b{re.escape(alias)}\b", t):
+            return co
+    return None
+
+
+def resolve_market(text: Optional[str]) -> Optional[dict]:
+    """Resolve free text to a ``{'country', 'exchange'}`` filter, or None.
+
+    Exchange aliases win when both could match (e.g. "SGX" implies Singapore but
+    we keep it as an exchange filter, which is the more specific request).
+    """
+    ex = resolve_exchange(text)
+    co = resolve_country(text)
+    if not ex and not co:
+        return None
+    return {"country": co, "exchange": ex}
+
+
+def market_label(country: Optional[str], exchange: Optional[str]) -> Optional[str]:
+    """Short human label for a country/exchange filter (exchange wins)."""
+    if exchange:
+        return exchange
+    if country:
+        return country
+    return None
+
+
+def symbols_by_market(
+    sid: Optional[str] = None,
+    country: Optional[str] = None,
+    exchange: Optional[str] = None,
+) -> List[str]:
+    """Symbols filtered by optional sector + country + exchange, most-valuable first.
+
+    DB-backed against the universe table; falls back to the curated mock catalog
+    when the DB is unavailable so breadth panels never go empty. With no filters
+    this is just `all_symbols()`; with only a sector it matches `symbols_in_sector`.
+    """
+    if not sid and not country and not exchange:
+        return all_symbols()
+    if not country and not exchange:
+        return symbols_in_sector(sid)
+    if db.db_available():
+        try:
+            where = ["f.price IS NOT NULL"]
+            params: list = []
+            if sid:
+                where.append("u.sector = %s")
+                params.append(sid)
+            if country:
+                where.append("u.country = %s")
+                params.append(country)
+            if exchange:
+                where.append("u.exchange = %s")
+                params.append(exchange)
+            rows = db.query(
+                f"""
+                SELECT f.symbol FROM fundamentals f
+                LEFT JOIN universe u ON u.symbol = f.symbol
+                WHERE {' AND '.join(where)}
+                ORDER BY f.market_cap DESC NULLS LAST
+                """,
+                tuple(params),
+            )
+            syms = [r["symbol"] for r in rows]
+            if syms:
+                return syms
+        except Exception as exc:  # noqa: BLE001
+            log.warning("symbols_by_market DB error: %s", exc)
+    items = []
+    for sym, c in data.COMPANIES.items():
+        if sid and c.get("sector") != sid:
+            continue
+        if country and c.get("country") != country:
+            continue
+        if exchange and c.get("exchange") != exchange:
+            continue
+        items.append((sym, c))
+    items.sort(key=lambda kv: kv[1].get("marketCap", 0), reverse=True)
+    return [s for s, _ in items]
+
+
 def list_sectors() -> List[dict]:
     counts: Dict[str, int] = {}
     if db.db_available():

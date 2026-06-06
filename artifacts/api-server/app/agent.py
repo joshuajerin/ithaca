@@ -70,17 +70,21 @@ def _tools() -> list:
         }},
         {"type": "function", "function": {
             "name": "add_screener",
-            "description": f"Add a screener table for a sector (omit sector for whole market). {sizing}",
+            "description": f"Add a screener table for a sector and/or market. Omit all filters for the whole market. Combine sector + country/exchange for e.g. 'Singapore banks' or 'US semiconductors'. {sizing}",
             "parameters": {"type": "object", "properties": {
                 "sector": {"type": "string", "description": f"Sector ({secs}) or omit."},
+                "country": {"type": "string", "description": "Optional country filter: 'United States' or 'Singapore'."},
+                "exchange": {"type": "string", "description": "Optional exchange filter: NASDAQ, NYSE or SGX."},
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }},
         }},
         {"type": "function", "function": {
             "name": "add_heatmap",
-            "description": f"Add a market/sector heatmap (omit sector for whole market). {sizing}",
+            "description": f"Add a market/sector heatmap. Omit all filters for the whole market. Combine sector + country/exchange for e.g. 'Singapore market heatmap' or 'US semiconductors'. {sizing}",
             "parameters": {"type": "object", "properties": {
                 "sector": {"type": "string"},
+                "country": {"type": "string", "description": "Optional country filter: 'United States' or 'Singapore'."},
+                "exchange": {"type": "string", "description": "Optional exchange filter: NASDAQ, NYSE or SGX."},
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }},
         }},
@@ -651,6 +655,10 @@ def _system_prompt() -> str:
         "- Choose panel types that actually answer the request. For a single stock deep-dive, a "
         "price chart + fundamentals + news + analysis works well. For 'what's moving', use a "
         "heatmap + screener. For comparisons, use the comparison tool.\n"
+        "- The catalog spans US (NASDAQ/NYSE) and Singapore (SGX) names. When the user scopes a "
+        "screener or heatmap to a market ('SGX stocks', 'Singapore market heatmap', 'US "
+        "semiconductors', 'Singapore banks'), pass country ('United States'/'Singapore') and/or "
+        "exchange ('NASDAQ'/'NYSE'/'SGX') to add_screener / add_heatmap, combined with sector when given.\n"
         "- For derivatives requests: vol surface → add_iv_surface; options strategy → add_options_strategy; "
         "VIX/vol curve → add_vol_term_structure; barrier/exotic → add_structured_product.\n"
         "- For macro and fixed income: global view → add_macro_dashboard; yield curve → add_yield_curve; "
@@ -1834,6 +1842,10 @@ def _describe(panels: List[dict]) -> str:
 # ----------------------------- heuristic fallback -----------------------------
 _AMBIGUOUS_TICKERS = {"NOW", "COP"}
 
+# Country/nationality words that appear as a company's first name-word but, when
+# present in a query, signal a market filter (not a specific-ticker request).
+_GEO_NAME_STOPWORDS = {"singapore", "united", "american", "america", "states"}
+
 
 def _extract_symbols(q: str) -> List[str]:
     up = q.upper()
@@ -1852,6 +1864,11 @@ def _extract_symbols(q: str) -> List[str]:
         low = q.lower()
         for s, c in repo.get_all_companies().items():
             short = c["name"].split()[0].lower()
+            # Skip geographic/nationality first-words ("Singapore" Airlines/Post/
+            # Exchange, "United" Overseas Bank): a country/market word in the query
+            # is a filter, not a ticker request, and matches several names at once.
+            if short in _GEO_NAME_STOPWORDS:
+                continue
             if len(short) > 3 and re.search(r"\b" + re.escape(short) + r"\b", low):
                 found.append(s)
     return found
@@ -1995,6 +2012,17 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
 
     symbols = _extract_symbols(query)
     sector = repo.resolve_sector(query)
+    market = repo.resolve_market(query)
+
+    def _market_params(extra: dict) -> dict:
+        """Merge the detected country/exchange filter into screener/heatmap params."""
+        p = dict(extra)
+        if market:
+            if market.get("country"):
+                p["country"] = market["country"]
+            if market.get("exchange"):
+                p["exchange"] = market["exchange"]
+        return p
 
     # AI-generated (dynamic) skills get first crack when their invoke phrases match,
     # so a feature works in the keyword fallback even when the LLM is unavailable.
@@ -2545,12 +2573,20 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         return panels, f"Deep-dive on {name}: price, fundamentals, news and an AI read."
 
     if sector:
-        add("heatmap", {"sector": sector}, 7, 4)
-        add("screener", {"sector": sector}, 5, 4)
+        add("heatmap", _market_params({"sector": sector}), 7, 4)
+        add("screener", _market_params({"sector": sector}), 5, 4)
         if wants_news or True:
             add("news", {"scope_type": "sector", "scope": sector}, 6, 4)
         add("analysis", {"scope_type": "sector", "scope": sector}, 6, 4)
-        return panels, f"{repo.sector_name(sector)} overview: heatmap, screener, news and analysis."
+        scope_label = repo.market_label(market.get("country"), market.get("exchange")) if market else None
+        prefix = f"{scope_label} " if scope_label else ""
+        return panels, f"{prefix}{repo.sector_name(sector)} overview: heatmap, screener, news and analysis."
+
+    if market:
+        label = repo.market_label(market.get("country"), market.get("exchange")) or "Market"
+        add("heatmap", _market_params({}), 8, 4)
+        add("screener", _market_params({}), 4, 5)
+        return panels, f"{label} overview: a market-filtered heatmap and screener."
 
     if wants_news:
         topic = _news_topic(query)
@@ -2647,8 +2683,19 @@ def _refine_params_heuristic(panel_type: str, panel: dict, instruction: str) -> 
             topic = _news_topic(instruction)
             if topic:
                 return {"scope_type": "topic", "scope": topic}
-    if panel_type in ("screener", "heatmap", "ma_tracker") and sector:
-        return {"sector": sector}
+    if panel_type in ("screener", "heatmap", "ma_tracker"):
+        market = repo.resolve_market(instruction)
+        if sector or market:
+            params = {}
+            if sector:
+                params["sector"] = sector
+            if market and panel_type in ("screener", "heatmap"):
+                if market.get("country"):
+                    params["country"] = market["country"]
+                if market.get("exchange"):
+                    params["exchange"] = market["exchange"]
+            if params:
+                return params
     if panel_type in ("iv_surface", "vol_term_structure") and syms:
         return {"symbol": syms[0]}
     if panel_type == "options_strategy" and syms:

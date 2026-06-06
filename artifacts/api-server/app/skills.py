@@ -348,15 +348,39 @@ def build_fundamentals(params: dict) -> dict:
     }
 
 
-def build_screener(params: dict) -> dict:
-    sector = params.get("sector")
+def _market_filter(params: dict):
+    """Extract a (sector_id, country, exchange) filter from panel params.
+
+    Accepts an explicit sector plus optional country/exchange filters, all
+    normalized through the repo resolvers so "SG"/"Singapore"/"sgx" etc. work.
+    A free-text sector/scope that isn't a real sector is retried as a market
+    (so "Singapore" passed as scope still filters by country)."""
+    sector = params.get("sector") or params.get("scope")
     sid = repo.resolve_sector(sector) if sector else None
+    country = repo.resolve_country(params.get("country"))
+    exchange = repo.resolve_exchange(params.get("exchange"))
+    if sector and not sid and not country and not exchange:
+        m = repo.resolve_market(sector)
+        if m:
+            country, exchange = m["country"], m["exchange"]
+    return sid, country, exchange
+
+
+def _market_title(sid, country, exchange, kind: str, default: str) -> str:
+    """Compose a panel title from the active sector/market filter."""
+    label = repo.market_label(country, exchange)
+    parts = []
+    if label:
+        parts.append(label)
     if sid:
-        syms = repo.symbols_in_sector(sid)
-        title = f"{repo.sector_name(sid)} Screener"
-    else:
-        syms = repo.all_symbols()
-        title = "Market Screener"
+        parts.append(repo.sector_name(sid))
+    return f"{' '.join(parts)} {kind}" if parts else default
+
+
+def build_screener(params: dict) -> dict:
+    sid, country, exchange = _market_filter(params)
+    syms = repo.symbols_by_market(sid, country, exchange)
+    title = _market_title(sid, country, exchange, "Screener", "Market Screener")
     bulk = repo.companies_bulk(syms)
     rets = repo.period_returns_bulk(syms, windows=("YTD",))
     rows = []
@@ -384,14 +408,9 @@ def build_screener(params: dict) -> dict:
 
 
 def build_heatmap(params: dict) -> dict:
-    sector = params.get("sector") or params.get("scope")
-    sid = repo.resolve_sector(sector) if sector else None
-    if sid:
-        syms = repo.symbols_in_sector(sid)
-        title = f"{repo.sector_name(sid)} Heatmap"
-    else:
-        syms = repo.all_symbols()
-        title = "Market Overview"
+    sid, country, exchange = _market_filter(params)
+    syms = repo.symbols_by_market(sid, country, exchange)
+    title = _market_title(sid, country, exchange, "Heatmap", "Market Overview")
     bulk = repo.companies_bulk(syms)
     rets = repo.period_returns_bulk(syms, windows=("YTD",))
     cells = []

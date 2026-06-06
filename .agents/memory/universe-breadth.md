@@ -40,3 +40,13 @@ keep `all_symbols()`/`symbols_in_sector()` for the real breadth at request time.
 
 **Schema:** added idempotently in `worker._seed_universe` (no migration files):
 `universe.country`, `universe.exchange`, `fundamentals.is_live`.
+
+**Country/exchange filtering (screener/heatmap):** `repo.resolve_market/resolve_country/
+resolve_exchange` normalize free text (SG/Singapore/usa/sgx) to canonical
+`universe.country`/`exchange` values; `repo.symbols_by_market(sid, country, exchange)`
+is the DB-backed (mock-fallback) filter. Builders share `skills._market_filter`/
+`_market_title`. **Heuristic trap:** `_extract_symbols`' name-fallback matches a company's
+first name-word, so geo words pull in `Singapore` Airlines/Post/Exchange and `United`
+Overseas Bank — guard with `_GEO_NAME_STOPWORDS` or "Singapore market heatmap" becomes a
+3-ticker comparison. country/exchange already exist on ScreenerRow/HeatmapCell models, so
+no openapi codegen is needed.

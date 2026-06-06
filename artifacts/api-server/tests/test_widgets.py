@@ -117,6 +117,41 @@ def test_heatmap_cells_carry_labeled_ytd():
     assert any(c["retYTD"] is not None for c in out["cells"])
 
 
+# --------------------------- country / exchange filtering ---------------------------
+def test_resolve_market_country_and_exchange():
+    assert repo.resolve_market("show me SGX stocks") == {"country": None, "exchange": "SGX"}
+    assert repo.resolve_market("Singapore market heatmap") == {"country": "Singapore", "exchange": None}
+    assert repo.resolve_market("US semiconductors") == {"country": "United States", "exchange": None}
+    assert repo.resolve_market("show me semiconductors") is None
+    # Canonicalization of loose inputs.
+    assert repo.resolve_exchange("sgx") == "SGX"
+    assert repo.resolve_country("SG") == "Singapore"
+    assert repo.resolve_country("usa") == "United States"
+
+
+def test_symbols_by_market_filters_to_requested_market():
+    sgx = repo.symbols_by_market(exchange="SGX")
+    assert sgx, "expected SGX names in the catalog"
+    bulk = repo.companies_bulk(sgx)
+    assert all(bulk[s].get("exchange") == "SGX" for s in sgx if s in bulk)
+    # No filters returns the whole universe (superset of the SGX slice).
+    assert set(sgx) <= set(repo.symbols_by_market())
+
+
+def test_screener_exchange_filter_only_returns_that_exchange():
+    out = skills.build_screener({"exchange": "SGX"})
+    assert out["rows"], "SGX screener returned no rows"
+    assert out["title"] == "SGX Screener"
+    assert {r.get("exchange") for r in out["rows"]} == {"SGX"}
+
+
+def test_heatmap_sector_plus_country_filter():
+    out = skills.build_heatmap({"sector": "semiconductors", "country": "United States"})
+    assert out["cells"], "US semiconductors heatmap returned no cells"
+    assert "United States" in out["title"] and "Semiconductors" in out["title"]
+    assert {c.get("country") for c in out["cells"]} == {"United States"}
+
+
 def test_fundamentals_has_explicit_return_metrics():
     out = skills.build_fundamentals({"symbol": "NVDA"})
     labels = {m["label"] for m in out["metrics"]}
