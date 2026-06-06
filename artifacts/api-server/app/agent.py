@@ -106,6 +106,22 @@ def _tools() -> list:
             }, "required": ["symbols"]},
         }},
         {"type": "function", "function": {
+            "name": "add_analyst_compare",
+            "description": (
+                "Add a QUICK analyst-view comparison across 2+ tickers: a compact card per name with its "
+                "bull/bear/neutral stance, conviction score, headline and a one-line call, built by reusing "
+                f"the deep analyst-report engine per symbol. {sizing} Use when the user wants to compare "
+                "analyst opinions/stance across several names ('compare analyst views on NVDA, AMD, TSM', "
+                "'analyst take on X vs Y', 'who's the better buy, X or Y'). Prefer this over add_comparison "
+                "(which compares raw metrics) when the user wants the analyst STANCE/CALL side by side; "
+                "prefer add_analyst_report for a single-name deep dive."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Two or more tickers to compare. Valid: {syms}"},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbols"]},
+        }},
+        {"type": "function", "function": {
             "name": "add_order_book",
             "description": f"Add an order book depth ladder and tape of recent prints for one ticker. Use when the user asks about the order book, bid/ask depth, or level 2 data. {sizing}",
             "parameters": {"type": "object", "properties": {
@@ -636,6 +652,7 @@ _TOOL_TO_TYPE = {
     "add_intraday_chart": "intraday_chart",
     "add_data_quality": "data_quality",
     "add_analyst_report": "analyst_report",
+    "add_analyst_compare": "analyst_compare",
     "add_scenario": "scenario",
     "add_risk_monitor": "risk_monitor",
     "add_strategy_desk": "strategy_desk",
@@ -741,7 +758,10 @@ def _system_prompt() -> str:
         "'investment thesis', 'should I buy/sell X', 'your view on X'), use add_analyst_report (richer than "
         "add_analysis). Pair it with a price chart for context. If the user asks to analyze/review "
         "'my dashboard', 'this dashboard', 'everything on screen' or 'my portfolio', call add_analyst_report "
-        "with scope='dashboard' (no symbol/sector) for a portfolio-level take across the kept panels.\n"
+        "with scope='dashboard' (no symbol/sector) for a portfolio-level take across the kept panels. "
+        "To COMPARE the analyst stance/call across several names side by side ('compare analyst views on "
+        "NVDA, AMD, TSM', 'analyst take on X vs Y', 'who's the better buy, X or Y'), use add_analyst_compare "
+        "with the list of symbols instead.\n"
         "- For WHAT-IF / hypothetical requests ('what if', 'if I do X then Y', 'if rates fall 100bps', "
         "'if X margins compress to 40%', 'suppose', 'scenario where'), use add_scenario and pass the user's "
         "full hypothetical as the prompt argument.\n"
@@ -1875,6 +1895,7 @@ _TYPE_LABELS = {
     "intraday_chart": "an intraday chart",
     "data_quality": "a data quality report",
     "analyst_report": "an analyst report",
+    "analyst_compare": "an analyst comparison",
     "scenario": "a what-if scenario",
     "risk_monitor": "a risk monitor",
     "strategy_desk": "the strategy desk",
@@ -2271,6 +2292,16 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         "investment thesis", "thesis on", "should i buy", "should i sell", "your view on",
         "your take on", "make the case",
     ])
+    wants_analyst_compare = (
+        len(symbols) >= 2
+        and (
+            wants_analyst_report
+            or any(k in q for k in [
+                "analyst", "stance", "conviction", "bull/bear", "bull or bear",
+                "better buy", "rather own", "best buy", "which to buy",
+            ])
+        )
+    )
     wants_dashboard_review = any(k in q for k in [
         "my dashboard", "this dashboard", "the dashboard", "current dashboard",
         "whole dashboard", "entire dashboard", "everything on screen", "on my screen",
@@ -2314,6 +2345,11 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
             else "a market-proxy basket"
         )
         return panels, f"What-if scenario for {label}: baseline vs scenario projection with reasoning and caveats."
+
+    if wants_analyst_compare:
+        add("analyst_compare", {"symbols": symbols}, 12, 5)
+        names = ", ".join(symbols)
+        return panels, f"Analyst comparison across {names}: stance, conviction and the one-line call side by side."
 
     if wants_analyst_report or wants_dashboard_review:
         if symbols:

@@ -22,3 +22,4 @@
 - [Earnings calendar panel + alert](earnings-calendar-panel.md) — passthrough earnings_calendar type; explicit-symbol horizon=120 vs watchlist=30; Terminal.tsx imminent banner reuses formatEarningsCountdown.
 - [Sovereign curve comparison panel](sovereign-curve-compare.md) — multi-curve overlay adds per-tenor twist (shared _region_spot) so cross-market spreads vary; route before yield_curve.
 - [Strategy lifecycle & paper book desk](strategy-lifecycle-desk.md) — registry+paperbook+lifecycle; deterministic intent handler before LLM; runtime CREATE TABLE not drizzle push; mark has no weight (use exposures); vite build needs PORT+BASE_PATH.
+- [Multi-ticker analyst compare](analyst-compare.md) — fan out build_analyst_report per symbol concurrently, isolate per-name failures; heuristic keyword traps ("view"⊂"overview").

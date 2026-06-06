@@ -43,6 +43,7 @@ import { DataUniversePanel } from "./panels/DataUniversePanel";
 import { IntradayChartPanel } from "./panels/IntradayChartPanel";
 import { DataQualityPanel } from "./panels/DataQualityPanel";
 import { AnalystReportPanel } from "./panels/AnalystReportPanel";
+import { AnalystComparePanel } from "./panels/AnalystComparePanel";
 import { ScenarioPanel } from "./panels/ScenarioPanel";
 import { RiskMonitorPanel } from "./panels/RiskMonitorPanel";
 import { PerformancePnlPanel } from "./panels/PerformancePnlPanel";
@@ -175,6 +176,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "intraday_chart": return <IntradayChartPanel data={panel.data as any} />;
       case "data_quality": return <DataQualityPanel data={panel.data as any} />;
       case "analyst_report": return <AnalystReportPanel data={panel.data as any} />;
+      case "analyst_compare": return <AnalystComparePanel data={panel.data as any} />;
       case "scenario": return <ScenarioPanel data={panel.data as any} />;
       case "risk_monitor": return <RiskMonitorPanel data={panel.data as any} onShock={submitRefine} />;
       case "performance_pnl": return <PerformancePnlPanel data={panel.data as any} />;

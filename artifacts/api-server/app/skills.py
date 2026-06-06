@@ -5847,6 +5847,83 @@ def build_analyst_report(params: dict) -> dict:
     return report
 
 
+def build_analyst_compare(params: dict) -> dict:
+    """Quick side-by-side of the analyst stance across several tickers.
+
+    Reuses build_analyst_report per symbol and distills each into a compact card
+    (stance, conviction, headline, one-line call) so the user can compare views
+    on a few names (e.g. NVDA vs AMD vs TSM) to support allocation thinking.
+    Each symbol is built independently and concurrently; any name that errors or
+    times out is reported in `failed` and simply omitted from the comparison, so
+    the panel degrades to whatever succeeded.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    raw_syms = params.get("symbols") or []
+    seen: set = set()
+    symbols: List[str] = []
+    for s in raw_syms:
+        u = str(s).upper().strip()
+        if u and u not in seen:
+            seen.add(u)
+            symbols.append(u)
+    symbols = symbols[:6]
+    if len(symbols) < 2:
+        raise ValueError("Comparing analyst views needs at least two tickers.")
+
+    def _one(sym: str) -> dict:
+        rep = build_analyst_report({"symbol": sym})
+        return {
+            "symbol": sym,
+            "name": rep.get("scope") or sym,
+            "stance": rep.get("stance") or "neutral",
+            "conviction": rep.get("conviction"),
+            "headline": rep.get("headline"),
+            "call": rep.get("call"),
+            "figures": (rep.get("figures") or [])[:4],
+            "asOf": rep.get("asOf"),
+            "source": rep.get("source"),
+        }
+
+    cards: List[dict] = []
+    failed: List[dict] = []
+    as_of = None
+    source = _live_source()
+    with ThreadPoolExecutor(max_workers=min(4, len(symbols))) as ex:
+        results = list(ex.map(lambda s: (s, _safe_call(_one, s)), symbols))
+    by_sym = {s: res for s, res in results}
+    for sym in symbols:  # preserve requested order
+        res = by_sym.get(sym)
+        ok, payload = res
+        if ok:
+            cards.append(payload)
+            if payload.get("asOf"):
+                as_of = payload["asOf"] if as_of is None else max(as_of, payload["asOf"])
+            source = payload.get("source") or source
+        else:
+            failed.append({"symbol": sym, "reason": payload})
+
+    if not cards:
+        raise ValueError("Could not build an analyst view for any of the requested tickers.")
+
+    return {
+        "title": "Analyst Comparison · " + " vs ".join(c["symbol"] for c in cards),
+        "cards": cards,
+        "failed": failed,
+        "asOf": as_of,
+        "source": source,
+    }
+
+
+def _safe_call(fn: Callable, *args):
+    """Run fn, returning (True, result) or (False, error-message). Used so one
+    failing ticker never sinks the whole analyst comparison."""
+    try:
+        return True, fn(*args)
+    except Exception as exc:  # noqa: BLE001 — per-ticker isolation is intentional
+        return False, str(exc)
+
+
 # ----------------------------- what-if scenario -----------------------------
 def _scenario_parse_heuristic(prompt: str, symbols: List[str]) -> dict:
     """Extract a coarse drift estimate and assumptions from a what-if prompt.
@@ -6067,6 +6144,20 @@ _reg(SkillDef(
         {"name": "structure_sections", "description": "Produce drivers, risks, catalysts, a valuation read and a call.", "expectedOutput": "Sectioned analyst content."},
     ],
     build_analyst_report, "Analyst Report",
+))
+_reg(SkillDef(
+    "analyst-compare", "Analyst Comparison", "analyst_compare",
+    "Produces a QUICK side-by-side comparison of the analyst stance across several tickers: a compact "
+    "card per name with its bull/bear/neutral STANCE, conviction score, headline and a one-line CALL, "
+    "reusing the full analyst-report engine per symbol. Use when the user wants to compare analyst views "
+    "across multiple names ('compare analyst views on NVDA, AMD, TSM', 'analyst take on X vs Y', 'who's "
+    "the better buy, X or Y') to support allocation thinking. Each ticker degrades independently, so the "
+    "panel shows whatever succeeded even if one name times out.",
+    [
+        {"name": "fan_out", "description": "Build a full analyst report per ticker concurrently, isolating per-name failures.", "expectedOutput": "One analyst report per requested symbol."},
+        {"name": "distill", "description": "Reduce each report to a compact card (stance, conviction, headline, call, key figures).", "expectedOutput": "A tidy row of comparable analyst cards."},
+    ],
+    build_analyst_compare, "Analyst Comparison",
 ))
 _reg(SkillDef(
     "scenario", "What-If Scenario", "scenario",
