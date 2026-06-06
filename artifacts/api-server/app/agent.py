@@ -283,47 +283,59 @@ def _tools() -> list:
         }},
         {"type": "function", "function": {
             "name": "add_performance_pnl",
-            "description": f"Add a portfolio P&L panel for a book over a window: cumulative & periodic return vs a REAL, traded benchmark ETF (default SPY; configurable e.g. QQQ/IWM), a drawdown track, and a full risk/return + active stat block (return, vol, Sharpe, max drawdown, hit rate, tracking error, information ratio, beta, alpha, up/down capture). Real returns only; excluded names reported. Use for P&L, performance vs benchmark, or how a book/portfolio has performed. {sizing}",
+            "description": f"Add a portfolio P&L panel for a book over a window: cumulative & periodic return vs a benchmark of the USER'S choosing, a drawdown track, and a full risk/return + active stat block (return, vol, Sharpe, max drawdown, hit rate, tracking error, information ratio, beta, alpha, up/down capture). The benchmark can be any real ETF (broad like SPY/QQQ/IWM or a sector ETF like XLK/XLE/XLF) OR a custom basket of constituent tickers. Defaults to SPY. Real returns only; excluded names reported. Use for P&L, performance vs benchmark, or how a book/portfolio has performed. {sizing}",
             "parameters": {"type": "object", "properties": {
                 "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Portfolio tickers. Valid: {syms}"},
                 "weights": {"type": "array", "items": {"type": "number"}, "description": "Optional portfolio weights aligned with symbols (auto-normalized; equal-weight if omitted)."},
                 "portfolio_name": {"type": "string", "description": "Optional display name for the portfolio."},
                 "range": {"type": "string", "enum": ["1M", "3M", "6M", "1Y", "YTD"]},
-                "benchmark": {"type": "string", "description": "Real benchmark ETF to compare against (default SPY).", "enum": ["SPY", "QQQ", "DIA", "IWM", "VTI", "VOO"]},
+                "benchmark": {"type": "string", "description": "Real benchmark ETF ticker to compare against (default SPY). Broad indices (SPY, QQQ, DIA, IWM, VTI, VOO, RSP) or sector/thematic ETFs (e.g. XLK, XLF, XLE, XLV, SMH, XBI) are all valid; any other ticker is honored only if a real price series exists for it."},
+                "benchmark_constituents": {"type": "array", "items": {"type": "string"}, "description": f"Optional: build a CUSTOM benchmark basket from these real constituent tickers instead of a single ETF (takes precedence over `benchmark`). Cap-weighted unless `benchmark_weights` is given. Valid: {syms}"},
+                "benchmark_weights": {"type": "array", "items": {"type": "number"}, "description": "Optional weights aligned with benchmark_constituents (auto-normalized; cap-weight if omitted)."},
+                "benchmark_name": {"type": "string", "description": "Optional display name for a custom benchmark basket."},
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }, "required": ["symbols"]},
         }},
         {"type": "function", "function": {
             "name": "add_brinson_attribution",
-            "description": f"Add a Brinson performance attribution panel: decomposes a book's active return vs a sector-aware REAL benchmark (each sector mapped to a real, traded sector/industry ETF such as XLK/XLF/XLE) into allocation, selection and interaction effects BY SECTOR (the three effects sum exactly to the active return). Real sector weights/returns; excluded names and unmapped sectors reported. Use for performance attribution, allocation vs selection, Brinson, or 'where did my outperformance come from'. {sizing}",
+            "description": f"Add a Brinson performance attribution panel: decomposes a book's active return into allocation, selection and interaction effects BY SECTOR (the three effects sum exactly to the active return vs the benchmark whose sector weights/returns drive the math). Benchmark selection (both REAL): pass `benchmark` with any ETF ticker (broad like SPY/QQQ or a sector ETF like XLK/XLE) — the ETF's OWN real sector weights (× real sector-ETF returns) then drive the decomposition; OR pass `benchmark_constituents` for a CUSTOM basket of real constituents, whose own real sector weights/returns drive it (takes precedence over `benchmark`). Defaults to SPY. If an ETF's real sector composition can't be sourced, it falls back to a diversified sector-ETF proxy and says so. Excluded names and unmapped sectors are reported. Use for performance attribution, allocation vs selection, Brinson, or 'where did my outperformance come from'. {sizing}",
             "parameters": {"type": "object", "properties": {
                 "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Portfolio tickers. Valid: {syms}"},
                 "weights": {"type": "array", "items": {"type": "number"}, "description": "Optional portfolio weights aligned with symbols (auto-normalized; equal-weight if omitted)."},
                 "portfolio_name": {"type": "string", "description": "Optional display name for the portfolio."},
                 "range": {"type": "string", "enum": ["1M", "3M", "6M", "1Y", "YTD"]},
+                "benchmark": {"type": "string", "description": "Real benchmark ETF ticker whose OWN real sector weights drive the Brinson decomposition (default SPY). Broad indices (SPY, QQQ, DIA, IWM, VTI) or sector ETFs (XLK, XLF, XLE, XLV, SMH...) are valid; falls back to a diversified sector-ETF proxy (and says so) if the ETF's real sector composition can't be sourced."},
+                "benchmark_constituents": {"type": "array", "items": {"type": "string"}, "description": f"Optional: a CUSTOM benchmark basket of real constituent tickers; its OWN real sector weights/returns drive the Brinson decomposition (takes precedence over `benchmark`). Valid: {syms}"},
+                "benchmark_weights": {"type": "array", "items": {"type": "number"}, "description": "Optional weights aligned with benchmark_constituents (auto-normalized; cap-weight if omitted)."},
+                "benchmark_name": {"type": "string", "description": "Optional display name for a custom benchmark basket."},
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }, "required": ["symbols"]},
         }},
         {"type": "function", "function": {
             "name": "add_factor_attribution",
-            "description": f"Add a factor return attribution panel: decomposes a book's REALIZED return over a window into per-factor contributions (exposure × realized factor return) for Market, Size, Value, Momentum, Volatility, Quality, plus a specific (idiosyncratic) return — contributions + specific reconstruct the realized return. Uses the real multi-factor risk model. Use for factor attribution, factor contribution to return, or 'which factors drove my return'. {sizing}",
+            "description": f"Add a factor return attribution panel: decomposes a book's REALIZED return over a window into per-factor contributions (exposure × realized factor return) for Market, Size, Value, Momentum, Volatility, Quality, plus a specific (idiosyncratic) return — contributions + specific reconstruct the realized return. Uses the real multi-factor risk model. NOTE: this decomposition is benchmark-independent (it explains the book's own return, not active return), so a chosen benchmark/basket does not change the numbers. Use for factor attribution, factor contribution to return, or 'which factors drove my return'. {sizing}",
             "parameters": {"type": "object", "properties": {
                 "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Portfolio tickers. Valid: {syms}"},
                 "weights": {"type": "array", "items": {"type": "number"}, "description": "Optional portfolio weights aligned with symbols (auto-normalized; equal-weight if omitted)."},
                 "portfolio_name": {"type": "string", "description": "Optional display name for the portfolio."},
                 "range": {"type": "string", "enum": ["1M", "3M", "6M", "1Y", "YTD"]},
+                "benchmark": {"type": "string", "description": "Accepted for orchestration consistency but IGNORED — factor attribution explains the book's own realized return and is benchmark-independent."},
+                "benchmark_constituents": {"type": "array", "items": {"type": "string"}, "description": "Accepted for orchestration consistency but IGNORED — factor attribution is benchmark-independent."},
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }, "required": ["symbols"]},
         }},
         {"type": "function", "function": {
             "name": "add_tear_sheet",
-            "description": f"Add a performance tear-sheet panel that combines P&L vs a REAL benchmark ETF (default SPY; configurable), the drawdown track, Brinson sector attribution and factor attribution into one report-style view for a book over a window. Use for a tear sheet, a full performance review, or 'give me a complete performance breakdown of my portfolio'. Best at full width. {sizing}",
+            "description": f"Add a performance tear-sheet panel that combines P&L vs a benchmark of the USER'S choosing (any real ETF — broad like SPY/QQQ or a sector ETF like XLK — OR a custom basket of constituent tickers; default SPY), the drawdown track, Brinson sector attribution and factor attribution into one report-style view for a book over a window. Use for a tear sheet, a full performance review, or 'give me a complete performance breakdown of my portfolio'. Best at full width. {sizing}",
             "parameters": {"type": "object", "properties": {
                 "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Portfolio tickers. Valid: {syms}"},
                 "weights": {"type": "array", "items": {"type": "number"}, "description": "Optional portfolio weights aligned with symbols (auto-normalized; equal-weight if omitted)."},
                 "portfolio_name": {"type": "string", "description": "Optional display name for the portfolio."},
                 "range": {"type": "string", "enum": ["1M", "3M", "6M", "1Y", "YTD"]},
-                "benchmark": {"type": "string", "description": "Real benchmark ETF to compare against (default SPY).", "enum": ["SPY", "QQQ", "DIA", "IWM", "VTI", "VOO"]},
+                "benchmark": {"type": "string", "description": "Real benchmark ETF ticker to compare against (default SPY). Broad indices or sector/thematic ETFs (e.g. XLK, XLE) are valid; any other ticker is honored only if a real price series exists."},
+                "benchmark_constituents": {"type": "array", "items": {"type": "string"}, "description": f"Optional: build a CUSTOM benchmark basket from these real constituent tickers instead of a single ETF (takes precedence over `benchmark`). Valid: {syms}"},
+                "benchmark_weights": {"type": "array", "items": {"type": "number"}, "description": "Optional weights aligned with benchmark_constituents (auto-normalized; cap-weight if omitted)."},
+                "benchmark_name": {"type": "string", "description": "Optional display name for a custom benchmark basket."},
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }, "required": ["symbols"]},
         }},
@@ -1861,6 +1873,31 @@ def _extract_range(q: str) -> Optional[str]:
     return None
 
 
+# Sector/thematic ETF tickers we recognize as benchmarks (also accepted by
+# skills._resolve_benchmark, which validates any picked ticker against real data).
+_BENCH_SECTOR_TICKERS = (
+    "XLK", "XLF", "XLE", "XLV", "XLY", "XLP", "XLI", "XLC", "XLB", "XLRE", "XLU",
+    "SMH", "SOXX", "CIBR", "XBI", "ITA", "ICLN", "ARKK", "IYT", "KIE", "XME",
+    "EFA", "EEM", "AGG", "RSP", "MDY",
+)
+# Free-text sector phrases → the real sector ETF a user likely means.
+_BENCH_SECTOR_PHRASES = (
+    ("semiconductor", "SMH"), ("chip sector", "SMH"),
+    ("tech sector", "XLK"), ("technology sector", "XLK"),
+    ("energy sector", "XLE"), ("financial sector", "XLF"),
+    ("financials sector", "XLF"), ("bank sector", "XLF"),
+    ("health care sector", "XLV"), ("healthcare sector", "XLV"),
+    ("biotech", "XBI"), ("utilities sector", "XLU"), ("utility sector", "XLU"),
+    ("real estate sector", "XLRE"), ("materials sector", "XLB"),
+    ("industrials sector", "XLI"), ("industrial sector", "XLI"),
+    ("staples sector", "XLP"), ("discretionary sector", "XLY"),
+    ("communication sector", "XLC"), ("cybersecurity", "CIBR"),
+    ("defense sector", "ITA"), ("aerospace", "ITA"), ("clean energy", "ICLN"),
+    ("emerging market", "EEM"), ("developed market", "EFA"),
+    ("aggregate bond", "AGG"), ("bond index", "AGG"),
+)
+
+
 def _extract_benchmark(q: str) -> Optional[str]:
     """Map free-text to a real benchmark ETF ticker, or None for the default."""
     ql = q.lower()
@@ -1870,13 +1907,50 @@ def _extract_benchmark(q: str) -> Optional[str]:
         return "IWM"
     if "dow" in ql or "dia" in ql:
         return "DIA"
+    if "equal weight" in ql or "equal-weight" in ql or " rsp" in ql:
+        return "RSP"
     if "total market" in ql or " vti" in ql:
         return "VTI"
     if "voo" in ql:
         return "VOO"
+    # Explicit sector ETF tickers.
+    for t in _BENCH_SECTOR_TICKERS:
+        if re.search(rf"\b{t}\b", q.upper()):
+            return t
+    # Free-text sector phrases.
+    for phrase, t in _BENCH_SECTOR_PHRASES:
+        if phrase in ql:
+            return t
     if "s&p" in ql or "sp500" in ql or "s and p" in ql or " spy" in ql or "500" in ql:
         return "SPY"
     return None
+
+
+# Phrases that introduce an explicit custom benchmark basket of tickers, e.g.
+# "vs a basket of AAPL, MSFT, NVDA" or "benchmark against a portfolio of ...".
+_BENCH_BASKET_RE = re.compile(
+    r"(?:basket|portfolio|index|group|set)\s+of\s+(.+)$", re.IGNORECASE
+)
+
+
+def _extract_benchmark_constituents(q: str) -> List[str]:
+    """Parse an explicit custom benchmark basket like 'vs a basket of A, B, C'.
+
+    Returns the real universe tickers named after the basket cue (empty when no
+    basket phrasing is present). Only triggers when the basket clearly belongs to
+    a benchmark/comparison context to avoid hijacking the book holdings.
+    """
+    ql = q.lower()
+    cue = any(
+        k in ql
+        for k in ("benchmark", "compare", "vs ", "vs.", "versus", "against", "relative to")
+    )
+    if not cue:
+        return []
+    m = _BENCH_BASKET_RE.search(q)
+    if not m:
+        return []
+    return _extract_symbols(m.group(1))
 
 
 def _extract_strategy(q: str) -> str:
@@ -1939,7 +2013,12 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
     wants_sentiment = any(k in q for k in ["sentiment", "buzz", "mood", "social"])
     wants_overview = any(k in q for k in ["overview", "moving", "market", "movers", "heatmap", "today"])
     wants_screen = any(k in q for k in ["screen", "screener", "scan", "list", "top "])
-    wants_order_book = any(k in q for k in ["order book", "orderbook", "bid", "ask", "depth", "level 2", "l2"])
+    # Short tokens (bid/ask/l2) need word boundaries — otherwise "ask" matches
+    # "basket", hijacking custom-benchmark-basket queries into the order book.
+    wants_order_book = (
+        any(k in q for k in ["order book", "orderbook", "depth", "level 2"])
+        or bool(re.search(r"\b(bid|ask|l2)\b", q))
+    )
     wants_trade_flow = any(k in q for k in ["unusual", "block", "sweep", "dark pool", "flow", "activity"])
     wants_tca = any(k in q for k in ["tca", "transaction cost", "slippage", "vwap", "twap", "pov",
                                      "execution", "impl", "market impact", "participation rate",
@@ -2358,22 +2437,35 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         return panels, f"Alpha signal research for {sig.replace('_', ' ')}: rank IC, IC decay, turnover and the long-short quantile spread from real data."
 
     if wants_tearsheet or wants_brinson or wants_factor_attr or wants_pnl:
-        port_syms = symbols if len(symbols) >= 1 else ["NVDA", "MSFT", "GOOGL", "META", "AMZN"]
+        # A custom benchmark basket ("vs a basket of A, B, C") takes precedence
+        # over a single ETF; strip those tickers from the book holdings so the
+        # basket names don't leak into the portfolio.
+        bench_basket = _extract_benchmark_constituents(q)
+        book_syms = [s for s in symbols if s not in set(bench_basket)]
+        port_syms = book_syms if len(book_syms) >= 1 else ["NVDA", "MSFT", "GOOGL", "META", "AMZN"]
         params = {"symbols": port_syms}
         rng = _extract_range(q)
         if rng:
             params["range"] = rng
         bench = _extract_benchmark(q)
-        if bench:
+        if bench_basket:
+            params["benchmark_constituents"] = bench_basket
+            bench_label = "a custom basket (" + ", ".join(bench_basket[:3]) + ("..." if len(bench_basket) > 3 else "") + ")"
+        elif bench:
             params["benchmark"] = bench
+            bench_label = bench
+        else:
+            bench_label = "SPY"
         label = ", ".join(port_syms[:3]) + ("..." if len(port_syms) > 3 else "")
-        bench_label = bench or "SPY"
         if wants_tearsheet:
             add("tear_sheet", params, 12, 6)
             return panels, f"Performance tear sheet for {label}: P&L vs {bench_label}, drawdowns, Brinson sector attribution and factor attribution in one view."
         if wants_brinson:
+            # Brinson's sector decomposition is driven by a custom basket (its own
+            # real sector weights/returns) or the chosen ETF's OWN real sector
+            # weights × real sector-ETF returns; SPY by default.
             add("brinson_attribution", params, 12, 6)
-            return panels, f"Brinson attribution for {label}: allocation, selection and interaction by sector vs real sector ETFs."
+            return panels, f"Brinson attribution for {label}: allocation, selection and interaction by sector vs {bench_label}."
         if wants_factor_attr:
             add("factor_attribution", params, 12, 6)
             return panels, f"Factor attribution for {label}: realized return decomposed into per-factor contributions and a specific return."

@@ -2470,15 +2470,47 @@ _ATTR_RANGE_LABELS = {
 
 # ---------------------------- real benchmarks ----------------------------
 # Validated, real, liquid US-listed ETFs usable as a headline benchmark for the
-# P&L / active-stats comparison. We will NOT benchmark against anything that is
-# not in this whitelist of real traded instruments.
+# P&L / active-stats comparison. Known tickers get a friendly display name; any
+# other ticker the user picks is accepted ONLY if a real price series can be
+# sourced for it (see ``_resolve_benchmark``) — we never benchmark against
+# non-real data, but the user is free to choose any real instrument or a custom
+# basket of real constituents.
 _BENCHMARK_ETFS = {
+    # Broad market indices.
     "SPY": "S&P 500 (SPY)",
     "QQQ": "Nasdaq-100 (QQQ)",
     "DIA": "Dow Jones (DIA)",
     "IWM": "Russell 2000 (IWM)",
     "VTI": "US Total Market (VTI)",
     "VOO": "S&P 500 (VOO)",
+    "RSP": "S&P 500 Equal Weight (RSP)",
+    "MDY": "S&P MidCap 400 (MDY)",
+    # Sector / industry / thematic ETFs (also valid headline benchmarks).
+    "XLK": "Technology Sector (XLK)",
+    "XLF": "Financials Sector (XLF)",
+    "XLE": "Energy Sector (XLE)",
+    "XLV": "Health Care Sector (XLV)",
+    "XLY": "Consumer Discretionary (XLY)",
+    "XLP": "Consumer Staples (XLP)",
+    "XLI": "Industrials Sector (XLI)",
+    "XLC": "Communication Services (XLC)",
+    "XLB": "Materials Sector (XLB)",
+    "XLRE": "Real Estate Sector (XLRE)",
+    "XLU": "Utilities Sector (XLU)",
+    "SMH": "Semiconductors (SMH)",
+    "SOXX": "Semiconductors (SOXX)",
+    "CIBR": "Cybersecurity (CIBR)",
+    "XBI": "Biotech (XBI)",
+    "ITA": "Aerospace & Defense (ITA)",
+    "ICLN": "Clean Energy (ICLN)",
+    "ARKK": "ARK Innovation (ARKK)",
+    "IYT": "Transportation (IYT)",
+    "KIE": "Insurance (KIE)",
+    "XME": "Metals & Mining (XME)",
+    # International / fixed income.
+    "EFA": "Developed ex-US (EFA)",
+    "EEM": "Emerging Markets (EEM)",
+    "AGG": "US Aggregate Bond (AGG)",
 }
 _DEFAULT_BENCHMARK = "SPY"
 
@@ -2502,24 +2534,144 @@ _SECTOR_ETFS = {
     "utilities": "XLU",
 }
 
+# Real SPDR/industry ETF per GICS top-level sector — used to source REAL
+# within-sector benchmark returns when a single ETF benchmark is chosen.
+_GICS_ETF = {
+    "technology": "XLK", "financial_services": "XLF", "healthcare": "XLV",
+    "consumer_cyclical": "XLY", "consumer_defensive": "XLP", "energy": "XLE",
+    "industrials": "XLI", "basic_materials": "XLB", "real_estate": "XLRE",
+    "utilities": "XLU", "communication_services": "XLC",
+}
+
+# Granular universe sector keys → GICS top level, so a book's holdings can be
+# bucketed into the same sector space an ETF reports its real weights in.
+_GRANULAR_TO_GICS = {
+    "semiconductors": "technology", "ai_tech": "technology", "cloud": "technology",
+    "quantum": "technology", "cybersecurity": "technology",
+    "fintech": "financial_services", "financials": "financial_services",
+    "insurance": "financial_services",
+    "energy": "energy", "clean_energy": "energy",
+    "ev_auto": "consumer_cyclical", "consumer": "consumer_cyclical",
+    "staples": "consumer_defensive",
+    "biotech": "healthcare", "healthcare": "healthcare",
+    "robotics": "industrials", "industrials": "industrials",
+    "defense": "industrials", "transportation": "industrials",
+    "comms": "communication_services", "telecom": "communication_services",
+    "real_estate": "real_estate",
+    "materials": "basic_materials", "metals_mining": "basic_materials",
+    "utilities": "utilities",
+}
+
+# yfinance funds_data keys → our canonical GICS keys.
+_YF_SECTOR_CANON = {"realestate": "real_estate"}
+
+_GICS_LABELS = {
+    "technology": "Technology", "financial_services": "Financial Services",
+    "healthcare": "Health Care", "consumer_cyclical": "Consumer Discretionary",
+    "consumer_defensive": "Consumer Staples", "energy": "Energy",
+    "industrials": "Industrials", "basic_materials": "Materials",
+    "real_estate": "Real Estate", "utilities": "Utilities",
+    "communication_services": "Communication Services",
+}
+
 # Process-local TTL cache so repeated attribution panels in one session don't
 # re-hit the network for the same instrument.
 _BENCH_CACHE: Dict[str, dict] = {}
 _BENCH_TTL = 900.0
 
+# ETF sector compositions change slowly, so cache the (network) lookup for a day.
+_ETF_SECTORW_CACHE: Dict[str, Optional[dict]] = {}
+_ETF_SECTORW_TS: Dict[str, float] = {}
+_ETF_SECTORW_TTL = 86400.0
+
+
+def _etf_sector_weights(ticker: str) -> Optional[dict]:
+    """REAL GICS sector weights for an ETF, or None when not sourceable.
+
+    Pulls the fund's actual sector allocation from Yahoo (yfinance funds_data)
+    and canonicalizes it to our GICS keys. Returns ``None`` for instruments
+    with no real fund composition (e.g. single stocks) or when the lookup
+    fails/rate-limits — the caller then falls back to the diversified sector-ETF
+    proxy and reports it. Never fabricates weights.
+    """
+    import time as _time
+
+    t = (ticker or "").upper().strip().lstrip("$")
+    if not t:
+        return None
+    now = _time.time()
+    if t in _ETF_SECTORW_CACHE and now - _ETF_SECTORW_TS.get(t, 0.0) < _ETF_SECTORW_TTL:
+        return _ETF_SECTORW_CACHE[t]
+
+    val: Optional[dict] = None
+    try:
+        import yfinance as yf  # heavy import; only when an ETF benchmark is picked
+
+        raw = yf.Ticker(t).funds_data.sector_weightings or {}
+        canon: Dict[str, float] = {}
+        for k, v in raw.items():
+            key = _YF_SECTOR_CANON.get(str(k), str(k))
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                continue
+            if fv > 0:
+                canon[key] = canon.get(key, 0.0) + fv
+        # A real, fully-classified ETF sums to ~1.0; reject thin/garbage payloads.
+        if canon and sum(canon.values()) > 0.5:
+            val = canon
+    except Exception as exc:  # noqa: BLE001
+        log.warning("ETF sector weightings unavailable for %s: %s", t, exc)
+
+    _ETF_SECTORW_CACHE[t] = val
+    _ETF_SECTORW_TS[t] = now
+    return val
+
 
 def _resolve_benchmark(params: dict) -> tuple:
     """Resolve a REAL benchmark ticker + display name from params.
 
-    Accepts an explicit ``benchmark`` ticker (validated against the whitelist of
-    real instruments) and otherwise defaults to SPY. Unknown / unsupported
-    tickers fall back to the default rather than benchmarking against anything
-    that is not a known real instrument.
+    Accepts an explicit ``benchmark`` ticker. Known broad/sector ETFs get a
+    friendly display name. Any other ticker the user picks is honored ONLY if a
+    real price series can be sourced for it (it is then shown by its own
+    ticker); otherwise we fall back to the default rather than benchmarking
+    against anything for which no real series exists.
     """
     raw = str(params.get("benchmark") or "").upper().strip().lstrip("$")
+    if not raw:
+        return _DEFAULT_BENCHMARK, _BENCHMARK_ETFS[_DEFAULT_BENCHMARK]
     if raw in _BENCHMARK_ETFS:
         return raw, _BENCHMARK_ETFS[raw]
+    rng = (params.get("range") or "3M").upper()
+    if _benchmark_closes(raw, rng):
+        return raw, raw
     return _DEFAULT_BENCHMARK, _BENCHMARK_ETFS[_DEFAULT_BENCHMARK]
+
+
+def _resolve_bench_constituents(params: dict) -> tuple:
+    """Real, de-duplicated constituent tickers for a custom-basket benchmark.
+
+    Returns ``(kept, dropped)`` where ``kept`` are symbols that exist in the
+    tracked universe and ``dropped`` are requested tickers that are not real /
+    not tracked (reported to the user rather than silently discarded). Both are
+    empty when no explicit basket was requested.
+    """
+    raw = params.get("benchmark_constituents") or []
+    if not isinstance(raw, list):
+        return [], []
+    out: List[str] = []
+    dropped: List[str] = []
+    seen = set()
+    for s in raw:
+        u = str(s).upper().strip().lstrip("$")
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        if repo.get_company(u):
+            out.append(u)
+        else:
+            dropped.append(u)
+    return out, dropped
 
 
 def _benchmark_closes(ticker: str, rng: str = "3M") -> Optional[dict]:
@@ -2580,6 +2732,238 @@ def _benchmark_closes(ticker: str, rng: str = "3M") -> Optional[dict]:
     return val
 
 
+def _basket_benchmark(
+    cons: List[str],
+    params: dict,
+    model: "factor_model.RiskModel",
+    rets,
+    wp_raw: Dict[str, float],
+    rp_num: Dict[str, float],
+    secs_all: List[str],
+    caps_all,
+    cum_all,
+    source: str,
+    dropped_pre: Optional[List[str]] = None,
+) -> Optional[dict]:
+    """Construct a REAL custom-basket benchmark from explicit constituents.
+
+    The basket's daily series, sector weights and sector returns all come
+    straight from the same real, date-aligned return panel used for the book, so
+    nothing is imputed. Constituents the risk model could not cover (and any that
+    were not real/tracked, ``dropped_pre``) are dropped and reported. Sector
+    weights are the constituents' own weights; within-sector returns are
+    cap-weighted real returns. Returns ``None`` when no constituent could be
+    modeled (the caller then falls back to the default ETF benchmark).
+    """
+    import numpy as np
+
+    pos = {s: i for i, s in enumerate(model.symbols)}
+    idxs: List[int] = []
+    kept: List[str] = []
+    dropped: List[str] = list(dropped_pre or [])
+    for s in cons:
+        if s in pos:
+            idxs.append(pos[s])
+            kept.append(s)
+        else:
+            dropped.append(s)
+    if not idxs:
+        return None
+
+    # Weights: honor an aligned ``benchmark_weights`` list, else cap-weight the
+    # kept constituents (equal-weight only if no caps are available).
+    raw_w = params.get("benchmark_weights")
+    bw = None
+    if isinstance(raw_w, list) and len(raw_w) == len(cons):
+        wmap = {str(c).upper().strip().lstrip("$"): float(x) for c, x in zip(cons, raw_w)}
+        vals = np.array([abs(wmap.get(s, 0.0)) for s in kept], dtype=float)
+        if vals.sum() > 0:
+            bw = vals / vals.sum()
+    if bw is None:
+        caps = np.array([max(float(caps_all[i]), 0.0) for i in idxs], dtype=float)
+        bw = caps / caps.sum() if caps.sum() > 0 else np.full(len(idxs), 1.0 / len(idxs))
+
+    bench = engine.book_returns(rets[:, idxs], bw)  # real daily series, date-aligned
+
+    # Brinson benchmark side from the basket's own sectors.
+    sec_w: Dict[str, float] = {}
+    sec_num: Dict[str, float] = {}
+    sec_cap: Dict[str, float] = {}
+    for kk, i in enumerate(idxs):
+        sec = secs_all[i]
+        sec_w[sec] = sec_w.get(sec, 0.0) + float(bw[kk])
+        c = max(float(caps_all[i]), 0.0) or 1.0
+        sec_num[sec] = sec_num.get(sec, 0.0) + c * float(cum_all[i])
+        sec_cap[sec] = sec_cap.get(sec, 0.0) + c
+
+    rb: Dict[str, float] = {}
+    wb_raw: Dict[str, float] = {}
+    excluded_sectors: List[str] = []
+    for sec in wp_raw:
+        if sec in sec_w and sec_cap.get(sec, 0.0) > 0:
+            rb[sec] = sec_num[sec] / sec_cap[sec]
+            wb_raw[sec] = sec_w[sec]
+        else:
+            # A book sector the chosen basket does not span — can't attribute it
+            # against this benchmark, so exclude & report rather than impute.
+            excluded_sectors.append(sec)
+
+    n = len(kept)
+    name = params.get("benchmark_name") or f"Custom basket · {n} name{'s' if n != 1 else ''}"
+    return {
+        "bench": bench,
+        "name": name,
+        "ticker": None,
+        "source": source,
+        "asOf": None,
+        "missing": 0,
+        "rb": rb,
+        "wb_raw": wb_raw,
+        "wp_raw": wp_raw,
+        "rp_num": rp_num,
+        "sector_etf": {},
+        "excluded_sectors": excluded_sectors,
+        "brinsonName": f"{name} (cap-weighted constituents)",
+        "constituents": kept,
+        "droppedConstituents": dropped,
+        "kind": "basket",
+    }
+
+
+def _build_benchmark(
+    params: dict,
+    model: "factor_model.RiskModel",
+    rets,
+    dates: List[str],
+    rng: str,
+    idx: List[int],
+    w,
+    wp_raw: Dict[str, float],
+    rp_num: Dict[str, float],
+    secs_all: List[str],
+    caps_all,
+    cum_all,
+    source: str,
+) -> dict:
+    """Resolve and construct the chosen benchmark for the attribution spine.
+
+    Supports two user-selectable specs, both REAL:
+      * an explicit list of real constituent tickers (``benchmark_constituents``)
+        — a real, cap- or user-weighted basket; or
+      * a single real traded ETF ticker (``benchmark``; default SPY). When the
+        ETF's REAL sector composition can be sourced, Brinson is decomposed at
+        GICS level using that ETF's own sector weights × real sector-ETF returns
+        (so the chosen ETF actually drives the math). When it cannot be sourced,
+        we fall back to a diversified sector-ETF proxy and say so.
+    Returns the headline daily series plus everything the Brinson decomposition
+    needs (sector weights/returns, the portfolio side in the matching sector
+    space, excluded sectors). Nothing synthetic.
+    """
+    import numpy as np
+
+    cons, dropped_pre = _resolve_bench_constituents(params)
+    if cons:
+        basket = _basket_benchmark(
+            cons, params, model, rets, wp_raw, rp_num, secs_all, caps_all,
+            cum_all, source, dropped_pre=dropped_pre,
+        )
+        if basket is not None:
+            return basket
+        # No constituent could be modeled — fall through to the ETF default but
+        # still report every requested basket ticker as dropped.
+        dropped_pre = list(dropped_pre) + list(cons)
+
+    bench_ticker, bench_name = _resolve_benchmark(params)
+    bser = _benchmark_closes(bench_ticker, rng)
+    if not bser:
+        raise ValueError(
+            f"benchmark {bench_ticker} unavailable — no real price series could be sourced"
+        )
+    bench, bench_missing = engine.align_benchmark_returns(bser["closes"], dates)
+
+    base = {
+        "bench": bench,
+        "name": bench_name,
+        "ticker": bench_ticker,
+        "source": bser["source"],
+        "asOf": bser.get("asOf"),
+        "missing": int(bench_missing),
+        "constituents": None,
+        "droppedConstituents": list(dropped_pre),
+        "kind": "etf",
+    }
+
+    # Preferred path: the chosen ETF's OWN real sector weights drive Brinson.
+    etf_w = _etf_sector_weights(bench_ticker)
+    if etf_w:
+        # Re-bucket the book into the GICS space the ETF reports its weights in.
+        g_wp_raw: Dict[str, float] = {}
+        g_rp_num: Dict[str, float] = {}
+        for kk, i in enumerate(idx):
+            g = _GRANULAR_TO_GICS.get(secs_all[i], "other")
+            g_wp_raw[g] = g_wp_raw.get(g, 0.0) + float(w[kk])
+            g_rp_num[g] = g_rp_num.get(g, 0.0) + float(w[kk]) * float(cum_all[i])
+
+        rb: Dict[str, float] = {}
+        wb_raw: Dict[str, float] = {}
+        sector_etf: Dict[str, str] = {}
+        excluded_sectors: List[str] = []
+        for sec in g_wp_raw:
+            etf = _GICS_ETF.get(sec)
+            ser = _benchmark_closes(etf, rng) if etf else None
+            if not ser:
+                excluded_sectors.append(sec)
+                continue
+            arr, _ = engine.align_benchmark_returns(ser["closes"], dates)
+            rb[sec] = float(np.prod(1.0 + arr) - 1.0)
+            wb_raw[sec] = float(etf_w.get(sec, 0.0))  # the ETF's REAL weight
+            sector_etf[sec] = etf
+
+        base.update({
+            "rb": rb,
+            "wb_raw": wb_raw,
+            "wp_raw": g_wp_raw,
+            "rp_num": g_rp_num,
+            "sector_etf": sector_etf,
+            "excluded_sectors": excluded_sectors,
+            "brinsonName": f"{bench_name} — its real sector weights × sector-ETF returns",
+        })
+        return base
+
+    # Fallback: the ETF's real sector mix could not be sourced. Use a diversified
+    # sector-ETF proxy (one real ETF per sector, universe cap-weighted) and say
+    # so, rather than pretending the chosen ETF drove the sector weights.
+    bench_cap: Dict[str, float] = {}
+    for j in range(len(model.symbols)):
+        bench_cap[secs_all[j]] = bench_cap.get(secs_all[j], 0.0) + float(caps_all[j])
+
+    rb = {}
+    wb_raw = {}
+    sector_etf = {}
+    excluded_sectors = []
+    for sec in wp_raw:
+        etf = _SECTOR_ETFS.get(sec)
+        ser = _benchmark_closes(etf, rng) if etf else None
+        if not ser:
+            excluded_sectors.append(sec)
+            continue
+        arr, _ = engine.align_benchmark_returns(ser["closes"], dates)
+        rb[sec] = float(np.prod(1.0 + arr) - 1.0)
+        wb_raw[sec] = bench_cap.get(sec, 0.0)
+        sector_etf[sec] = etf
+
+    base.update({
+        "rb": rb,
+        "wb_raw": wb_raw,
+        "wp_raw": wp_raw,
+        "rp_num": rp_num,
+        "sector_etf": sector_etf,
+        "excluded_sectors": excluded_sectors,
+        "brinsonName": f"Diversified sector-ETF proxy ({bench_name} sector weights unavailable)",
+    })
+    return base
+
+
 def _compute_attribution(params: dict) -> dict:
     """Shared spine for the performance & factor attribution panels.
 
@@ -2608,31 +2992,6 @@ def _compute_attribution(params: dict) -> dict:
     # Book daily return series over the window.
     book = engine.book_returns(rets[:, idx], w)
 
-    # Headline benchmark: a REAL, validated traded instrument (default SPY),
-    # sourced through the real price path and date-aligned to the book window.
-    bench_ticker, bench_name = _resolve_benchmark(params)
-    bser = _benchmark_closes(bench_ticker, rng)
-    if not bser:
-        raise ValueError(
-            f"benchmark {bench_ticker} unavailable — no real price series could be sourced"
-        )
-    bench, bench_missing = engine.align_benchmark_returns(bser["closes"], dates)
-
-    # Cumulative equity curves + drawdown for the chart (length k, date-aligned).
-    book_eq = engine.attribution.equity_curve(book)[1:]
-    bench_eq = engine.attribution.equity_curve(bench)[1:]
-    peak = np.maximum.accumulate(book_eq)
-    dd = book_eq / np.where(peak == 0, np.nan, peak) - 1.0
-    series = [
-        {
-            "date": dates[i],
-            "book": round(float(book_eq[i] / 100.0 - 1.0) * 100.0, 2),
-            "bench": round(float(bench_eq[i] / 100.0 - 1.0) * 100.0, 2),
-            "drawdown": round(float(dd[i]) * 100.0 if np.isfinite(dd[i]) else 0.0, 2),
-        }
-        for i in range(len(dates))
-    ]
-
     # Single-period portfolio sector returns over the window (real per-stock).
     cum_all = np.prod(1.0 + rets, axis=0) - 1.0  # (N,)
     secs_all = [(data.get_company(s) or {}).get("sector") or "Other" for s in model.symbols]
@@ -2649,29 +3008,41 @@ def _compute_attribution(params: dict) -> dict:
         wp_raw[sec] = wp_raw.get(sec, 0.0) + float(w[kk])
         rp_num[sec] = rp_num.get(sec, 0.0) + float(w[kk]) * float(cum_all[i])
 
-    # Benchmark side: a sector-aware REAL proxy. Each sector the book touches is
-    # mapped to a real, traded sector/industry ETF whose window return is sourced
-    # through the real price path; its benchmark weight is that sector's market-
-    # cap weight across the universe. Sectors without a real ETF are excluded and
-    # reported, so every benchmark sector return is a real instrument.
-    bench_cap: Dict[str, float] = {}
-    for j in range(len(model.symbols)):
-        bench_cap[secs_all[j]] = bench_cap.get(secs_all[j], 0.0) + float(caps_all[j])
+    # Chosen benchmark (user-selectable): a custom real basket OR a real traded
+    # ETF (default SPY). This yields the headline daily series and the Brinson
+    # benchmark sector side (weights/returns). Every number is real or excluded.
+    bm = _build_benchmark(
+        params, model, rets, dates, rng, idx, w, wp_raw, rp_num, secs_all,
+        caps_all, cum_all, res.coverage.source,
+    )
+    bench = bm["bench"]
+    bench_name = bm["name"]
+    bench_ticker = bm["ticker"]
+    bench_missing = bm["missing"]
+    rb = bm["rb"]
+    wb_raw = bm["wb_raw"]
+    sector_etf = bm["sector_etf"]
+    excluded_sectors = bm["excluded_sectors"]
+    # The benchmark builder may re-bucket the book into the benchmark's sector
+    # space (e.g. GICS for an ETF whose real weights drove the math), so use the
+    # portfolio side it returns to keep both sides in the same buckets.
+    wp_raw = bm["wp_raw"]
+    rp_num = bm["rp_num"]
 
-    rb: Dict[str, float] = {}
-    wb_raw: Dict[str, float] = {}
-    sector_etf: Dict[str, str] = {}
-    excluded_sectors: List[str] = []
-    for sec in wp_raw:
-        etf = _SECTOR_ETFS.get(sec)
-        ser = _benchmark_closes(etf, rng) if etf else None
-        if not ser:
-            excluded_sectors.append(sec)
-            continue
-        arr, _ = engine.align_benchmark_returns(ser["closes"], dates)
-        rb[sec] = float(np.prod(1.0 + arr) - 1.0)
-        wb_raw[sec] = bench_cap.get(sec, 0.0)
-        sector_etf[sec] = etf
+    # Cumulative equity curves + drawdown for the chart (length k, date-aligned).
+    book_eq = engine.attribution.equity_curve(book)[1:]
+    bench_eq = engine.attribution.equity_curve(bench)[1:]
+    peak = np.maximum.accumulate(book_eq)
+    dd = book_eq / np.where(peak == 0, np.nan, peak) - 1.0
+    series = [
+        {
+            "date": dates[i],
+            "book": round(float(book_eq[i] / 100.0 - 1.0) * 100.0, 2),
+            "bench": round(float(bench_eq[i] / 100.0 - 1.0) * 100.0, 2),
+            "drawdown": round(float(dd[i]) * 100.0 if np.isfinite(dd[i]) else 0.0, 2),
+        }
+        for i in range(len(dates))
+    ]
 
     included = [s for s in wp_raw if s in rb]
     # Renormalize portfolio & benchmark weights over the comparable (real-ETF-
@@ -2683,11 +3054,13 @@ def _compute_attribution(params: dict) -> dict:
     rp = {s: (rp_num[s] / wp_raw[s] if wp_raw[s] else 0.0) for s in included}
 
     sectors = sorted(included, key=lambda s: -wb.get(s, 0.0))
-    sector_labels = {s: repo.sector_name(s) for s in sectors}
+    sector_labels = {s: (_GICS_LABELS.get(s) or repo.sector_name(s)) for s in sectors}
     brinson = engine.brinson(sectors, wp, wb, rp, {s: rb[s] for s in sectors})
-    brinson["benchmarkName"] = "Real sector ETFs (SPDR / industry proxies)"
+    brinson["benchmarkName"] = bm["brinsonName"]
     if excluded_sectors:
-        brinson["excludedSectors"] = [repo.sector_name(s) for s in excluded_sectors]
+        brinson["excludedSectors"] = [
+            (_GICS_LABELS.get(s) or repo.sector_name(s)) for s in excluded_sectors
+        ]
     for row in brinson["rows"]:
         row["sectorLabel"] = sector_labels.get(row["sector"], row["sector"])
         row["benchmarkEtf"] = sector_etf.get(row["sector"])
@@ -2700,8 +3073,11 @@ def _compute_attribution(params: dict) -> dict:
         "portfolioName": name,
         "benchmarkName": bench_name,
         "benchmarkTicker": bench_ticker,
-        "benchmarkSource": bser["source"],
-        "benchmarkAsOf": bser.get("asOf"),
+        "benchmarkKind": bm["kind"],
+        "benchmarkConstituents": bm.get("constituents"),
+        "benchmarkDroppedConstituents": bm.get("droppedConstituents") or [],
+        "benchmarkSource": bm["source"],
+        "benchmarkAsOf": bm["asOf"],
         "benchmarkMissingDays": int(bench_missing),
         "range": rng,
         "rangeLabel": _ATTR_RANGE_LABELS.get(rng, rng),
@@ -2726,6 +3102,9 @@ def build_performance_pnl(params: dict) -> dict:
         "portfolioName": a["portfolioName"],
         "benchmarkName": a["benchmarkName"],
         "benchmarkTicker": a["benchmarkTicker"],
+        "benchmarkKind": a["benchmarkKind"],
+        "benchmarkConstituents": a["benchmarkConstituents"],
+        "benchmarkDroppedConstituents": a["benchmarkDroppedConstituents"],
         "benchmarkSource": a["benchmarkSource"],
         "benchmarkAsOf": a["benchmarkAsOf"],
         "benchmarkMissingDays": a["benchmarkMissingDays"],
@@ -2791,6 +3170,9 @@ def build_tear_sheet(params: dict) -> dict:
         "portfolioName": a["portfolioName"],
         "benchmarkName": a["benchmarkName"],
         "benchmarkTicker": a["benchmarkTicker"],
+        "benchmarkKind": a["benchmarkKind"],
+        "benchmarkConstituents": a["benchmarkConstituents"],
+        "benchmarkDroppedConstituents": a["benchmarkDroppedConstituents"],
         "benchmarkSource": a["benchmarkSource"],
         "benchmarkAsOf": a["benchmarkAsOf"],
         "benchmarkMissingDays": a["benchmarkMissingDays"],

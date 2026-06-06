@@ -24,7 +24,7 @@ export interface TearSheetData {
   windowDays: number;
   series: PerformancePnlData["series"];
   stats: PerformancePnlData["stats"];
-  brinson: { rows: BrinsonData["rows"]; totals: BrinsonData["totals"] };
+  brinson: { rows: BrinsonData["rows"]; totals: BrinsonData["totals"]; benchmarkName?: string };
   factor: {
     rows: FactorAttributionData["rows"];
     realizedReturn: number;
@@ -112,7 +112,10 @@ export function TearSheetPanel({ data }: { data: TearSheetData }) {
 
         <div className="grid grid-rows-2 gap-3 min-h-[160px]">
           <div className="flex flex-col min-h-0">
-            <SectionLabel>Brinson Active Return by Sector (%)</SectionLabel>
+            <SectionLabel>
+              Brinson Active Return by Sector (%)
+              {data.brinson.benchmarkName ? ` · vs ${data.brinson.benchmarkName}` : ""}
+            </SectionLabel>
             <div className="flex-1 min-h-0">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={brinsonChart} margin={{ top: 2, right: 0, left: -22, bottom: 0 }}>
