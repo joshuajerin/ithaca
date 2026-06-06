@@ -23,6 +23,16 @@ import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 const NAV_INTENT =
   /\b(walk me through|walk through|guide me through|guide me|take me through|give me a tour|take me on a tour|show me around|tour (?:the|this|my)|navigate me|show me what matters|talk me through)\b/i;
 
+// A small, tappable set of starter prompts shown over the empty-state dot-wave
+// so first-time users have a concrete sense of what to type.
+const EXAMPLE_PROMPTS = [
+  "Show me Microsoft fundamentals",
+  "Macro dashboard",
+  "AAPL order book",
+  "Deep dive on NVIDIA",
+  "Screen the cloud & software sector",
+];
+
 // What's left of a tour request once the navigation phrasing and filler is
 // stripped. Empty => a "tour what's already here" request; non-empty => there's
 // a subject to build first (e.g. "walk me through NVDA").
@@ -319,6 +329,29 @@ export default function Terminal() {
                 className="absolute inset-0"
               >
                 <DotWaveCanvas />
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none px-6">
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.6, delay: 0.35, ease: [0.22, 1, 0.36, 1] }}
+                    className="flex flex-col items-center max-w-2xl"
+                  >
+                    <span className="editorial-label text-[9px] text-muted-foreground mb-4">
+                      Try one of these
+                    </span>
+                    <div className="flex flex-wrap items-center justify-center gap-2.5">
+                      {EXAMPLE_PROMPTS.map((prompt) => (
+                        <button
+                          key={prompt}
+                          onClick={() => void handleCommand(prompt)}
+                          className="pointer-events-auto px-4 py-2 border border-border bg-black/60 backdrop-blur-sm font-serif text-sm text-gray-300 hover:text-white hover:border-white transition-colors duration-200"
+                        >
+                          {prompt}
+                        </button>
+                      ))}
+                    </div>
+                  </motion.div>
+                </div>
               </motion.div>
             )}
           </AnimatePresence>
