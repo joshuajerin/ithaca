@@ -297,37 +297,40 @@ def _validate_tsx(code: str) -> None:
 def list_features() -> list[dict]:
     """Return metadata for every active AI-generated feature.
 
-    Each entry: panelType, name, description, invokeExample, createdAt (ISO mtime
-    of the Python module). Sorted newest-first.
+    Each entry: panelType, name, description, invokeExample, createdAt. Provenance
+    is preferred from the generated-skills manifest (the ORIGINAL plain-language
+    request and the true creation timestamp); when no manifest entry exists (e.g.
+    a feature built before manifest tracking), it falls back to the registered
+    SKILL_DEFINITION and the Python module's mtime. Sorted newest-first.
     """
     import datetime as _dt
+
+    manifest = {e.get("panel_type"): e for e in dynamic_skills.read_manifest()}
 
     features: list[dict] = []
     for panel_type in dynamic_skills.panel_types():
         definition = dynamic_skills.get_definition(panel_type) or {}
+        entry = manifest.get(panel_type) or {}
         py_path = os.path.join(dynamic_skills.GENERATED_DIR, f"{panel_type}.py")
-        created_at = None
-        mtime = None
-        try:
-            mtime = os.path.getmtime(py_path)
-            created_at = _dt.datetime.fromtimestamp(
-                mtime, tz=_dt.timezone.utc
-            ).isoformat()
-        except OSError:
-            pass
+
+        created_at = entry.get("created_at")
+        if not created_at:
+            try:
+                mtime = os.path.getmtime(py_path)
+                created_at = _dt.datetime.fromtimestamp(mtime, tz=_dt.timezone.utc).isoformat()
+            except OSError:
+                created_at = None
+
         phrases = definition.get("invoke_phrases") or []
-        invoke_example = phrases[0] if phrases else f"show me {definition.get('name') or panel_type}"
+        fallback_invoke = phrases[0] if phrases else f"show me {definition.get('name') or panel_type}"
         features.append({
             "panelType": panel_type,
-            "name": definition.get("name") or definition.get("default_title") or panel_type,
-            "description": definition.get("description") or "",
-            "invokeExample": invoke_example,
+            "name": entry.get("name") or definition.get("name") or definition.get("default_title") or panel_type,
+            "description": entry.get("description") or definition.get("description") or "",
+            "invokeExample": entry.get("invoke_example") or fallback_invoke,
             "createdAt": created_at,
-            "_mtime": mtime or 0,
         })
-    features.sort(key=lambda f: f["_mtime"], reverse=True)
-    for f in features:
-        f.pop("_mtime", None)
+    features.sort(key=lambda f: f["createdAt"] or "", reverse=True)
     return features
 
 
@@ -342,6 +345,7 @@ def remove_feature(panel_type: str) -> bool:
         return False
 
     dynamic_skills.unregister(panel_type)
+    dynamic_skills.remove_manifest_entry(panel_type)
 
     py_path = os.path.join(dynamic_skills.GENERATED_DIR, f"{panel_type}.py")
     tsx_path = os.path.join(PANEL_DIR, f"{panel_type}.tsx")
@@ -421,6 +425,14 @@ def stream_feature_request(description: str) -> Iterator[str]:
 
         with open(tsx_path, "w", encoding="utf-8") as fh:
             fh.write(tsx_code)
+
+        # Record provenance (best-effort; never blocks activation on failure).
+        dynamic_skills.record_feature(
+            panel_type=panel_type,
+            name=feature_name,
+            description=description.strip(),
+            invoke_example=invoke_example,
+        )
 
         yield _sse({
             "stage": "done",

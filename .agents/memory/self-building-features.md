@@ -64,3 +64,19 @@ A failure leaves zero partial files.
 - Endpoint `POST /api/feature-request` is SSE (StreamingResponse over a sync generator) with
   stages planning→generating_skill→generating_panel→activating→done|error. `FeatureRequestModal`
   reads it via `fetch` + `ReadableStream` (relative `/api/...`, proxy-routed; no base URL set).
+
+## Provenance manifest (debuggability + feature management)
+- `dynamic_skills.py` owns `manifest.json` in `skills_generated/`: `read_manifest()` (resilient —
+  missing/corrupt/non-list → `[]`, never raises), `record_feature(panel_type,name,description,
+  invoke_example)` (appends, replaces same-panel_type, atomic temp+os.replace), `remove_manifest_entry`
+  (drops entry on delete). All best-effort: swallow+log errors. Entry keys: panel_type, name,
+  description (ORIGINAL user prompt), invoke_example, created_at (ISO).
+- **The manifest is provenance ONLY — the loader scans `*.py` on disk and never reads it, so a bad
+  manifest can't block skill loading.** `feature_builder` calls `record_feature` AFTER both files
+  write (never aborts activation); `remove_feature` calls `remove_manifest_entry`.
+- **Feature-management UI is `/api/features` (list) + `DELETE /api/features/{panel_type}`** (main.py),
+  served by `feature_builder.list_features()`/`remove_feature()`. `list_features` returns camelCase
+  (panelType,name,description,invokeExample,createdAt) and PREFERS manifest data (original prompt +
+  true created_at), falling back to SKILL_DEFINITION + .py mtime for pre-manifest features. The
+  `FeatureRequestModal` build/manage view consumes it. (An earlier `/api/generated-features` +
+  "Features you've built" list was folded into this richer management UI during a rebase.)

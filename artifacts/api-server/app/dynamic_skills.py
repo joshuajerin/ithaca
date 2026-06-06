@@ -16,8 +16,11 @@ harness passes their data through untouched.
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 import os
+import tempfile
+from datetime import datetime, timezone
 from typing import Dict, List
 
 from . import code_guard, skills
@@ -25,6 +28,12 @@ from . import code_guard, skills
 log = logging.getLogger("dynamic_skills")
 
 GENERATED_DIR = os.path.join(os.path.dirname(__file__), "skills_generated")
+
+# Provenance manifest: a record of every feature the self-building pipeline has
+# produced (what, when, from what prompt). It is purely informational — the
+# loader scans the .py modules on disk and never depends on this file, so a
+# missing or corrupt manifest can never block skill loading.
+MANIFEST_PATH = os.path.join(GENERATED_DIR, "manifest.json")
 
 # panel_type -> the raw SKILL_DEFINITION dict (used to build tools/heuristics).
 _DEFINITIONS: Dict[str, dict] = {}
@@ -146,3 +155,82 @@ def is_dynamic(panel_type: str) -> bool:
 
 def panel_types() -> List[str]:
     return list(_DEFINITIONS.keys())
+
+
+# ----------------------------- provenance manifest -----------------------------
+def read_manifest() -> List[dict]:
+    """Return the recorded feature provenance entries.
+
+    Resilient by design: a missing, unreadable, or corrupt manifest yields an
+    empty list rather than raising, so callers (and skill loading) are never
+    blocked by a bad manifest.
+    """
+    try:
+        with open(MANIFEST_PATH, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (FileNotFoundError, OSError, ValueError):
+        return []
+    if isinstance(data, dict):
+        data = data.get("features")
+    if not isinstance(data, list):
+        return []
+    return [e for e in data if isinstance(e, dict)]
+
+
+def _write_manifest(entries: List[dict]) -> None:
+    """Atomically write the manifest (temp file + rename) to avoid partial writes."""
+    ensure_dir()
+    fd, tmp = tempfile.mkstemp(dir=GENERATED_DIR, prefix=".manifest-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(entries, fh, indent=2)
+        os.replace(tmp, MANIFEST_PATH)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def record_feature(
+    panel_type: str,
+    name: str,
+    description: str,
+    invoke_example: str,
+) -> None:
+    """Append a feature's provenance to the manifest. Never raises.
+
+    Records the panel_type, display name, the original plain-language request,
+    an invoke example, and a creation timestamp. If an entry for the same
+    panel_type already exists it is replaced (a rebuild supersedes the old
+    record). Failures are logged and swallowed — provenance is best-effort and
+    must never break the feature-build pipeline.
+    """
+    try:
+        entries = [e for e in read_manifest() if e.get("panel_type") != panel_type]
+        entries.append({
+            "panel_type": panel_type,
+            "name": name,
+            "description": description,
+            "invoke_example": invoke_example,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        _write_manifest(entries)
+    except Exception:  # noqa: BLE001 — provenance is best-effort
+        log.exception("Failed to record feature provenance for %s", panel_type)
+
+
+def remove_manifest_entry(panel_type: str) -> None:
+    """Drop a feature's provenance entry from the manifest. Never raises.
+
+    Called when a feature is deleted so the manifest stays consistent with what
+    is actually live. Best-effort — failures are logged and swallowed.
+    """
+    try:
+        entries = read_manifest()
+        remaining = [e for e in entries if e.get("panel_type") != panel_type]
+        if len(remaining) != len(entries):
+            _write_manifest(remaining)
+    except Exception:  # noqa: BLE001 — provenance is best-effort
+        log.exception("Failed to remove manifest entry for %s", panel_type)
