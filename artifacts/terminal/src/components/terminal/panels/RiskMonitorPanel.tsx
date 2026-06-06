@@ -60,6 +60,13 @@ interface HypoStress {
   pnlUsd: number;
   breakdown?: string;
 }
+interface CustomStress {
+  label: string;
+  pnlPct: number;
+  pnlUsd: number;
+  factorBreakdown: { factor: string; exposure: number; shockPct: number; pnlPct: number }[];
+  assetBreakdown: { symbol: string; weightPct: number; shockPct: number; pnlPct: number }[];
+}
 interface Coverage {
   included: number;
   excluded: number;
@@ -85,7 +92,7 @@ interface RiskMonitorData {
   inLimit: boolean;
   historicalStress: HistStress[];
   hypotheticalStress: HypoStress[];
-  customStress?: HypoStress | null;
+  customStress?: CustomStress | null;
   coverage: Coverage;
   asOf?: string | null;
   source?: string;
@@ -111,7 +118,13 @@ function fmtLimitVal(v: number, format: Limit["format"]): string {
   return `${(v * 100).toFixed(2)}%`;
 }
 
-export function RiskMonitorPanel({ data }: { data: RiskMonitorData }) {
+export function RiskMonitorPanel({
+  data,
+  onShock,
+}: {
+  data: RiskMonitorData;
+  onShock?: (instruction: string) => void;
+}) {
   const {
     bookName,
     nav,
@@ -122,6 +135,7 @@ export function RiskMonitorPanel({ data }: { data: RiskMonitorData }) {
     longCount,
     shortCount,
     risk,
+    positions,
     sectors,
     factor,
     limits,
@@ -129,8 +143,35 @@ export function RiskMonitorPanel({ data }: { data: RiskMonitorData }) {
     inLimit,
     historicalStress,
     hypotheticalStress,
+    customStress,
     coverage,
   } = data;
+
+  const factorNames = (factor.exposures || []).map((f) => f.factor);
+  const assetSymbols = (positions || []).map((p) => p.symbol);
+
+  type ShockKind = "factor" | "asset" | "market";
+  const [kind, setKind] = React.useState<ShockKind>(
+    factorNames.length ? "factor" : assetSymbols.length ? "asset" : "market",
+  );
+  const [factorTarget, setFactorTarget] = React.useState(factorNames[0] || "");
+  const [assetTarget, setAssetTarget] = React.useState(assetSymbols[0] || "");
+  const [magnitude, setMagnitude] = React.useState(-10);
+
+  const submitShock = () => {
+    if (!onShock) return;
+    let instruction = "";
+    if (kind === "factor") {
+      if (!factorTarget) return;
+      instruction = `Custom shock: factor ${factorTarget} ${magnitude}%`;
+    } else if (kind === "asset") {
+      if (!assetTarget) return;
+      instruction = `Custom shock: asset ${assetTarget} ${magnitude}%`;
+    } else {
+      instruction = `Custom shock: market ${magnitude}%`;
+    }
+    onShock(instruction);
+  };
 
   const maxSector = Math.max(...sectors.map((s) => Math.abs(s.netPct)), 1);
   const maxFactor = Math.max(...(factor.exposures || []).map((f) => Math.abs(f.exposure)), 0.5);
@@ -382,6 +423,123 @@ export function RiskMonitorPanel({ data }: { data: RiskMonitorData }) {
               })}
             </div>
           </div>
+
+          {/* Custom shock builder */}
+          {onShock && (
+            <div className="shrink-0">
+              <div className="text-[9px] text-muted-foreground uppercase tracking-widest mb-1.5">
+                Custom Shock Builder
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <select
+                  value={kind}
+                  onChange={(e) => setKind(e.target.value as ShockKind)}
+                  className="bg-transparent border border-border text-[10px] text-white py-1 px-1.5 focus:outline-none focus:border-white"
+                >
+                  {factorNames.length > 0 && <option value="factor">Factor</option>}
+                  {assetSymbols.length > 0 && <option value="asset">Asset</option>}
+                  <option value="market">Market</option>
+                </select>
+                {kind === "factor" && (
+                  <select
+                    value={factorTarget}
+                    onChange={(e) => setFactorTarget(e.target.value)}
+                    className="bg-transparent border border-border text-[10px] text-white py-1 px-1.5 focus:outline-none focus:border-white"
+                  >
+                    {factorNames.map((f) => (
+                      <option key={f} value={f}>
+                        {f}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {kind === "asset" && (
+                  <select
+                    value={assetTarget}
+                    onChange={(e) => setAssetTarget(e.target.value)}
+                    className="bg-transparent border border-border text-[10px] text-white py-1 px-1.5 focus:outline-none focus:border-white"
+                  >
+                    {assetSymbols.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <div className="flex items-center gap-1.5 flex-1 min-w-[120px]">
+                  <input
+                    type="range"
+                    min={-50}
+                    max={50}
+                    step={1}
+                    value={magnitude}
+                    onChange={(e) => setMagnitude(Number(e.target.value))}
+                    className="flex-1 accent-white h-1"
+                  />
+                  <span
+                    className="w-12 shrink-0 text-right text-[10px] font-mono"
+                    style={{ color: magnitude < 0 ? "#ef4444" : "#22c55e" }}
+                  >
+                    {signed(magnitude, 0)}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={submitShock}
+                  className="text-[10px] uppercase tracking-widest border border-border px-2 py-1 text-white hover:bg-white hover:text-black transition-colors"
+                >
+                  Apply
+                </button>
+              </div>
+
+              {customStress && (
+                <div className="mt-2 border border-amber-400/40 bg-amber-400/5 p-2">
+                  <div className="flex items-baseline justify-between">
+                    <div className="text-[9px] uppercase tracking-widest text-amber-300/90">
+                      {customStress.label}
+                    </div>
+                    <div
+                      className="text-[11px] font-mono font-bold"
+                      style={{ color: customStress.pnlPct < 0 ? "#ef4444" : "#22c55e" }}
+                    >
+                      {signed(customStress.pnlPct, 2)} · {fmtUsd(customStress.pnlUsd)}
+                    </div>
+                  </div>
+                  {(customStress.factorBreakdown.length > 0 ||
+                    customStress.assetBreakdown.length > 0) && (
+                    <div className="mt-1.5 space-y-0.5">
+                      {customStress.factorBreakdown.map((b) => (
+                        <div
+                          key={`f-${b.factor}`}
+                          className="flex items-center justify-between text-[9px] font-mono text-muted-foreground"
+                        >
+                          <span className="text-white/70">
+                            {b.factor} <span className="text-muted-foreground">· β {b.exposure.toFixed(2)} · {signed(b.shockPct, 0)}</span>
+                          </span>
+                          <span style={{ color: b.pnlPct < 0 ? "#ef4444" : "#22c55e" }}>
+                            {signed(b.pnlPct, 2)}
+                          </span>
+                        </div>
+                      ))}
+                      {customStress.assetBreakdown.map((b) => (
+                        <div
+                          key={`a-${b.symbol}`}
+                          className="flex items-center justify-between text-[9px] font-mono text-muted-foreground"
+                        >
+                          <span className="text-white/70">
+                            {b.symbol} <span className="text-muted-foreground">· w {b.weightPct.toFixed(0)}% · {signed(b.shockPct, 0)}</span>
+                          </span>
+                          <span style={{ color: b.pnlPct < 0 ? "#ef4444" : "#22c55e" }}>
+                            {signed(b.pnlPct, 2)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

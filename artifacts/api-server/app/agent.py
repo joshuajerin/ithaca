@@ -2618,10 +2618,67 @@ def refine(session_id: str, panel_id: str, instruction: str) -> Optional[dict]:
     layout = panel["layout"]
     title = panel.get("title")
 
-    params = _refine_params(panel_type, panel, instruction)
-    updated = harness.run_skill(panel_type, params, layout, title=None, panel_id=panel_id)
+    # The risk monitor's custom shock builder submits a canonical instruction that
+    # we parse deterministically and apply against the panel's CURRENT book (which
+    # the panel data lets us reconstruct), so the shock never resets the portfolio.
+    params = None
+    keep_title = None
+    if panel_type == "risk_monitor":
+        params = _risk_monitor_shock_params(panel, instruction)
+        if params is not None:
+            keep_title = title  # a shock keeps the same book, so keep its title
+    if params is None:
+        params = _refine_params(panel_type, panel, instruction)
+    updated = harness.run_skill(panel_type, params, layout, title=keep_title, panel_id=panel_id)
     state.update_panel(session_id, updated)
     return updated
+
+
+# Canonical custom-shock instructions emitted by the risk monitor's shock builder,
+# e.g. "Custom shock: factor Momentum -8%", "Custom shock: asset NVDA -15%",
+# "Custom shock: market -10%". Parsed deterministically (no LLM dependency).
+_SHOCK_FACTOR_RE = re.compile(r"factor\s+([A-Za-z]+)\s+(-?\d+(?:\.\d+)?)\s*%?", re.I)
+_SHOCK_ASSET_RE = re.compile(r"asset\s+([A-Za-z0-9.]+)\s+(-?\d+(?:\.\d+)?)\s*%?", re.I)
+_SHOCK_MARKET_RE = re.compile(r"market\s+(-?\d+(?:\.\d+)?)\s*%?", re.I)
+
+
+def _parse_shock(instruction: str) -> Optional[dict]:
+    text = instruction or ""
+    m = _SHOCK_FACTOR_RE.search(text)
+    if m:
+        return {"factor_shocks": {m.group(1).title(): float(m.group(2))}}
+    m = _SHOCK_ASSET_RE.search(text)
+    if m:
+        return {"asset_shocks": {m.group(1).upper(): float(m.group(2))}}
+    m = _SHOCK_MARKET_RE.search(text)
+    if m:
+        return {"market_shock": float(m.group(1))}
+    return None
+
+
+def _risk_monitor_shock_params(panel: dict, instruction: str) -> Optional[dict]:
+    """Build refine params that re-run the SAME book with a custom shock applied.
+
+    Returns None when the instruction isn't a custom-shock command, so the caller
+    falls back to the normal LLM/heuristic refine path.
+    """
+    shock = _parse_shock(instruction)
+    if not shock:
+        return None
+    data_blk = panel.get("data") or {}
+    params: dict = {}
+    positions = [p for p in (data_blk.get("positions") or []) if p.get("symbol")]
+    if positions:
+        params["symbols"] = [p["symbol"] for p in positions]
+        params["weights"] = [float(p.get("weightPct", 0.0)) / 100.0 for p in positions]
+    nav = data_blk.get("nav")
+    if nav:
+        params["nav"] = float(nav)
+    name = data_blk.get("bookName")
+    if name:
+        params["portfolio_name"] = name
+    params.update(shock)
+    return params
 
 
 def _refine_params(panel_type: str, panel: dict, instruction: str) -> dict:

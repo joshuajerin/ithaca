@@ -76,27 +76,31 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
   
   const refineMutation = useRefinePanel();
 
+  const submitRefine = async (instruction: string) => {
+    if (!instruction.trim()) return;
+    try {
+      const result = await refineMutation.mutateAsync({
+        data: {
+          sessionId,
+          panelId: panel.id,
+          instruction
+        }
+      });
+      onRefined(result);
+    } catch (e) {
+      console.error("Failed to refine panel", e);
+    }
+  };
+
   const handleRefine = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!refineText.trim()) {
       setIsRefining(false);
       return;
     }
-    
-    try {
-      const result = await refineMutation.mutateAsync({
-        data: {
-          sessionId,
-          panelId: panel.id,
-          instruction: refineText
-        }
-      });
-      onRefined(result);
-      setIsRefining(false);
-      setRefineText("");
-    } catch (e) {
-      console.error("Failed to refine panel", e);
-    }
+    await submitRefine(refineText);
+    setIsRefining(false);
+    setRefineText("");
   };
 
   const renderContent = () => {
@@ -159,7 +163,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "data_quality": return <DataQualityPanel data={panel.data as any} />;
       case "analyst_report": return <AnalystReportPanel data={panel.data as any} />;
       case "scenario": return <ScenarioPanel data={panel.data as any} />;
-      case "risk_monitor": return <RiskMonitorPanel data={panel.data as any} />;
+      case "risk_monitor": return <RiskMonitorPanel data={panel.data as any} onShock={submitRefine} />;
       case "performance_pnl": return <PerformancePnlPanel data={panel.data as any} />;
       case "brinson_attribution": return <BrinsonPanel data={panel.data as any} />;
       case "factor_attribution": return <FactorAttributionPanel data={panel.data as any} />;
