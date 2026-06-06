@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { useGetSuggestions, useGetSkills, useGetWatchlist } from "@workspace/api-client-react";
+import { useGetSuggestions, useGetSkills, useGetWatchlist, useGetSectors } from "@workspace/api-client-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { Send, ChevronRight, Activity, Command } from "lucide-react";
+import { Send, ChevronRight, Activity, Command, LayoutGrid, X } from "lucide-react";
 
 interface ChatPanelProps {
   sessionId?: string;
@@ -27,12 +27,14 @@ interface Message {
 export function ChatPanel({ sessionId, onCommand, isProcessing, reply, inputRef }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
+  const [showSectors, setShowSectors] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastReplyNonce = useRef(0);
 
   const { data: suggestions } = useGetSuggestions();
   const { data: skills } = useGetSkills();
   const { data: watchlist } = useGetWatchlist();
+  const { data: sectorList } = useGetSectors();
 
   useEffect(() => {
     if (reply && reply.text && reply.nonce !== lastReplyNonce.current) {
@@ -62,14 +64,84 @@ export function ChatPanel({ sessionId, onCommand, isProcessing, reply, inputRef 
     onCommand(prompt);
   };
 
+  const handleSectorClick = (name: string) => {
+    if (isProcessing) return;
+    setShowSectors(false);
+    handleSuggestionClick(`Screen the ${name} sector`);
+  };
+
+  const sectors = sectorList?.sectors ?? [];
+
   return (
     <div className="flex flex-col h-full border-l border-border bg-black">
-      <div className="px-5 pt-4 pb-3 border-b border-border">
-        <span className="editorial-label text-[9px] text-muted-foreground">Command Input</span>
-        <h2 className="font-serif text-xl leading-none mt-1.5 flex items-center gap-2">
-          Console
-        </h2>
+      <div className="px-5 pt-4 pb-3 border-b border-border flex items-end justify-between gap-3">
+        <div>
+          <span className="editorial-label text-[9px] text-muted-foreground">Command Input</span>
+          <h2 className="font-serif text-xl leading-none mt-1.5 flex items-center gap-2">
+            Console
+          </h2>
+        </div>
+        <button
+          onClick={() => setShowSectors((v) => !v)}
+          aria-pressed={showSectors}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 editorial-label text-[9px] border transition-colors ${
+            showSectors
+              ? "bg-white text-black border-white"
+              : "bg-black text-white border-border hover:border-white"
+          }`}
+        >
+          <LayoutGrid className="w-3 h-3" strokeWidth={1.5} />
+          Themes
+        </button>
       </div>
+
+      {/* Sector / theme browser — lists every classified sector for one-click screening. */}
+      <AnimatePresence>
+        {showSectors && (
+          <motion.div
+            key="sector-menu"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+            className="border-b border-border overflow-hidden bg-black/40"
+          >
+            <div className="px-5 py-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="editorial-label text-[9px] text-muted-foreground">
+                  Browse by theme · {sectors.length} sectors
+                </div>
+                <button
+                  onClick={() => setShowSectors(false)}
+                  className="text-muted-foreground hover:text-white transition-colors"
+                  aria-label="Close theme menu"
+                >
+                  <X className="w-3.5 h-3.5" strokeWidth={1.5} />
+                </button>
+              </div>
+              <ScrollArea className="max-h-56">
+                <div className="grid grid-cols-2 gap-1.5 pr-2">
+                  {sectors.map((sector) => (
+                    <button
+                      key={sector.id}
+                      onClick={() => handleSectorClick(sector.name)}
+                      disabled={isProcessing}
+                      className="text-left px-3 py-2 border border-border hover:border-white hover:bg-white/5 transition-colors group/sector disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-transparent"
+                    >
+                      <div className="font-serif text-sm leading-tight text-gray-200 group-hover/sector:text-white transition-colors">
+                        {sector.name}
+                      </div>
+                      <div className="editorial-label text-[8px] text-muted-foreground mt-0.5 nums-tabular">
+                        {sector.tickerCount} {sector.tickerCount === 1 ? "name" : "names"}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </ScrollArea>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <ScrollArea className="flex-1 px-5 py-5" ref={scrollRef}>
         <div className="space-y-7">
@@ -107,6 +179,21 @@ export function ChatPanel({ sessionId, onCommand, isProcessing, reply, inputRef 
                         </button>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {sectors.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="editorial-label text-[9px] text-muted-foreground">Browse by theme</div>
+                    <button
+                      onClick={() => setShowSectors(true)}
+                      className="w-full text-left py-3 border-t border-border hover:text-white text-gray-300 transition-colors duration-200 flex items-start gap-2 group"
+                    >
+                      <LayoutGrid className="w-3.5 h-3.5 mt-1 shrink-0 text-muted-foreground group-hover:text-white transition-colors" strokeWidth={1.5} />
+                      <span className="font-serif text-base leading-snug">
+                        Explore all {sectors.length} sectors — screen any theme in one click
+                      </span>
+                    </button>
                   </div>
                 )}
               </motion.div>
