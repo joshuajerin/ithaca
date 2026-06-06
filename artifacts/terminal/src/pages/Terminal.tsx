@@ -51,6 +51,15 @@ export default function Terminal() {
   const [reply, setReply] = useState<{ text: string; kind: 'answer' | 'summary'; nonce: number } | null>(null);
   const replyNonce = useRef(0);
 
+  // Ref to the command input so keyboard shortcuts can focus it from anywhere.
+  const commandInputRef = useRef<HTMLInputElement>(null);
+  // Open the console (if collapsed) and focus the command input. A short delay
+  // lets the panel's width transition begin before the focus scrolls it in.
+  const focusCommand = useCallback(() => {
+    setChatOpen(true);
+    window.setTimeout(() => commandInputRef.current?.focus(), 80);
+  }, []);
+
   const pushReply = useCallback((result: DashboardSpec) => {
     const isAnswer = result.intent === "question";
     const text = (isAnswer ? result.answer : result.summary) || "";
@@ -189,8 +198,55 @@ export default function Terminal() {
     if (voiceMode && navigatorRef.current.active) navigatorRef.current.stop();
   }, [voiceMode]);
 
+  // Power-user keyboard shortcuts:
+  //   "/" or ⌘/Ctrl+K  → focus the command input from anywhere
+  //   Esc              → blur the input if focused, else toggle the console
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (isMobile) return;
+      const target = e.target as HTMLElement | null;
+      const editable =
+        !!target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable);
+
+      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+        if (voiceMode) return;
+        e.preventDefault();
+        focusCommand();
+        return;
+      }
+
+      if (e.key === "/" && !editable && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (voiceMode) return;
+        e.preventDefault();
+        focusCommand();
+        return;
+      }
+
+      if (e.key === "Escape") {
+        if (showFeatureModal || voiceMode) return;
+        if (document.activeElement === commandInputRef.current) {
+          commandInputRef.current?.blur();
+        } else {
+          setChatOpen((o) => !o);
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [isMobile, voiceMode, showFeatureModal, focusCommand]);
+
+  const modLabel =
+    typeof window !== "undefined" &&
+    /Mac|iPhone|iPad/.test(window.navigator.platform)
+      ? "⌘K"
+      : "Ctrl K";
+
   return (
-    <div className="flex h-screen w-full bg-black text-white overflow-hidden">
+    <div className="flex flex-col h-screen w-full bg-black text-white overflow-hidden">
+      <div className="flex flex-1 min-h-0 w-full">
       <main className="flex-1 flex flex-col min-w-0 border-r border-border overflow-y-auto scrollbar-none">
         <header className="h-16 border-b border-border flex items-end justify-between px-4 sm:px-8 pb-3 shrink-0 bg-black/70 backdrop-blur-sm z-10 sticky top-0">
           <div className="flex flex-col">
@@ -307,11 +363,33 @@ export default function Terminal() {
                 onCommand={handleCommand}
                 isProcessing={orchestrate.isPending}
                 reply={reply}
+                inputRef={commandInputRef}
               />
             </div>
           </aside>
         </div>
       )}
+      </div>
+
+      {/* Status bar — surfaces the keyboard shortcuts for power-user navigation. */}
+      <footer className="hidden sm:flex items-center justify-between h-7 shrink-0 border-t border-border px-4 sm:px-8 bg-black/70 backdrop-blur-sm">
+        <div className="flex items-center gap-5">
+          <span className="editorial-label text-[9px] text-muted-foreground">Shortcuts</span>
+          <span className="flex items-center gap-1.5 text-[9px] text-muted-foreground">
+            <kbd className="px-1.5 py-0.5 border border-border bg-black font-mono text-gray-300 leading-none">/</kbd>
+            <span>or</span>
+            <kbd className="px-1.5 py-0.5 border border-border bg-black font-mono text-gray-300 leading-none">{modLabel}</kbd>
+            <span>Focus command</span>
+          </span>
+          <span className="flex items-center gap-1.5 text-[9px] text-muted-foreground">
+            <kbd className="px-1.5 py-0.5 border border-border bg-black font-mono text-gray-300 leading-none">Esc</kbd>
+            <span>Toggle console</span>
+          </span>
+        </div>
+        <span className="editorial-label text-[9px] text-muted-foreground">
+          {chatOpen ? "Console Open" : "Console Collapsed"}
+        </span>
+      </footer>
 
       <NavigatorCursor
         active={navigator.active}

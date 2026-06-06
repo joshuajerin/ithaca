@@ -13,6 +13,9 @@ interface ChatPanelProps {
   // carried with a monotonically increasing nonce so every reply renders — even
   // when its text repeats a previous one (no content-based dedup dropping it).
   reply?: { text: string; kind: 'answer' | 'summary'; nonce: number } | null;
+  // Forwarded ref to the command input so power-user hotkeys (e.g. "/" or ⌘K)
+  // can focus it from anywhere in the terminal.
+  inputRef?: React.Ref<HTMLInputElement>;
 }
 
 interface Message {
@@ -21,7 +24,7 @@ interface Message {
   kind?: 'answer' | 'summary';
 }
 
-export function ChatPanel({ sessionId, onCommand, isProcessing, reply }: ChatPanelProps) {
+export function ChatPanel({ sessionId, onCommand, isProcessing, reply, inputRef }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -161,6 +164,7 @@ export function ChatPanel({ sessionId, onCommand, isProcessing, reply }: ChatPan
         <form onSubmit={handleSubmit} className="relative flex items-center">
           <Command className="w-4 h-4 text-muted-foreground shrink-0" strokeWidth={1.5} />
           <input
+            ref={inputRef}
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
