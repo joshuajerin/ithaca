@@ -1,18 +1,121 @@
 import React from "react";
 import type { NewsData } from "@workspace/api-client-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Search, X } from "lucide-react";
+
+type SentimentFilter = "all" | "positive" | "negative" | "neutral";
 
 export function NewsPanel({ data }: { data: NewsData }) {
+  const [keyword, setKeyword] = React.useState("");
+  const [source, setSource] = React.useState<string>("all");
+  const [sentiment, setSentiment] = React.useState<SentimentFilter>("all");
+
+  const sources = React.useMemo(() => {
+    const seen = new Set<string>();
+    for (const item of data.items) {
+      if (item.source) seen.add(item.source);
+    }
+    return Array.from(seen).sort((a, b) => a.localeCompare(b));
+  }, [data.items]);
+
+  const filtered = React.useMemo(() => {
+    const kw = keyword.trim().toLowerCase();
+    return data.items.filter((item) => {
+      if (source !== "all" && item.source !== source) return false;
+      if (sentiment !== "all" && (item.sentiment || "neutral") !== sentiment) return false;
+      if (kw) {
+        const hay = `${item.headline} ${item.summary} ${item.tickers.join(" ")}`.toLowerCase();
+        if (!hay.includes(kw)) return false;
+      }
+      return true;
+    });
+  }, [data.items, keyword, source, sentiment]);
+
+  const hasActiveFilters = keyword.trim() !== "" || source !== "all" || sentiment !== "all";
+
+  const clearFilters = () => {
+    setKeyword("");
+    setSource("all");
+    setSentiment("all");
+  };
+
+  const sentiments: SentimentFilter[] = ["all", "positive", "negative", "neutral"];
+  const sentimentLabels: Record<SentimentFilter, string> = {
+    all: "All",
+    positive: "Pos",
+    negative: "Neg",
+    neutral: "Neutral",
+  };
+
   return (
     <div className="flex flex-col h-full">
-      <div className="editorial-label text-[9px] text-muted-foreground mb-3 shrink-0">
-        Scope · {data.scope}
+      <div className="flex items-center justify-between gap-2 mb-3 shrink-0">
+        <div className="editorial-label text-[9px] text-muted-foreground">
+          Scope · {data.scope}
+        </div>
+        <div className="editorial-label text-[9px] text-muted-foreground nums-tabular">
+          {filtered.length}
+          {filtered.length !== data.items.length ? ` / ${data.items.length}` : ""}
+        </div>
       </div>
-      
+
+      <div className="flex flex-wrap items-center gap-2 mb-3 shrink-0">
+        <div className="relative flex-1 min-w-[140px]">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" strokeWidth={1.5} />
+          <input
+            type="text"
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            placeholder="Filter headlines…"
+            className="w-full bg-transparent border border-border pl-7 pr-2 py-1 text-xs font-serif outline-none focus:border-foreground transition-colors"
+          />
+        </div>
+
+        {sources.length > 1 && (
+          <select
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            className="bg-transparent border border-border px-2 py-1 editorial-label text-[9px] text-muted-foreground outline-none focus:border-foreground transition-colors cursor-pointer max-w-[120px]"
+          >
+            <option value="all">All sources</option>
+            {sources.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        )}
+
+        <div className="flex border border-border">
+          {sentiments.map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setSentiment(s)}
+              className={`editorial-label text-[8.5px] px-1.5 py-1 transition-colors border-r border-border last:border-r-0 ${
+                sentiment === s
+                  ? "bg-foreground text-background"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {sentimentLabels[s]}
+            </button>
+          ))}
+        </div>
+
+        {hasActiveFilters && (
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="flex items-center gap-1 editorial-label text-[8.5px] text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <X className="w-3 h-3" strokeWidth={1.5} />
+            Clear
+          </button>
+        )}
+      </div>
+
       <ScrollArea className="flex-1 pr-3">
         <div className="flex flex-col">
-          {data.items.map((item) => (
+          {filtered.map((item) => (
             <div key={item.id} className="border-t border-border py-4 first:border-t-0 first:pt-0">
               <div className="flex justify-between items-start gap-3 mb-2">
                 <div className="flex items-center gap-2 editorial-label text-[8.5px] text-muted-foreground">
@@ -45,6 +148,9 @@ export function NewsPanel({ data }: { data: NewsData }) {
           ))}
           {data.items.length === 0 && (
             <div className="font-serif text-sm text-muted-foreground text-center py-6 italic">No recent news found.</div>
+          )}
+          {data.items.length > 0 && filtered.length === 0 && (
+            <div className="font-serif text-sm text-muted-foreground text-center py-6 italic">No headlines match your filters.</div>
           )}
         </div>
       </ScrollArea>
