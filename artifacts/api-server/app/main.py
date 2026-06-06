@@ -245,6 +245,21 @@ def get_generated_panels():
     return {"panels": panels}
 
 
+@api.get("/features")
+def list_features():
+    """List every active AI-generated feature (name, invoke example, created date)."""
+    return {"features": feature_builder.list_features()}
+
+
+@api.delete("/features/{panel_type}")
+def delete_feature(panel_type: str):
+    """Remove a generated feature: unregister it and delete its source files."""
+    removed = feature_builder.remove_feature(panel_type)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Unknown feature: {panel_type}")
+    return {"ok": True, "panelType": panel_type}
+
+
 class FeatureRequestInput(BaseModel):
     description: str
 

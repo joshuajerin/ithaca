@@ -293,6 +293,66 @@ def _validate_tsx(code: str) -> None:
             raise ValueError(f"Generated panel may only import 'react', not '{source}'")
 
 
+# ----------------------------- feature management -----------------------------
+def list_features() -> list[dict]:
+    """Return metadata for every active AI-generated feature.
+
+    Each entry: panelType, name, description, invokeExample, createdAt (ISO mtime
+    of the Python module). Sorted newest-first.
+    """
+    import datetime as _dt
+
+    features: list[dict] = []
+    for panel_type in dynamic_skills.panel_types():
+        definition = dynamic_skills.get_definition(panel_type) or {}
+        py_path = os.path.join(dynamic_skills.GENERATED_DIR, f"{panel_type}.py")
+        created_at = None
+        mtime = None
+        try:
+            mtime = os.path.getmtime(py_path)
+            created_at = _dt.datetime.fromtimestamp(
+                mtime, tz=_dt.timezone.utc
+            ).isoformat()
+        except OSError:
+            pass
+        phrases = definition.get("invoke_phrases") or []
+        invoke_example = phrases[0] if phrases else f"show me {definition.get('name') or panel_type}"
+        features.append({
+            "panelType": panel_type,
+            "name": definition.get("name") or definition.get("default_title") or panel_type,
+            "description": definition.get("description") or "",
+            "invokeExample": invoke_example,
+            "createdAt": created_at,
+            "_mtime": mtime or 0,
+        })
+    features.sort(key=lambda f: f["_mtime"], reverse=True)
+    for f in features:
+        f.pop("_mtime", None)
+    return features
+
+
+def remove_feature(panel_type: str) -> bool:
+    """Delete a generated feature: unregister it and remove both source files.
+
+    Returns False if the panel_type is not a known generated feature. Removal of
+    the on-disk files is best-effort (a missing file is not an error) so the
+    operation always leaves the registry and disk consistent.
+    """
+    if not dynamic_skills.is_dynamic(panel_type):
+        return False
+
+    dynamic_skills.unregister(panel_type)
+
+    py_path = os.path.join(dynamic_skills.GENERATED_DIR, f"{panel_type}.py")
+    tsx_path = os.path.join(PANEL_DIR, f"{panel_type}.tsx")
+    for path in (py_path, tsx_path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    return True
+
+
 # ----------------------------- SSE event stream -----------------------------
 def _sse(event: dict) -> str:
     return f"data: {json.dumps(event)}\n\n"

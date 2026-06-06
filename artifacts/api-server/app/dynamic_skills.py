@@ -95,6 +95,24 @@ def load_one(panel_type: str) -> dict:
     return register_module(module)
 
 
+def unregister(panel_type: str) -> bool:
+    """Remove a generated skill from the in-process registry.
+
+    Drops it from both ``skills.SKILLS`` and the local definitions map so the
+    orchestrator can no longer dispatch it. Returns True if it was registered.
+    Does NOT touch any files on disk — callers handle removal of the source.
+    """
+    was_dynamic = panel_type in _DEFINITIONS
+    _DEFINITIONS.pop(panel_type, None)
+    if skills.SKILLS.get(panel_type) is not None and was_dynamic:
+        skills.SKILLS.pop(panel_type, None)
+    return was_dynamic
+
+
+def get_definition(panel_type: str) -> dict | None:
+    return _DEFINITIONS.get(panel_type)
+
+
 def load_generated_skills() -> List[str]:
     """Scan the generated dir and (re)register every valid skill in-process.
 
