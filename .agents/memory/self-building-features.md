@@ -80,3 +80,12 @@ A failure leaves zero partial files.
   true created_at), falling back to SKILL_DEFINITION + .py mtime for pre-manifest features. The
   `FeatureRequestModal` build/manage view consumes it. (An earlier `/api/generated-features` +
   "Features you've built" list was folded into this richer management UI during a rebase.)
+
+## Abuse throttling (resource/cost guard)
+- `feature_builder.stream_feature_request` enforces a per-process limiter via
+  `_try_acquire_build_slot()`/`_release_build_slot()` (threading.Lock — SSE generator runs in a
+  threadpool, so requests race). Concurrency cap `_MAX_CONCURRENT_BUILDS=1` + rolling-window rate
+  `_RATE_MAX_IN_WINDOW=5` per `_RATE_WINDOW_SECONDS=60`. Acquire happens AFTER the
+  description/ai_available checks; rejection is emitted as a `{"stage":"error"}` SSE event (NOT
+  HTTP 429, since the response is already streaming). Slot is freed in a `finally` (also fires on
+  client disconnect via GeneratorExit). Single-at-a-time use is unaffected.

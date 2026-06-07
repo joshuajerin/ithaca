@@ -16,6 +16,8 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from typing import Iterator, Optional, Tuple
 
 from . import ai, code_guard, dynamic_skills, skills
@@ -35,6 +37,54 @@ _VALIDATE_CPU_SECONDS = 8
 _VALIDATE_MEM_BYTES = 2 * 1024 * 1024 * 1024
 _VALIDATE_FSIZE_BYTES = 1 * 1024 * 1024  # 1 MB max file write
 _VALIDATE_TIMEOUT = 10
+
+# ----------------------------- abuse limits -----------------------------
+# Each build triggers an LLM call plus a validation subprocess, so unbounded
+# requests are a resource/cost abuse vector. We cap how many builds can run at
+# once (concurrency) and how many may start within a rolling window (rate).
+# Both are per-process and intentionally generous so single-at-a-time use is
+# never affected — they only bite when a client hammers the endpoint.
+_MAX_CONCURRENT_BUILDS = 1          # one build in flight at a time
+_RATE_WINDOW_SECONDS = 60.0        # rolling window for the rate limit
+_RATE_MAX_IN_WINDOW = 5            # max builds that may START within the window
+
+_limiter_lock = threading.Lock()
+_active_builds = 0
+_recent_starts: list[float] = []   # monotonic start timestamps within the window
+
+
+def _try_acquire_build_slot() -> Optional[str]:
+    """Reserve a build slot, enforcing concurrency + rate limits.
+
+    Returns ``None`` when a slot was granted (caller MUST later call
+    :func:`_release_build_slot`), or a human-readable rejection message when the
+    request is throttled. Thread-safe: the endpoint generator runs in a
+    threadpool, so several requests can land here concurrently.
+    """
+    global _active_builds
+    now = time.monotonic()
+    with _limiter_lock:
+        cutoff = now - _RATE_WINDOW_SECONDS
+        while _recent_starts and _recent_starts[0] < cutoff:
+            _recent_starts.pop(0)
+        if _active_builds >= _MAX_CONCURRENT_BUILDS:
+            return ("A feature build is already in progress. Please wait for it "
+                    "to finish before starting another.")
+        if len(_recent_starts) >= _RATE_MAX_IN_WINDOW:
+            return ("Too many feature builds in a short time. Please wait a "
+                    "minute and try again.")
+        _active_builds += 1
+        _recent_starts.append(now)
+        return None
+
+
+def _release_build_slot() -> None:
+    """Release a slot previously granted by :func:`_try_acquire_build_slot`."""
+    global _active_builds
+    with _limiter_lock:
+        if _active_builds > 0:
+            _active_builds -= 1
+
 
 # Where the generated React panel components live (terminal artifact).
 _THIS_DIR = os.path.dirname(__file__)
@@ -376,6 +426,13 @@ def stream_feature_request(description: str) -> Iterator[str]:
         yield _sse({"stage": "error", "message": "AI is not available to build features right now."})
         return
 
+    # Throttle abuse: reject if a build is already running or the rate cap is hit.
+    # A granted slot MUST be released in the finally below.
+    rejection = _try_acquire_build_slot()
+    if rejection is not None:
+        yield _sse({"stage": "error", "message": rejection})
+        return
+
     try:
         yield _sse({"stage": "planning", "message": "Interpreting your request…"})
         payload = _call_ai(description)
@@ -447,3 +504,5 @@ def stream_feature_request(description: str) -> Iterator[str]:
         yield _sse({"stage": "error", "message": "The AI returned an invalid response. Please try again."})
     except Exception as exc:  # noqa: BLE001
         yield _sse({"stage": "error", "message": f"Feature generation failed: {exc}"})
+    finally:
+        _release_build_slot()
