@@ -35,6 +35,71 @@ function Sparkline({ data, positive }: { data: number[]; positive: boolean }) {
   );
 }
 
+const REGIME_STYLES: Record<
+  string,
+  { border: string; bg: string; dot: string; text: string }
+> = {
+  risk_on: {
+    border: "border-emerald-400/40",
+    bg: "bg-emerald-400/10",
+    dot: "#34d399",
+    text: "text-emerald-300",
+  },
+  risk_off: {
+    border: "border-red-400/40",
+    bg: "bg-red-400/10",
+    dot: "#f87171",
+    text: "text-red-300",
+  },
+  stagflation: {
+    border: "border-amber-400/40",
+    bg: "bg-amber-400/10",
+    dot: "#fbbf24",
+    text: "text-amber-300",
+  },
+  soft_landing: {
+    border: "border-sky-400/40",
+    bg: "bg-sky-400/10",
+    dot: "#38bdf8",
+    text: "text-sky-300",
+  },
+  neutral: {
+    border: "border-white/20",
+    bg: "bg-white/5",
+    dot: "#9ca3af",
+    text: "text-muted-foreground",
+  },
+};
+
+function RegimeBanner({ regime }: { regime: any }) {
+  const style = REGIME_STYLES[regime.label] ?? REGIME_STYLES.neutral;
+  const headline =
+    regime.headline ??
+    String(regime.label ?? "")
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (c: string) => c.toUpperCase());
+
+  return (
+    <div
+      className={`flex items-center gap-2 px-2.5 py-1.5 border ${style.border} ${style.bg} shrink-0`}
+    >
+      <span
+        className="inline-block h-2 w-2 rounded-full shrink-0"
+        style={{ backgroundColor: style.dot }}
+      />
+      <span
+        className={`text-[10px] font-bold uppercase tracking-[0.18em] shrink-0 ${style.text}`}
+      >
+        {headline}
+      </span>
+      <span className="text-[9px] text-muted-foreground/50 shrink-0">·</span>
+      <span className="text-[10px] text-muted-foreground truncate min-w-0">
+        {regime.rationale}
+      </span>
+    </div>
+  );
+}
+
 function AssetTile({ tile }: { tile: any }) {
   const isPositive = tile.changePct >= 0;
   const absChg = Math.abs(tile.changePct);
@@ -83,6 +148,7 @@ function AssetTile({ tile }: { tile: any }) {
 export function MacroDashboardPanel({ data }: { data: any }) {
   return (
     <div className="flex flex-col h-full gap-3 overflow-y-auto">
+      {data.regime && <RegimeBanner regime={data.regime} />}
       <div className="editorial-label text-[8px] text-muted-foreground/70 shrink-0 text-right -mb-1">
         % = 1D change
       </div>

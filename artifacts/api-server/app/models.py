@@ -375,11 +375,18 @@ class MacroOverride(BaseModel):
     symbol: str
 
 
+class MacroRegime(BaseModel):
+    label: str  # risk_on | risk_off | stagflation | soft_landing | neutral
+    headline: str
+    rationale: str
+
+
 class MacroDashboardData(BaseModel):
     theme: str
     title: str
     groups: List[MacroGroup]
     overrides: List[MacroOverride] = []
+    regime: Optional[MacroRegime] = None
 
 
 # --- yield_curve ---

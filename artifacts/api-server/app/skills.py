@@ -1299,12 +1299,133 @@ def build_macro_dashboard(params: dict) -> dict:
             })
         if tiles:
             groups.append({"label": label, "tiles": tiles})
-    return {
+    result = {
         "theme": theme_key,
         "title": theme_def["title"],
         "groups": groups,
         "overrides": applied,
     }
+    regime = _compute_macro_regime(groups)
+    if regime:
+        result["regime"] = regime
+    return result
+
+
+def _compute_macro_regime(groups: list) -> Optional[dict]:
+    """Rule-based market-regime classifier from the 1D tile moves.
+
+    Synthesizes equity, gold, dollar, oil, yield and VIX moves into one of:
+    risk_on | risk_off | stagflation | soft_landing | neutral. No LLM.
+    """
+    # Flatten tiles by symbol and collect equity moves (excluding VIX).
+    by_symbol: Dict[str, float] = {}
+    equity_moves: List[float] = []
+    for group in groups:
+        is_equity = group.get("label") == "Equities"
+        for tile in group.get("tiles", []):
+            sym = tile.get("symbol")
+            chg = float(tile.get("changePct", 0.0))
+            by_symbol[sym] = chg
+            if is_equity and sym != "VIX":
+                equity_moves.append(chg)
+
+    # Need at least the equity signal to call a regime.
+    if not equity_moves:
+        return None
+
+    eq = sum(equity_moves) / len(equity_moves)
+    gold = by_symbol.get("GOLD")
+    dxy = by_symbol.get("DXY")
+    oil = by_symbol.get("WTI")
+    vix = by_symbol.get("VIX")
+    y10 = by_symbol.get("US10Y")
+
+    EQ_T = 0.10      # equity direction threshold (%)
+    G_T = 0.10       # gold / dollar threshold (%)
+    OIL_T = 0.30     # oil move threshold (%)
+    Y_T = 0.05       # 10Y yield move threshold (%)
+
+    equities_up = eq > EQ_T
+    equities_dn = eq < -EQ_T
+    gold_up = gold is not None and gold > G_T
+    gold_soft = gold is not None and gold < G_T
+    dollar_up = dxy is not None and dxy > G_T
+    dollar_dn = dxy is not None and dxy < -G_T
+    oil_up = oil is not None and oil > OIL_T
+    oil_soft = oil is not None and oil < OIL_T
+    vix_up = vix is not None and vix > 0
+    yields_up = y10 is not None and y10 > Y_T
+    yields_dn = y10 is not None and y10 < -Y_T
+
+    # --- phrase helpers (only describe signals that are actually present) ---
+    def eq_phrase() -> str:
+        if equities_up:
+            return "equities bid"
+        if equities_dn:
+            return "equities sold"
+        return "equities flat"
+
+    parts: List[str] = []
+
+    if equities_up:
+        # Soft landing: growth holding, inflation cooling, yields easing.
+        if (yields_dn or oil_soft) and gold_soft and not oil_up:
+            label = "soft_landing"
+            headline = "Soft Landing"
+            parts.append(eq_phrase())
+            if yields_dn:
+                parts.append("yields easing")
+            if gold_soft:
+                parts.append("gold soft")
+            if oil_soft:
+                parts.append("oil cooling")
+        else:
+            label = "risk_on"
+            headline = "Risk-On"
+            parts.append(eq_phrase())
+            if gold_soft:
+                parts.append("gold soft")
+            if dollar_dn:
+                parts.append("dollar weak")
+            if vix is not None and not vix_up:
+                parts.append("vol calm")
+    elif equities_dn:
+        # Stagflation: weak growth + inflation pressure (commodities/yields up).
+        if (oil_up or gold_up) and (yields_up or oil_up):
+            label = "stagflation"
+            headline = "Stagflation"
+            parts.append(eq_phrase())
+            if oil_up:
+                parts.append("oil bid")
+            if gold_up:
+                parts.append("gold bid")
+            if yields_up:
+                parts.append("yields rising")
+        else:
+            label = "risk_off"
+            headline = "Risk-Off"
+            parts.append(eq_phrase())
+            if gold_up:
+                parts.append("gold bid")
+            if dollar_up:
+                parts.append("dollar firm")
+            if vix_up:
+                parts.append("vol spiking")
+    else:
+        label = "neutral"
+        headline = "Neutral"
+        parts.append(eq_phrase())
+        if gold is not None:
+            parts.append("gold soft" if gold_soft else "gold bid" if gold_up else "gold flat")
+        if dxy is not None:
+            parts.append("dollar weak" if dollar_dn else "dollar firm" if dollar_up else "dollar steady")
+
+    # Ensure we always have at least two descriptors for a readable sentence.
+    if len(parts) < 2 and y10 is not None:
+        parts.append("yields rising" if yields_up else "yields easing" if yields_dn else "yields steady")
+
+    rationale = ", ".join(parts)
+    return {"label": label, "headline": headline, "rationale": rationale}
 
 
 # ----------------------------- fixed income builders -----------------------------
