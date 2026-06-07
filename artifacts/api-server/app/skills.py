@@ -539,12 +539,26 @@ def build_comparison(params: dict) -> dict:
 
 
 def build_order_book(params: dict) -> dict:
+    """Deterministic intraday order book with a full-session replay timeline.
+
+    Generates a fixed set of snapshots ("frames") spanning the regular trading
+    session (09:30–16:00). Each frame holds the bid/ask depth ladder and the
+    cumulative tape as it stood at that minute, so the frontend can scrub
+    backward/forward through how depth and flow evolved during the day. Blocks
+    and sweeps on the tape are flagged so they can be highlighted as the
+    timeline passes them. Everything is seeded off the symbol, so the same
+    timestamp always regenerates the same snapshot.
+
+    Optional ``timestamp`` ("HH:MM") selects which frame is returned as the
+    top-level snapshot; absent, the latest (live) frame is used.
+    """
     symbol = (params.get("symbol") or "NVDA").upper()
     company = data.get_company(symbol)
     if not company:
         raise ValueError(f"Unknown symbol: {symbol}")
     last = company["price"]
-    seed = data._seed(symbol)
+    avg_vol = company.get("volume") or 1_000_000
+    seed = data._seed(symbol + "obk")
 
     def _rnd():
         nonlocal seed
@@ -554,48 +568,145 @@ def build_order_book(params: dict) -> dict:
     tick = round(last * 0.0001, 2) or 0.01
     spread = round(tick * 2, 2)
     levels = 8
-
-    bids = []
-    for i in range(levels):
-        price = round(last - spread / 2 - tick * i, 2)
-        size = round(500 + _rnd() * 9500, 0)
-        bids.append({"price": price, "size": size, "depth": 0.0})
-
-    asks = []
-    for i in range(levels):
-        price = round(last + spread / 2 + tick * i, 2)
-        size = round(500 + _rnd() * 9500, 0)
-        asks.append({"price": price, "size": size, "depth": 0.0})
-
-    max_bid = max(b["size"] for b in bids)
-    max_ask = max(a["size"] for a in asks)
-    for b in bids:
-        b["depth"] = round(b["size"] / max_bid, 3)
-    for a in asks:
-        a["depth"] = round(a["size"] / max_ask, 3)
-
     venues = ["NYSE", "NASDAQ", "BATS", "EDGX", "IEX"]
-    tape = []
-    for i in range(20):
-        side = "buy" if _rnd() > 0.45 else "sell"
-        price = round(last + (_rnd() - 0.5) * spread * 4, 2)
-        size = round(100 + _rnd() * 4900, 0)
-        h = 9 + int(_rnd() * 6)
-        m = int(_rnd() * 60)
-        s = int(_rnd() * 60)
-        venue = venues[int(_rnd() * len(venues))]
-        tape.append({"time": f"{h:02d}:{m:02d}:{s:02d}", "price": price, "size": size, "side": side, "venue": venue})
 
-    tape.sort(key=lambda t: t["time"], reverse=True)
+    # --- intraday price path, anchored so the final frame equals `last` ---
+    session_start = 570  # 09:30 in minutes-of-day
+    session_end = 960    # 16:00
+    frame_step = 10
+    frame_minutes = list(range(session_start, session_end + 1, frame_step))
+    n_frames = len(frame_minutes)
+
+    walk = [0.0]
+    for _ in range(n_frames - 1):
+        walk.append(walk[-1] + (_rnd() - 0.5))
+    span = last * 0.02  # ~2% intraday range
+    max_abs = max((abs(w) for w in walk), default=1.0) or 1.0
+    end_w = walk[-1]
+    frame_prices = [round(last + (w - end_w) / max_abs * span, 2) for w in walk]
+    frame_prices = [p if p > 0 else last for p in frame_prices]
+
+    def make_ladder(price: float, fseed: int):
+        s = fseed & 0x7FFFFFFF
+
+        def r():
+            nonlocal s
+            s = (1103515245 * s + 12345) & 0x7FFFFFFF
+            return s / 0x7FFFFFFF
+
+        bids, asks = [], []
+        for i in range(levels):
+            bp = round(price - spread / 2 - tick * i, 2)
+            bids.append({"price": bp, "size": round(500 + r() * 9500, 0), "depth": 0.0})
+        for i in range(levels):
+            ap = round(price + spread / 2 + tick * i, 2)
+            asks.append({"price": ap, "size": round(500 + r() * 9500, 0), "depth": 0.0})
+        max_bid = max((b["size"] for b in bids), default=1) or 1
+        max_ask = max((a["size"] for a in asks), default=1) or 1
+        for b in bids:
+            b["depth"] = round(b["size"] / max_bid, 3)
+        for a in asks:
+            a["depth"] = round(a["size"] / max_ask, 3)
+        return bids, asks
+
+    # --- master tape across the whole session ---
+    block_threshold = round(avg_vol * 0.002, 0)
+    n_prints = 110
+    base_size = avg_vol * 0.0005
+    master = []
+    for i in range(n_prints):
+        frac = (i + _rnd() * 0.8) / n_prints
+        minute = session_start + frac * (session_end - session_start)
+        minute = max(session_start, min(session_end, minute))
+        secs = int(minute * 60) + int(_rnd() * 60)
+        fi = min(n_frames - 1, int((minute - session_start) / frame_step))
+        base_price = frame_prices[fi]
+        price = round(base_price + (_rnd() - 0.5) * spread * 4, 2)
+        side = "buy" if _rnd() > 0.45 else "sell"
+        roll = _rnd()
+        is_block = roll > 0.9
+        is_sweep = (not is_block) and roll > 0.8
+        if is_block:
+            size = round(base_size * (6 + _rnd() * 16), 0)
+        elif is_sweep:
+            size = round(base_size * (2.5 + _rnd() * 4), 0)
+        else:
+            size = round(base_size * (0.4 + _rnd() * 2), 0)
+        size = max(size, 100)
+        venue = venues[int(_rnd() * len(venues))]
+        h, m, s = secs // 3600, (secs % 3600) // 60, secs % 60
+        master.append({
+            "secs": secs,
+            "time": f"{h:02d}:{m:02d}:{s:02d}",
+            "price": price,
+            "size": size,
+            "side": side,
+            "venue": venue,
+            "isBlock": is_block,
+            "isSweep": is_sweep,
+        })
+    master.sort(key=lambda t: t["secs"])
+
+    tape_keys = ("time", "price", "size", "side", "venue", "isBlock", "isSweep")
+    tape_len = 18
+    frames = []
+    for idx, fmin in enumerate(frame_minutes):
+        price = frame_prices[idx]
+        bids, asks = make_ladder(price, data._seed(symbol) + idx * 7919)
+        cutoff = fmin * 60 + 59
+        visible = [pr for pr in master if pr["secs"] <= cutoff][-tape_len:]
+        tape = list(reversed([{k: pr[k] for k in tape_keys} for pr in visible]))
+        frames.append({
+            "time": f"{fmin // 60:02d}:{fmin % 60:02d}",
+            "lastPrice": price,
+            "spread": spread,
+            "bids": bids,
+            "asks": asks,
+            "tape": tape,
+        })
+
+    span_minutes = (session_end - session_start) or 1
+    events = [
+        {
+            "time": f"{pr['secs'] // 3600:02d}:{(pr['secs'] % 3600) // 60:02d}",
+            "type": "block" if pr["isBlock"] else "sweep",
+            "side": pr["side"],
+            "price": pr["price"],
+            "size": pr["size"],
+            "pos": round(((pr["secs"] / 60.0) - session_start) / span_minutes, 4),
+        }
+        for pr in master
+        if pr["isBlock"] or pr["isSweep"]
+    ]
+
+    # --- select the requested frame (or the live one) ---
+    requested = params.get("timestamp")
+    sel = n_frames - 1
+    if requested:
+        try:
+            parts = str(requested).split(":")
+            rmin = int(parts[0]) * 60 + int(parts[1])
+            sel = min(range(n_frames), key=lambda i: abs(frame_minutes[i] - rmin))
+        except Exception:
+            sel = n_frames - 1
+    cur = frames[sel]
 
     return {
         "symbol": symbol,
         "name": company["name"],
-        "lastPrice": last,
-        "spread": spread,
-        "bids": bids,
-        "asks": asks,
-        "tape": tape,
+        "lastPrice": cur["lastPrice"],
+        "spread": cur["spread"],
+        "bids": cur["bids"],
+        "asks": cur["asks"],
+        "tape": cur["tape"],
+        "timestamp": cur["time"],
+        "selectedIndex": sel,
+        "isLive": sel == n_frames - 1,
+        "frames": frames,
+        "events": events,
+        "blockThreshold": block_threshold,
+        "sessionStart": "09:30",
+        "sessionEnd": "16:00",
     }
 
 

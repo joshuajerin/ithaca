@@ -36,6 +36,13 @@ registry. If you forget `_reg(SkillDef(... panel_type ...))`, the panel returns 
 (status `error`, note "could not be built: Unknown panel type") with NO traceback in logs — easy
 to misread as a builder bug. Always verify the new type via orchestrate, not just the builder.
 
+**Counterpart — EXISTING typed panels are NOT passthrough:** panel types listed in
+`harness.DATA_MODELS` (e.g. `order_book`, `trade_flow`) validate via a pydantic model in
+`models.py`, which SILENTLY DROPS any field not on the model. If you add new fields to
+such a builder's return dict, you MUST add them to the corresponding model (often as
+`Optional[...] = None`) or they vanish over `/api/orchestrate` (builder works when called
+directly, but the panel arrives missing the new keys). Restart api-server after.
+
 **Always restart `artifacts/api-server: API Server`** after backend changes — it runs
 WITHOUT `--reload`.
 

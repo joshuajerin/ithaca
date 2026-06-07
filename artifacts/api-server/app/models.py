@@ -211,6 +211,26 @@ class TapePrint(BaseModel):
     size: float
     side: str
     venue: str
+    isBlock: Optional[bool] = None
+    isSweep: Optional[bool] = None
+
+
+class OrderBookFrame(BaseModel):
+    time: str
+    lastPrice: float
+    spread: float
+    bids: List[OrderBookLevel]
+    asks: List[OrderBookLevel]
+    tape: List[TapePrint]
+
+
+class OrderBookEvent(BaseModel):
+    time: str
+    type: str
+    side: str
+    price: float
+    size: float
+    pos: float
 
 
 class OrderBookData(BaseModel):
@@ -221,6 +241,14 @@ class OrderBookData(BaseModel):
     bids: List[OrderBookLevel]
     asks: List[OrderBookLevel]
     tape: List[TapePrint]
+    timestamp: Optional[str] = None
+    selectedIndex: Optional[int] = None
+    isLive: Optional[bool] = None
+    frames: Optional[List[OrderBookFrame]] = None
+    events: Optional[List[OrderBookEvent]] = None
+    blockThreshold: Optional[float] = None
+    sessionStart: Optional[str] = None
+    sessionEnd: Optional[str] = None
 
 
 # --- trade_flow ---
