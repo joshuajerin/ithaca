@@ -135,7 +135,9 @@ export const GetDefaultDashboardResponse = zod.object({
   "marketCap": zod.number(),
   "peRatio": zod.number().nullish(),
   "volume": zod.number(),
-  "sector": zod.string()
+  "sector": zod.string(),
+  "subIndustry": zod.string().nullish(),
+  "logoUrl": zod.string().nullish()
 }))
 }),zod.object({
   "title": zod.string(),
@@ -145,7 +147,9 @@ export const GetDefaultDashboardResponse = zod.object({
   "changePct": zod.number(),
   "ret1Y": zod.number().nullish(),
   "marketCap": zod.number(),
-  "sector": zod.string()
+  "sector": zod.string(),
+  "subIndustry": zod.string().nullish(),
+  "logoUrl": zod.string().nullish()
 }))
 }),zod.object({
   "scope": zod.string(),
@@ -504,7 +508,9 @@ export const OrchestrateResponse = zod.object({
   "marketCap": zod.number(),
   "peRatio": zod.number().nullish(),
   "volume": zod.number(),
-  "sector": zod.string()
+  "sector": zod.string(),
+  "subIndustry": zod.string().nullish(),
+  "logoUrl": zod.string().nullish()
 }))
 }),zod.object({
   "title": zod.string(),
@@ -514,7 +520,9 @@ export const OrchestrateResponse = zod.object({
   "changePct": zod.number(),
   "ret1Y": zod.number().nullish(),
   "marketCap": zod.number(),
-  "sector": zod.string()
+  "sector": zod.string(),
+  "subIndustry": zod.string().nullish(),
+  "logoUrl": zod.string().nullish()
 }))
 }),zod.object({
   "scope": zod.string(),
@@ -905,7 +913,9 @@ export const RefinePanelResponse = zod.object({
   "marketCap": zod.number(),
   "peRatio": zod.number().nullish(),
   "volume": zod.number(),
-  "sector": zod.string()
+  "sector": zod.string(),
+  "subIndustry": zod.string().nullish(),
+  "logoUrl": zod.string().nullish()
 }))
 }),zod.object({
   "title": zod.string(),
@@ -915,7 +925,9 @@ export const RefinePanelResponse = zod.object({
   "changePct": zod.number(),
   "ret1Y": zod.number().nullish(),
   "marketCap": zod.number(),
-  "sector": zod.string()
+  "sector": zod.string(),
+  "subIndustry": zod.string().nullish(),
+  "logoUrl": zod.string().nullish()
 }))
 }),zod.object({
   "scope": zod.string(),

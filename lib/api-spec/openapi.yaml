@@ -423,6 +423,10 @@ components:
           type: number
         sector:
           type: string
+        subIndustry:
+          type: ["string", "null"]
+        logoUrl:
+          type: ["string", "null"]
     ScreenerData:
       type: object
       required: [title, rows]
@@ -449,6 +453,10 @@ components:
           type: number
         sector:
           type: string
+        subIndustry:
+          type: ["string", "null"]
+        logoUrl:
+          type: ["string", "null"]
     HeatmapData:
       type: object
       required: [title, cells]

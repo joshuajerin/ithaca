@@ -287,6 +287,9 @@ def _c(symbol, name, sector, price, change_pct, market_cap, pe, volume,
         "description": desc,
         "country": country,
         "exchange": exchange,
+        # Populated after the catalog is built (see _COMPANY_PROFILES below).
+        "subIndustry": None,
+        "logoUrl": None,
     }
 
 
@@ -665,6 +668,229 @@ _c("ETN", "Eaton Corp.", "industrials", 312.80, 0.72, 124 * B, 32.0, 2_000_000,
    "Power-management company benefiting from electrification and data-center demand.")
 
 
+# ----------------------------- company profiles -----------------------------
+# A favicon CDN turns a company's website domain into a recognizable logo with
+# no API key. The frontend falls back to a clean monogram when the image fails
+# or no domain is known, so a wrong/missing domain degrades gracefully.
+_LOGO_SERVICE = "https://www.google.com/s2/favicons?domain={domain}&sz=128"
+
+
+def logo_url(domain: Optional[str]) -> Optional[str]:
+    """Build a logo URL from a website/domain. Returns None when unknown."""
+    if not domain:
+        return None
+    d = re.sub(r"^https?://", "", domain.strip().lower()).split("/")[0]
+    if d.startswith("www."):
+        d = d[4:]
+    if not d or "." not in d:
+        return None
+    return _LOGO_SERVICE.format(domain=d)
+
+
+def sub_industry_name(sid: Optional[str], industry: Optional[str] = None) -> Optional[str]:
+    """Human-readable sub-industry/group label, distinct from the internal
+    sector id. Prefers a finer label (e.g. Yahoo's industry string for live
+    names) and falls back to the broad sector group name."""
+    if industry:
+        return industry
+    return SECTORS.get(sid or "")
+
+
+# Curated symbol -> (finer sub-industry, website domain) for the catalog. Live
+# names refresh their sub-industry from Yahoo's industry string and their logo
+# from the fetched website; these are the deterministic fallbacks.
+_COMPANY_PROFILES: Dict[str, tuple] = {
+    # Semiconductors
+    "NVDA": ("GPUs & AI Accelerators", "nvidia.com"),
+    "AMD": ("CPUs & GPUs", "amd.com"),
+    "INTC": ("Integrated Device Manufacturing", "intel.com"),
+    "TSM": ("Foundry & Fabrication", "tsmc.com"),
+    "AVGO": ("Networking & Infrastructure Chips", "broadcom.com"),
+    "ASML": ("Semiconductor Equipment", "asml.com"),
+    "MU": ("Memory & Storage", "micron.com"),
+    "QCOM": ("Wireless & Mobile Chipsets", "qualcomm.com"),
+    # Energy
+    "XOM": ("Integrated Oil & Gas", "corporate.exxonmobil.com"),
+    "CVX": ("Integrated Oil & Gas", "chevron.com"),
+    "COP": ("Oil & Gas E&P", "conocophillips.com"),
+    "SLB": ("Oilfield Services & Equipment", "slb.com"),
+    "NEE": ("Utilities & Renewables", "nexteraenergy.com"),
+    "ENPH": ("Solar Inverters & Storage", "enphase.com"),
+    "FSLR": ("Solar Manufacturing", "firstsolar.com"),
+    "OXY": ("Oil & Gas E&P", "oxy.com"),
+    # AI / Tech
+    "MSFT": ("Software & Cloud Infrastructure", "microsoft.com"),
+    "GOOGL": ("Internet Search & Advertising", "abc.xyz"),
+    "META": ("Social Media & Advertising", "meta.com"),
+    "AMZN": ("E-Commerce & Cloud", "amazon.com"),
+    "PLTR": ("Data Analytics Software", "palantir.com"),
+    "SNOW": ("Cloud Data Platform", "snowflake.com"),
+    "CRM": ("Enterprise CRM Software", "salesforce.com"),
+    "NOW": ("Workflow Automation Software", "servicenow.com"),
+    # Robotics & Automation
+    "ABB": ("Industrial Automation & Motion", "abb.com"),
+    "ROK": ("Factory Automation Systems", "rockwellautomation.com"),
+    "TER": ("Test Equipment & Robotics", "teradyne.com"),
+    "ZBRA": ("Asset Intelligence & RFID", "zebra.com"),
+    "SYM": ("Warehouse Automation", "symbotic.com"),
+    "PATH": ("Robotic Process Automation", "uipath.com"),
+    "IRBT": ("Consumer Robotics", "irobot.com"),
+    # EVs & Automotive
+    "TSLA": ("Electric Vehicles & Energy", "tesla.com"),
+    "RIVN": ("Electric Vehicles", "rivian.com"),
+    "LCID": ("Luxury Electric Vehicles", "lucidmotors.com"),
+    "GM": ("Automobile Manufacturing", "gm.com"),
+    "F": ("Automobile Manufacturing", "ford.com"),
+    "NIO": ("Electric Vehicles", "nio.com"),
+    "LI": ("Electric Vehicles", "lixiang.com"),
+    # Cybersecurity
+    "CRWD": ("Endpoint Security", "crowdstrike.com"),
+    "PANW": ("Network & Cloud Security", "paloaltonetworks.com"),
+    "ZS": ("Zero-Trust Cloud Security", "zscaler.com"),
+    "FTNT": ("Network Security (Firewalls)", "fortinet.com"),
+    "S": ("Endpoint Security", "sentinelone.com"),
+    "OKTA": ("Identity & Access Management", "okta.com"),
+    "CYBR": ("Privileged Access Security", "cyberark.com"),
+    # Biotech & Pharma
+    "LLY": ("Pharmaceuticals", "lilly.com"),
+    "NVO": ("Pharmaceuticals (Diabetes/Obesity)", "novonordisk.com"),
+    "AMGN": ("Biotechnology", "amgen.com"),
+    "GILD": ("Biotechnology (Antivirals)", "gilead.com"),
+    "REGN": ("Biotechnology", "regeneron.com"),
+    "VRTX": ("Biotechnology", "vrtx.com"),
+    "MRNA": ("mRNA Therapeutics", "modernatx.com"),
+    # Fintech
+    "V": ("Payment Networks", "visa.com"),
+    "MA": ("Payment Networks", "mastercard.com"),
+    "PYPL": ("Digital Payments", "paypal.com"),
+    "XYZ": ("Digital Payments", "block.xyz"),
+    "COIN": ("Crypto Exchange", "coinbase.com"),
+    "SOFI": ("Digital Banking & Lending", "sofi.com"),
+    "AFRM": ("Buy Now, Pay Later", "affirm.com"),
+    # Cloud & Software
+    "ORCL": ("Database & Enterprise Software", "oracle.com"),
+    "ADBE": ("Creative & Document Software", "adobe.com"),
+    "SAP": ("Enterprise ERP Software", "sap.com"),
+    "NET": ("Edge & Connectivity Cloud", "cloudflare.com"),
+    "DDOG": ("Cloud Observability", "datadoghq.com"),
+    "MDB": ("Database Software", "mongodb.com"),
+    "WDAY": ("HR & Finance Software", "workday.com"),
+    # Clean & Renewable Energy
+    "RUN": ("Residential Solar", "sunrun.com"),
+    "SEDG": ("Solar Inverters", "solaredge.com"),
+    "PLUG": ("Hydrogen & Fuel Cells", "plugpower.com"),
+    "BE": ("Fuel Cells", "bloomenergy.com"),
+    "ORA": ("Geothermal Power", "ormat.com"),
+    "CWEN": ("Renewable Power Generation", "clearwayenergy.com"),
+    # Defense & Aerospace
+    "LMT": ("Defense Prime", "lockheedmartin.com"),
+    "RTX": ("Aerospace & Defense", "rtx.com"),
+    "NOC": ("Defense & Space Systems", "northropgrumman.com"),
+    "GD": ("Aerospace & Defense", "gd.com"),
+    "BA": ("Aerospace & Defense", "boeing.com"),
+    "LHX": ("Defense Electronics", "l3harris.com"),
+    # Banks & Financials
+    "JPM": ("Diversified Banking", "jpmorganchase.com"),
+    "BAC": ("Diversified Banking", "bankofamerica.com"),
+    "WFC": ("Retail & Commercial Banking", "wellsfargo.com"),
+    "GS": ("Investment Banking", "goldmansachs.com"),
+    "MS": ("Investment Banking & Wealth", "morganstanley.com"),
+    "C": ("Diversified Banking", "citigroup.com"),
+    "BLK": ("Asset Management", "blackrock.com"),
+    # Healthcare
+    "UNH": ("Health Insurance & Services", "unitedhealthgroup.com"),
+    "JNJ": ("Pharma & Medical Devices", "jnj.com"),
+    "ABT": ("Medical Devices & Diagnostics", "abbott.com"),
+    "MDT": ("Medical Devices", "medtronic.com"),
+    "CVS": ("Healthcare Services & Pharmacy", "cvshealth.com"),
+    "ISRG": ("Surgical Robotics", "intuitive.com"),
+    "TMO": ("Life Sciences Tools", "thermofisher.com"),
+    # Consumer & Retail
+    "WMT": ("Discount Retail", "walmart.com"),
+    "COST": ("Warehouse Retail", "costco.com"),
+    "HD": ("Home Improvement Retail", "homedepot.com"),
+    "NKE": ("Footwear & Apparel", "nike.com"),
+    "MCD": ("Restaurants", "mcdonalds.com"),
+    "SBUX": ("Restaurants", "starbucks.com"),
+    "TGT": ("General Merchandise Retail", "target.com"),
+    # Communications & Media
+    "DIS": ("Media & Entertainment", "thewaltdisneycompany.com"),
+    "NFLX": ("Streaming Media", "netflix.com"),
+    "CMCSA": ("Cable & Media", "corporate.comcast.com"),
+    "T": ("Telecom Services", "att.com"),
+    "VZ": ("Telecom Services", "verizon.com"),
+    "TMUS": ("Telecom Services", "t-mobile.com"),
+    "WBD": ("Media & Entertainment", "wbd.com"),
+    # Industrials
+    "CAT": ("Construction & Mining Equipment", "caterpillar.com"),
+    "DE": ("Agricultural Equipment", "deere.com"),
+    "HON": ("Diversified Industrials", "honeywell.com"),
+    "UPS": ("Logistics & Delivery", "ups.com"),
+    "MMM": ("Diversified Industrials", "3m.com"),
+    "EMR": ("Process Automation", "emerson.com"),
+    "ETN": ("Power Management", "eaton.com"),
+    # Prominent large-cap names carried in the breadth catalog
+    "AAPL": ("Consumer Electronics", "apple.com"),
+    "GOOG": ("Internet Search & Advertising", "abc.xyz"),
+    "CSCO": ("Networking Equipment", "cisco.com"),
+    "ACN": ("IT Services & Consulting", "accenture.com"),
+    "IBM": ("IT Services & Hybrid Cloud", "ibm.com"),
+    "INTU": ("Financial & Tax Software", "intuit.com"),
+    "UBER": ("Ride-Hailing & Delivery", "uber.com"),
+    "ANET": ("Cloud Networking", "arista.com"),
+    "SHOP": ("E-Commerce Platform", "shopify.com"),
+    "APP": ("Mobile Ad Tech", "applovin.com"),
+    "TXN": ("Analog Semiconductors", "ti.com"),
+    "AMAT": ("Semiconductor Equipment", "appliedmaterials.com"),
+    "ARM": ("Chip IP & Architecture", "arm.com"),
+    "ADI": ("Analog Semiconductors", "analog.com"),
+    "KLAC": ("Semiconductor Equipment", "kla.com"),
+    "LRCX": ("Semiconductor Equipment", "lamresearch.com"),
+    "PG": ("Household & Personal Products", "pg.com"),
+    "KO": ("Beverages", "coca-colacompany.com"),
+    "PEP": ("Beverages & Snacks", "pepsico.com"),
+    "PM": ("Tobacco", "pmi.com"),
+    "MO": ("Tobacco", "altria.com"),
+    "MDLZ": ("Packaged Foods", "mondelezinternational.com"),
+    "ABBV": ("Pharmaceuticals", "abbvie.com"),
+    "MRK": ("Pharmaceuticals", "merck.com"),
+    "PFE": ("Pharmaceuticals", "pfizer.com"),
+    "BMY": ("Pharmaceuticals", "bms.com"),
+    "DHR": ("Life Sciences Tools", "danaher.com"),
+    "SYK": ("Medical Devices", "stryker.com"),
+    "BSX": ("Medical Devices", "bostonscientific.com"),
+    "ELV": ("Health Insurance", "elevancehealth.com"),
+    "CI": ("Health Insurance", "cigna.com"),
+    "TM": ("Automobile Manufacturing", "toyota.com"),
+    "AXP": ("Consumer Credit & Cards", "americanexpress.com"),
+    "SCHW": ("Brokerage & Wealth", "schwab.com"),
+    "PGR": ("Property & Casualty Insurance", "progressive.com"),
+    "CB": ("Property & Casualty Insurance", "chubb.com"),
+    "MMC": ("Insurance Brokerage", "marshmclennan.com"),
+    "GE": ("Aerospace & Defense", "geaerospace.com"),
+    "LIN": ("Industrial Gases", "linde.com"),
+    "UNP": ("Railroads", "up.com"),
+    "LOW": ("Home Improvement Retail", "lowes.com"),
+    "BKNG": ("Online Travel", "bookingholdings.com"),
+    "TJX": ("Off-Price Retail", "tjx.com"),
+    "PLD": ("Industrial REIT", "prologis.com"),
+    "SO": ("Electric Utilities", "southerncompany.com"),
+}
+
+
+def _apply_company_profiles() -> None:
+    """Stamp each catalog record with a finer sub-industry label and logo. Any
+    name without an explicit profile still gets a clean human-readable group."""
+    for _sym, (_sub, _dom) in _COMPANY_PROFILES.items():
+        co = COMPANIES.get(_sym)
+        if co:
+            co["subIndustry"] = _sub
+            co["logoUrl"] = logo_url(_dom)
+    for co in COMPANIES.values():
+        if not co.get("subIndustry"):
+            co["subIndustry"] = SECTORS.get(co["sector"])
+
+
 def list_sectors() -> List[dict]:
     out = []
     for sid, name in SECTORS.items():
@@ -758,6 +984,7 @@ def _q(symbol, name, sector, mcap_b, *, country="United States",
         "eps": eps, "dividendYield": div, "beta": beta, "week52High": hi,
         "week52Low": lo, "description": desc, "country": country,
         "exchange": exchange,
+        "subIndustry": None, "logoUrl": None,
     }
 
 
@@ -1133,6 +1360,11 @@ _SGX: List[tuple] = [
 
 _load(_US)
 _load(_SGX, country="Singapore", exchange="SGX")
+
+# Stamp sub-industry labels + logos onto the full catalog (curated names get a
+# finer label/logo; everything else falls back to its sector group name). Must
+# run after the bulk catalog above is loaded so on-demand names are covered too.
+_apply_company_profiles()
 
 
 def price_series(symbol: str, days: int = 90) -> List[dict]:

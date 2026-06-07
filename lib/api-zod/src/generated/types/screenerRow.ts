@@ -18,4 +18,8 @@ export interface ScreenerRow {
   peRatio?: number | null;
   volume: number;
   sector: string;
+  /** @nullable */
+  subIndustry?: string | null;
+  /** @nullable */
+  logoUrl?: string | null;
 }

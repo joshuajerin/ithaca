@@ -406,6 +406,8 @@ def build_screener(params: dict) -> dict:
             "peRatio": c["peRatio"],
             "volume": c["volume"],
             "sector": repo.sector_name(c["sector"]),
+            "subIndustry": c.get("subIndustry") or repo.sector_name(c["sector"]),
+            "logoUrl": c.get("logoUrl"),
             "country": c.get("country"),
             "exchange": c.get("exchange"),
         })
@@ -433,6 +435,8 @@ def build_heatmap(params: dict) -> dict:
             "ret1Y": (rets.get(s) or {}).get("1Y"),  # true trailing 1-year return
             "marketCap": c["marketCap"],
             "sector": repo.sector_name(c["sector"]),
+            "subIndustry": c.get("subIndustry") or repo.sector_name(c["sector"]),
+            "logoUrl": c.get("logoUrl"),
             "country": c.get("country"),
             "exchange": c.get("exchange"),
         })
@@ -6233,6 +6237,7 @@ def build_company_analytics(params: dict) -> dict:
         peers_table.append({
             "symbol": sym,
             "name": c["name"],
+            "logoUrl": c.get("logoUrl"),
             "isSubject": sym == symbol,
             "revenueGrowth": rg,
             "opMargin": c["netMargin"],
@@ -6309,6 +6314,10 @@ def build_company_analytics(params: dict) -> dict:
     return {
         "symbol": symbol,
         "name": name,
+        "sector": repo.sector_name(company["sector"]),
+        "subIndustry": company.get("subIndustry") or repo.sector_name(company["sector"]),
+        "logoUrl": company.get("logoUrl"),
+        "description": company.get("description") or "",
         "priceTrendPct": chg_pct,  # 1-day move
         "returns": {
             "1D": chg_pct,

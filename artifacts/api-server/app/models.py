@@ -134,6 +134,8 @@ class ScreenerRow(BaseModel):
     peRatio: Optional[float] = None
     volume: float
     sector: str
+    subIndustry: Optional[str] = None
+    logoUrl: Optional[str] = None
     country: Optional[str] = None
     exchange: Optional[str] = None
 
@@ -151,6 +153,8 @@ class HeatmapCell(BaseModel):
     ret1Y: Optional[float] = None  # true trailing 1-year price return
     marketCap: float
     sector: str
+    subIndustry: Optional[str] = None
+    logoUrl: Optional[str] = None
     country: Optional[str] = None
     exchange: Optional[str] = None
 

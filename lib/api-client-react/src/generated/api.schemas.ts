@@ -156,6 +156,10 @@ export interface ScreenerRow {
   peRatio?: number | null;
   volume: number;
   sector: string;
+  /** @nullable */
+  subIndustry?: string | null;
+  /** @nullable */
+  logoUrl?: string | null;
 }
 
 export interface ScreenerData {
@@ -171,6 +175,10 @@ export interface HeatmapCell {
   ret1Y?: number | null;
   marketCap: number;
   sector: string;
+  /** @nullable */
+  subIndustry?: string | null;
+  /** @nullable */
+  logoUrl?: string | null;
 }
 
 export interface HeatmapData {

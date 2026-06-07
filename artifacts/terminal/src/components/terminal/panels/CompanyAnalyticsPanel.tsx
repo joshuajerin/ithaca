@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ArrowUpRight, ArrowDownRight, ArrowRight, Zap, BarChart2, GitBranch, Calendar, ChevronDown } from "lucide-react";
+import { CompanyLogo } from "../CompanyLogo";
 
 interface Driver {
   title: string;
@@ -14,6 +15,7 @@ interface Driver {
 interface Peer {
   symbol: string;
   name: string;
+  logoUrl?: string | null;
   isSubject: boolean;
   revenueGrowth: number | null;
   opMargin: number | null;
@@ -46,6 +48,10 @@ interface PeriodReturns {
 interface CompanyAnalyticsData {
   symbol: string;
   name: string;
+  sector?: string;
+  subIndustry?: string | null;
+  logoUrl?: string | null;
+  description?: string;
   priceTrendPct: number;
   returns?: PeriodReturns;
   drivers: Driver[];
@@ -127,6 +133,33 @@ export function CompanyAnalyticsPanel({ data }: { data: CompanyAnalyticsData }) 
   return (
     <ScrollArea className="h-full pr-1">
       <div className="flex flex-col gap-5 pb-2">
+
+        {/* ── Company profile header ── */}
+        <section className="flex items-start gap-3 border-b border-border pb-4">
+          <CompanyLogo symbol={data.symbol} logoUrl={data.logoUrl} size={36} />
+          <div className="flex flex-col min-w-0 flex-1">
+            <span className="font-serif text-lg text-white leading-tight truncate">{data.name}</span>
+            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+              <span className="editorial-label text-[8px] text-muted-foreground nums-tabular">{data.symbol}</span>
+              {data.subIndustry && (
+                <>
+                  <span className="text-muted-foreground text-[8px]">·</span>
+                  <span className="editorial-label text-[8px] text-muted-foreground uppercase tracking-wider truncate">
+                    {data.subIndustry}
+                  </span>
+                </>
+              )}
+              {data.sector && data.sector !== data.subIndustry && (
+                <>
+                  <span className="text-muted-foreground text-[8px]">·</span>
+                  <span className="editorial-label text-[8px] text-muted-foreground uppercase tracking-wider truncate">
+                    {data.sector}
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+        </section>
 
         {/* ── Performance by timeframe ── */}
         <section className="flex items-end justify-end gap-5 border-b border-border pb-3">
@@ -220,10 +253,13 @@ export function CompanyAnalyticsPanel({ data }: { data: CompanyAnalyticsData }) 
                     className={`border-border hover:bg-white/5 transition-colors ${p.isSubject ? "bg-white/5" : ""}`}
                   >
                     <TableCell className="py-2 font-serif text-sm">
-                      <span className={p.isSubject ? "text-white" : "text-gray-400"}>{p.symbol}</span>
-                      {p.isSubject && (
-                        <span className="ml-1.5 editorial-label text-[7px] text-muted-foreground">subject</span>
-                      )}
+                      <div className="flex items-center gap-1.5">
+                        <CompanyLogo symbol={p.symbol} logoUrl={p.logoUrl} size={16} />
+                        <span className={p.isSubject ? "text-white" : "text-gray-400"}>{p.symbol}</span>
+                        {p.isSubject && (
+                          <span className="editorial-label text-[7px] text-muted-foreground">subject</span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className={`py-2 text-right font-serif text-sm nums-tabular ${
                       p.revenueGrowth === null ? "text-muted-foreground"

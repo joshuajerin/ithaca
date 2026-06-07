@@ -47,6 +47,7 @@ def get_company(symbol: str) -> Optional[dict]:
                 """
                 SELECT f.symbol, f.name, u.sector AS sector,
                        u.country AS country, u.exchange AS exchange,
+                       u.industry AS industry, u.website AS website,
                        f.price, f.change_pct, f.market_cap, f.pe_ratio, f.volume,
                        f.revenue, f.net_margin, f.revenue_growth, f.eps,
                        f.dividend_yield, f.beta,
@@ -75,10 +76,20 @@ def get_company(symbol: str) -> Optional[dict]:
 
 
 def _company_from_row(row: dict) -> dict:
+    sid = row.get("sector") or "ai_tech"
+    mock = data.COMPANIES.get(row["symbol"])
+    # Prefer a real (live) logo from the fetched website, then the curated
+    # fallback; sub-industry prefers Yahoo's finer industry, then curated, then
+    # the broad sector group so the label is always human-readable.
+    logo = data.logo_url(row.get("website")) or (mock.get("logoUrl") if mock else None)
+    sub = (row.get("industry") or (mock.get("subIndustry") if mock else None)
+           or data.sub_industry_name(sid))
     c = {
         "symbol": row["symbol"],
         "name": row.get("name") or row["symbol"],
-        "sector": row.get("sector") or "ai_tech",
+        "sector": sid,
+        "subIndustry": sub,
+        "logoUrl": logo,
         "price": _num(row.get("price")),
         "changePct": _num(row.get("change_pct")),
         "marketCap": _num(row.get("market_cap")),
@@ -124,6 +135,7 @@ def companies_bulk(symbols: List[str]) -> Dict[str, dict]:
                 """
                 SELECT f.symbol, f.name, u.sector AS sector,
                        u.country AS country, u.exchange AS exchange,
+                       u.industry AS industry, u.website AS website,
                        f.price, f.change_pct, f.market_cap, f.pe_ratio, f.volume,
                        f.revenue, f.net_margin, f.revenue_growth, f.eps,
                        f.dividend_yield, f.beta,

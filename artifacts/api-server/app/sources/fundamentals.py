@@ -68,6 +68,7 @@ def fetch_fundamentals(symbol: str) -> Dict:
         "description": (info.get("longBusinessSummary") or "")[:600] or None,
         "sector": map_sector(info.get("sector"), info.get("industry")),
         "industry": info.get("industry") or None,
+        "website": info.get("website") or None,
     }
 
 

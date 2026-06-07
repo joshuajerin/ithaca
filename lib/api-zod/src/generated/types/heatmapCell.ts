@@ -14,4 +14,8 @@ export interface HeatmapCell {
   ret1Y?: number | null;
   marketCap: number;
   sector: string;
+  /** @nullable */
+  subIndustry?: string | null;
+  /** @nullable */
+  logoUrl?: string | null;
 }
