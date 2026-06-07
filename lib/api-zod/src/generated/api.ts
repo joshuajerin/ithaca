@@ -131,7 +131,7 @@ export const GetDefaultDashboardResponse = zod.object({
   "name": zod.string(),
   "price": zod.number(),
   "changePct": zod.number(),
-  "retYTD": zod.number().nullish(),
+  "ret1Y": zod.number().nullish(),
   "marketCap": zod.number(),
   "peRatio": zod.number().nullish(),
   "volume": zod.number(),
@@ -143,7 +143,7 @@ export const GetDefaultDashboardResponse = zod.object({
   "symbol": zod.string(),
   "name": zod.string(),
   "changePct": zod.number(),
-  "retYTD": zod.number().nullish(),
+  "ret1Y": zod.number().nullish(),
   "marketCap": zod.number(),
   "sector": zod.string()
 }))
@@ -500,7 +500,7 @@ export const OrchestrateResponse = zod.object({
   "name": zod.string(),
   "price": zod.number(),
   "changePct": zod.number(),
-  "retYTD": zod.number().nullish(),
+  "ret1Y": zod.number().nullish(),
   "marketCap": zod.number(),
   "peRatio": zod.number().nullish(),
   "volume": zod.number(),
@@ -512,7 +512,7 @@ export const OrchestrateResponse = zod.object({
   "symbol": zod.string(),
   "name": zod.string(),
   "changePct": zod.number(),
-  "retYTD": zod.number().nullish(),
+  "ret1Y": zod.number().nullish(),
   "marketCap": zod.number(),
   "sector": zod.string()
 }))
@@ -900,7 +900,7 @@ export const RefinePanelResponse = zod.object({
   "name": zod.string(),
   "price": zod.number(),
   "changePct": zod.number(),
-  "retYTD": zod.number().nullish(),
+  "ret1Y": zod.number().nullish(),
   "marketCap": zod.number(),
   "peRatio": zod.number().nullish(),
   "volume": zod.number(),
@@ -912,7 +912,7 @@ export const RefinePanelResponse = zod.object({
   "symbol": zod.string(),
   "name": zod.string(),
   "changePct": zod.number(),
-  "retYTD": zod.number().nullish(),
+  "ret1Y": zod.number().nullish(),
   "marketCap": zod.number(),
   "sector": zod.string()
 }))

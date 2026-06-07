@@ -13,13 +13,18 @@ Real period returns are computed from the stored price series, not from quote fi
   the figure is stable and clearly differs from the 1D move.
 - Returns are `None` (rendered "—") when history is too short — honest, never faked.
 
-**Decision: screener + heatmap expose `retYTD` (year-to-date), NOT `ret1Y`.**
-**Why:** the live OHLCV DB only holds ~6 months (~125 trading days), so a true 1Y return is
-`None` for every live name — a 1Y column would be all dashes. YTD is computable for both live
-names AND mock names, so it's the longest honest period the live data supports.
-**How to apply:** if/when the ingest backfills a full year of history, 1Y becomes viable and the
-screener/heatmap period column could switch back to `ret1Y` (update models.py, openapi.yaml +
-codegen, both panels, and tests in lockstep — the field name flows through all of them).
+**Decision: screener + heatmap expose `ret1Y` (true trailing 1-year return).**
+**Why:** the price ingest now fetches a 2y daily window per tracked symbol (`_ingest_prices`
+range `"2y"`), so the OHLCV store always holds well over a full year — a true 1Y return is
+computable for live names instead of all dashes. 1Y is the standard trader metric, so it
+replaced the earlier YTD stopgap.
+**History:** before the 2y backfill the live DB held only ~6 months, so a 1Y column was all
+dashes and the panels showed `retYTD` instead. The switch back to `ret1Y` touched (in lockstep):
+ingest range in `worker.py`, `build_screener`/`build_heatmap` windows + field, `models.py`,
+`openapi.yaml` + codegen, both panels, and `tests/test_widgets.py` — the field name flows
+through all of them.
+**How to apply:** any change to which period column these panels show must update that same
+chain together, or the generated client/types drift from the API.
 
 company_analytics exposes a full `returns` block (1D/1M/YTD/1Y); price_chart's `change` is already
 a period return over its selected range. Tests: `tests/test_widgets.py`.

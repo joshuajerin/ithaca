@@ -15,7 +15,7 @@ export function HeatmapPanel({ data }: { data: HeatmapData }) {
         <span>{data.title}</span>
         <span className="flex items-center gap-3 tabular-nums">
           <span>1D</span>
-          <span className="text-muted-foreground/50">YTD</span>
+          <span className="text-muted-foreground/50">1Y</span>
         </span>
       </div>
 
@@ -33,7 +33,7 @@ export function HeatmapPanel({ data }: { data: HeatmapData }) {
             <div
               key={cell.symbol}
               className="group flex items-stretch border-b border-border hover:bg-white/[0.06] transition-colors"
-              title={`${cell.name} · ${cell.sector} · 1D ${cell.changePct}%${cell.retYTD == null ? "" : ` · YTD ${cell.retYTD}%`}`}
+              title={`${cell.name} · ${cell.sector} · 1D ${cell.changePct}%${cell.ret1Y == null ? "" : ` · 1Y ${cell.ret1Y}%`}`}
             >
               {/* Row index */}
               <div className="w-9 shrink-0 flex items-center justify-end pr-2 py-3 text-muted-foreground/60 border-r border-border tabular-nums">
@@ -74,11 +74,11 @@ export function HeatmapPanel({ data }: { data: HeatmapData }) {
                 </span>
                 <span
                   className="w-16 shrink-0 text-right tabular-nums text-muted-foreground/50"
-                  title="year-to-date return"
+                  title="trailing 1-year return"
                 >
-                  {cell.retYTD == null
+                  {cell.ret1Y == null
                     ? "—"
-                    : `${cell.retYTD > 0 ? "+" : ""}${cell.retYTD.toFixed(0)}%`}
+                    : `${cell.ret1Y > 0 ? "+" : ""}${cell.ret1Y.toFixed(0)}%`}
                 </span>
               </div>
 

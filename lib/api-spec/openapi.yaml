@@ -413,7 +413,7 @@ components:
           type: number
         changePct:
           type: number
-        retYTD:
+        ret1Y:
           type: ["number", "null"]
         marketCap:
           type: number
@@ -443,7 +443,7 @@ components:
           type: string
         changePct:
           type: number
-        retYTD:
+        ret1Y:
           type: ["number", "null"]
         marketCap:
           type: number

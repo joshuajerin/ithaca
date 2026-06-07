@@ -150,7 +150,7 @@ export interface ScreenerRow {
   price: number;
   changePct: number;
   /** @nullable */
-  retYTD?: number | null;
+  ret1Y?: number | null;
   marketCap: number;
   /** @nullable */
   peRatio?: number | null;
@@ -168,7 +168,7 @@ export interface HeatmapCell {
   name: string;
   changePct: number;
   /** @nullable */
-  retYTD?: number | null;
+  ret1Y?: number | null;
   marketCap: number;
   sector: string;
 }

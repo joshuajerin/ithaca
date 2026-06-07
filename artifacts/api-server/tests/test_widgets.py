@@ -87,34 +87,34 @@ def test_repo_period_returns_single_is_deterministic():
 
 def test_repo_period_returns_bulk_matches_single():
     syms = repo.symbols_in_sector(repo.resolve_sector("ai_tech"))[:5]
-    bulk = repo.period_returns_bulk(syms, windows=("YTD",))
+    bulk = repo.period_returns_bulk(syms, windows=("1Y",))
     assert set(bulk.keys()) >= {s.upper() for s in syms}
     for s in syms:
-        single = repo.period_returns(s, windows=("YTD",))["returns"]["YTD"]
-        assert bulk[s.upper()]["YTD"] == single
+        single = repo.period_returns(s, windows=("1Y",))["returns"]["1Y"]
+        assert bulk[s.upper()]["1Y"] == single
 
 
 # --------------------------- builders ---------------------------
-def test_screener_rows_carry_labeled_ytd():
+def test_screener_rows_carry_labeled_1y():
     out = skills.build_screener({"sector": "ai_tech"})
     assert out["rows"], "screener returned no rows"
     for row in out["rows"]:
         assert "changePct" in row  # 1-day move
-        assert "retYTD" in row     # explicit year-to-date return field
-    # At least some names should have a computable YTD return.
-    assert any(r["retYTD"] is not None for r in out["rows"])
-    # The YTD figure should generally not equal the 1-day move.
-    diffs = [r for r in out["rows"] if r["retYTD"] is not None and abs(r["retYTD"] - r["changePct"]) > 0.01]
-    assert diffs, "YTD returns suspiciously identical to 1D changes"
+        assert "ret1Y" in row      # explicit trailing 1-year return field
+    # At least some names should have a computable 1Y return.
+    assert any(r["ret1Y"] is not None for r in out["rows"])
+    # The 1Y figure should generally not equal the 1-day move.
+    diffs = [r for r in out["rows"] if r["ret1Y"] is not None and abs(r["ret1Y"] - r["changePct"]) > 0.01]
+    assert diffs, "1Y returns suspiciously identical to 1D changes"
 
 
-def test_heatmap_cells_carry_labeled_ytd():
+def test_heatmap_cells_carry_labeled_1y():
     out = skills.build_heatmap({"sector": "ai_tech"})
     assert out["cells"], "heatmap returned no cells"
     for cell in out["cells"]:
         assert "changePct" in cell
-        assert "retYTD" in cell
-    assert any(c["retYTD"] is not None for c in out["cells"])
+        assert "ret1Y" in cell
+    assert any(c["ret1Y"] is not None for c in out["cells"])
 
 
 # --------------------------- country / exchange filtering ---------------------------

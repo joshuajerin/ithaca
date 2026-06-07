@@ -129,7 +129,7 @@ class ScreenerRow(BaseModel):
     name: str
     price: float
     changePct: float  # 1-day move
-    retYTD: Optional[float] = None  # true year-to-date price return
+    ret1Y: Optional[float] = None  # true trailing 1-year price return
     marketCap: float
     peRatio: Optional[float] = None
     volume: float
@@ -148,7 +148,7 @@ class HeatmapCell(BaseModel):
     symbol: str
     name: str
     changePct: float  # 1-day move
-    retYTD: Optional[float] = None  # true year-to-date price return
+    ret1Y: Optional[float] = None  # true trailing 1-year price return
     marketCap: float
     sector: str
     country: Optional[str] = None

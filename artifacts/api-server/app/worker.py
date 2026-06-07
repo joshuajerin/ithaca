@@ -276,7 +276,11 @@ async def _ingest_prices(symbol: str) -> None:
     # internal base code so all reads stay keyed consistently.
     ysym = data.yahoo_symbol(symbol)
     try:
-        res = await _net(p_src.fetch_price_history, ysym, "6mo", "1d")
+        # Fetch ~2 years of daily bars so the store always holds well over a
+        # full year of history — enough to anchor a true 1Y return for live
+        # names (not just YTD). Upserts are idempotent, so re-fetching the wider
+        # window each cycle only refreshes/extends rows.
+        res = await _net(p_src.fetch_price_history, ysym, "2y", "1d")
         if res.get("points"):
             await asyncio.to_thread(_upsert_ohlcv, symbol, res["points"])
         if res.get("quote", {}).get("price") is not None:

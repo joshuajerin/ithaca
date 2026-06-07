@@ -387,7 +387,7 @@ def build_screener(params: dict) -> dict:
     syms = repo.symbols_by_market(sid, country, exchange)
     title = _market_title(sid, country, exchange, "Screener", "Market Screener")
     bulk = repo.companies_bulk(syms)
-    rets = repo.period_returns_bulk(syms, windows=("YTD",))
+    rets = repo.period_returns_bulk(syms, windows=("1Y",))
     rows = []
     companies = []
     for s in syms:
@@ -400,7 +400,7 @@ def build_screener(params: dict) -> dict:
             "name": c["name"],
             "price": c["price"],
             "changePct": c["changePct"],  # 1-day move
-            "retYTD": (rets.get(s) or {}).get("YTD"),  # true year-to-date return
+            "ret1Y": (rets.get(s) or {}).get("1Y"),  # true trailing 1-year return
             "marketCap": c["marketCap"],
             "peRatio": c["peRatio"],
             "volume": c["volume"],
@@ -417,7 +417,7 @@ def build_heatmap(params: dict) -> dict:
     syms = repo.symbols_by_market(sid, country, exchange)
     title = _market_title(sid, country, exchange, "Heatmap", "Market Overview")
     bulk = repo.companies_bulk(syms)
-    rets = repo.period_returns_bulk(syms, windows=("YTD",))
+    rets = repo.period_returns_bulk(syms, windows=("1Y",))
     cells = []
     companies = []
     for s in syms:
@@ -429,7 +429,7 @@ def build_heatmap(params: dict) -> dict:
             "symbol": s,
             "name": c["name"],
             "changePct": c["changePct"],  # 1-day move
-            "retYTD": (rets.get(s) or {}).get("YTD"),  # true year-to-date return
+            "ret1Y": (rets.get(s) or {}).get("1Y"),  # true trailing 1-year return
             "marketCap": c["marketCap"],
             "sector": repo.sector_name(c["sector"]),
             "country": c.get("country"),
