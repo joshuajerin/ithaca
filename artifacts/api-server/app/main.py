@@ -143,7 +143,7 @@ def navigate(req: models.NavigateRequest):
 
 @api.post("/refine", response_model=models.Panel)
 def refine(req: models.RefineRequest):
-    updated = agent.refine(req.sessionId, req.panelId, req.instruction)
+    updated = agent.refine(req.sessionId, req.panelId, req.instruction, req.params)
     if updated is None:
         raise HTTPException(status_code=404, detail="panel not found for session")
     return updated

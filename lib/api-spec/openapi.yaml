@@ -1223,6 +1223,14 @@ components:
           type: string
         instruction:
           type: string
+        params:
+          type: ["object", "null"]
+          additionalProperties: true
+          description: >-
+            Optional explicit skill parameters. When provided, they are applied
+            directly (bypassing instruction parsing), enabling deterministic
+            in-panel controls such as switching an intraday chart's resolution
+            and window without re-issuing a command.
     ScenarioRecomputeRequest:
       type: object
       required: [symbols, horizonDays, driftPct]

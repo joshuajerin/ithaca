@@ -79,6 +79,21 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
   const [refineText, setRefineText] = useState("");
   
   const refineMutation = useRefinePanel();
+  const paramRefineMutation = useRefinePanel();
+
+  const handleParamRefine = async (
+    params: Record<string, unknown>,
+    instruction: string,
+  ) => {
+    try {
+      const result = await paramRefineMutation.mutateAsync({
+        data: { sessionId, panelId: panel.id, instruction, params },
+      });
+      onRefined(result);
+    } catch (e) {
+      console.error("Failed to update panel", e);
+    }
+  };
 
   const submitRefine = async (instruction: string) => {
     if (!instruction.trim()) return;
@@ -176,7 +191,21 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "ma_tracker": return <MACPanel data={panel.data as any} />;
       case "company_analytics": return <CompanyAnalyticsPanel data={panel.data as any} />;
       case "data_universe": return <DataUniversePanel data={panel.data as any} />;
-      case "intraday_chart": return <IntradayChartPanel data={panel.data as any} />;
+      case "intraday_chart": {
+        const idData = panel.data as any;
+        return (
+          <IntradayChartPanel
+            data={idData}
+            pending={paramRefineMutation.isPending}
+            onSelect={(s) =>
+              handleParamRefine(
+                { symbol: idData?.symbol, interval: s.interval, range: s.range },
+                `${s.interval} resolution over a ${s.range} window`,
+              )
+            }
+          />
+        );
+      }
       case "data_quality": return <DataQualityPanel data={panel.data as any} />;
       case "analyst_report": return <AnalystReportPanel data={panel.data as any} />;
       case "analyst_compare": return <AnalystComparePanel data={panel.data as any} />;

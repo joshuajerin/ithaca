@@ -601,10 +601,21 @@ export interface SpeechAudio {
   format: string;
 }
 
+/**
+ * Optional explicit skill parameters. When provided, they are applied directly (bypassing instruction parsing), enabling deterministic in-panel controls such as switching an intraday chart's resolution and window without re-issuing a command.
+ * @nullable
+ */
+export type RefineRequestParams = { [key: string]: unknown } | null;
+
 export interface RefineRequest {
   sessionId: string;
   panelId: string;
   instruction: string;
+  /**
+     * Optional explicit skill parameters. When provided, they are applied directly (bypassing instruction parsing), enabling deterministic in-panel controls such as switching an intraday chart's resolution and window without re-issuing a command.
+     * @nullable
+     */
+  params?: RefineRequestParams;
 }
 
 export interface ScenarioRecomputeRequest {

@@ -56,6 +56,7 @@ export * from './priceChartData';
 export * from './pricePoint';
 export * from './quantileReturn';
 export * from './refineRequest';
+export * from './refineRequestParams';
 export * from './riskCoverage';
 export * from './riskHolding';
 export * from './riskModelData';

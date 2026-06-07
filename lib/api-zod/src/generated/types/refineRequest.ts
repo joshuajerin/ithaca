@@ -5,9 +5,15 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { RefineRequestParams } from './refineRequestParams';
 
 export interface RefineRequest {
   sessionId: string;
   panelId: string;
   instruction: string;
+  /**
+     * Optional explicit skill parameters. When provided, they are applied directly (bypassing instruction parsing), enabling deterministic in-panel controls such as switching an intraday chart's resolution and window without re-issuing a command.
+     * @nullable
+     */
+  params?: RefineRequestParams;
 }

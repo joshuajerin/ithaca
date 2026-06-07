@@ -31,7 +31,7 @@
 - [Multi-period Brinson linking (Carino)](attribution-multiperiod-linking.md) — long windows use per-day BHB scaled by Carino k_t/k so effects sum to the geometric active return; brinson_linked vs single-period brinson.
 - [DCF saved custom models](dcf-saved-models.md) — named assumption sets persist per session+symbol in state.py; DCFPanel uses raw /api/dcf-models fetch (no codegen); restore just resets local assumptions.
 - [Macro dashboard live data](macro-live-data.md) — isolated macro_quotes ingest (not equity universe); MACRO_YAHOO map; US2Y/2Y10Y/TIPS/iron have no free source → stay mock; staleness guard; per-tile isLive.
-
+- [Refine with explicit params](refine-explicit-params.md) — RefineRequest.params bypasses LLM/heuristic for deterministic in-panel controls; include symbol, use a separate mutation for in-panel spinner.
 - [Strategy lifecycle & paper book desk](strategy-lifecycle-desk.md) — registry+paperbook+lifecycle; deterministic intent handler before LLM; runtime CREATE TABLE not drizzle push; mark has no weight (use exposures); vite build needs PORT+BASE_PATH.
 - [Multi-ticker analyst compare](analyst-compare.md) — fan out build_analyst_report per symbol concurrently, isolate per-name failures; heuristic keyword traps ("view"⊂"overview").
 - [Macro dashboard overrides](macro-dashboard-overrides.md) — pin/remove macro tiles via refine; overrides persisted in panel data + on the pydantic model, merged latest-op-per-symbol.

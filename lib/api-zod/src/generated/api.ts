@@ -831,7 +831,8 @@ export const NavigateResponse = zod.object({
 export const RefinePanelBody = zod.object({
   "sessionId": zod.string(),
   "panelId": zod.string(),
-  "instruction": zod.string()
+  "instruction": zod.string(),
+  "params": zod.record(zod.string(), zod.unknown()).nullish().describe('Optional explicit skill parameters. When provided, they are applied directly (bypassing instruction parsing), enabling deterministic in-panel controls such as switching an intraday chart\'s resolution and window without re-issuing a command.')
 })
 
 export const RefinePanelResponse = zod.object({

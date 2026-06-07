@@ -2787,7 +2787,12 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
 
 
 # ----------------------------- refine a single panel -----------------------------
-def refine(session_id: str, panel_id: str, instruction: str) -> Optional[dict]:
+def refine(
+    session_id: str,
+    panel_id: str,
+    instruction: str,
+    explicit_params: Optional[dict] = None,
+) -> Optional[dict]:
     panel = state.get_panel(session_id, panel_id)
     if panel is None:
         return None
@@ -2795,12 +2800,18 @@ def refine(session_id: str, panel_id: str, instruction: str) -> Optional[dict]:
     layout = panel["layout"]
     title = panel.get("title")
 
-    # The risk monitor's custom shock builder submits a canonical instruction that
-    # we parse deterministically and apply against the panel's CURRENT book (which
-    # the panel data lets us reconstruct), so the shock never resets the portfolio.
+    # Deterministic in-panel controls pass explicit skill params, which are
+    # applied directly so the panel re-fetches exactly what was selected
+    # (no LLM/heuristic parsing of a free-text instruction).
     params = None
     keep_title = None
-    if panel_type == "risk_monitor":
+    if explicit_params:
+        params = dict(explicit_params)
+    elif panel_type == "risk_monitor":
+        # The risk monitor's custom shock builder submits a canonical instruction
+        # that we parse deterministically and apply against the panel's CURRENT
+        # book (which the panel data lets us reconstruct), so the shock never
+        # resets the portfolio.
         params = _risk_monitor_shock_params(panel, instruction)
         if params is not None:
             keep_title = title  # a shock keeps the same book, so keep its title
