@@ -1,6 +1,5 @@
 import type React from "react";
 import ReactDefault from "react";
-import { transform } from "sucrase";
 
 // AI-generated panel components are resolved through TWO paths:
 //
@@ -52,7 +51,11 @@ export function hasGeneratedComponent(panelType: string): boolean {
 // Transpile a generated TSX module source into a live React component. The
 // generated contract only allows `import React from "react"`, which we satisfy
 // with a require shim; any other import is rejected so evaluation stays bounded.
-function compileComponent(source: string): GeneratedComponent {
+async function compileComponent(source: string): Promise<GeneratedComponent> {
+  // Load the in-browser TSX compiler on demand so it stays out of the initial
+  // bundle — most sessions never build a custom panel, so the ~MB sucrase chunk
+  // is only fetched the first time a runtime panel actually needs compiling.
+  const { transform } = await import("sucrase");
   const { code } = transform(source, {
     transforms: ["typescript", "jsx", "imports"],
     production: true,
@@ -93,7 +96,7 @@ export async function loadGeneratedComponent(
       };
       const entry = payload.panels?.find((p) => p.panelType === panelType);
       if (!entry?.source) return undefined;
-      const Component = compileComponent(entry.source);
+      const Component = await compileComponent(entry.source);
       runtimeRegistry[panelType] = Component;
       return Component;
     } catch (err) {
