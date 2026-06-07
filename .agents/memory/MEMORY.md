@@ -25,3 +25,4 @@
 - [Replit config tooling traps](replit-config-tooling-traps.md) — validation tooling hijacks/over-removes `.replit` runButton="Project" (unrecoverable via tools); package firewall 403-blocks vitest, so no committed JS test runner.
 - [Strategy lifecycle & paper book desk](strategy-lifecycle-desk.md) — registry+paperbook+lifecycle; deterministic intent handler before LLM; runtime CREATE TABLE not drizzle push; mark has no weight (use exposures); vite build needs PORT+BASE_PATH.
 - [Multi-ticker analyst compare](analyst-compare.md) — fan out build_analyst_report per symbol concurrently, isolate per-name failures; heuristic keyword traps ("view"⊂"overview").
+- [Macro dashboard overrides](macro-dashboard-overrides.md) — pin/remove macro tiles via refine; overrides persisted in panel data + on the pydantic model, merged latest-op-per-symbol.

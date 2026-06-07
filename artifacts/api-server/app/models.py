@@ -369,10 +369,16 @@ class MacroGroup(BaseModel):
     tiles: List[MacroTile]
 
 
+class MacroOverride(BaseModel):
+    op: str
+    symbol: str
+
+
 class MacroDashboardData(BaseModel):
     theme: str
     title: str
     groups: List[MacroGroup]
+    overrides: List[MacroOverride] = []
 
 
 # --- yield_curve ---

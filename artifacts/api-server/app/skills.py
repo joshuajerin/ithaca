@@ -1258,8 +1258,32 @@ def build_macro_dashboard(params: dict) -> dict:
     theme_raw = params.get("theme") or "global"
     theme_key = data.resolve_macro_theme(theme_raw)
     theme_def = data.MACRO_THEMES[theme_key]
-    groups = []
+
+    # Start from the theme's default groups, then apply user pin/remove overrides.
+    group_syms: dict = {}
     for label, symbols in theme_def["groups"].items():
+        group_syms[label] = list(symbols)
+
+    applied: List[dict] = []
+    for ov in (params.get("overrides") or []):
+        op = str(ov.get("op") or "").lower()
+        sym = str(ov.get("symbol") or "").upper()
+        if op not in ("add", "remove") or sym not in data.MACRO_ASSETS:
+            continue
+        applied.append({"op": op, "symbol": sym})
+        if op == "remove":
+            for label in group_syms:
+                if sym in group_syms[label]:
+                    group_syms[label].remove(sym)
+        else:  # add
+            grp = data.MACRO_ASSETS[sym]["group"]
+            label = data.MACRO_GROUP_LABELS.get(grp, grp.title())
+            group_syms.setdefault(label, [])
+            if sym not in group_syms[label]:
+                group_syms[label].append(sym)
+
+    groups = []
+    for label, symbols in group_syms.items():
         tiles = []
         for sym in symbols:
             asset = data.MACRO_ASSETS.get(sym)
@@ -1279,6 +1303,7 @@ def build_macro_dashboard(params: dict) -> dict:
         "theme": theme_key,
         "title": theme_def["title"],
         "groups": groups,
+        "overrides": applied,
     }
 
 

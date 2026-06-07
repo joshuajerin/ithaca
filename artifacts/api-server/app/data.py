@@ -1316,6 +1316,62 @@ MACRO_THEME_ALIASES: Dict[str, str] = {
 }
 
 
+# Human-friendly aliases → MACRO_ASSETS keys, used when a user asks to add/remove
+# an asset from a macro dashboard by name (e.g. "iron ore", "EUR/USD", "the dollar").
+MACRO_SYMBOL_ALIASES: Dict[str, str] = {
+    "eur/usd": "EURUSD", "eurusd": "EURUSD", "euro": "EURUSD", "the euro": "EURUSD",
+    "usd/jpy": "USDJPY", "usdjpy": "USDJPY", "the yen": "USDJPY", "yen": "USDJPY",
+    "usd/cnh": "USDCNH", "usdcnh": "USDCNH", "cnh": "USDCNH", "yuan": "USDCNH", "renminbi": "USDCNH",
+    "dxy": "DXY", "dollar index": "DXY", "us dollar index": "DXY", "the dollar": "DXY", "dollar": "DXY",
+    "wti": "WTI", "crude oil": "WTI", "crude": "WTI", "oil": "WTI",
+    "gold": "GOLD",
+    "copper": "COPPER",
+    "iron ore": "IRON", "iron": "IRON",
+    "s&p 500": "SPX", "s&p500": "SPX", "s&p": "SPX", "sp500": "SPX", "spx": "SPX", "s and p": "SPX",
+    "nasdaq 100": "NDX", "nasdaq": "NDX", "ndx": "NDX",
+    "em equities": "EEM", "emerging markets": "EEM", "eem": "EEM",
+    "csi 300": "CSI300", "csi300": "CSI300",
+    "hang seng china enterprises": "HSCEI", "hscei": "HSCEI",
+    "vix": "VIX", "volatility index": "VIX",
+    "10y breakeven": "TIPS10Y", "breakevens": "TIPS10Y", "breakeven": "TIPS10Y", "tips": "TIPS10Y",
+    "2y-10y spread": "US2Y10Y", "2y-10y": "US2Y10Y", "2y10y": "US2Y10Y", "2s10s": "US2Y10Y",
+    "us 10y": "US10Y", "10-year": "US10Y", "10 year": "US10Y", "10y": "US10Y", "us10y": "US10Y",
+    "us 2y": "US2Y", "2-year": "US2Y", "2 year": "US2Y", "2y": "US2Y", "us2y": "US2Y",
+}
+
+# MACRO_ASSETS["group"] (lowercase) → display label used by MACRO_THEMES groups.
+MACRO_GROUP_LABELS: Dict[str, str] = {
+    "rates": "Rates",
+    "fx": "FX",
+    "commodities": "Commodities",
+    "equities": "Equities",
+}
+
+
+def resolve_macro_symbols(text: str) -> List[str]:
+    """Extract macro asset symbols referenced in free text (by code or alias).
+
+    Returns canonical MACRO_ASSETS keys, in order of appearance. Longer aliases are
+    matched first and consumed so e.g. "2y-10y" does not also match "2y".
+    """
+    if not text:
+        return []
+    found: List[str] = []
+    remaining = " " + text.lower() + " "
+    for alias in sorted(MACRO_SYMBOL_ALIASES, key=len, reverse=True):
+        pat = r"\b" + re.escape(alias) + r"\b"
+        if re.search(pat, remaining):
+            sym = MACRO_SYMBOL_ALIASES[alias]
+            if sym not in found:
+                found.append(sym)
+            remaining = re.sub(pat, " ", remaining)
+    up = " " + text.upper() + " "
+    for sym in MACRO_ASSETS:
+        if sym not in found and re.search(r"\b" + re.escape(sym) + r"\b", up):
+            found.append(sym)
+    return found
+
+
 def resolve_macro_theme(text: str) -> str:
     """Return a canonical MACRO_THEMES key for a natural-language theme string."""
     if not text:

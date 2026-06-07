@@ -2903,7 +2903,104 @@ def _refine_params(panel_type: str, panel: dict, instruction: str) -> dict:
     return _refine_params_heuristic(panel_type, panel, instruction)
 
 
+def _current_macro_state(panel: dict) -> tuple:
+    """Return (theme, overrides) from a macro_dashboard panel's persisted data."""
+    d = panel.get("data") or {}
+    theme = d.get("theme") or "global"
+    overrides = [
+        {"op": o.get("op"), "symbol": o.get("symbol")}
+        for o in (d.get("overrides") or [])
+        if o.get("op") and o.get("symbol")
+    ]
+    return theme, overrides
+
+
+def _merge_macro_overrides(existing: list, new_ops: list) -> list:
+    """Apply new add/remove ops on top of existing ones; latest op per symbol wins."""
+    merged = [dict(o) for o in existing]
+    for op in new_ops:
+        sym = op["symbol"]
+        merged = [m for m in merged if m["symbol"] != sym]
+        merged.append({"op": op["op"], "symbol": sym})
+    return merged
+
+
+def _detect_macro_theme(instruction: str) -> Optional[str]:
+    """Return a theme key only if the instruction explicitly names a theme.
+
+    Returns None when no theme is referenced so the caller keeps the panel's
+    current theme (calling resolve_macro_theme unconditionally would wrongly
+    reset every plain add/remove to the "global" default).
+    """
+    ql = " " + (instruction or "").lower() + " "
+    candidates = list(data.MACRO_THEMES.keys()) + list(data.MACRO_THEME_ALIASES.keys())
+    for cand in sorted(candidates, key=len, reverse=True):
+        if re.search(r"\b" + re.escape(cand) + r"\b", ql):
+            return data.resolve_macro_theme(cand)
+    return None
+
+
+def _refine_macro_heuristic(panel: dict, instruction: str) -> dict:
+    theme, existing = _current_macro_state(panel)
+    new_theme = _detect_macro_theme(instruction) or theme
+    syms = data.resolve_macro_symbols(instruction)
+    ql = instruction.lower()
+    is_remove = any(k in ql for k in ("remove", "drop", "delete", "take out", "take off", "get rid", "hide", "exclude", "without"))
+    new_ops = [{"op": "remove" if is_remove else "add", "symbol": s} for s in syms]
+    return {"theme": new_theme, "overrides": _merge_macro_overrides(existing, new_ops)}
+
+
+def _refine_macro_llm(panel: dict, instruction: str) -> dict:
+    theme, existing = _current_macro_state(panel)
+    valid = ", ".join(data.MACRO_ASSETS.keys())
+    tool = {"type": "function", "function": {
+        "name": "update_macro_dashboard",
+        "description": "Update which assets appear on a macro dashboard, and optionally its theme.",
+        "parameters": {"type": "object", "properties": {
+            "theme": {"type": "string", "enum": ["global", "inflation", "china", "risk"],
+                      "description": "Only change if the user explicitly asks for a different theme."},
+            "add": {"type": "array", "items": {"type": "string"},
+                    "description": f"Macro symbols to add. Must be one of: {valid}"},
+            "remove": {"type": "array", "items": {"type": "string"},
+                       "description": f"Macro symbols to remove. Must be one of: {valid}"},
+        }},
+    }}
+    sys = (
+        "You edit a macro / cross-asset dashboard panel. Decide which assets to add or remove "
+        f"to satisfy the instruction. Use ONLY these macro symbols: {valid}. Map names to symbols "
+        "(e.g. 'EUR/USD'->EURUSD, 'iron ore'->IRON, 'gold'->GOLD, 'S&P 500'->SPX, 'dollar index'->DXY, "
+        "'VIX'->VIX, '10y'->US10Y). Do not change the theme unless explicitly asked. Call the tool once."
+    )
+    msg = ai.chat(
+        [
+            {"role": "system", "content": sys},
+            {"role": "user", "content": f"Current theme: {theme}\nInstruction: {instruction}"},
+        ],
+        tools=[tool],
+        tool_choice={"type": "function", "function": {"name": "update_macro_dashboard"}},
+    )
+    tcs = getattr(msg, "tool_calls", None) or []
+    if not tcs:
+        raise RuntimeError("no tool call")
+    args = json.loads(tcs[0].function.arguments or "{}")
+    new_ops: list = []
+    for s in (args.get("remove") or []):
+        su = str(s).upper()
+        if su in data.MACRO_ASSETS:
+            new_ops.append({"op": "remove", "symbol": su})
+    for s in (args.get("add") or []):
+        su = str(s).upper()
+        if su in data.MACRO_ASSETS:
+            new_ops.append({"op": "add", "symbol": su})
+    new_theme = args.get("theme") or theme
+    if new_theme not in data.MACRO_THEMES:
+        new_theme = theme
+    return {"theme": new_theme, "overrides": _merge_macro_overrides(existing, new_ops)}
+
+
 def _refine_params_llm(panel_type: str, panel: dict, instruction: str) -> dict:
+    if panel_type == "macro_dashboard":
+        return _refine_macro_llm(panel, instruction)
     tool = next(
         (t for t in _all_tools() if _type_of_tool(t["function"]["name"]) == panel_type),
         None
@@ -2934,6 +3031,8 @@ def _refine_params_llm(panel_type: str, panel: dict, instruction: str) -> dict:
 
 
 def _refine_params_heuristic(panel_type: str, panel: dict, instruction: str) -> dict:
+    if panel_type == "macro_dashboard":
+        return _refine_macro_heuristic(panel, instruction)
     syms = _extract_symbols(instruction)
     sector = repo.resolve_sector(instruction)
     if panel_type in ("price_chart", "fundamentals", "supply_chain", "dcf_model", "earnings_transcript"):
