@@ -251,6 +251,73 @@ def test_evaluate_signal_too_few_names_returns_empty_stats():
     assert res["ic"]["n"] == 0
 
 
+def test_normalize_scheme_aliases():
+    assert engine.normalize_scheme(None) == "top_quantile"
+    assert engine.normalize_scheme("long short") == "long_short"
+    assert engine.normalize_scheme("market-neutral spread") == "long_short"
+    assert engine.normalize_scheme("top quantile") == "top_quantile"
+    assert engine.normalize_scheme("garbage") == "top_quantile"
+
+
+def test_construct_portfolio_top_quantile_shape_and_book():
+    series = _ramp_series()
+    res = engine.construct_portfolio(series, signal="momentum", scheme="top_quantile",
+                                     quantiles=5, holding=21)
+    for k in ("curve", "drawdown", "stats", "benchStats", "holdings",
+              "longCount", "shortCount", "gross", "net", "turnoverAnnual"):
+        assert k in res
+    # Long-only top quantile: no shorts, weights sum to ~1, net == gross.
+    assert res["shortCount"] == 0
+    assert res["longCount"] > 0
+    assert math.isclose(res["net"], 1.0, abs_tol=1e-6)
+    assert math.isclose(res["gross"], 1.0, abs_tol=1e-6)
+    # On a clean uptrending cross-section the long book should make money.
+    assert res["stats"]["totalReturn"] > 0
+    # Equity curve is rebased to 100 at inception.
+    assert res["curve"][0]["strategy"] == 100.0
+    # Holdings are the top names (highest drift S5..S9 in the ramp).
+    longs = {h["symbol"] for h in res["holdings"] if h["side"] == "long"}
+    assert "S9" in longs
+
+
+def test_construct_portfolio_long_short_is_dollar_neutral():
+    series = _ramp_series()
+    res = engine.construct_portfolio(series, signal="momentum", scheme="long_short",
+                                     quantiles=5, holding=21)
+    assert res["longCount"] > 0 and res["shortCount"] > 0
+    # Dollar-neutral: net ~ 0, gross ~ 2 (1 long + 1 short).
+    assert math.isclose(res["net"], 0.0, abs_tol=1e-6)
+    assert math.isclose(res["gross"], 2.0, abs_tol=1e-6)
+    # Long top / short bottom of a monotone trend → positive realized spread.
+    assert res["stats"]["totalReturn"] > 0
+
+
+def test_construct_portfolio_excludes_missing_and_never_imputes():
+    series = _ramp_series()
+    series["BAD"] = [{"t": "2024-01-01", "c": 100.0}]  # too short
+    res = engine.construct_portfolio(series, signal="momentum", scheme="top_quantile")
+    excluded = {e["symbol"] for e in res["excluded"]}
+    assert "BAD" in excluded
+    assert "BAD" not in res["included"]
+    assert "BAD" not in {h["symbol"] for h in res["holdings"]}
+
+
+def test_construct_portfolio_is_deterministic():
+    series = _ramp_series()
+    a = engine.construct_portfolio(series, signal="momentum", scheme="long_short", holding=21)
+    b = engine.construct_portfolio(series, signal="momentum", scheme="long_short", holding=21)
+    assert a["curve"] == b["curve"]
+    assert a["stats"] == b["stats"]
+    assert a["holdings"] == b["holdings"]
+
+
+def test_construct_portfolio_too_few_names_returns_empty_curve():
+    series = {k: v for k, v in list(_ramp_series().items())[:3]}
+    res = engine.construct_portfolio(series, signal="momentum", quantiles=5, min_names=5)
+    assert res["curve"] == []
+    assert res["holdings"] == []
+
+
 from app.engine import attribution as attr
 
 

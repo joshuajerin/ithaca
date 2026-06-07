@@ -424,6 +424,17 @@ def _tools() -> list:
             }, "required": []},
         }},
         {"type": "function", "function": {
+            "name": "add_signal_portfolio",
+            "description": f"Build a tradeable PORTFOLIO from ONE alpha signal: ranks the real cross-section and constructs either an equal-weight top-quantile (long-only) book or a dollar-neutral long-short quantile spread, then backtests the realized book (equity curve vs equal-weight benchmark, Sharpe, CAGR, drawdown, turnover) with position counts and weights. {sizing} Use for 'build/construct a portfolio from <signal>', 'turn <signal> into a strategy', 'size positions from <signal>', or a signal's realized portfolio performance. Signals: momentum, short_reversal, low_volatility, value, quality.",
+            "parameters": {"type": "object", "properties": {
+                "signal": {"type": "string", "description": "Signal to build the portfolio from.", "enum": ["momentum", "short_reversal", "low_volatility", "value", "quality"]},
+                "scheme": {"type": "string", "description": "Construction scheme: top_quantile (equal-weight long-only top bucket) or long_short (dollar-neutral long-short spread).", "enum": ["top_quantile", "long_short"]},
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Optional explicit universe. Valid: {syms}"},
+                "sector": {"type": "string", "description": "Optional sector to scope the universe."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["signal"]},
+        }},
+        {"type": "function", "function": {
             "name": "add_iv_surface",
             "description": f"Add an implied volatility surface heatmap for a ticker. {sizing} Use for vol surface, IV surface, or skew requests.",
             "parameters": {"type": "object", "properties": {
@@ -647,6 +658,7 @@ _TOOL_TO_TYPE = {
     "add_portfolio_optimizer": "portfolio_optimizer",
     "add_signal_research": "signal_research",
     "add_signal_scorecard": "signal_scorecard",
+    "add_signal_portfolio": "signal_portfolio",
     "add_iv_surface": "iv_surface",
     "add_options_chain": "options_chain",
     "add_options_strategy": "options_strategy",
@@ -762,7 +774,10 @@ def _system_prompt() -> str:
         "- For alpha signal research (rank IC, information coefficient, IC decay, signal turnover, "
         "quantile/decile long-short spread, 'does <signal> predict returns'), use add_signal_research with one "
         "signal of momentum/short_reversal/low_volatility/value/quality. To compare or rank several signals "
-        "('signal scorecard', 'which signal works best', 'compare value vs momentum'), use add_signal_scorecard.\n"
+        "('signal scorecard', 'which signal works best', 'compare value vs momentum'), use add_signal_scorecard. "
+        "To BUILD a tradeable portfolio/strategy FROM a signal ('build a portfolio from momentum', 'turn the value "
+        "signal into a strategy', 'size positions from <signal>', 'long-short book from <signal>'), use "
+        "add_signal_portfolio (scheme=top_quantile for long-only, long_short for a dollar-neutral spread).\n"
         "- For company analytics requests ('why is X up/down', 'what drives X', 'analyze X vs competitors', "
         "'company analytics for X', 'competition for X', 'price drivers for X'), use add_company_analytics.\n"
         "- For data-layer requests: universe/coverage/'what's tracked'/'live vs mock' → add_data_universe; "
@@ -1348,8 +1363,48 @@ def _ser_backtest(data: dict) -> str:
     return "; ".join(p for p in parts if p)
 
 
+def _ser_signal_portfolio(data: dict) -> str:
+    parts: List[str] = []
+    head = []
+    if data.get("label"):
+        head.append(f"signal={data['label']}")
+    if data.get("schemeLabel"):
+        head.append(f"scheme={data['schemeLabel']}")
+    if head:
+        parts.append(", ".join(head))
+    lc, sc = data.get("longCount"), data.get("shortCount")
+    if lc is not None:
+        parts.append(f"book: {lc} long / {sc or 0} short, gross {_ser_scalar(data.get('gross'))}x, net {_ser_scalar(data.get('net'))}")
+    stats = data.get("stats")
+    if isinstance(stats, dict) and stats:
+        parts.append("stats: " + _ser_dict(stats))
+    bench = data.get("benchStats")
+    if isinstance(bench, dict) and bench:
+        parts.append(f"equal-weight benchmark return {_ser_scalar(bench.get('totalReturn'))}%")
+    curve = data.get("curve") or []
+    if curve:
+        c = _ser_curve(curve)
+        if c:
+            parts.append(c)
+    holdings = data.get("holdings") or []
+    longs = [h for h in holdings if h.get("side") == "long"][:6]
+    if longs:
+        parts.append("top longs: " + ", ".join(f"{h.get('symbol')} {_ser_scalar(round(h.get('weight', 0.0) * 100, 1))}%" for h in longs))
+    if data.get("turnoverAnnual") is not None:
+        parts.append(f"annual turnover {_ser_scalar(data.get('turnoverAnnual'))}%")
+    cov = []
+    if data.get("included") is not None:
+        cov.append(f"{data['included']}/{data.get('universeSize')} included")
+    if data.get("excluded"):
+        cov.append(f"{data['excluded']} excluded (never imputed)")
+    if cov:
+        parts.append(", ".join(cov))
+    return "; ".join(p for p in parts if p)
+
+
 _PANEL_SERIALIZERS = {
     "backtest": _ser_backtest,
+    "signal_portfolio": _ser_signal_portfolio,
 }
 
 
@@ -1895,6 +1950,7 @@ _TYPE_LABELS = {
     "portfolio_optimizer": "a portfolio optimizer",
     "signal_research": "an alpha signal research panel",
     "signal_scorecard": "an alpha signal scorecard",
+    "signal_portfolio": "a signal portfolio",
     "iv_surface": "an IV surface",
     "options_chain": "an options chain",
     "options_strategy": "an options strategy",
@@ -2245,6 +2301,20 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         "long short spread", "predict returns", "cross-sectional", "cross sectional",
     ]) or (_mentions_signal and len(_signals_found) >= 1)
 
+    # Build a tradeable portfolio FROM a signal. Must be checked before the
+    # scorecard/research/backtest routes because they also catch signal mentions.
+    _portfolio_build_words = any(k in q for k in [
+        "build a portfolio", "build portfolio", "construct a portfolio", "construct portfolio",
+        "portfolio from", "build a book", "construct a book", "long-short book", "long short book",
+        "into a portfolio", "into a strategy", "into a book", "size positions from",
+        "size a portfolio", "tradeable portfolio", "tradable portfolio", "make a portfolio",
+        "form a portfolio", "top quantile portfolio", "top-quantile portfolio",
+    ])
+    wants_portfolio_build = (_mentions_signal or len(_signals_found) >= 1) and (
+        _portfolio_build_words
+        or ("portfolio" in q and any(k in q for k in ["build", "construct", "from", "make", "form"]))
+    )
+
     if wants_desk:
         add("strategy_desk", {}, 12, 5)
         return panels, "Here's the strategy desk: every strategy across the lifecycle with live P&L."
@@ -2515,7 +2585,7 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         add("yield_curve", {"region": "US"}, 4, 5)
         return panels, f"Cash flow schedule, duration/convexity, and rate-shock scenarios for {bond_key}."
 
-    if wants_optimizer:
+    if wants_optimizer and not wants_portfolio_build:
         params: dict = {}
         if "min variance" in q or "min-variance" in q or "minimum variance" in q:
             params["method"] = "min_variance"
@@ -2581,6 +2651,22 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         name = data.get_company(sym)["name"]
         summary = f"Monte Carlo simulation of {name}: percentile fan, probability of loss, and terminal VaR/CVaR."
         return panels, summary
+
+    if wants_portfolio_build:
+        sig = _signals_found[0] if _signals_found else "momentum"
+        scheme = "long_short" if any(k in q for k in [
+            "long-short", "long short", "long/short", "ls ", "market neutral",
+            "market-neutral", "dollar neutral", "dollar-neutral", "spread", "hedged",
+        ]) else "top_quantile"
+        params = {"signal": sig, "scheme": scheme}
+        if symbols:
+            params["symbols"] = symbols
+        elif sector:
+            params["sector"] = sector
+        add("signal_portfolio", params, 12, 6)
+        scheme_label = "long-short quantile spread" if scheme == "long_short" else "equal-weight top-quantile"
+        return panels, (f"Built a {scheme_label} portfolio from the {sig.replace('_', ' ')} signal: "
+                        f"position weights, realized equity vs an equal-weight benchmark, Sharpe, drawdown and turnover.")
 
     if wants_backtest and symbols:
         sym = symbols[0]

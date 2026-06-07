@@ -4188,6 +4188,80 @@ def build_signal_scorecard(params: dict) -> dict:
     }
 
 
+def build_signal_portfolio(params: dict) -> dict:
+    """Turn one alpha signal into a tradeable book and backtest it.
+
+    Ranks the real cross-section at every rebalance and forms a portfolio under a
+    construction scheme — equal-weight top quantile (long-only) or a dollar-neutral
+    long-short quantile spread — then compounds the realized daily book return into
+    an equity curve scored with the shared backtest stat block (Sharpe, CAGR,
+    drawdown, VaR). Names without usable data are excluded and reported, never
+    imputed (consistent with the signal research desk).
+    """
+    signal = engine.normalize_signal(params.get("signal") or "momentum")
+    meta = engine.SIGNAL_META.get(signal, {})
+    scheme = engine.normalize_scheme(params.get("scheme"))
+    symbols, universe_label = _resolve_signal_universe(params)
+    if len(symbols) < _SIGNAL_QUANTILES:
+        raise ValueError("need a broader universe to build a cross-sectional portfolio")
+
+    bulk = repo.price_closes_bulk(symbols, days=_SIGNAL_DAYS)
+    series = bulk["series"]
+    companies = repo.companies_bulk(symbols) if meta.get("kind") == "fundamental" else {}
+    ctx_by_symbol, pre_excluded = _signal_ctx(signal, companies)
+
+    excluded_syms = {e["symbol"] for e in pre_excluded}
+    eval_series = {s: pts for s, pts in series.items() if s not in excluded_syms}
+
+    result = engine.construct_portfolio(
+        eval_series,
+        signal=signal,
+        ctx_by_symbol=ctx_by_symbol,
+        scheme=scheme,
+        quantiles=_SIGNAL_QUANTILES,
+        holding=_SIGNAL_HOLDING,
+    )
+
+    excluded_all = pre_excluded + list(result.get("excluded") or [])
+    if result.get("includedCount", 0) < _SIGNAL_QUANTILES or not result.get("curve"):
+        raise ValueError("not enough names with usable history to build this portfolio")
+
+    # Attach company names to the latest book so the panel reads cleanly.
+    holdings = []
+    for h in result["holdings"]:
+        c = repo.get_company(h["symbol"])
+        holdings.append({**h, "name": (c or {}).get("name", h["symbol"])})
+
+    return {
+        "signal": signal,
+        "label": result["label"],
+        "description": meta.get("desc", ""),
+        "scheme": result["scheme"],
+        "schemeLabel": result["schemeLabel"],
+        "universe": universe_label,
+        "universeSize": len(symbols),
+        "included": result["includedCount"],
+        "excluded": len(excluded_all),
+        "excludedNames": excluded_all[:30],
+        "holding": result["holding"],
+        "quantiles": result["quantiles"],
+        "rebalances": result["rebalances"],
+        "longCount": result["longCount"],
+        "shortCount": result["shortCount"],
+        "gross": result["gross"],
+        "net": result["net"],
+        "holdings": holdings,
+        "curve": result["curve"],
+        "drawdown": result["drawdown"],
+        "stats": result["stats"],
+        "benchStats": result["benchStats"],
+        "turnover": result["turnover"],
+        "turnoverAnnual": result["turnoverAnnual"],
+        "asOf": bulk.get("asOf"),
+        "source": bulk.get("source", "mock"),
+    }
+
+
 # ----------------------------- supply chain builder -----------------------------
 _SUPPLY_CHAIN_DB: dict = {
     "NVDA": {
@@ -5945,6 +6019,22 @@ _reg(SkillDef(
         {"name": "rank_signals", "description": "Evaluate each signal on the same names and rank by IC information ratio.", "expectedOutput": "A ranked table of signal scorecard rows with spread sparklines."},
     ],
     build_signal_scorecard, "Signal Scorecard",
+))
+_reg(SkillDef(
+    "signal-portfolio", "Signal Portfolio Construction", "signal_portfolio",
+    "Turns a single alpha signal (momentum, short-term reversal, low volatility, value, or "
+    "quality) into a tradeable portfolio: ranks the real cross-section and builds either an "
+    "equal-weight top-quantile (long-only) book or a dollar-neutral long-short quantile spread, "
+    "then backtests the realized book with the shared stat block (equity curve vs an equal-weight "
+    "benchmark, Sharpe, CAGR, drawdown, turnover). Names missing data are excluded and reported, "
+    "never imputed. Use when the user wants to build/construct a portfolio or strategy FROM a "
+    "signal, size positions, or see a signal's realized portfolio performance.",
+    [
+        {"name": "resolve_signal", "description": "Map the request to a known signal.", "expectedOutput": "A registered signal key."},
+        {"name": "select_scheme", "description": "Pick the construction scheme (top quantile or long-short spread).", "expectedOutput": "A scheme key."},
+        {"name": "construct_and_backtest", "description": "Rank the cross-section, size positions and backtest the realized book on real data.", "expectedOutput": "Holdings with weights, equity curve, drawdown, performance stats and coverage."},
+    ],
+    build_signal_portfolio, "Signal Portfolio",
 ))
 
 
