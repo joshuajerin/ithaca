@@ -197,6 +197,23 @@ export default function Terminal() {
     });
   };
 
+  // User dragged a panel's resize handle — apply the new grid size immediately,
+  // in place, without re-fetching panel data.
+  const handlePanelResized = useCallback(
+    (panelId: string, size: { w: number; h: number }) => {
+      setActiveDashboard((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          panels: prev.panels.map((p) =>
+            p.id === panelId ? { ...p, layout: { ...p.layout, w: size.w, h: size.h } } : p,
+          ),
+        };
+      });
+    },
+    [],
+  );
+
   const hasPanels = !!activeDashboard && activeDashboard.panels.length > 0;
 
   // Earnings alert: surface a banner when any earnings_calendar panel on the
@@ -419,6 +436,7 @@ export default function Terminal() {
                 <Dashboard
                   dashboard={activeDashboard!}
                   onPanelRefined={handlePanelRefined}
+                  onPanelResized={handlePanelResized}
                   highlightedPanelId={highlightedPanelId}
                 />
               </motion.div>
