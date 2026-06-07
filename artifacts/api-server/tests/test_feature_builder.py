@@ -1,24 +1,32 @@
-"""End-to-end test for the self-building feature (Build Feature) happy path.
+"""End-to-end tests for the self-building feature pipeline.
 
 Runnable two ways:
-    python artifacts/api-server/tests/test_feature_builder.py   # standalone
-    pytest artifacts/api-server/tests/test_feature_builder.py    # if pytest installed
+    python artifacts/api-server/tests/test_feature_builder.py     # standalone
+    pytest artifacts/api-server/tests/test_feature_builder.py      # if pytest installed
 
-The security guard already has focused rejection coverage (``test_code_guard``).
-This test exercises the *happy path*: a valid plain-language request is stubbed
-to produce a working skill + panel, and we assert the full pipeline reaches the
-``done`` stage, writes both files, registers the skill in ``skills.SKILLS``, and
-that ``harness.run_skill`` can build a panel from the freshly generated skill.
+These exercise the FULL backend pipeline that the "Build a Feature" modal drives
+over SSE (``POST /api/feature-request`` -> ``feature_builder.stream_feature_request``):
+plan -> validate Python (static guard + isolated subprocess) -> validate TSX ->
+write both artifacts -> register the skill in-process -> dispatch it via the
+harness (what happens when the user types the invoke example in chat).
 
-The AI call is stubbed so the test is deterministic and offline. Every file the
-test creates is removed (and the skill un-registered) in a ``finally`` block so
-the generated dirs are left exactly as they were found.
+The only thing mocked is the single LLM call (``ai.chat``); everything downstream
+runs for real, including the subprocess validator and on-disk writes. A unique
+test-only panel_type is used and both artifacts are removed afterward so the test
+never leaves state behind and never collides with a real generated feature.
+
+Positive test  -> a valid generation reaches "done", writes both files, registers
+                  the skill, and the harness builds an "ok" panel from it.
+Negative tests -> a generation that fails Python validation, TSX validation, or the
+                  static safety guard reports an "error" stage and leaves NO partial
+                  files in ``skills_generated/`` or ``panels/generated/``.
 """
 from __future__ import annotations
 
 import json
 import os
 import sys
+from types import SimpleNamespace
 
 # Make the api-server package importable regardless of how the test is invoked.
 _API_SERVER_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -27,172 +35,221 @@ if _API_SERVER_DIR not in sys.path:
 
 from app import ai, dynamic_skills, feature_builder, harness, skills  # noqa: E402
 
-# A panel_type unlikely to collide with any built-in or previously generated skill.
-_PANEL_TYPE = "e2e_test_widget"
+# A unique, test-only panel type so we never touch a real generated feature.
+_TEST_TYPE = "e2e_test_gauge"
 
-# A valid, contract-abiding Python skill module (stdlib only) that the stubbed AI
-# "returns". Mirrors the shape required by the PYTHON MODULE CONTRACT.
-_PYTHON_CODE = '''
+# A valid skill module honoring the contract (stdlib only, build({}) works).
+_VALID_PY = '''
 import random
 from datetime import datetime, timezone
 
 SKILL_DEFINITION = {
-    "id": "e2e-test-widget",
-    "name": "E2E Test Widget",
-    "panel_type": "e2e_test_widget",
-    "description": "A deterministic synthetic widget used to verify the build pipeline end to end.",
-    "default_title": "E2E Test Widget",
+    "id": "e2e-test-gauge",
+    "name": "E2E Test Gauge",
+    "panel_type": "e2e_test_gauge",
+    "description": "A deterministic test gauge used by the automated feature-builder e2e test.",
+    "default_title": "Test Gauge",
     "subskills": [
-        {"name": "seed", "description": "Seed a deterministic series.", "expectedOutput": "A stable seed."},
-        {"name": "series", "description": "Produce a short series.", "expectedOutput": "Dated points."},
+        {"name": "pick", "description": "Pick a reading.", "expectedOutput": "A number."},
     ],
-    "invoke_phrases": ["e2e test widget", "test widget"],
-    "parameters": {"symbol": {"type": "string", "description": "A ticker symbol."}},
+    "invoke_phrases": ["e2e test gauge", "test gauge"],
+    "parameters": {"label": {"type": "string", "description": "An optional label."}},
 }
 
 def build(params):
-    symbol = (params.get("symbol") or "TEST").upper()
-    rng = random.Random(hash(symbol) & 0xFFFFFFFF)
-    points = []
-    val = 100.0
-    for i in range(10):
-        val = round(val * (1 + (rng.random() - 0.5) * 0.02), 2)
-        points.append({"day": i + 1, "value": val})
+    label = (params.get("label") or "Default").strip()
+    rng = random.Random(1234)
+    reading = round(rng.random() * 100, 2)
     return {
-        "symbol": symbol,
-        "points": points,
+        "label": label,
+        "reading": reading,
         "asOf": datetime.now(timezone.utc).isoformat(),
         "source": "mock",
     }
 '''
 
-# A valid, contract-abiding React panel component (imports only react, default export).
-_TSX_CODE = '''import React from "react";
+_VALID_TSX = '''import React from "react";
 
-export default function E2ETestWidgetPanel({ data }: { data: any }) {
-  const points = data?.points ?? [];
-  const max = Math.max(1, ...points.map((p: any) => p.value));
+export default function E2eTestGaugePanel({ data }: { data: any }) {
+  const reading = data?.reading ?? 0;
   return (
     <div className="flex flex-col h-full text-white">
-      <div className="flex items-baseline justify-between mb-3">
-        <span className="font-serif text-xl">{data?.symbol ?? "—"}</span>
-        <span className="text-[10px] uppercase tracking-widest text-zinc-400">E2E</span>
-      </div>
-      <div className="flex items-end gap-1 flex-1">
-        {points.map((p: any, i: number) => (
-          <div key={i} className="flex-1 bg-zinc-200" style={{ height: `${(p.value / max) * 100}%` }} />
-        ))}
-      </div>
+      <span className="text-[10px] uppercase tracking-widest text-zinc-400">{data?.label ?? "—"}</span>
+      <span className="font-serif text-3xl">{reading}</span>
     </div>
   );
 }
 '''
 
 
-class _StubMessage:
-    """Mimics the OpenAI chat message object: only ``.content`` is read."""
-
-    def __init__(self, content: str):
-        self.content = content
-
-
-def _make_stub_chat(payload: dict):
-    def _stub_chat(messages, tools=None, tool_choice=None, response_format=None):
-        return _StubMessage(json.dumps(payload))
-
-    return _stub_chat
+def _payload(python_code: str, tsx_code: str) -> dict:
+    return {
+        "panel_type": _TEST_TYPE,
+        "feature_name": "E2E Test Gauge",
+        "invoke_example": "show me the e2e test gauge",
+        "python_code": python_code,
+        "tsx_code": tsx_code,
+    }
 
 
-def _drive(description: str) -> list:
-    """Run the SSE generator to completion, returning the parsed event dicts."""
-    events = []
-    for line in feature_builder.stream_feature_request(description):
-        # Each chunk is "data: {json}\n\n".
-        for part in line.splitlines():
-            part = part.strip()
-            if part.startswith("data:"):
-                events.append(json.loads(part[len("data:"):].strip()))
-    return events
+def _install_fake_ai(monkeyish, payload: dict):
+    """Point feature_builder's AI at a canned response. Returns a restore fn."""
+    orig_available = ai.ai_available
+    orig_chat = ai.chat
+    ai.ai_available = lambda: True  # type: ignore[assignment]
+    ai.chat = lambda *a, **k: SimpleNamespace(content=json.dumps(payload))  # type: ignore[assignment]
+
+    def restore():
+        ai.ai_available = orig_available  # type: ignore[assignment]
+        ai.chat = orig_chat  # type: ignore[assignment]
+
+    return restore
+
+
+def _py_path() -> str:
+    return os.path.join(dynamic_skills.GENERATED_DIR, f"{_TEST_TYPE}.py")
+
+
+def _tsx_path() -> str:
+    return os.path.join(feature_builder.PANEL_DIR, f"{_TEST_TYPE}.tsx")
 
 
 def _cleanup() -> None:
-    """Remove generated files and un-register the skill so nothing is left behind."""
-    py_path = os.path.join(dynamic_skills.GENERATED_DIR, f"{_PANEL_TYPE}.py")
-    tsx_path = os.path.join(feature_builder.PANEL_DIR, f"{_PANEL_TYPE}.tsx")
-    for path in (py_path, tsx_path):
+    """Remove any test artifacts and unregister the test skill in-process."""
+    for p in (_py_path(), _tsx_path()):
         try:
-            os.remove(path)
+            os.remove(p)
         except OSError:
             pass
-    skills.SKILLS.pop(_PANEL_TYPE, None)
-    dynamic_skills._DEFINITIONS.pop(_PANEL_TYPE, None)
+    skills.SKILLS.pop(_TEST_TYPE, None)
+    dynamic_skills._DEFINITIONS.pop(_TEST_TYPE, None)
+    sys.modules.pop("app.skills_generated." + _TEST_TYPE, None)
 
 
-def test_build_feature_happy_path():
-    """A valid request drives the full pipeline to ``done`` and yields a usable skill."""
-    payload = {
-        "panel_type": _PANEL_TYPE,
-        "feature_name": "E2E Test Widget",
-        "invoke_example": "show me the e2e test widget for AAPL",
-        "python_code": _PYTHON_CODE,
-        "tsx_code": _TSX_CODE,
-    }
+def _drive(description: str) -> list:
+    """Consume the SSE stream and return the parsed event dicts in order."""
+    events = []
+    for chunk in feature_builder.stream_feature_request(description):
+        line = chunk.strip()
+        if not line.startswith("data:"):
+            continue
+        events.append(json.loads(line[len("data:"):].strip()))
+    return events
 
-    orig_chat = ai.chat
-    orig_available = ai.ai_available
-    # Ensure a clean slate even if a prior run left artifacts behind.
+
+def _assert_no_partial_files() -> None:
+    assert not os.path.exists(_py_path()), f"left a partial python file: {_py_path()}"
+    assert not os.path.exists(_tsx_path()), f"left a partial tsx file: {_tsx_path()}"
+
+
+# --------------------------- positive ---------------------------
+def test_build_feature_happy_path_registers_and_renders():
+    """Full pipeline: valid generation -> done -> files written -> skill
+    registered -> harness builds an 'ok' panel (the chat-invoke path)."""
     _cleanup()
+    restore = _install_fake_ai(None, _payload(_VALID_PY, _VALID_TSX))
     try:
-        ai.ai_available = lambda: True
-        ai.chat = _make_stub_chat(payload)
+        events = _drive("a deterministic test gauge for the e2e suite")
 
-        events = _drive("Build me a test widget that shows a synthetic price series.")
         stages = [e.get("stage") for e in events]
+        assert "error" not in stages, f"unexpected error stage: {events}"
+        assert stages[-1] == "done", f"did not reach done: {stages}"
 
-        # 1) The pipeline reached the terminal `done` stage (no error stage).
-        assert "error" not in stages, f"pipeline errored: {events}"
-        assert stages[-1] == "done", f"expected final stage 'done', got stages={stages}"
         done = events[-1]
-        assert done["feature"]["panelType"] == _PANEL_TYPE, done
+        assert done["feature"]["panelType"] == _TEST_TYPE
+        assert done["feature"]["invokeExample"]
 
-        # 2) Both artifacts were written to disk.
-        py_path = os.path.join(dynamic_skills.GENERATED_DIR, f"{_PANEL_TYPE}.py")
-        tsx_path = os.path.join(feature_builder.PANEL_DIR, f"{_PANEL_TYPE}.tsx")
-        assert os.path.exists(py_path), f"skill module not written: {py_path}"
-        assert os.path.exists(tsx_path), f"panel component not written: {tsx_path}"
+        # Both artifacts are on disk.
+        assert os.path.exists(_py_path()), "python skill not written"
+        assert os.path.exists(_tsx_path()), "tsx panel not written"
 
-        # 3) The skill registered in the live registry as a dynamic skill.
-        assert _PANEL_TYPE in skills.SKILLS, "skill was not registered in skills.SKILLS"
-        assert dynamic_skills.is_dynamic(_PANEL_TYPE), "skill not marked as dynamic"
+        # Skill is registered in-process (no restart needed).
+        assert _TEST_TYPE in skills.SKILLS
+        assert dynamic_skills.is_dynamic(_TEST_TYPE)
 
-        # 4) The harness can build a working panel from the new skill.
-        panel = harness.run_skill(_PANEL_TYPE, {"symbol": "AAPL"}, {"x": 0, "y": 0, "w": 6, "h": 4})
-        assert panel["status"] == "ok", f"harness failed to build panel: {panel}"
-        assert panel["type"] == _PANEL_TYPE
-        assert panel["data"]["symbol"] == "AAPL"
-        assert isinstance(panel["data"]["points"], list) and panel["data"]["points"], panel
-        # Freshness metadata is lifted onto the panel envelope, not the data dict.
+        # Dispatching it (what the chat invoke does) yields a renderable panel.
+        panel = harness.run_skill(_TEST_TYPE, {"label": "QA"}, {"x": 0, "y": 0, "w": 6, "h": 4})
+        assert panel["status"] == "ok", f"panel build failed: {panel.get('note')}"
+        assert panel["type"] == _TEST_TYPE
+        assert panel["data"]["label"] == "QA"
+        assert isinstance(panel["data"]["reading"], (int, float))
+        # Freshness metadata is lifted onto the envelope, not the data dict.
         assert panel["source"] == "mock"
         assert "source" not in panel["data"]
     finally:
-        ai.chat = orig_chat
-        ai.ai_available = orig_available
+        restore()
         _cleanup()
 
 
-def test_build_feature_leaves_generated_dirs_clean():
-    """After the happy-path run + cleanup, no test artifacts remain on disk."""
-    py_path = os.path.join(dynamic_skills.GENERATED_DIR, f"{_PANEL_TYPE}.py")
-    tsx_path = os.path.join(feature_builder.PANEL_DIR, f"{_PANEL_TYPE}.tsx")
-    assert not os.path.exists(py_path), "test skill module was left behind"
-    assert not os.path.exists(tsx_path), "test panel component was left behind"
-    assert _PANEL_TYPE not in skills.SKILLS, "test skill was left registered"
+# --------------------------- negative: clean failure leaves no files ---------------------------
+def test_invalid_python_leaves_no_partial_files():
+    """build() raising means the isolated validator fails -> error, no files."""
+    _cleanup()
+    bad_py = _VALID_PY.replace(
+        "    reading = round(rng.random() * 100, 2)",
+        "    raise RuntimeError('boom')\n    reading = 0",
+    )
+    restore = _install_fake_ai(None, _payload(bad_py, _VALID_TSX))
+    try:
+        events = _drive("a gauge whose builder explodes")
+        assert events[-1]["stage"] == "error", f"expected error, got {events[-1]}"
+        _assert_no_partial_files()
+        assert _TEST_TYPE not in skills.SKILLS
+    finally:
+        restore()
+        _cleanup()
+
+
+def test_invalid_tsx_leaves_no_partial_files():
+    """A TSX panel without a default export is rejected before any write."""
+    _cleanup()
+    bad_tsx = _VALID_TSX.replace("export default function", "function")
+    restore = _install_fake_ai(None, _payload(_VALID_PY, bad_tsx))
+    try:
+        events = _drive("a gauge whose panel has no default export")
+        assert events[-1]["stage"] == "error", f"expected error, got {events[-1]}"
+        _assert_no_partial_files()
+        assert _TEST_TYPE not in skills.SKILLS
+    finally:
+        restore()
+        _cleanup()
+
+
+def test_unsafe_python_blocked_by_guard_leaves_no_files():
+    """A disallowed import is rejected by the static guard before execution."""
+    _cleanup()
+    unsafe_py = "import os\n" + _VALID_PY
+    restore = _install_fake_ai(None, _payload(unsafe_py, _VALID_TSX))
+    try:
+        events = _drive("a gauge that tries to import os")
+        assert events[-1]["stage"] == "error", f"expected error, got {events[-1]}"
+        assert "safety" in events[-1]["message"].lower()
+        _assert_no_partial_files()
+        assert _TEST_TYPE not in skills.SKILLS
+    finally:
+        restore()
+        _cleanup()
+
+
+def test_empty_description_is_rejected():
+    """An empty request errors immediately and never calls the AI or writes."""
+    _cleanup()
+    try:
+        events = _drive("   ")
+        assert len(events) == 1
+        assert events[0]["stage"] == "error"
+        _assert_no_partial_files()
+    finally:
+        _cleanup()
 
 
 def _run_all() -> int:
     tests = [
-        test_build_feature_happy_path,
-        test_build_feature_leaves_generated_dirs_clean,
+        test_build_feature_happy_path_registers_and_renders,
+        test_invalid_python_leaves_no_partial_files,
+        test_invalid_tsx_leaves_no_partial_files,
+        test_unsafe_python_blocked_by_guard_leaves_no_files,
+        test_empty_description_is_rejected,
     ]
     failed = 0
     for t in tests:
