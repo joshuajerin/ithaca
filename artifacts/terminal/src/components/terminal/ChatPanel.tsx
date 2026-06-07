@@ -4,44 +4,30 @@ import { useGetSuggestions, useGetSkills, useGetWatchlist, useGetSectors } from 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Send, ChevronRight, Activity, Command, LayoutGrid, X } from "lucide-react";
+import type { ConsoleMessage } from "@/hooks/useConsoleConversation";
 
 interface ChatPanelProps {
   sessionId?: string;
   onCommand: (cmd: string) => void;
   isProcessing: boolean;
-  // The latest assistant reply (a build summary or a conversational answer),
-  // carried with a monotonically increasing nonce so every reply renders — even
-  // when its text repeats a previous one (no content-based dedup dropping it).
-  reply?: { text: string; kind: 'answer' | 'summary'; nonce: number } | null;
+  // The transcript is owned by the parent (persisted across reloads) and passed
+  // in as a controlled prop. The operator's message is appended by the parent
+  // when it dispatches the command.
+  messages: ConsoleMessage[];
   // Forwarded ref to the command input so power-user hotkeys (e.g. "/" or ⌘K)
   // can focus it from anywhere in the terminal.
   inputRef?: React.Ref<HTMLInputElement>;
 }
 
-interface Message {
-  role: 'user' | 'assistant';
-  content: string;
-  kind?: 'answer' | 'summary';
-}
-
-export function ChatPanel({ sessionId, onCommand, isProcessing, reply, inputRef }: ChatPanelProps) {
+export function ChatPanel({ sessionId, onCommand, isProcessing, messages, inputRef }: ChatPanelProps) {
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<Message[]>([]);
   const [showSectors, setShowSectors] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const lastReplyNonce = useRef(0);
 
   const { data: suggestions } = useGetSuggestions();
   const { data: skills } = useGetSkills();
   const { data: watchlist } = useGetWatchlist();
   const { data: sectorList } = useGetSectors();
-
-  useEffect(() => {
-    if (reply && reply.text && reply.nonce !== lastReplyNonce.current) {
-      lastReplyNonce.current = reply.nonce;
-      setMessages(prev => [...prev, { role: 'assistant', content: reply.text, kind: reply.kind }]);
-    }
-  }, [reply]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -52,15 +38,13 @@ export function ChatPanel({ sessionId, onCommand, isProcessing, reply, inputRef 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isProcessing) return;
-    
+
     const cmd = input.trim();
     setInput("");
-    setMessages(prev => [...prev, { role: 'user', content: cmd }]);
     onCommand(cmd);
   };
 
   const handleSuggestionClick = (prompt: string) => {
-    setMessages(prev => [...prev, { role: 'user', content: prompt }]);
     onCommand(prompt);
   };
 

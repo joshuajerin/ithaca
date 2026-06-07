@@ -21,5 +21,6 @@
 - [Supply chain risk scoring](supply-chain-risk.md) — concentration×geo risk score per node; built-in panels have a pydantic model in harness.DATA_MODELS that strips unknown fields (add fields to models.py too).
 - [Earnings calendar panel + alert](earnings-calendar-panel.md) — passthrough earnings_calendar type; explicit-symbol horizon=120 vs watchlist=30; Terminal.tsx imminent banner reuses formatEarningsCountdown.
 - [Sovereign curve comparison panel](sovereign-curve-compare.md) — multi-curve overlay adds per-tenor twist (shared _region_spot) so cross-market spreads vary; route before yield_curve.
+- [Console conversation persistence](console-conversation-persistence.md) — transcript+sessionId in localStorage; ChatPanel now controlled; reset = new sessionId → clear; survives refresh not server restart.
 - [Strategy lifecycle & paper book desk](strategy-lifecycle-desk.md) — registry+paperbook+lifecycle; deterministic intent handler before LLM; runtime CREATE TABLE not drizzle push; mark has no weight (use exposures); vite build needs PORT+BASE_PATH.
 - [Multi-ticker analyst compare](analyst-compare.md) — fan out build_analyst_report per symbol concurrently, isolate per-name failures; heuristic keyword traps ("view"⊂"overview").

@@ -12,6 +12,7 @@ import { VoicePanel } from "@/components/terminal/VoicePanel";
 import { NavigatorCursor } from "@/components/terminal/NavigatorCursor";
 import { useVoiceConductor } from "@/hooks/useVoiceConductor";
 import { useNavigator } from "@/hooks/useNavigator";
+import { useConsoleConversation } from "@/hooks/useConsoleConversation";
 import { FeatureRequestModal } from "@/components/terminal/FeatureRequestModal";
 import { DotWaveCanvas } from "@/components/terminal/DotWaveCanvas";
 import { useToast } from "@/hooks/use-toast";
@@ -59,11 +60,6 @@ export default function Terminal() {
   const [highlightedPanelId, setHighlightedPanelId] = useState<string | null>(null);
   const [chatOpen, setChatOpen] = useState(true);
   const [showFeatureModal, setShowFeatureModal] = useState(false);
-  // The latest assistant reply to surface in the Console, carried with an
-  // incrementing nonce so every reply renders — including a question's answer
-  // even when panels did not change.
-  const [reply, setReply] = useState<{ text: string; kind: 'answer' | 'summary'; nonce: number } | null>(null);
-  const replyNonce = useRef(0);
 
   // Ref to the command input so keyboard shortcuts can focus it from anywhere.
   const commandInputRef = useRef<HTMLInputElement>(null);
@@ -74,13 +70,33 @@ export default function Terminal() {
     window.setTimeout(() => commandInputRef.current?.focus(), 80);
   }, []);
 
-  const pushReply = useCallback((result: DashboardSpec) => {
-    const isAnswer = result.intent === "question";
-    const text = (isAnswer ? result.answer : result.summary) || "";
-    if (!text) return;
-    replyNonce.current += 1;
-    setReply({ text, kind: isAnswer ? 'answer' : 'summary', nonce: replyNonce.current });
-  }, []);
+  // The Console conversation (transcript + the backend session id it belongs
+  // to) is persisted in localStorage so it survives a page reload. Reusing the
+  // stored session id keeps follow-up questions in context with the same
+  // backend session.
+  const convo = useConsoleConversation();
+
+  // Adopt a backend result into the conversation: keep the session id in sync,
+  // surface the assistant reply in the Console, and — when a reset minted a new
+  // session id — wipe the persisted transcript so the Console starts fresh too.
+  const adoptResult = useCallback(
+    (result: DashboardSpec, sentSessionId: string | undefined) => {
+      const wasReset =
+        !!sentSessionId &&
+        !!result.sessionId &&
+        result.sessionId !== sentSessionId;
+      if (wasReset) {
+        convo.clear();
+        convo.setSessionId(result.sessionId);
+        return;
+      }
+      convo.setSessionId(result.sessionId);
+      const isAnswer = result.intent === "question";
+      const text = (isAnswer ? result.answer : result.summary) || "";
+      if (text) convo.addAssistantMessage(text, isAnswer ? "answer" : "summary");
+    },
+    [convo],
+  );
 
   const orchestrate = useOrchestrate();
   const speak = useSpeak();
@@ -88,11 +104,13 @@ export default function Terminal() {
   const { toast } = useToast();
   const isMobile = useIsMobile();
 
-  // Keep a ref to the latest sessionId for the voice conductor callbacks.
+  // Keep a ref to the latest sessionId for the voice conductor callbacks. The
+  // source of truth is the persisted conversation, so a reloaded page keeps
+  // talking to the same backend session.
   const sessionIdRef = useRef<string | undefined>(undefined);
   useEffect(() => {
-    sessionIdRef.current = activeDashboard?.sessionId || undefined;
-  }, [activeDashboard?.sessionId]);
+    sessionIdRef.current = convo.sessionId || undefined;
+  }, [convo.sessionId]);
 
   // AI navigator cursor — drives across the dashboard, stopping on each panel.
   const navigator = useNavigator({
@@ -131,21 +149,25 @@ export default function Terminal() {
   const handleCommand = async (command: string) => {
     // A new command always supersedes a running tour.
     if (navigatorRef.current.active) navigatorRef.current.stop();
+    // Record the operator's message immediately so the Console (and its
+    // persisted transcript) reflects what was asked.
+    convo.addUserMessage(command);
+    const sent = sessionIdRef.current;
     try {
       if (NAV_INTENT.test(command)) {
         const bare = tourSubject(command).length === 0;
         // "Walk me through this" with panels already up → tour what's on screen.
-        if (bare && hasPanels && sessionIdRef.current) {
-          await runTour(sessionIdRef.current, command);
+        if (bare && hasPanels && sent) {
+          await runTour(sent, command);
           return;
         }
         // Otherwise build the dashboard for the request first, then tour it once
         // the new panels have rendered.
         const result = await orchestrate.mutateAsync({
-          data: { query: command, sessionId: sessionIdRef.current },
+          data: { query: command, sessionId: sent },
         });
         setActiveDashboard(result);
-        pushReply(result);
+        adoptResult(result, sent);
         window.setTimeout(() => void runTour(result.sessionId, command), 850);
         return;
       }
@@ -153,13 +175,13 @@ export default function Terminal() {
       const result = await orchestrate.mutateAsync({
         data: {
           query: command,
-          sessionId: sessionIdRef.current,
+          sessionId: sent,
         },
       });
       // A question answer leaves the panels untouched; a build recomposes them.
       // Either way we adopt the returned spec so the session id stays in sync.
       setActiveDashboard(result);
-      pushReply(result);
+      adoptResult(result, sent);
     } catch (e) {
       console.error("Orchestration failed", e);
     }
@@ -213,13 +235,20 @@ export default function Terminal() {
   // Voice flow: transcript -> orchestrate(voice) -> narration segments.
   const processVoiceQuery = useCallback(
     async (text: string): Promise<NarrationSegment[]> => {
+      const sent = sessionIdRef.current;
       const result = await orchestrate.mutateAsync({
-        data: { query: text, sessionId: sessionIdRef.current, voice: true },
+        data: { query: text, sessionId: sent, voice: true },
       });
       setActiveDashboard(result);
+      // Voice turns stay out of the Console transcript, but the session id must
+      // still track so a later typed follow-up reuses the same backend session.
+      // A voice-triggered reset also clears the persisted conversation.
+      const wasReset = !!sent && !!result.sessionId && result.sessionId !== sent;
+      if (wasReset) convo.clear();
+      convo.setSessionId(result.sessionId);
       return result.narration ?? [];
     },
-    [orchestrate],
+    [orchestrate, convo],
   );
 
   const synthesize = useCallback(
@@ -306,14 +335,14 @@ export default function Terminal() {
             <div className="hidden sm:flex flex-col items-end">
               <span className="editorial-label text-[9px] text-muted-foreground">Session</span>
               <span className="font-serif text-sm nums-tabular mt-0.5">
-                {activeDashboard?.sessionId ? activeDashboard.sessionId.slice(0, 8) : '—'}
+                {convo.sessionId ? convo.sessionId.slice(0, 8) : '—'}
               </span>
             </div>
             <div className="hidden sm:block h-7 w-px bg-border" />
             <div className="hidden sm:flex flex-col items-end">
               <span className="editorial-label text-[9px] text-muted-foreground">Status</span>
               <span className="font-serif text-sm mt-0.5">
-                {activeDashboard?.sessionId ? 'Live' : 'Ready'}
+                {convo.sessionId ? 'Live' : 'Ready'}
               </span>
             </div>
             <div className="hidden sm:block h-7 w-px bg-border" />
@@ -466,10 +495,10 @@ export default function Terminal() {
           >
             <div style={{ width: 400, minWidth: 400 }} className="flex flex-col h-full">
               <ChatPanel
-                sessionId={activeDashboard?.sessionId}
+                sessionId={convo.sessionId}
                 onCommand={handleCommand}
                 isProcessing={orchestrate.isPending}
-                reply={reply}
+                messages={convo.messages}
                 inputRef={commandInputRef}
               />
             </div>
