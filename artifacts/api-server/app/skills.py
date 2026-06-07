@@ -5750,6 +5750,86 @@ def _company_correlations(symbol: str, peer_syms: List[str]) -> Optional[List[di
     return out[:5]
 
 
+_CATALYST_BULLISH_KW = (
+    "growth", "beat", "ramp", "synergy", "synergies", "relief", "recovery",
+    "premium", "win", "wins", "upside", "expansion", "expand", "accelerate",
+    "support", "supports", "buyback", "dividend", "design-win", "design wins",
+    "re-rating", "rerating", "backlog", "milestone", "production start",
+)
+_CATALYST_BEARISH_KW = (
+    "decline", "contraction", "headwind", "concern", "concerns", "curb", "curbs",
+    "restrict", "restriction", "restrictions", "tighten", "weak", "pressure",
+    "loss", "risk", "risks", "slowdown", "soft", "overhang", "delay",
+)
+
+
+def _enrich_catalyst(symbol: str, company: dict, cat: dict) -> dict:
+    """Derive a sentiment read and a 2-3 sentence breakdown for a single catalyst.
+
+    Pre-populates expandable detail in the payload (no extra API call). Sentiment
+    is conservative: neutral unless the catalyst's own description leans clearly
+    one way.
+    """
+    text = f"{cat.get('event', '')} {cat.get('description', '')}".lower()
+
+    def _kw_hits(keywords) -> int:
+        return sum(1 for kw in keywords if re.search(r"\b" + re.escape(kw) + r"\b", text))
+
+    bull = _kw_hits(_CATALYST_BULLISH_KW)
+    bear = _kw_hits(_CATALYST_BEARISH_KW)
+    if bull > bear:
+        sentiment = "bullish"
+        read = "Our read leans bullish — the setup favors upside if the event lands in line with or ahead of expectations."
+    elif bear > bull:
+        sentiment = "bearish"
+        read = "Our read leans bearish — the balance of risk skews to the downside if the outcome disappoints."
+    else:
+        sentiment = "neutral"
+        read = "We read this as neutral — the outcome is closer to binary and hard to handicap with conviction in advance."
+
+    impact = cat.get("impact", "Medium")
+    name = company.get("name", symbol)
+    try:
+        days = (date.fromisoformat(cat["date"]) - date.today()).days
+    except Exception:
+        days = None
+    when = (
+        f"scheduled in about {days} days" if isinstance(days, int) and days > 0
+        else "due imminently" if isinstance(days, int) and days <= 0
+        else "upcoming"
+    )
+    impact_clause = {
+        "High": f"As a high-impact event {when}, it has the potential to drive an outsized move in {symbol}.",
+        "Medium": f"As a medium-impact event {when}, it can meaningfully shift sentiment around {name} at the margin.",
+        "Low": f"As a lower-impact event {when}, it is more of a sentiment data point than a standalone catalyst for {symbol}.",
+    }.get(impact, f"This event is {when} and worth tracking for {symbol}.")
+
+    detail = f"{cat.get('description', '').rstrip('.')}. {impact_clause} {read}"
+    out = dict(cat)
+    out["sentiment"] = sentiment
+    out["detail"] = detail
+    return out
+
+
+_DRIVER_TAG_OUTLOOK = {
+    "bullish": "On balance this is a supportive factor for the shares from here.",
+    "bearish": "On balance this is a drag on the shares that bears close watching.",
+    "neutral": "On its own this is broadly neutral for direction and should be read alongside the other drivers.",
+}
+
+
+def _compose_driver_detail(company: dict, driver: dict) -> str:
+    """Build a paragraph-grade supporting-context detail for a price driver."""
+    explanation = (driver.get("explanation") or "").strip()
+    tag = driver.get("tag", "neutral")
+    base = f"{explanation} " if explanation else ""
+    return (
+        f"{base}This read is grounded in {company.get('name', '')}'s "
+        f"current fundamentals and the latest news flow rather than any single data point. "
+        f"{_DRIVER_TAG_OUTLOOK.get(tag, _DRIVER_TAG_OUTLOOK['neutral'])}"
+    ).strip()
+
+
 def _company_analytics_fallback(symbol: str, company: dict) -> dict:
     """Rules-based price drivers when AI is unavailable."""
     chg = company["changePct"]
@@ -5794,6 +5874,10 @@ def _company_analytics_fallback(symbol: str, company: dict) -> dict:
         drivers.append({"title": "High-beta macro sensitivity", "tag": "neutral",
                         "explanation": f"Beta of {company['beta']:.2f} means outsized moves with the broader market."})
 
+    # Ensure every driver carries an expandable detail paragraph.
+    for d in drivers:
+        d["detail"] = _compose_driver_detail(company, d)
+
     return drivers[:5]
 
 
@@ -5831,8 +5915,9 @@ def build_company_analytics(params: dict) -> dict:
     # --- KPI correlations (live rolling price correlations, curated fallback) ---
     correlations = _company_correlations(symbol, peer_syms) or data.get_kpi_correlations(symbol)
 
-    # --- Catalysts (live earnings/dividend calendar merged with curated events) ---
-    catalysts = _company_catalysts(symbol, company)
+    # --- Catalysts (live earnings/dividend calendar merged with curated events,
+    #     then enriched with a sentiment read + expandable breakdown) ---
+    catalysts = [_enrich_catalyst(symbol, company, cat) for cat in _company_catalysts(symbol, company)]
 
     # --- Price drivers (AI preferred, rules fallback) ---
     if ai.ai_available():
@@ -5855,7 +5940,10 @@ def build_company_analytics(params: dict) -> dict:
                 "reasons this stock is moving today (could be up or down). "
                 "Respond with a single JSON object and nothing else: "
                 '{"drivers": [{"title": string (max 6 words), "tag": "bullish"|"bearish"|"neutral", '
-                '"explanation": string (1-2 sentences)}]}. '
+                '"explanation": string (1-2 sentences), '
+                '"detail": string (a full paragraph of 3-4 sentences expanding on the driver — '
+                "the mechanism behind it, supporting evidence from the data, and what it means "
+                'for the stock from here)}]}. '
                 "Do not invent precise figures beyond what is provided.\n\nDATA:\n"
                 + json.dumps(ctx)
             )
@@ -5875,10 +5963,15 @@ def build_company_analytics(params: dict) -> dict:
             drivers = parsed.get("drivers") or []
             if not drivers:
                 raise ValueError("empty drivers")
-            # Validate tags
+            # Validate tags & ensure each driver carries an expandable detail paragraph
             for d in drivers:
                 if d.get("tag") not in ("bullish", "bearish", "neutral"):
                     d["tag"] = "neutral"
+                detail = (d.get("detail") or "").strip()
+                # Backfill a real paragraph when the model omits detail or just
+                # echoes the one-line explanation.
+                if not detail or detail == (d.get("explanation") or "").strip():
+                    d["detail"] = _compose_driver_detail(company, d)
             drivers = drivers[:5]
         except Exception:
             drivers = _company_analytics_fallback(symbol, company)

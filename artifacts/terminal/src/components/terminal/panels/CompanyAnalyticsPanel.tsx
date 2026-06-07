@@ -1,12 +1,14 @@
-import React from "react";
+import React, { useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowUpRight, ArrowDownRight, ArrowRight, Zap, BarChart2, GitBranch, Calendar } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight, ArrowRight, Zap, BarChart2, GitBranch, Calendar, ChevronDown } from "lucide-react";
 
 interface Driver {
   title: string;
   tag: "bullish" | "bearish" | "neutral";
   explanation: string;
+  detail?: string;
 }
 
 interface Peer {
@@ -30,6 +32,8 @@ interface Catalyst {
   date: string;
   impact: "High" | "Medium" | "Low";
   description: string;
+  sentiment?: "bullish" | "bearish" | "neutral";
+  detail?: string;
 }
 
 interface PeriodReturns {
@@ -117,6 +121,8 @@ function ReturnStat({ label, value }: { label: string; value?: number | null }) 
 export function CompanyAnalyticsPanel({ data }: { data: CompanyAnalyticsData }) {
   const trend = data.priceTrendPct >= 0;
   const r = data.returns ?? { "1D": data.priceTrendPct };
+  const [expandedDriver, setExpandedDriver] = useState<number | null>(null);
+  const [expandedCatalyst, setExpandedCatalyst] = useState<number | null>(null);
 
   return (
     <ScrollArea className="h-full pr-1">
@@ -140,20 +146,53 @@ export function CompanyAnalyticsPanel({ data }: { data: CompanyAnalyticsData }) 
             </span>
           </div>
           <div className="flex flex-col border-t border-border">
-            {data.drivers.map((d, i) => (
-              <div key={i} className="flex gap-3 py-2.5 border-b border-border last:border-b-0">
-                <span className="editorial-label text-[8px] text-muted-foreground mt-0.5 nums-tabular shrink-0 w-4">
-                  {String(i + 1).padStart(2, "0")}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-start gap-2 mb-1">
-                    <span className="font-serif text-sm text-white leading-tight">{d.title}</span>
-                    <TagBadge tag={d.tag} />
-                  </div>
-                  <p className="editorial-label text-[8.5px] text-muted-foreground leading-relaxed">{d.explanation}</p>
+            {data.drivers.map((d, i) => {
+              const open = expandedDriver === i;
+              const hasDetail = !!(d.detail && d.detail.trim());
+              return (
+                <div key={i} className="border-b border-border last:border-b-0">
+                  <button
+                    type="button"
+                    disabled={!hasDetail}
+                    onClick={() => setExpandedDriver(open ? null : i)}
+                    aria-expanded={open}
+                    className={`w-full flex gap-3 py-2.5 text-left ${hasDetail ? "cursor-pointer hover:bg-white/[0.03]" : "cursor-default"} transition-colors`}
+                  >
+                    <span className="editorial-label text-[8px] text-muted-foreground mt-0.5 nums-tabular shrink-0 w-4">
+                      {String(i + 1).padStart(2, "0")}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start gap-2 mb-1">
+                        <span className="font-serif text-sm text-white leading-tight">{d.title}</span>
+                        <TagBadge tag={d.tag} />
+                        {hasDetail && (
+                          <ChevronDown
+                            className={`w-3 h-3 text-muted-foreground ml-auto mt-0.5 shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+                            strokeWidth={1.5}
+                          />
+                        )}
+                      </div>
+                      <p className="editorial-label text-[8.5px] text-muted-foreground leading-relaxed">{d.explanation}</p>
+                    </div>
+                  </button>
+                  <AnimatePresence initial={false}>
+                    {open && hasDetail && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+                        className="overflow-hidden"
+                      >
+                        <p className="editorial-label text-[8.5px] text-gray-400 leading-relaxed pl-7 pr-1 pb-3 border-l border-white/15 ml-1.5">
+                          {d.detail}
+                        </p>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
 
@@ -250,20 +289,63 @@ export function CompanyAnalyticsPanel({ data }: { data: CompanyAnalyticsData }) 
             <span className="editorial-label text-[8.5px] text-muted-foreground tracking-widest uppercase">Catalyst Watch</span>
           </div>
           <div className="flex flex-col border-t border-border">
-            {data.catalysts.map((cat, i) => (
-              <div key={i} className="flex gap-3 py-2.5 border-b border-border last:border-b-0">
-                <div className="flex flex-col gap-0.5 shrink-0 w-16">
-                  <span className="editorial-label text-[7.5px] text-muted-foreground nums-tabular">
-                    {new Date(cat.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                  </span>
-                  <ImpactBadge impact={cat.impact} />
+            {data.catalysts.map((cat, i) => {
+              const open = expandedCatalyst === i;
+              const hasDetail = !!(cat.detail && cat.detail.trim());
+              return (
+                <div key={i} className="border-b border-border last:border-b-0">
+                  <button
+                    type="button"
+                    disabled={!hasDetail}
+                    onClick={() => setExpandedCatalyst(open ? null : i)}
+                    aria-expanded={open}
+                    className={`w-full flex gap-3 py-2.5 text-left ${hasDetail ? "cursor-pointer hover:bg-white/[0.03]" : "cursor-default"} transition-colors`}
+                  >
+                    <div className="flex flex-col gap-0.5 shrink-0 w-16">
+                      <span className="editorial-label text-[7.5px] text-muted-foreground nums-tabular">
+                        {new Date(cat.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                      </span>
+                      <ImpactBadge impact={cat.impact} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start gap-2 mb-1">
+                        <span className="font-serif text-sm text-white leading-tight">{cat.event}</span>
+                        {hasDetail && (
+                          <ChevronDown
+                            className={`w-3 h-3 text-muted-foreground ml-auto mt-0.5 shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+                            strokeWidth={1.5}
+                          />
+                        )}
+                      </div>
+                      <p className="editorial-label text-[8.5px] text-muted-foreground leading-relaxed">{cat.description}</p>
+                    </div>
+                  </button>
+                  <AnimatePresence initial={false}>
+                    {open && hasDetail && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+                        className="overflow-hidden"
+                      >
+                        <div className="pl-[4.75rem] pr-1 pb-3">
+                          <div className="border-l border-white/15 pl-3 flex flex-col gap-1.5">
+                            {cat.sentiment && (
+                              <div className="flex items-center gap-1.5">
+                                <span className="editorial-label text-[7px] text-muted-foreground tracking-widest uppercase">Sentiment Read</span>
+                                <TagBadge tag={cat.sentiment} />
+                              </div>
+                            )}
+                            <p className="editorial-label text-[8.5px] text-gray-400 leading-relaxed">{cat.detail}</p>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="font-serif text-sm text-white leading-tight mb-1">{cat.event}</div>
-                  <p className="editorial-label text-[8.5px] text-muted-foreground leading-relaxed">{cat.description}</p>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
 
