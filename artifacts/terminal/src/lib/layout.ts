@@ -20,23 +20,23 @@ export function rectsOverlap(a: Rect, b: Rect): boolean {
 }
 
 /** A rect fits when it is on-grid and clears every already-placed rect. */
-function fits(rect: Rect, placed: Rect[]): boolean {
-  if (rect.x < 0 || rect.y < 0 || rect.x + rect.w > GRID_COLUMNS) return false;
+function fits(rect: Rect, placed: Rect[], columns: number): boolean {
+  if (rect.x < 0 || rect.y < 0 || rect.x + rect.w > columns) return false;
   return !placed.some((p) => rectsOverlap(rect, p));
 }
 
 /** First top-left slot (row-major scan) where a w×h rect fits among placed rects. */
-function findSlot(w: number, h: number, placed: Rect[]): { x: number; y: number } {
+function findSlot(w: number, h: number, placed: Rect[], columns: number): { x: number; y: number } {
   for (let y = 0; ; y++) {
-    for (let x = 0; x + w <= GRID_COLUMNS; x++) {
-      if (fits({ x, y, w, h }, placed)) return { x, y };
+    for (let x = 0; x + w <= columns; x++) {
+      if (fits({ x, y, w, h }, placed, columns)) return { x, y };
     }
   }
 }
 
-/** Clamp an AI-emitted layout to a sane on-grid rect (integer units, w within 1..12). */
-function normalize(layout: Panel["layout"]): Rect {
-  const w = Math.max(1, Math.min(GRID_COLUMNS, Math.round(layout.w) || 1));
+/** Clamp an AI-emitted layout to a sane on-grid rect (integer units, w within 1..columns). */
+function normalize(layout: Panel["layout"], columns: number): Rect {
+  const w = Math.max(1, Math.min(columns, Math.round(layout.w) || 1));
   const h = Math.max(1, Math.round(layout.h) || 1);
   const x = Math.max(0, Math.round(layout.x) || 0);
   const y = Math.max(0, Math.round(layout.y) || 0);
@@ -56,9 +56,16 @@ function normalize(layout: Panel["layout"]): Rect {
  * conflicting panel happened to be processed first. The returned array
  * preserves the original panel order and only allocates a new object for panels
  * whose layout actually changed.
+ *
+ * `columns` controls the effective grid width. On narrow viewports a smaller
+ * column count collapses wide panels (w is clamped to `columns`) and the same
+ * reserve-then-reflow algorithm naturally stacks them.
  */
-export function resolvePanelLayouts(panels: Panel[]): Panel[] {
-  if (panels.length <= 1) return panels;
+export function resolvePanelLayouts(panels: Panel[], columns: number = GRID_COLUMNS): Panel[] {
+  if (panels.length === 0) return panels;
+  // With a single column every panel spans the full width; with one panel and a
+  // full-width grid there is nothing to resolve.
+  if (panels.length <= 1 && columns >= GRID_COLUMNS) return panels;
 
   const order = panels
     .map((panel, index) => ({ panel, index }))
@@ -74,8 +81,8 @@ export function resolvePanelLayouts(panels: Panel[]): Panel[] {
 
   // Pass 1 — reserve non-conflicting panels at their desired positions.
   for (const { panel } of order) {
-    const desired = normalize(panel.layout);
-    if (fits(desired, placed)) {
+    const desired = normalize(panel.layout, columns);
+    if (fits(desired, placed, columns)) {
       placed.push(desired);
       resolved.set(panel.id, desired);
     } else {
@@ -85,7 +92,7 @@ export function resolvePanelLayouts(panels: Panel[]): Panel[] {
 
   // Pass 2 — reflow conflicting panels into the gaps left behind.
   for (const { panel, rect } of needsReflow) {
-    const slot = findSlot(rect.w, rect.h, placed);
+    const slot = findSlot(rect.w, rect.h, placed, columns);
     const final = { x: slot.x, y: slot.y, w: rect.w, h: rect.h };
     placed.push(final);
     resolved.set(panel.id, final);

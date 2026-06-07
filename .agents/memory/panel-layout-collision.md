@@ -23,3 +23,10 @@ their AI positions; only two-pass guarantees that.
 **How to apply:** if you extend layout logic (e.g. resize handles, persistence),
 keep the reserve-then-reflow ordering. Panels keep the same object reference when
 their layout is unchanged, so don't assume the returned array is all-new.
+
+**Responsive columns:** `resolvePanelLayouts(panels, columns = GRID_COLUMNS)` is
+parameterized by effective column count — the same two-pass algorithm collapses
+wide panels (`normalize` clamps `w` to `columns`) and stacks them at narrower
+grids. Dashboard.tsx picks columns by viewport via `useResponsiveColumns` (1 on
+phones <768px, 6 on tablets <1280px, 12 otherwise) and feeds the same count to
+both the CSS `gridTemplateColumns` and the resolver — keep those two in sync.

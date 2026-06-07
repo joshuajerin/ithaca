@@ -35,12 +35,40 @@ interface DragState {
   curH: number;
 }
 
+/**
+ * Effective grid width for the current viewport. On phones we collapse to a
+ * single stacked column; on tablets / narrow desktops we halve the grid so wide
+ * panels are not crammed into a raw 12-column layout. The same reserve-then-reflow
+ * algorithm in `resolvePanelLayouts` adapts to whatever column count we return.
+ */
+function useResponsiveColumns(): number {
+  const getColumns = React.useCallback(() => {
+    if (typeof window === "undefined") return GRID_COLUMNS;
+    const w = window.innerWidth;
+    if (w < 768) return 1;
+    if (w < 1280) return 6;
+    return GRID_COLUMNS;
+  }, []);
+
+  const [columns, setColumns] = React.useState<number>(getColumns);
+
+  React.useEffect(() => {
+    const onResize = () => setColumns(getColumns());
+    window.addEventListener("resize", onResize);
+    onResize();
+    return () => window.removeEventListener("resize", onResize);
+  }, [getColumns]);
+
+  return columns;
+}
+
 export function Dashboard({
   dashboard,
   onPanelRefined,
   onPanelResized,
   highlightedPanelId,
 }: DashboardProps) {
+  const columns = useResponsiveColumns();
   const gridRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
   // Live preview of the panel currently being resized. Only the dragged panel
@@ -59,7 +87,10 @@ export function Dashboard({
     let h = d.startH;
     if (d.mode === "right" || d.mode === "both") {
       const deltaW = Math.round(dx / d.unitX);
-      w = Math.max(MIN_W, Math.min(GRID_COLUMNS - d.x, d.startW + deltaW));
+      // Cap to the columns remaining to the right of this panel. On very narrow
+      // grids that maximum can be below MIN_W, so floor the minimum accordingly.
+      const maxW = columns - d.x;
+      w = Math.max(Math.min(MIN_W, maxW), Math.min(maxW, d.startW + deltaW));
     }
     if (d.mode === "bottom" || d.mode === "both") {
       const deltaH = Math.round(dy / d.unitY);
@@ -71,7 +102,7 @@ export function Dashboard({
       d.curH = h;
       setDraft({ id: d.id, w, h });
     }
-  }, []);
+  }, [columns]);
 
   const endDrag = useCallback(
     (e: React.PointerEvent) => {
@@ -99,7 +130,7 @@ export function Dashboard({
       e.preventDefault();
       e.stopPropagation();
       const rect = grid.getBoundingClientRect();
-      const col = (rect.width - GRID_GAP * (GRID_COLUMNS - 1)) / GRID_COLUMNS;
+      const col = (rect.width - GRID_GAP * (columns - 1)) / columns;
       dragRef.current = {
         id,
         mode,
@@ -120,7 +151,7 @@ export function Dashboard({
         /* capture is best-effort */
       }
     },
-    [resizable],
+    [resizable, columns],
   );
 
   if (!dashboard.panels || dashboard.panels.length === 0) {
@@ -133,8 +164,9 @@ export function Dashboard({
   }
 
   // Resolve any overlapping / off-grid coordinates the AI may have emitted so
-  // no two panels ever stack on top of each other.
-  const panels = resolvePanelLayouts(dashboard.panels);
+  // no two panels ever stack on top of each other. The column count adapts to
+  // the viewport so wide panels collapse gracefully on smaller windows.
+  const panels = resolvePanelLayouts(dashboard.panels, columns);
 
   // Row height is ~100px. We use CSS Grid where each unit of height represents roughly that.
   return (
@@ -142,7 +174,7 @@ export function Dashboard({
       ref={gridRef}
       className={`grid gap-6 w-full ${draft ? "select-none" : ""}`}
       style={{
-        gridTemplateColumns: "repeat(12, minmax(0, 1fr))",
+        gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
         gridAutoRows: "120px",
       }}
     >
