@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import List, Optional
 
 from . import data, db, strategy
@@ -450,6 +451,13 @@ async def _ondemand_loop():
 
 # ----------------------------- lifecycle -----------------------------
 async def start() -> None:
+    # Boot smoke checks (scripts/smoke_api.py) set this so the app can verify it
+    # imports, boots and serves a request without kicking off the continuous live
+    # ingestion loops (which make hundreds of network calls and, under some
+    # process-sandboxed runners, spawn yfinance subprocesses that fail to exec).
+    if os.environ.get("TERMINAL_SKIP_WORKER") == "1":
+        log.info("data worker disabled (TERMINAL_SKIP_WORKER=1)")
+        return
     if not db.db_available():
         log.warning("DATABASE_URL not set; data worker disabled, using mock data only")
         return
