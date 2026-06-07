@@ -17,7 +17,7 @@ import { FeatureRequestModal } from "@/components/terminal/FeatureRequestModal";
 import { DotWaveCanvas } from "@/components/terminal/DotWaveCanvas";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles, CalendarClock, X } from "lucide-react";
+import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles, Compass, CalendarClock, X } from "lucide-react";
 import {
   formatEarningsCountdown,
   type EarningsRow,
@@ -426,6 +426,19 @@ export default function Terminal() {
               </span>
             </div>
             <div className="hidden sm:block h-7 w-px bg-border" />
+            {hasPanels && (
+              <button
+                onClick={() => {
+                  if (sessionIdRef.current) {
+                    void runTour(sessionIdRef.current, "walk me through this dashboard");
+                  }
+                }}
+                className="flex items-center gap-2 px-3 py-2 editorial-label text-[9px] border border-border bg-black text-white hover:border-white transition-colors group/btn"
+              >
+                <Compass className="w-3.5 h-3.5 text-muted-foreground group-hover/btn:text-white transition-colors" strokeWidth={1.5} />
+                Tour
+              </button>
+            )}
             <button
               onClick={() => setShowFeatureModal(true)}
               className="flex items-center gap-2 px-3 py-2 editorial-label text-[9px] border border-border bg-black text-white hover:border-white transition-colors group/btn"
