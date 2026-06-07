@@ -37,6 +37,12 @@ ONDEMAND_INTERVAL = 15
 # trading day (one row per strategy per day), so an hourly pass simply keeps the
 # day's NAV fresh and settles to the close once prices stop moving.
 SNAPSHOT_INTERVAL = 3600
+MACRO_INTERVAL = 120
+
+# A macro quote is only treated as "live" when its upstream timestamp is within
+# this many days. Some Yahoo macro symbols (illiquid futures, etc.) go stale or
+# stop updating; we never present a month-old print as a live quote.
+MACRO_STALE_DAYS = 5
 
 # Breadth market-cap refresh: a deliberately slow round-robin that touches only
 # the single market_cap field on mock breadth names (is_live = FALSE), so the
@@ -131,6 +137,25 @@ def _seed_universe() -> None:
     log.info(
         "seeded universe: %d sectors, %d symbols (%d core tracked)",
         len(data.SECTORS), len(data.COMPANIES), len(core),
+    )
+
+
+def _ensure_macro_schema() -> None:
+    """Dedicated, isolated table for live macro/cross-asset quotes.
+
+    Kept separate from `universe`/`fundamentals` so macro pseudo-symbols
+    (^TNX, indices, FX, futures) never leak into equity screeners/heatmaps."""
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS macro_quotes (
+            symbol      TEXT PRIMARY KEY,
+            price       DOUBLE PRECISION,
+            change_pct  DOUBLE PRECISION,
+            sparkline   JSONB,
+            is_live     BOOLEAN NOT NULL DEFAULT FALSE,
+            updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        """
     )
 
 
@@ -322,6 +347,65 @@ async def _ingest_prices(symbol: str) -> None:
         log.warning("price ingest failed for %s: %s", symbol, exc)
 
 
+def _upsert_macro(symbol: str, price, change_pct, sparkline: list, is_live: bool) -> None:
+    import json
+    db.execute(
+        """
+        INSERT INTO macro_quotes (symbol, price, change_pct, sparkline, is_live, updated_at)
+        VALUES (%s, %s, %s, %s, %s, now())
+        ON CONFLICT (symbol) DO UPDATE SET
+          price = EXCLUDED.price,
+          change_pct = EXCLUDED.change_pct,
+          sparkline = EXCLUDED.sparkline,
+          is_live = EXCLUDED.is_live,
+          updated_at = now()
+        """,
+        (symbol, price, change_pct, json.dumps(sparkline), is_live),
+    )
+
+
+def _macro_is_stale(as_of: Optional[str]) -> bool:
+    if not as_of:
+        return True
+    try:
+        from datetime import datetime, timezone
+        then = datetime.fromisoformat(as_of)
+        if then.tzinfo is None:
+            then = then.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - then).days > MACRO_STALE_DAYS
+    except Exception:  # noqa: BLE001
+        return True
+
+
+async def _ingest_macro(symbol: str) -> None:
+    """Fetch a live quote + short sparkline for one macro asset.
+
+    Persists the latest close-series tail as the sparkline and marks the row
+    live only when the upstream quote is fresh; a stale/illiquid symbol is
+    stored with ``is_live = FALSE`` so the dashboard falls back to its curated
+    mock value and labels the tile honestly."""
+    ysym = data.macro_yahoo_symbol(symbol)
+    if not ysym:
+        return
+    try:
+        res = await _net(p_src.fetch_price_history, ysym, "1mo", "1d")
+        quote = res.get("quote") or {}
+        price = quote.get("price")
+        if price is None:
+            return
+        change_pct = quote.get("changePct")
+        closes = [p["c"] for p in (res.get("points") or []) if p.get("c") is not None]
+        sparkline = closes[-14:] if closes else [float(price)]
+        is_live = not _macro_is_stale(quote.get("asOf"))
+        await asyncio.to_thread(
+            _upsert_macro, symbol, float(price),
+            float(change_pct) if change_pct is not None else None,
+            sparkline, is_live,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("macro ingest failed for %s (%s): %s", symbol, ysym, exc)
+
+
 async def _ingest_fundamentals(symbol: str) -> None:
     ysym = data.yahoo_symbol(symbol)
     try:
@@ -390,6 +474,17 @@ async def _price_loop():
         except Exception as exc:  # noqa: BLE001
             log.warning("price loop error: %s", exc)
         await asyncio.sleep(PRICE_INTERVAL)
+
+
+async def _macro_loop():
+    syms = data.macro_symbols()
+    while True:
+        try:
+            await asyncio.gather(*(_ingest_macro(s) for s in syms))
+            log.info("macro cycle complete (%d symbols)", len(syms))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("macro loop error: %s", exc)
+        await asyncio.sleep(MACRO_INTERVAL)
 
 
 async def _fundamentals_loop():
@@ -538,7 +633,12 @@ async def start() -> None:
         await asyncio.to_thread(_seed_universe)
     except Exception as exc:  # noqa: BLE001
         log.warning("universe seeding failed: %s", exc)
+    try:
+        await asyncio.to_thread(_ensure_macro_schema)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("macro schema ensure failed: %s", exc)
     _tasks.append(asyncio.create_task(_price_loop()))
+    _tasks.append(asyncio.create_task(_macro_loop()))
     _tasks.append(asyncio.create_task(_fundamentals_loop()))
     _tasks.append(asyncio.create_task(_news_loop()))
     _tasks.append(asyncio.create_task(_sentiment_loop()))

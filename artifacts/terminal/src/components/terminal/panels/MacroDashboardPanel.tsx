@@ -102,7 +102,7 @@ function RegimeBanner({ regime }: { regime: any }) {
 
 function AssetTile({ tile }: { tile: any }) {
   const isPositive = tile.changePct >= 0;
-  const absChg = Math.abs(tile.changePct);
+  const isLive = tile.isLive === true;
 
   return (
     <div
@@ -115,8 +115,16 @@ function AssetTile({ tile }: { tile: any }) {
     >
       <div className="flex items-start justify-between gap-1 min-w-0">
         <div className="min-w-0 flex-1">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-white truncate">
-            {tile.symbol}
+          <div className="flex items-center gap-1">
+            <span
+              title={isLive ? "Live quote" : "Curated reference value (no live source)"}
+              className={`w-1 h-1 rounded-full shrink-0 ${
+                isLive ? "bg-emerald-400" : "bg-muted-foreground/40"
+              }`}
+            />
+            <div className="text-[10px] font-bold uppercase tracking-wider text-white truncate">
+              {tile.symbol}
+            </div>
           </div>
           <div className="text-[9px] text-muted-foreground truncate leading-tight">
             {tile.name}
@@ -149,8 +157,14 @@ export function MacroDashboardPanel({ data }: { data: any }) {
   return (
     <div className="flex flex-col h-full gap-3 overflow-y-auto">
       {data.regime && <RegimeBanner regime={data.regime} />}
-      <div className="editorial-label text-[8px] text-muted-foreground/70 shrink-0 text-right -mb-1">
-        % = 1D change
+      <div className="flex items-center justify-end gap-2.5 text-[8px] text-muted-foreground/70 shrink-0 -mb-1">
+        <span className="flex items-center gap-1">
+          <span className="w-1 h-1 rounded-full bg-emerald-400" /> live
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-1 h-1 rounded-full bg-muted-foreground/40" /> reference
+        </span>
+        <span className="editorial-label">% = 1D change</span>
       </div>
       {data.groups.map((group: any) => (
         <div key={group.label} className="shrink-0">

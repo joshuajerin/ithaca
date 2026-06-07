@@ -460,6 +460,43 @@ def price_series_meta(symbol: str, days: int = 90, rng: Optional[str] = None) ->
     return {"points": data.price_series(sym, days=days), "source": "mock", "asOf": None}
 
 
+# ----------------------------- macro assets -----------------------------
+def macro_quotes() -> Dict[str, dict]:
+    """Live macro quotes keyed by internal macro code.
+
+    Returns ``{symbol: {"price", "changePct", "sparkline", "asOf"}}`` for every
+    macro asset the worker has ingested live. Names absent from the result have
+    no live quote and the caller must fall back to the curated mock value and
+    label the tile accordingly. Empty dict when the DB is unavailable/empty.
+    """
+    if not db.db_available():
+        return {}
+    try:
+        rows = db.query(
+            "SELECT symbol, price, change_pct, sparkline, updated_at "
+            "FROM macro_quotes WHERE is_live = TRUE"
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("macro_quotes DB error: %s", exc)
+        return {}
+    out: Dict[str, dict] = {}
+    for r in rows:
+        spark = r.get("sparkline")
+        if isinstance(spark, str):
+            try:
+                import json
+                spark = json.loads(spark)
+            except Exception:  # noqa: BLE001
+                spark = None
+        out[r["symbol"]] = {
+            "price": _num(r.get("price")),
+            "changePct": _num(r.get("change_pct")),
+            "sparkline": [float(x) for x in spark] if isinstance(spark, list) else None,
+            "asOf": _iso(r.get("updated_at")),
+        }
+    return out
+
+
 # ----------------------------- period returns -----------------------------
 # We fetch enough calendar history to anchor a 1Y / YTD window. Live series are
 # trading days (this many rows comfortably spans a year); mock series are

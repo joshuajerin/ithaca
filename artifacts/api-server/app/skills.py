@@ -1259,6 +1259,8 @@ def build_macro_dashboard(params: dict) -> dict:
     theme_raw = params.get("theme") or "global"
     theme_key = data.resolve_macro_theme(theme_raw)
     theme_def = data.MACRO_THEMES[theme_key]
+    live = repo.macro_quotes()  # {sym: {price, changePct, sparkline, asOf}}
+    as_ofs: List[str] = []
 
     # Start from the theme's default groups, then apply user pin/remove overrides.
     group_syms: dict = {}
@@ -1290,13 +1292,27 @@ def build_macro_dashboard(params: dict) -> dict:
             asset = data.MACRO_ASSETS.get(sym)
             if not asset:
                 continue
+            q = live.get(sym)
+            if q and q.get("price") is not None:
+                price = float(q["price"])
+                change = float(q["changePct"]) if q.get("changePct") is not None else float(asset["changePct"])
+                spark = q.get("sparkline") or data.macro_sparkline(sym)
+                is_live = True
+                if q.get("asOf"):
+                    as_ofs.append(q["asOf"])
+            else:
+                price = float(asset["price"])
+                change = float(asset["changePct"])
+                spark = data.macro_sparkline(sym)
+                is_live = False
             tiles.append({
                 "symbol": sym,
                 "name": asset["name"],
-                "price": float(asset["price"]),
-                "changePct": float(asset["changePct"]),
+                "price": price,
+                "changePct": change,
                 "unit": asset["unit"],
-                "sparkline": data.macro_sparkline(sym),
+                "sparkline": spark,
+                "isLive": is_live,
             })
         if tiles:
             groups.append({"label": label, "tiles": tiles})
@@ -1305,6 +1321,9 @@ def build_macro_dashboard(params: dict) -> dict:
         "title": theme_def["title"],
         "groups": groups,
         "overrides": applied,
+        # Panel-level freshness: "live" when any tile resolved to a real quote.
+        "source": "live" if as_ofs else "mock",
+        "asOf": max(as_ofs) if as_ofs else None,
     }
     regime = _compute_macro_regime(groups)
     if regime:

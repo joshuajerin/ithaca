@@ -1303,6 +1303,39 @@ MACRO_THEMES: Dict[str, dict] = {
     },
 }
 
+# Live-source mapping for macro assets. Only symbols with a reliable, free,
+# key-less Yahoo quote are listed here; everything else (US2Y/2Y10Y spread/TIPS
+# breakeven/iron ore — no clean free intraday source) stays on the curated mock
+# values above and is reported as such via the freshness badge. The values map
+# the internal macro code to the symbol Yahoo's chart endpoint expects.
+MACRO_YAHOO: Dict[str, str] = {
+    "US10Y":  "^TNX",        # CBOE 10Y Treasury yield (quoted as a % level)
+    "DXY":    "DX-Y.NYB",    # US Dollar Index
+    "EURUSD": "EURUSD=X",
+    "USDJPY": "JPY=X",
+    "USDCNH": "CNH=X",
+    "WTI":    "CL=F",        # WTI crude front-month future
+    "GOLD":   "GC=F",        # Gold front-month future
+    "COPPER": "HG=F",        # Copper front-month future
+    "SPX":    "^GSPC",
+    "NDX":    "^NDX",
+    "EEM":    "EEM",
+    "HSCEI":  "^HSCE",
+    "CSI300": "000300.SS",
+    "VIX":    "^VIX",
+}
+
+
+def macro_yahoo_symbol(symbol: str) -> Optional[str]:
+    """Yahoo chart symbol for a macro asset, or None if it has no live source."""
+    return MACRO_YAHOO.get((symbol or "").upper())
+
+
+def macro_symbols() -> List[str]:
+    """All macro asset codes with a live Yahoo source (for the ingest worker)."""
+    return list(MACRO_YAHOO.keys())
+
+
 # Also allow the theme key "default" and "global risk" / etc.
 MACRO_THEME_ALIASES: Dict[str, str] = {
     "default": "global",

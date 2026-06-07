@@ -363,6 +363,7 @@ class MacroTile(BaseModel):
     changePct: float
     unit: str
     sparkline: List[float]
+    isLive: bool = False
 
 
 class MacroGroup(BaseModel):
