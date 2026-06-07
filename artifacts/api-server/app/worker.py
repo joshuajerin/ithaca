@@ -290,6 +290,19 @@ def _update_market_cap(symbol: str, market_cap: float) -> None:
     )
 
 
+def _update_industry(symbol: str, industry: str) -> None:
+    """Fill the industry label for a single universe row, only when blank.
+
+    Used by the one-time backfill. The ``IS NULL OR = ''`` guard makes the
+    write idempotent and ensures we never clobber an industry that was already
+    captured by a live fundamentals ingest."""
+    db.execute(
+        "UPDATE universe SET industry = %s, updated_at = now() "
+        "WHERE symbol = %s AND (industry IS NULL OR industry = '')",
+        (industry, symbol),
+    )
+
+
 def _upsert_news(items: list) -> None:
     rows = [
         (it["id"], it["headline"], it.get("source"), it.get("summary"), it.get("url"),
@@ -597,6 +610,49 @@ async def _breadth_market_cap_loop():
         await asyncio.sleep(BREADTH_INTERVAL)
 
 
+async def _backfill_one_industry(symbol: str) -> bool:
+    """Fetch fundamentals for one symbol and fill its industry if missing."""
+    ysym = data.yahoo_symbol(symbol)
+    try:
+        d = await _net(f_src.fetch_fundamentals, ysym)
+        industry = d.get("industry")
+        if industry:
+            await asyncio.to_thread(_update_industry, symbol, industry)
+            return True
+    except Exception as exc:  # noqa: BLE001
+        log.warning("industry backfill failed for %s: %s", symbol, exc)
+    return False
+
+
+async def _backfill_industry() -> None:
+    """One-time backfill of ``universe.industry`` for tracked symbols whose
+    fundamentals were ingested before industry capture existed.
+
+    Targets only the gap (tracked rows with a blank industry) and writes just
+    the industry column via an idempotent guarded update, so it never produces
+    duplicate or partial fundamentals writes and never overwrites an industry
+    already captured live. Runs concurrently (bounded by the shared network
+    semaphore) so the universe table reads complete without waiting for the
+    slow fundamentals refresh cycle."""
+    try:
+        rows = await asyncio.to_thread(
+            db.query,
+            "SELECT symbol FROM universe "
+            "WHERE tracked = TRUE AND (industry IS NULL OR industry = '') "
+            "ORDER BY symbol",
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("industry backfill query failed: %s", exc)
+        return
+    syms = [r["symbol"] for r in rows]
+    if not syms:
+        log.info("industry backfill: nothing to do")
+        return
+    log.info("industry backfill: %d tracked symbols missing industry", len(syms))
+    results = await asyncio.gather(*(_backfill_one_industry(s) for s in syms))
+    log.info("industry backfill complete: %d/%d filled", sum(results), len(syms))
+
+
 async def _ondemand_loop():
     while True:
         try:
@@ -640,6 +696,9 @@ async def start() -> None:
         await asyncio.to_thread(_ensure_macro_schema)
     except Exception as exc:  # noqa: BLE001
         log.warning("macro schema ensure failed: %s", exc)
+    # One-time backfill of industry for symbols ingested before industry
+    # capture existed; runs once concurrently and exits (not a loop).
+    _tasks.append(asyncio.create_task(_backfill_industry()))
     _tasks.append(asyncio.create_task(_price_loop()))
     _tasks.append(asyncio.create_task(_macro_loop()))
     _tasks.append(asyncio.create_task(_fundamentals_loop()))
