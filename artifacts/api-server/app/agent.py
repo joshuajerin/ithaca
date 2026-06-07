@@ -432,6 +432,15 @@ def _tools() -> list:
             }, "required": ["symbol"]},
         }},
         {"type": "function", "function": {
+            "name": "add_options_chain",
+            "description": f"Add a full options chain for a ticker: calls and puts side-by-side across all strikes with bid/ask, last, IV, volume and open interest, plus an expiry selector. {sizing} Use when the user wants to see the options chain, calls and puts, the strike ladder, or all strikes/expiries for a name.",
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Underlying ticker. One of: {syms}"},
+                "expiry": {"type": "string", "description": "Default expiry to display. One of: 1W, 2W, 1M, 2M, 3M, 6M, 1Y."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
+        {"type": "function", "function": {
             "name": "add_options_strategy",
             "description": f"Add an options strategy payoff diagram with Greeks. {sizing} Use for options trades, straddles, condors, spreads etc.",
             "parameters": {"type": "object", "properties": {
@@ -639,6 +648,7 @@ _TOOL_TO_TYPE = {
     "add_signal_research": "signal_research",
     "add_signal_scorecard": "signal_scorecard",
     "add_iv_surface": "iv_surface",
+    "add_options_chain": "options_chain",
     "add_options_strategy": "options_strategy",
     "add_vol_term_structure": "vol_term_structure",
     "add_structured_product": "structured_product",
@@ -705,7 +715,8 @@ def _system_prompt() -> str:
         "screener or heatmap to a market ('SGX stocks', 'Singapore market heatmap', 'US "
         "semiconductors', 'Singapore banks'), pass country ('United States'/'Singapore') and/or "
         "exchange ('NASDAQ'/'NYSE'/'SGX') to add_screener / add_heatmap, combined with sector when given.\n"
-        "- For derivatives requests: vol surface → add_iv_surface; options strategy → add_options_strategy; "
+        "- For derivatives requests: vol surface → add_iv_surface; options chain/calls and puts/all strikes → add_options_chain; "
+        "options strategy → add_options_strategy; "
         "VIX/vol curve → add_vol_term_structure; barrier/exotic → add_structured_product.\n"
         "- For macro and fixed income: global view → add_macro_dashboard; single-country yield curve → add_yield_curve; "
         "comparing sovereign curves across countries/currencies (e.g. 'US vs German curve', 'UST vs Bund', "
@@ -1882,6 +1893,7 @@ _TYPE_LABELS = {
     "signal_research": "an alpha signal research panel",
     "signal_scorecard": "an alpha signal scorecard",
     "iv_surface": "an IV surface",
+    "options_chain": "an options chain",
     "options_strategy": "an options strategy",
     "vol_term_structure": "a vol term structure",
     "structured_product": "a structured product pricer",
@@ -2046,6 +2058,23 @@ def _extract_benchmark_constituents(q: str) -> List[str]:
     if not m:
         return []
     return _extract_symbols(m.group(1))
+
+
+def _extract_expiry(q: str) -> Optional[str]:
+    """Map free-text to an options-chain expiry label (1W..1Y), or None for default."""
+    ql = q.lower()
+    for tok, label in [
+        ("1 week", "1W"), ("one week", "1W"), ("weekly", "1W"), ("1w", "1W"),
+        ("2 week", "2W"), ("two week", "2W"), ("2w", "2W"),
+        ("1 year", "1Y"), ("one year", "1Y"), ("12 month", "1Y"), ("1y", "1Y"),
+        ("6 month", "6M"), ("6mo", "6M"), ("6m", "6M"), ("half year", "6M"),
+        ("3 month", "3M"), ("3mo", "3M"), ("3m", "3M"), ("quarter", "3M"),
+        ("2 month", "2M"), ("2mo", "2M"), ("2m", "2M"),
+        ("1 month", "1M"), ("one month", "1M"), ("1mo", "1M"), ("1m", "1M"), ("30 day", "1M"),
+    ]:
+        if tok in ql:
+            return label
+    return None
 
 
 def _extract_strategy(q: str) -> str:
@@ -2649,6 +2678,21 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         "structured", "exotic", "pricer",
     ])
 
+    wants_chain = any(k in q for k in [
+        "options chain", "option chain", "options table", "calls and puts",
+        "full chain", "strike ladder", "all strikes",
+    ])
+
+    if wants_chain:
+        sym = symbols[0] if symbols else "NVDA"
+        params = {"symbol": sym}
+        exp = _extract_expiry(query)
+        if exp:
+            params["expiry"] = exp
+        add("options_chain", params, 12, 6)
+        name = data.get_company(sym)["name"]
+        return panels, f"{name} options chain — calls and puts across all strikes with bid/ask, IV, volume and open interest."
+
     if wants_iv_surface and symbols:
         sym = symbols[0]
         add("iv_surface", {"symbol": sym}, 8, 5)
@@ -3072,6 +3116,12 @@ def _refine_params_heuristic(panel_type: str, panel: dict, instruction: str) -> 
                 return params
     if panel_type in ("iv_surface", "vol_term_structure") and syms:
         return {"symbol": syms[0]}
+    if panel_type == "options_chain" and (syms or _extract_expiry(instruction)):
+        params = {"symbol": syms[0]} if syms else {"symbol": (panel.get("data") or {}).get("symbol", "NVDA")}
+        exp = _extract_expiry(instruction)
+        if exp:
+            params["expiry"] = exp
+        return params
     if panel_type == "options_strategy" and syms:
         return {"symbol": syms[0], "strategy": _extract_strategy(instruction)}
     if panel_type == "structured_product" and syms:

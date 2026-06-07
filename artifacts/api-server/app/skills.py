@@ -1750,6 +1750,130 @@ def build_iv_surface(params: dict) -> dict:
     }
 
 
+def _det_hash(s: str) -> int:
+    """Stable FNV-1a hash so synthetic quotes are deterministic per (symbol, strike, expiry)."""
+    h = 2166136261
+    for ch in s:
+        h = ((h ^ ord(ch)) * 16777619) & 0xFFFFFFFF
+    return h
+
+
+def _strike_step(S: float) -> float:
+    """Pick a sensible strike increment for the underlying price."""
+    raw = S * 0.025
+    for step in [0.5, 1, 2.5, 5, 10, 25, 50, 100]:
+        if step >= raw:
+            return float(step)
+    return 100.0
+
+
+_CHAIN_EXPIRY_ALIASES = {
+    "1W": "1W", "1WEEK": "1W", "WEEKLY": "1W", "7D": "1W",
+    "2W": "2W", "2WEEK": "2W", "14D": "2W",
+    "1M": "1M", "1MO": "1M", "30D": "1M", "1MONTH": "1M",
+    "2M": "2M", "2MO": "2M", "2MONTH": "2M",
+    "3M": "3M", "3MO": "3M", "3MONTH": "3M", "QUARTER": "3M",
+    "6M": "6M", "6MO": "6M", "6MONTH": "6M",
+    "1Y": "1Y", "12M": "1Y", "1YR": "1Y", "1YEAR": "1Y",
+}
+
+
+def _resolve_chain_expiry(raw, labels: list) -> str:
+    if not raw:
+        return "1M"
+    r = str(raw).upper().replace(" ", "").replace("-", "")
+    if r in _CHAIN_EXPIRY_ALIASES:
+        return _CHAIN_EXPIRY_ALIASES[r]
+    if r in labels:
+        return r
+    return "1M"
+
+
+def _opt_quote(S: float, K: float, days: int, iv: float, mid: float, side: str) -> dict:
+    """Build a synthetic bid/ask/last/volume/OI quote around a Black-Scholes mid."""
+    pct = abs(K - S) / S if S else 0.0
+    # Wider relative spreads further from the money and for thin/cheap contracts.
+    spread_frac = max(0.02, 0.02 + 0.10 * pct)
+    half = max(0.01, mid * spread_frac / 2)
+    bid = max(0.0, round(mid - half, 2))
+    ask = round(max(bid + 0.01, mid + half), 2)
+    h = _det_hash(f"{side}|{K}|{days}")
+    last = round(bid + (ask - bid) * ((h % 1000) / 1000.0), 2)
+    # Volume peaks at-the-money and is heavier in near-dated tenors; OI accumulates
+    # with time. Deterministic jitter keeps it looking like a real tape.
+    atm_factor = math.exp(-((pct / 0.10) ** 2))
+    near_factor = max(0.25, 1.6 - days / 365.0)
+    j_vol = 0.6 + 0.8 * (((h >> 4) % 1000) / 1000.0)
+    j_oi = 0.6 + 0.8 * (((h >> 12) % 1000) / 1000.0)
+    volume = int(6000 * atm_factor * near_factor * j_vol)
+    oi = int(14000 * atm_factor * (0.5 + days / 365.0) * j_oi)
+    return {
+        "bid": bid,
+        "ask": ask,
+        "last": last,
+        "iv": round(iv * 100, 2),
+        "volume": volume,
+        "oi": oi,
+    }
+
+
+def build_options_chain(params: dict) -> dict:
+    """Full options chain: calls and puts across strikes for each expiry."""
+    symbol = (params.get("symbol") or "NVDA").upper()
+    repo.note_symbol(symbol)
+    company = repo.get_company(symbol)
+    if not company:
+        raise ValueError(f"Unknown symbol: {symbol}")
+
+    S = company["price"]
+    beta = company["beta"]
+    base_iv = max(0.15, min(0.80, 0.18 + beta * 0.09 + abs(company["changePct"]) * 0.005))
+    r = 0.05
+
+    expiry_labels = ["1W", "2W", "1M", "2M", "3M", "6M", "1Y"]
+    expiry_days = [7, 14, 30, 60, 90, 180, 365]
+
+    step = _strike_step(S)
+    atm = round(S / step) * step
+    n = 8  # strikes either side of ATM -> up to 17 strikes
+    strikes = [round(atm + i * step, 2) for i in range(-n, n + 1)]
+    strikes = [k for k in strikes if k > 0]
+    atm_strike = min(strikes, key=lambda k: abs(k - S))
+
+    selected = _resolve_chain_expiry(params.get("expiry") or params.get("range"), expiry_labels)
+
+    chains = []
+    for label, days in zip(expiry_labels, expiry_days):
+        T = days / 365.0
+        rows = []
+        for K in strikes:
+            moneyness = math.log(K / S)
+            iv = _iv_smile(moneyness, T, base_iv)
+            call_mid = _bs_price(S, K, T, r, iv, "call")
+            put_mid = _bs_price(S, K, T, r, iv, "put")
+            cq = _opt_quote(S, K, days, iv, call_mid, "call")
+            pq = _opt_quote(S, K, days, iv, put_mid, "put")
+            rows.append({
+                "strike": K,
+                "callBid": cq["bid"], "callAsk": cq["ask"], "callLast": cq["last"],
+                "callIv": cq["iv"], "callVolume": cq["volume"], "callOi": cq["oi"],
+                "putBid": pq["bid"], "putAsk": pq["ask"], "putLast": pq["last"],
+                "putIv": pq["iv"], "putVolume": pq["volume"], "putOi": pq["oi"],
+            })
+        chains.append({"label": label, "daysToExpiry": days, "rows": rows})
+
+    return {
+        "symbol": symbol,
+        "underlyingPrice": S,
+        "expiries": expiry_labels,
+        "selectedExpiry": selected,
+        "atmStrike": atm_strike,
+        "chains": chains,
+        "asOf": company.get("_asOf"),
+        "source": company.get("_source"),
+    }
+
+
 def _parse_strategy(query: str) -> str:
     """Map natural-language or param to a canonical strategy name."""
     q = query.lower().replace("-", " ").replace("_", " ")
@@ -5239,6 +5363,19 @@ _reg(SkillDef(
         {"name": "compute_skew", "description": "Extract the 1M skew strip across the strike range.", "expectedOutput": "A list of (strike, IV) skew points."},
     ],
     build_iv_surface, "IV Surface",
+))
+_reg(SkillDef(
+    "options-chain", "Options Chain", "options_chain",
+    "Renders the full options chain for a ticker: calls and puts side-by-side across every "
+    "strike, with bid/ask, last, implied vol, volume and open interest, and an expiry selector "
+    "spanning 1W to 1Y. Use when the user asks to see the options chain, option chain, calls and "
+    "puts, the strike ladder, or all strikes/expiries for a name before picking legs.",
+    [
+        {"name": "resolve_symbol", "description": "Map the request to a known ticker.", "expectedOutput": "A valid ticker."},
+        {"name": "build_strikes", "description": "Lay out a strike grid centered on the at-the-money price.", "expectedOutput": "An ordered strike ladder."},
+        {"name": "price_contracts", "description": "Price each call and put with Black-Scholes and synthesize bid/ask, IV, volume and OI per expiry.", "expectedOutput": "A calls-and-puts chain for every expiry."},
+    ],
+    build_options_chain, "Options Chain",
 ))
 _reg(SkillDef(
     "options-strategy", "Options Strategy Builder", "options_strategy",

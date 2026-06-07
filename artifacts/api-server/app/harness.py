@@ -36,6 +36,7 @@ DATA_MODELS = {
     "factor_exposures": models.FactorExposureData,
     "portfolio_optimizer": models.PortfolioOptimizerData,
     "iv_surface": models.IVSurfaceData,
+    "options_chain": models.OptionsChainData,
     "options_strategy": models.OptionsStrategyData,
     "vol_term_structure": models.VolTermStructureData,
     "structured_product": models.StructuredProductData,
@@ -106,6 +107,11 @@ def _derive_title(skill: "skills.SkillDef", params: dict) -> str:
     strategy = params.get("strategy") or params.get("strategyName")
     if skill.panel_type == "comparison" and syms:
         return " vs ".join(s.upper() for s in syms)
+    if skill.panel_type == "options_chain" and sym:
+        exp = params.get("expiry") or params.get("range")
+        if exp:
+            return f"{sym.upper()} · {str(exp).upper()} Chain"
+        return f"{sym.upper()} · Options Chain"
     if skill.panel_type == "options_strategy" and sym:
         strat = strategy or "Strategy"
         return f"{sym.upper()} · {strat.replace('_', ' ').title()}"

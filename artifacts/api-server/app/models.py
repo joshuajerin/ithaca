@@ -33,6 +33,7 @@ class PanelType(str, Enum):
     factor_exposures = "factor_exposures"
     portfolio_optimizer = "portfolio_optimizer"
     iv_surface = "iv_surface"
+    options_chain = "options_chain"
     options_strategy = "options_strategy"
     vol_term_structure = "vol_term_structure"
     structured_product = "structured_product"
@@ -526,6 +527,42 @@ class IVSurfaceData(BaseModel):
     surface: List[IVSurfaceCell]
     atmIv: float
     skew: List[IVSkewPoint]
+
+
+# --- options_chain ---
+class OptionChainRow(BaseModel):
+    strike: float
+    # call side
+    callBid: float
+    callAsk: float
+    callLast: float
+    callIv: float
+    callVolume: int
+    callOi: int
+    # put side
+    putBid: float
+    putAsk: float
+    putLast: float
+    putIv: float
+    putVolume: int
+    putOi: int
+
+
+class OptionChainExpiry(BaseModel):
+    label: str
+    daysToExpiry: int
+    rows: List[OptionChainRow]
+
+
+class OptionsChainData(BaseModel):
+    symbol: str
+    underlyingPrice: float
+    expiries: List[str]
+    selectedExpiry: str
+    atmStrike: float
+    chains: List[OptionChainExpiry]
+    asOf: Optional[str] = None
+    source: Optional[str] = None
 
 
 # --- options_strategy ---
@@ -1167,6 +1204,7 @@ PanelData = Union[
     RiskModelData,
     FactorExposureData,
     IVSurfaceData,
+    OptionsChainData,
     OptionsStrategyData,
     VolTermStructureData,
     StructuredProductData,

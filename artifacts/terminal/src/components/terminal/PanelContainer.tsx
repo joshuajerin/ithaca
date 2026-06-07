@@ -30,6 +30,7 @@ import { FactorExposurePanel } from "./panels/FactorExposurePanel";
 import { SignalResearchPanel } from "./panels/SignalResearchPanel";
 import { SignalScorecardPanel } from "./panels/SignalScorecardPanel";
 import { IVSurfacePanel } from "./panels/IVSurfacePanel";
+import { OptionsChainPanel } from "./panels/OptionsChainPanel";
 import { OptionsStrategyPanel } from "./panels/OptionsStrategyPanel";
 import { VolTermStructurePanel } from "./panels/VolTermStructurePanel";
 import { StructuredProductPanel } from "./panels/StructuredProductPanel";
@@ -164,6 +165,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "signal_research": return <SignalResearchPanel data={panel.data as any} />;
       case "signal_scorecard": return <SignalScorecardPanel data={panel.data as any} />;
       case "iv_surface": return <IVSurfacePanel data={panel.data as any} />;
+      case "options_chain": return <OptionsChainPanel data={panel.data as any} />;
       case "options_strategy": return <OptionsStrategyPanel data={panel.data as any} />;
       case "vol_term_structure": return <VolTermStructurePanel data={panel.data as any} />;
       case "structured_product": return <StructuredProductPanel data={panel.data as any} />;
