@@ -10,6 +10,14 @@ export type VoiceStatus =
   | "speaking"
   | "error";
 
+/** A single line in the running voice-conversation transcript. */
+export interface TranscriptEntry {
+  id: string;
+  role: "user" | "agent";
+  text: string;
+  at: number;
+}
+
 interface UseVoiceConductorArgs {
   active: boolean;
   processQuery: (text: string) => Promise<NarrationSegment[]>;
@@ -30,6 +38,8 @@ interface UseVoiceConductor {
   supported: boolean;
   /** True when running inside a cross-origin iframe where the mic is blocked. */
   embedded: boolean;
+  /** Running, chronological transcript of the voice conversation this session. */
+  transcript: TranscriptEntry[];
   retry: () => void;
   /** Begin listening — call on press/hold-start. */
   startListening: () => void;
@@ -54,6 +64,18 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
   const [error, setError] = useState<string | null>(null);
   const [micDenied, setMicDenied] = useState(false);
   const [embedded, setEmbedded] = useState(false);
+  const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
+
+  // Monotonic id source for transcript rows (stable React keys across renders).
+  const transcriptIdRef = useRef(0);
+  const addTranscript = useCallback((role: "user" | "agent", text: string) => {
+    const clean = text.trim();
+    if (!clean) return;
+    setTranscript((prev) => [
+      ...prev,
+      { id: `${role}-${++transcriptIdRef.current}`, role, text: clean, at: Date.now() },
+    ]);
+  }, []);
 
   const processRef = useRef(processQuery);
   const synthRef = useRef(synthesize);
@@ -337,6 +359,9 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
     const myTurn = ++turnIdRef.current;
     busyRef.current = true;
     setInterim("");
+    // Record what the user said as soon as the utterance finalizes so it appears
+    // in the transcript in real time, before the AI begins responding.
+    addTranscript("user", text);
     // Stop listening immediately — we have the utterance and don't want the mic
     // picking up our own synthesized speech (echo / self-trigger).
     recognitionRef.current.stop();
@@ -348,6 +373,9 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
       for (const seg of segments) {
         if (myTurn !== turnIdRef.current) break; // barged in mid-narration
         if (!seg?.text) continue;
+        // Surface each narration line as it begins so the transcript grows in
+        // step with what the user is hearing.
+        addTranscript("agent", seg.text);
         highlightRef.current(seg.panelId ?? null);
         try {
           const audio = await synthRef.current(seg.text);
@@ -371,13 +399,14 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
       setError("Something went wrong while responding. Tap retry to try again.");
       setStatusSafe("error");
     }
-  }, [playSegmentAudio, setStatusSafe]);
+  }, [playSegmentAudio, setStatusSafe, addTranscript]);
 
   // --- Lifecycle: enter / exit voice mode ---
   const startVoice = useCallback(async () => {
     setError(null);
     setMicDenied(false);
     setEmbedded(false);
+    setTranscript([]);
     heldRef.current = false;
     // Web Speech recognition and mic capture are blocked inside cross-origin
     // iframes (the Replit preview pane / canvas). Detect that up front and
@@ -452,6 +481,7 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
     micDenied,
     supported: recognition.supported,
     embedded,
+    transcript,
     retry,
     startListening,
     stopListening,

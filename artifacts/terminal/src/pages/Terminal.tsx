@@ -470,6 +470,7 @@ export default function Terminal() {
               micDenied={voice.micDenied}
               supported={voice.supported}
               embedded={voice.embedded}
+              transcript={voice.transcript}
               compact={isMobile}
               onRetry={voice.retry}
               onStartListening={voice.startListening}

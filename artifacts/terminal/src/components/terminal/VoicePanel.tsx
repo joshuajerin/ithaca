@@ -1,6 +1,6 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { Mic, Loader2, Volume2, AlertTriangle, RefreshCw, MonitorX, ExternalLink } from "lucide-react";
-import type { VoiceStatus } from "@/hooks/useVoiceConductor";
+import type { VoiceStatus, TranscriptEntry } from "@/hooks/useVoiceConductor";
 import { openStandaloneTab } from "@/lib/embed";
 import { VoiceOrb } from "./VoiceOrb";
 
@@ -13,6 +13,8 @@ interface VoicePanelProps {
   micDenied: boolean;
   supported: boolean;
   embedded: boolean;
+  /** Running, chronological transcript of the voice conversation this session. */
+  transcript: TranscriptEntry[];
   /** Compact, bottom-docked control for phone-sized screens. */
   compact?: boolean;
   onRetry: () => void;
@@ -20,6 +22,67 @@ interface VoicePanelProps {
   onStartListening: () => void;
   /** Called on release / pointer-cancel. */
   onStopListening: () => void;
+}
+
+/**
+ * Scrollable history of the voice conversation: each user utterance and agent
+ * narration line, oldest first. Auto-scrolls to the newest entry as the
+ * conversation grows, and shows the live interim line while the user speaks.
+ */
+function TranscriptLog({
+  transcript,
+  interim,
+  listening,
+  compact = false,
+}: {
+  transcript: TranscriptEntry[];
+  interim: string;
+  listening: boolean;
+  compact?: boolean;
+}) {
+  const endRef = useRef<HTMLDivElement>(null);
+  const showInterim = listening && !!interim.trim();
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+  }, [transcript.length, showInterim, interim]);
+
+  if (transcript.length === 0 && !showInterim) return null;
+
+  return (
+    <div
+      className={`w-full overflow-y-auto scrollbar-none flex flex-col gap-2 text-left ${
+        compact ? "max-h-28" : "max-h-44"
+      }`}
+      aria-label="Voice conversation transcript"
+    >
+      {transcript.map((entry) => (
+        <div key={entry.id} className="flex flex-col gap-0.5">
+          <span
+            className={`editorial-label text-[8px] ${
+              entry.role === "user" ? "text-white/60" : "text-muted-foreground"
+            }`}
+          >
+            {entry.role === "user" ? "You" : "Terminal"}
+          </span>
+          <p
+            className={`text-[11px] leading-relaxed ${
+              entry.role === "user" ? "text-white" : "text-muted-foreground"
+            }`}
+          >
+            {entry.text}
+          </p>
+        </div>
+      ))}
+      {showInterim && (
+        <div className="flex flex-col gap-0.5 opacity-70">
+          <span className="editorial-label text-[8px] text-white/60">You</span>
+          <p className="text-[11px] leading-relaxed text-white italic">{interim}</p>
+        </div>
+      )}
+      <div ref={endRef} />
+    </div>
+  );
 }
 
 const STATUS_COPY: Record<VoiceStatus, string> = {
@@ -57,6 +120,7 @@ export function VoicePanel({
   micDenied,
   supported,
   embedded,
+  transcript,
   compact = false,
   onRetry,
   onStartListening,
@@ -157,6 +221,12 @@ export function VoicePanel({
             </div>
           ) : (
             <>
+              <TranscriptLog
+                transcript={transcript}
+                interim={interim}
+                listening={status === "listening"}
+                compact
+              />
               {orbControl}
               <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-white">
                 <StatusIcon status={status} />
@@ -185,6 +255,13 @@ export function VoicePanel({
           </div>
         ) : (
           <>
+            {/* Running conversation history — grows as you speak and the agent narrates. */}
+            <TranscriptLog
+              transcript={transcript}
+              interim={interim}
+              listening={status === "listening"}
+            />
+
             {/* Orb — press-and-hold to talk */}
             {orbControl}
 
