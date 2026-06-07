@@ -139,6 +139,26 @@ def _to_iso_date(v) -> Optional[str]:
         return None
 
 
+def fetch_market_cap(symbol: str) -> Optional[float]:
+    """Return just the live market cap (USD) for `symbol`, or None if unknown.
+
+    Uses yfinance ``fast_info``, which derives market cap from the last price and
+    shares outstanding via the lightweight chart endpoint — far cheaper than the
+    full ``.info`` quote-summary. Intended for a slow breadth refresh that touches
+    only this single field, so it must NOT be treated as a full live snapshot.
+
+    Raises on network/auth failure so the caller can log and skip the symbol.
+    """
+    sym = symbol.upper()
+    fast = yf.Ticker(sym).fast_info
+    try:
+        mcap = fast["market_cap"]
+    except (KeyError, AttributeError, TypeError):
+        mcap = getattr(fast, "market_cap", None)
+    val = _f(mcap)
+    return val if val and val > 0 else None
+
+
 def _f(v) -> Optional[float]:
     if v is None:
         return None

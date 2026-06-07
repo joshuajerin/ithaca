@@ -39,7 +39,8 @@ description. Use `repo.prompt_symbols(n)` (cap, market-cap desc) for prompts;
 keep `all_symbols()`/`symbols_in_sector()` for the real breadth at request time.
 
 **Schema:** added idempotently in `worker._seed_universe` (no migration files):
-`universe.country`, `universe.exchange`, `fundamentals.is_live`.
+`universe.country`, `universe.exchange`, `fundamentals.is_live`,
+`fundamentals.mcap_refreshed_at`.
 
 **Country/exchange filtering (screener/heatmap):** `repo.resolve_market/resolve_country/
 resolve_exchange` normalize free text (SG/Singapore/usa/sgx) to canonical
@@ -50,3 +51,18 @@ first name-word, so geo words pull in `Singapore` Airlines/Post/Exchange and `Un
 Overseas Bank — guard with `_GEO_NAME_STOPWORDS` or "Singapore market heatmap" becomes a
 3-ticker comparison. country/exchange already exist on ScreenerRow/HeatmapCell models, so
 no openapi codegen is needed.
+
+**Breadth market-cap refresh (don't break the mock/live split):** a slow
+round-robin loop corrects ONLY the `market_cap` of mock breadth names so the
+hand-entered `_US`/`_SGX` cap hints don't drift over months. Rules:
+- Filter is `is_live = FALSE` (exactly the mock breadth set). The cap-only update
+  must NOT set `is_live = TRUE` — the row is still mock for every other field.
+- The cheap source is `f_src.fetch_market_cap` → yfinance `fast_info["market_cap"]`
+  (derived from last price × shares via the chart endpoint; far lighter than full
+  `.info`). yfinance `fast_info` keys are accessible via `["market_cap"]`; `.get`
+  is unreliable. Returns None if missing → loop skips.
+- Round-robins by `ORDER BY mcap_refreshed_at ASC NULLS FIRST` (least-recent
+  first); small batch + long sleep so it never competes with live loops/requests.
+  First pass is deferred (startup delay) so it never piles onto cold-start boot.
+- `_update_market_cap` leaves `updated_at` untouched on purpose so this pass
+  doesn't masquerade as a full fundamentals snapshot.

@@ -38,6 +38,16 @@ ONDEMAND_INTERVAL = 15
 # day's NAV fresh and settles to the close once prices stop moving.
 SNAPSHOT_INTERVAL = 3600
 
+# Breadth market-cap refresh: a deliberately slow round-robin that touches only
+# the single market_cap field on mock breadth names (is_live = FALSE), so the
+# hand-entered cap hints don't drift over months. Small batch + long sleep so it
+# never competes with the live loops or the request path. ~556 breadth names at
+# 10 per tick / 5 min ≈ a full sweep every few hours.
+BREADTH_INTERVAL = 300
+BREADTH_BATCH = 10
+# Defer the first breadth pass so it never piles onto cold-start ingestion/boot.
+BREADTH_STARTUP_DELAY = 180
+
 # Small pause between RSS batches so a fast news cadence doesn't trip Yahoo 403/429.
 NEWS_BATCH_PAUSE = 1.5
 
@@ -69,6 +79,7 @@ def _seed_universe() -> None:
         "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS earnings_date DATE",
         "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS ex_dividend_date DATE",
         "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS dividend_date DATE",
+        "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS mcap_refreshed_at TIMESTAMPTZ",
     ):
         db.execute(ddl)
 
@@ -233,6 +244,24 @@ def _upsert_calendar(c: dict) -> None:
     )
 
 
+def _update_market_cap(symbol: str, market_cap: float) -> None:
+    """Refresh ONLY the market_cap of a mock breadth row.
+
+    Guarded by ``is_live = FALSE`` so a cap-only refresh never overwrites a row
+    that already carries full live fundamentals, and it never flips ``is_live``
+    to TRUE (the refreshed row is still mock for every other field). ``updated_at``
+    is intentionally left untouched so this cheap pass doesn't masquerade as a
+    full fundamentals snapshot; ``mcap_refreshed_at`` tracks the round-robin."""
+    db.execute(
+        """
+        UPDATE fundamentals
+           SET market_cap = %s, mcap_refreshed_at = now()
+         WHERE symbol = %s AND is_live = FALSE
+        """,
+        (market_cap, symbol),
+    )
+
+
 def _upsert_news(items: list) -> None:
     rows = [
         (it["id"], it["headline"], it.get("source"), it.get("summary"), it.get("url"),
@@ -311,6 +340,16 @@ async def _ingest_fundamentals(symbol: str) -> None:
         await asyncio.to_thread(_upsert_calendar, cal)
     except Exception as exc:  # noqa: BLE001
         log.warning("calendar ingest failed for %s: %s", symbol, exc)
+
+
+async def _refresh_market_cap(symbol: str) -> None:
+    ysym = data.yahoo_symbol(symbol)
+    try:
+        mcap = await _net(f_src.fetch_market_cap, ysym)
+        if mcap:
+            await asyncio.to_thread(_update_market_cap, symbol, mcap)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("market-cap refresh failed for %s: %s", symbol, exc)
 
 
 async def _ingest_news_for(symbols: List[str], sector: Optional[str]) -> None:
@@ -430,6 +469,36 @@ async def _snapshot_loop():
         await asyncio.sleep(SNAPSHOT_INTERVAL)
 
 
+async def _breadth_market_cap_loop():
+    """Slowly round-robin a real market_cap onto mock breadth names.
+
+    Picks the least-recently-refreshed breadth rows (``is_live = FALSE``,
+    least-recently-refreshed first via NULLS FIRST) in small batches so every
+    name's cap hint gets periodically corrected without promoting it to full live
+    fundamentals and without any burst that could affect the request path."""
+    await asyncio.sleep(BREADTH_STARTUP_DELAY)
+    while True:
+        try:
+            rows = await asyncio.to_thread(
+                db.query,
+                """
+                SELECT symbol FROM fundamentals
+                 WHERE is_live = FALSE
+                 ORDER BY mcap_refreshed_at ASC NULLS FIRST, symbol
+                 LIMIT %s
+                """,
+                (BREADTH_BATCH,),
+            )
+            syms = [r["symbol"] for r in rows]
+            for s in syms:  # serialized via the network semaphore; keep it gentle
+                await _refresh_market_cap(s)
+            if syms:
+                log.info("breadth market-cap refresh (%d names)", len(syms))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("breadth market-cap loop error: %s", exc)
+        await asyncio.sleep(BREADTH_INTERVAL)
+
+
 async def _ondemand_loop():
     while True:
         try:
@@ -473,6 +542,7 @@ async def start() -> None:
     _tasks.append(asyncio.create_task(_fundamentals_loop()))
     _tasks.append(asyncio.create_task(_news_loop()))
     _tasks.append(asyncio.create_task(_sentiment_loop()))
+    _tasks.append(asyncio.create_task(_breadth_market_cap_loop()))
     _tasks.append(asyncio.create_task(_ondemand_loop()))
     _tasks.append(asyncio.create_task(_snapshot_loop()))
     log.info("data worker started (%d loops)", len(_tasks))
