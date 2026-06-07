@@ -28,3 +28,14 @@ chain together, or the generated client/types drift from the API.
 
 company_analytics exposes a full `returns` block (1D/1M/YTD/1Y); price_chart's `change` is already
 a period return over its selected range. Tests: `tests/test_widgets.py`.
+
+**Trap: never derive the 1-day `changePct` from Yahoo chart meta `chartPreviousClose`.**
+On a ranged chart (e.g. `range=6mo`) `chartPreviousClose` is the close *just before the window
+begins* (~6 months ago), so `(price - chartPreviousClose)/chartPreviousClose` is a multi-month
+return mislabeled as the daily move (NVDA showed +12% vs the real +1.7%). Yahoo's chart `meta`
+also has NO usable `previousClose` on ranged charts (it comes back null). Compute the daily move
+from the last two daily closes in the series instead: baseline = `points[-2].c`, latest =
+`regularMarketPrice` (fallback `points[-1].c`). `prices.fetch_price_history` does this for
+`interval == "1d"`. The 90s price loop and the 15m fundamentals loop (which uses the genuine
+`regularMarketPreviousClose`) now both write a correct 1-day value, so the COALESCE upsert
+reconciliation is safe.

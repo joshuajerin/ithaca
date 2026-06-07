@@ -94,11 +94,25 @@ def fetch_price_history(symbol: str, range_: str = "6mo", interval: str = "1d") 
             "v": float(_at(volumes, i, 0) or 0),
         })
 
+    # Daily change must be the *latest trading day's* move, so the baseline is the
+    # prior trading day's close. `chartPreviousClose` is the close just before the
+    # requested range begins (e.g. ~6 months ago on a "6mo" chart), so using it
+    # mislabels a multi-month return as the 1-day move. Derive the baseline from
+    # the last two daily closes in the series instead; `previousClose` (when the
+    # endpoint provides it) is a valid fallback, but on ranged charts it is often
+    # absent. Raise nothing here — leave change_pct None when we can't be sure.
     price = meta.get("regularMarketPrice")
-    prev = meta.get("chartPreviousClose") or meta.get("previousClose")
+    prev = None
+    if interval == "1d" and len(points) >= 2:
+        prev = points[-2]["c"]
+    elif meta.get("previousClose"):
+        prev = meta.get("previousClose")
     change_pct = None
     if price is not None and prev:
         change_pct = round((price - prev) / prev * 100, 2)
+    elif prev and len(points) >= 1:
+        # No live price: fall back to the close-to-close move from the series.
+        change_pct = round((points[-1]["c"] - prev) / prev * 100, 2)
 
     return {
         "points": points,
