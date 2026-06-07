@@ -2407,32 +2407,32 @@ def build_risk_monitor(params: dict) -> dict:
     lim = {**DEFAULT_RISK_LIMITS, **(params.get("limits") or {})}
     rows: List[dict] = []
 
-    def _add(name_, scope, current, limit, fmt, detail=None):
+    def _add(name_, scope, current, limit, fmt, detail=None, key=None):
         limit = float(limit)
         util = (abs(current) / limit * 100.0) if limit else 0.0
         status = "breach" if abs(current) > limit else ("warn" if util >= 80.0 else "ok")
         rows.append({
             "name": name_, "scope": scope, "current": round(float(current), 4),
             "limit": round(limit, 4), "utilizationPct": round(util, 1),
-            "status": status, "format": fmt, "detail": detail,
+            "status": status, "format": fmt, "detail": detail, "key": key,
         })
 
-    _add("Gross Exposure", "book", gross, lim["maxGross"], "ratio")
-    _add("Net Exposure", "book", net, lim["maxNet"], "ratio")
+    _add("Gross Exposure", "book", gross, lim["maxGross"], "ratio", key="maxGross")
+    _add("Net Exposure", "book", net, lim["maxNet"], "ratio", key="maxNet")
     worst_pos = max(positions, key=lambda p: abs(p["weightPct"])) if positions else None
     if worst_pos:
         over = [p["symbol"] for p in positions if abs(p["weightPct"]) / 100.0 > lim["maxPosition"]]
         _add("Max Position", worst_pos["symbol"], worst_pos["weightPct"] / 100.0,
-             lim["maxPosition"], "ratio", ", ".join(over) if over else None)
+             lim["maxPosition"], "ratio", ", ".join(over) if over else None, key="maxPosition")
     if sectors:
         worst_sec = max(sectors, key=lambda x: abs(x["netPct"]))
         _add("Max Sector (net)", worst_sec["label"], worst_sec["netPct"] / 100.0,
-             lim["maxSector"], "ratio", worst_sec["label"])
+             lim["maxSector"], "ratio", worst_sec["label"], key="maxSector")
     if factor_block["available"] and factor_exposures:
         wf = max(factor_exposures.items(), key=lambda kv: abs(kv[1]))
-        _add("Max Factor", wf[0], wf[1], lim["maxFactor"], "exp", wf[0])
+        _add("Max Factor", wf[0], wf[1], lim["maxFactor"], "exp", wf[0], key="maxFactor")
     if var95 is not None:
-        _add("Daily VaR 95%", "book", var95, lim["varLimit"], "pct")
+        _add("Daily VaR 95%", "book", var95, lim["varLimit"], "pct", key="varLimit")
 
     breaches = [r for r in rows if r["status"] == "breach"]
 
@@ -2539,6 +2539,18 @@ def build_risk_monitor(params: dict) -> dict:
         "hypotheticalStress": hypothetical,
         "customStress": custom,
         "coverage": coverage,
+        # Internal: full book + limits config so a panel refine (e.g. editing a
+        # limit inline) can rebuild without resetting the book. `positions` above
+        # is truncated for display, so the untruncated book lives here.
+        "_refine": {
+            "symbols": symbols,
+            "weights": [round(float(w), 6) for w in ws],
+            "nav": round(nav, 0),
+            "portfolio_name": name,
+            "limits": {k: round(float(v), 6) for k, v in lim.items()},
+            "factor_shocks": (fshocks or None),
+            "asset_shocks": (ashocks or None),
+        },
         "asOf": as_of,
         "source": src,
     }

@@ -2811,7 +2811,90 @@ def _risk_monitor_shock_params(panel: dict, instruction: str) -> Optional[dict]:
     return params
 
 
+_RISK_LIMIT_KEYS = ("maxGross", "maxNet", "maxPosition", "maxSector", "maxFactor", "varLimit")
+
+
+def _parse_limit_edits(instruction: str) -> dict:
+    """Extract limit overrides from a refine instruction.
+
+    Accepts a JSON object ({"limits": {...}} or a bare {maxGross: ...} dict) or
+    a `key=value` / `key:value` list. Only known limit keys with positive numeric
+    values are kept. Returns {} when no limit edit is present.
+    """
+    edits: dict = {}
+    text = (instruction or "").strip()
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            src = obj.get("limits") if isinstance(obj.get("limits"), dict) else obj
+            for k in _RISK_LIMIT_KEYS:
+                if k in src:
+                    try:
+                        v = float(src[k])
+                        if v > 0:
+                            edits[k] = v
+                    except (TypeError, ValueError):
+                        pass
+            if edits:
+                return edits
+    except (ValueError, TypeError):
+        pass
+    for k in _RISK_LIMIT_KEYS:
+        m = re.search(rf"{k}\s*[=:]\s*(-?\d+(?:\.\d+)?)", text)
+        if m:
+            try:
+                v = float(m.group(1))
+                if v > 0:
+                    edits[k] = v
+            except ValueError:
+                pass
+    return edits
+
+
+def _refine_risk_monitor(panel: dict, instruction: str) -> Optional[dict]:
+    """Deterministic refine for risk_monitor limit edits: merge new limits onto
+    the stored book/limits so editing a limit re-evaluates breaches without
+    resetting the book. Returns None when the instruction is not a limit edit."""
+    edits = _parse_limit_edits(instruction)
+    if not edits:
+        return None
+    data = panel.get("data") or {}
+    base = data.get("_refine") or {}
+    limits = {**(base.get("limits") or {}), **edits}
+    params: dict = {"limits": limits}
+    symbols = base.get("symbols")
+    if not symbols:
+        # Fallback for panels built before _refine was stored: reconstruct from
+        # the (possibly truncated) displayed positions.
+        positions = data.get("positions") or []
+        symbols = [p["symbol"] for p in positions if p.get("symbol")]
+        weights = [float(p.get("weightPct", 0.0)) / 100.0 for p in positions]
+        nav = data.get("nav")
+        name = data.get("bookName")
+    else:
+        weights = base.get("weights")
+        nav = base.get("nav")
+        name = base.get("portfolio_name")
+    if symbols:
+        params["symbols"] = symbols
+        if weights:
+            params["weights"] = weights
+        if nav:
+            params["nav"] = nav
+        if name:
+            params["portfolio_name"] = name
+    if base.get("factor_shocks"):
+        params["factor_shocks"] = base["factor_shocks"]
+    if base.get("asset_shocks"):
+        params["asset_shocks"] = base["asset_shocks"]
+    return params
+
+
 def _refine_params(panel_type: str, panel: dict, instruction: str) -> dict:
+    if panel_type == "risk_monitor":
+        rp = _refine_risk_monitor(panel, instruction)
+        if rp is not None:
+            return rp
     if ai.ai_available():
         try:
             return _refine_params_llm(panel_type, panel, instruction)

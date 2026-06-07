@@ -13,7 +13,10 @@ A risk-desk panel distinct from the factor risk model (decomposition/MCTR) and f
 - `app/skills.py::build_risk_monitor` — assembles the book via `_resolve_book` (signed NAV-fraction weights, negative = short, NO renorm so leverage is preserved), exposures, VaR/CVaR from real returns, factor exposures+MCTR via `decompose_portfolio`, limits, and both stress blocks. Registered as SkillDef "risk-monitor" / panel_type "risk_monitor".
 
 ## Limits framework
-`DEFAULT_RISK_LIMITS` keys: maxGross, maxNet, maxPosition, maxSector, maxFactor (multiples/fractions) + varLimit (daily VaR fraction). Each limit emits status ok/warn/breach by utilization; `inLimit` is false if any breach. Overridable via the `limits` tool param.
+`DEFAULT_RISK_LIMITS` keys: maxGross, maxNet, maxPosition, maxSector, maxFactor (multiples/fractions) + varLimit (daily VaR fraction). Each limit emits status ok/warn/breach by utilization; `inLimit` is false if any breach. Overridable via the `limits` tool param. Each emitted limit row carries a `key` (the config key) so the UI can map a row back to the config.
+
+## Inline limit editing (refine path)
+The panel edits limits live via the existing `/refine` flow, NOT a new endpoint. Key constraint: refine REBUILDS the panel from params, and `positions` is truncated to [:14], so the book can't be reconstructed from displayed data. Fix: `build_risk_monitor` stores an internal `_refine` block in the data dict (full symbols/weights/nav/portfolio_name + current limits + factor/asset shocks). `agent._refine_risk_monitor` runs deterministically BEFORE the LLM path: it parses limit edits (JSON `{"limits":{...}}` or `key=value`) and merges them onto `_refine`'s stored book+limits so a limit edit never resets the book and shocks survive. Non-limit instructions return None → fall through to the normal LLM/heuristic refine. Frontend sends `JSON.stringify({limits:{...}})`; ratio limits edit as the multiple, exp/pct edit as a percent (÷100 to config).
 
 ## Why pure-numpy engine separate from skills
 Same pattern as factor-risk-model and backtest engine: engine stays IO-free and unit-testable (`tests/test_stress.py`, run directly via `python tests/test_stress.py` — pytest is NOT installed), data assembly lives in skills.

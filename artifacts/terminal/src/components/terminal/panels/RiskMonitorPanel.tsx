@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { Pencil, Check, X, Loader2 } from "lucide-react";
 
 interface Risk {
   var95Pct: number;
@@ -36,6 +37,7 @@ interface Limit {
   status: "ok" | "warn" | "breach";
   format: "ratio" | "exp" | "pct";
   detail?: string;
+  key?: string | null;
 }
 interface MissingName {
   symbol: string;
@@ -118,12 +120,25 @@ function fmtLimitVal(v: number, format: Limit["format"]): string {
   return `${(v * 100).toFixed(2)}%`;
 }
 
+// The config value is stored as a multiple (ratio) or a fraction (exp/pct). The
+// editor shows the human-readable number: a multiple for "ratio", a percent for
+// "exp"/"pct".
+function limitToInput(v: number, format: Limit["format"]): number {
+  return format === "ratio" ? v : v * 100;
+}
+function inputToLimit(n: number, format: Limit["format"]): number {
+  return format === "ratio" ? n : n / 100;
+}
+const limitUnit = (format: Limit["format"]) => (format === "ratio" ? "x" : "%");
+
 export function RiskMonitorPanel({
   data,
   onShock,
+  onEditLimits,
 }: {
   data: RiskMonitorData;
   onShock?: (instruction: string) => void;
+  onEditLimits?: (instruction: string) => Promise<unknown>;
 }) {
   const {
     bookName,
@@ -171,6 +186,62 @@ export function RiskMonitorPanel({
       instruction = `Custom shock: market ${magnitude}%`;
     }
     onShock(instruction);
+  };
+
+  const editableLimits = useMemo(() => limits.filter((l) => !!l.key), [limits]);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!editing) {
+      setDraft(
+        Object.fromEntries(
+          editableLimits.map((l) => [l.key as string, String(limitToInput(l.limit, l.format))]),
+        ),
+      );
+    }
+  }, [editing, editableLimits]);
+
+  const startEditing = () => {
+    setError(null);
+    setDraft(
+      Object.fromEntries(
+        editableLimits.map((l) => [l.key as string, String(limitToInput(l.limit, l.format))]),
+      ),
+    );
+    setEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setEditing(false);
+    setError(null);
+  };
+
+  const saveLimits = async () => {
+    if (!onEditLimits) return;
+    const next: Record<string, number> = {};
+    for (const l of editableLimits) {
+      const key = l.key as string;
+      const raw = draft[key];
+      const num = Number(raw);
+      if (raw === undefined || raw.trim() === "" || !Number.isFinite(num) || num <= 0) {
+        setError(`Enter a positive value for ${l.name}`);
+        return;
+      }
+      next[key] = inputToLimit(num, l.format);
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await onEditLimits(JSON.stringify({ limits: next }));
+      setEditing(false);
+    } catch {
+      setError("Could not update limits");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const maxSector = Math.max(...sectors.map((s) => Math.abs(s.netPct)), 1);
@@ -228,8 +299,41 @@ export function RiskMonitorPanel({
         <div className="flex flex-col gap-3 flex-1 min-h-0 overflow-auto">
           {/* Limits framework */}
           <div className="shrink-0">
-            <div className="text-[9px] text-muted-foreground uppercase tracking-widest mb-1.5">
-              Limits Framework
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="text-[9px] text-muted-foreground uppercase tracking-widest">
+                Limits Framework
+              </div>
+              {onEditLimits && editableLimits.length > 0 && (
+                editing ? (
+                  <div className="flex items-center gap-2">
+                    {saving && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+                    <button
+                      onClick={saveLimits}
+                      disabled={saving}
+                      className="flex items-center gap-1 text-[9px] uppercase tracking-widest text-emerald-400 hover:text-emerald-300 disabled:opacity-50"
+                      title="Save limits"
+                    >
+                      <Check className="w-3 h-3" strokeWidth={2} /> Save
+                    </button>
+                    <button
+                      onClick={cancelEditing}
+                      disabled={saving}
+                      className="flex items-center gap-1 text-[9px] uppercase tracking-widest text-muted-foreground hover:text-white disabled:opacity-50"
+                      title="Cancel"
+                    >
+                      <X className="w-3 h-3" strokeWidth={2} /> Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={startEditing}
+                    className="flex items-center gap-1 text-[9px] uppercase tracking-widest text-muted-foreground hover:text-white"
+                    title="Edit limits"
+                  >
+                    <Pencil className="w-2.5 h-2.5" strokeWidth={2} /> Edit
+                  </button>
+                )
+              )}
             </div>
             <div className="space-y-1.5">
               {limits.map((l) => (
@@ -237,28 +341,60 @@ export function RiskMonitorPanel({
                   <div className="w-28 shrink-0 text-[10px] text-white/80 truncate" title={l.detail}>
                     {l.name}
                   </div>
-                  <div className="flex-1 h-2.5 bg-white/5 relative overflow-hidden">
-                    <div
-                      className="absolute inset-y-0 left-0"
-                      style={{
-                        width: `${Math.min(100, l.utilizationPct)}%`,
-                        backgroundColor: statusColor(l.status),
-                        opacity: 0.7,
-                      }}
-                    />
-                  </div>
-                  <div className="w-28 shrink-0 text-right text-[10px] font-mono text-muted-foreground">
-                    {fmtLimitVal(l.current, l.format)} / {fmtLimitVal(l.limit, l.format)}
-                  </div>
-                  <div
-                    className="w-10 shrink-0 text-right text-[10px] font-mono"
-                    style={{ color: statusColor(l.status) }}
-                  >
-                    {l.utilizationPct.toFixed(0)}%
-                  </div>
+                  {editing && l.key ? (
+                    <>
+                      <div className="flex-1 text-[10px] text-muted-foreground font-mono">
+                        now {fmtLimitVal(l.current, l.format)}
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          value={draft[l.key] ?? ""}
+                          onChange={(e) =>
+                            setDraft((d) => ({ ...d, [l.key as string]: e.target.value }))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") saveLimits();
+                            if (e.key === "Escape") cancelEditing();
+                          }}
+                          className="w-16 bg-white/5 border border-border px-1.5 py-0.5 text-right text-[10px] font-mono text-white focus:outline-none focus:border-white"
+                        />
+                        <span className="w-3 text-[10px] text-muted-foreground font-mono">
+                          {limitUnit(l.format)}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex-1 h-2.5 bg-white/5 relative overflow-hidden">
+                        <div
+                          className="absolute inset-y-0 left-0"
+                          style={{
+                            width: `${Math.min(100, l.utilizationPct)}%`,
+                            backgroundColor: statusColor(l.status),
+                            opacity: 0.7,
+                          }}
+                        />
+                      </div>
+                      <div className="w-28 shrink-0 text-right text-[10px] font-mono text-muted-foreground">
+                        {fmtLimitVal(l.current, l.format)} / {fmtLimitVal(l.limit, l.format)}
+                      </div>
+                      <div
+                        className="w-10 shrink-0 text-right text-[10px] font-mono"
+                        style={{ color: statusColor(l.status) }}
+                      >
+                        {l.utilizationPct.toFixed(0)}%
+                      </div>
+                    </>
+                  )}
                 </div>
               ))}
             </div>
+            {editing && error && (
+              <div className="text-[9px] text-red-400 mt-1.5 font-mono">{error}</div>
+            )}
           </div>
 
           {/* Sector exposures */}

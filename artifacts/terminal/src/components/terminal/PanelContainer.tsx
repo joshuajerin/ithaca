@@ -81,18 +81,15 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
 
   const submitRefine = async (instruction: string) => {
     if (!instruction.trim()) return;
-    try {
-      const result = await refineMutation.mutateAsync({
-        data: {
-          sessionId,
-          panelId: panel.id,
-          instruction
-        }
-      });
-      onRefined(result);
-    } catch (e) {
-      console.error("Failed to refine panel", e);
-    }
+    const result = await refineMutation.mutateAsync({
+      data: {
+        sessionId,
+        panelId: panel.id,
+        instruction,
+      },
+    });
+    onRefined(result);
+    return result;
   };
 
   const handleRefine = async (e: React.FormEvent) => {
@@ -101,9 +98,13 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       setIsRefining(false);
       return;
     }
-    await submitRefine(refineText);
-    setIsRefining(false);
-    setRefineText("");
+    try {
+      await submitRefine(refineText);
+      setIsRefining(false);
+      setRefineText("");
+    } catch (e) {
+      console.error("Failed to refine panel", e);
+    }
   };
 
   // Switch the price chart window. Round-trips through the same refine path the
@@ -178,7 +179,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "analyst_report": return <AnalystReportPanel data={panel.data as any} />;
       case "analyst_compare": return <AnalystComparePanel data={panel.data as any} />;
       case "scenario": return <ScenarioPanel data={panel.data as any} />;
-      case "risk_monitor": return <RiskMonitorPanel data={panel.data as any} onShock={submitRefine} />;
+      case "risk_monitor": return <RiskMonitorPanel data={panel.data as any} onShock={submitRefine} onEditLimits={submitRefine} />;
       case "performance_pnl": return <PerformancePnlPanel data={panel.data as any} />;
       case "brinson_attribution": return <BrinsonPanel data={panel.data as any} />;
       case "factor_attribution": return <FactorAttributionPanel data={panel.data as any} />;
