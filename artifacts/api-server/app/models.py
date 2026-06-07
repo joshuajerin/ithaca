@@ -993,6 +993,9 @@ class SupplyChainNode(BaseModel):
     riskValue: Optional[float] = None
     geoRisk: Optional[float] = None
     singleSource: Optional[bool] = None
+    policyRisk: Optional[str] = None  # export-controlled | tariff-exposed | sanctioned
+    policyReason: Optional[str] = None
+    policySeverity: Optional[float] = None
 
 
 class SupplyChainEdge(BaseModel):
@@ -1012,6 +1015,9 @@ class SupplyChainTableRow(BaseModel):
     riskValue: Optional[float] = None
     geoRisk: Optional[float] = None
     singleSource: Optional[bool] = None
+    policyRisk: Optional[str] = None
+    policyReason: Optional[str] = None
+    policySeverity: Optional[float] = None
 
 
 class SupplyChainTopRisk(BaseModel):
@@ -1029,9 +1035,21 @@ class SupplyChainCountryConcentration(BaseModel):
     geoRisk: float
 
 
+class SupplyChainPolicyRisk(BaseModel):
+    country: str
+    countryName: str
+    flag: str  # export-controlled | tariff-exposed | sanctioned
+    flagLabel: str
+    reason: str
+    severity: float
+    exposure: float
+    count: int
+
+
 class SupplyChainRiskSummary(BaseModel):
     topRisks: List[SupplyChainTopRisk]
     countryConcentration: List[SupplyChainCountryConcentration]
+    policyRisks: List[SupplyChainPolicyRisk] = []
     counts: Dict[str, int]
 
 

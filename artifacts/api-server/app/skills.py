@@ -4043,6 +4043,28 @@ _GEO_RISK: dict = {
     "Global": 0.05,  # diversified / multi-region
 }
 
+# Policy / trade-action risk per sourcing region. Captures tariffs, export
+# controls and sanctions that would hit a supplier link regardless of how
+# diversified it is — a concentration score answers "where am I exposed",
+# this answers "what policy event would actually break this link".
+# severity: 0.0 (none) .. 1.0 (trade effectively blocked).
+_POLICY_RISK: dict = {
+    "CN": {"flag": "export-controlled", "severity": 0.85,
+           "reason": "US export controls on advanced chips & dual-use tech"},
+    "HK": {"flag": "export-controlled", "severity": 0.55,
+           "reason": "Subject to China-linked US export controls"},
+    "RU": {"flag": "sanctioned", "severity": 1.0,
+           "reason": "Comprehensive sanctions block most trade"},
+    "TW": {"flag": "tariff-exposed", "severity": 0.35,
+           "reason": "Proposed US tariffs on Taiwan-made semiconductors"},
+}
+
+_POLICY_LABEL: dict = {
+    "export-controlled": "Export-controlled",
+    "tariff-exposed": "Tariff-exposed",
+    "sanctioned": "Sanctioned",
+}
+
 _COUNTRY_NAME: dict = {
     "TW": "Taiwan",
     "CN": "China",
@@ -4082,8 +4104,13 @@ def _score_supply_node(exposure: float, country: str) -> dict:
     dependency in Taiwan reads Critical; a diversified 10% buyer reads Low.
     """
     geo = _GEO_RISK.get(country, 0.40)
+    policy = _POLICY_RISK.get(country)
+    policy_sev = float(policy["severity"]) if policy else 0.0
     single_source = exposure >= 90.0
-    risk_value = exposure * (0.55 + 0.65 * geo)
+
+    # Concentration (geo) and policy exposure both amplify the raw dependency:
+    # a link can be benign on concentration yet still snap on a sanction/tariff.
+    risk_value = exposure * (0.55 + 0.65 * geo + 0.5 * policy_sev)
 
     label = "Low"
     for threshold, name in _RISK_BANDS:
@@ -4091,19 +4118,33 @@ def _score_supply_node(exposure: float, country: str) -> dict:
             label = name
             break
 
-    # Single-source dependencies are structurally fragile regardless of region:
-    # floor them at High, and at Critical when the region is also sensitive.
-    if single_source:
-        floor = "Critical" if geo >= 0.70 else "High"
-        if _RISK_ORDER[floor] > _RISK_ORDER[label]:
-            label = floor
+    def _floor(level: str) -> None:
+        nonlocal label
+        if _RISK_ORDER[level] > _RISK_ORDER[label]:
+            label = level
 
-    return {
+    # Single-source dependencies are structurally fragile regardless of region:
+    # floor them at High, and at Critical when the region is geopolitically
+    # sensitive OR under a severe trade action (sanctions / export controls).
+    if single_source:
+        _floor("Critical" if (geo >= 0.70 or policy_sev >= 0.80) else "High")
+
+    # A severe policy action (sanctions / hard export controls) is a break risk
+    # on its own — floor at High even for a diversified link.
+    if policy_sev >= 0.80:
+        _floor("High")
+
+    result = {
         "riskScore": label,
         "riskValue": round(risk_value, 1),
         "geoRisk": round(geo, 2),
         "singleSource": single_source,
     }
+    if policy:
+        result["policyRisk"] = policy["flag"]
+        result["policyReason"] = policy["reason"]
+        result["policySeverity"] = round(policy_sev, 2)
+    return result
 
 
 def _annotate_supply_chain_risk(result: dict) -> dict:
@@ -4137,13 +4178,53 @@ def _annotate_supply_chain_risk(result: dict) -> dict:
     ]
     country_concentration.sort(key=lambda x: x["sharePct"], reverse=True)
 
+    # Policy exposure: which trade actions (tariffs / export controls / sanctions)
+    # would actually break a link, aggregated per region across all nodes. Boosts
+    # the candidate riskValue so a policy event ranks alongside concentration.
+    policy_by_country: dict = {}
+    for r in table:
+        flag = r.get("policyRisk")
+        if not flag:
+            continue
+        c = r.get("country", "")
+        entry = policy_by_country.get(c)
+        if entry is None:
+            entry = {
+                "country": c,
+                "countryName": _country_name(c),
+                "flag": flag,
+                "flagLabel": _POLICY_LABEL.get(flag, flag),
+                "reason": r.get("policyReason", ""),
+                "severity": float(r.get("policySeverity", 0.0)),
+                "exposure": 0.0,
+                "count": 0,
+            }
+            policy_by_country[c] = entry
+        entry["exposure"] += float(r.get("exposure", 0.0))
+        entry["count"] += 1
+    policy_risks = sorted(
+        policy_by_country.values(),
+        key=lambda x: (x["severity"], x["exposure"]),
+        reverse=True,
+    )
+    for p in policy_risks:
+        p["exposure"] = round(p["exposure"], 1)
+        p["severity"] = round(p["severity"], 2)
+
     # Build candidate risk items, then rank by severity for the summary bar.
     candidates: list = []
     for r in table:
+        flag = r.get("policyRisk")
+        if flag:
+            detail = f"{_POLICY_LABEL.get(flag, flag)} · {r.get('policyReason', '')}"
+            kind = "policy"
+        else:
+            detail = f"{round(float(r.get('exposure', 0.0)))}% {r.get('category', r.get('role', ''))} · {_country_name(r.get('country', ''))}"
+            kind = "node"
         candidates.append({
-            "kind": "node",
+            "kind": kind,
             "title": r.get("name", ""),
-            "detail": f"{round(float(r.get('exposure', 0.0)))}% {r.get('category', r.get('role', ''))} · {_country_name(r.get('country', ''))}",
+            "detail": detail,
             "level": r.get("riskScore", "Low"),
             "riskValue": r.get("riskValue", 0.0),
         })
@@ -4174,6 +4255,7 @@ def _annotate_supply_chain_risk(result: dict) -> dict:
     result["riskSummary"] = {
         "topRisks": top_risks,
         "countryConcentration": country_concentration[:5],
+        "policyRisks": policy_risks[:5],
         "counts": counts,
     }
     return result

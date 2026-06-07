@@ -14,6 +14,17 @@ exposure, counts). Both the curated `_SUPPLY_CHAIN_DB` path and `_generate_suppl
 **Why a separate score, not raw exposure:** a 100% dependency in Taiwan must read worse than a
 100% dependency in the US — geopolitical region amplifies concentration risk.
 
+## Policy / trade-action layer
+`_POLICY_RISK` (keyed by country, like `_GEO_RISK`) carries `{flag, severity 0-1, reason}` for
+tariffs / export controls / sanctions; `_POLICY_LABEL` maps flag→display. `_score_supply_node`
+blends it as a third multiplier term: `exposure * (0.55 + 0.65*geo + 0.5*policy_sev)`, and floors
+the label at High when `policy_sev >= 0.80` (severe = sanctions/hard export controls); a severe
+single source escalates to Critical. Nodes/rows gain `policyRisk/policyReason/policySeverity`.
+`riskSummary.policyRisks` aggregates affected suppliers per region; policy-driven nodes become
+`kind="policy"` candidates so they rank into topRisks. **Concentration answers "where am I
+exposed", policy answers "what event actually breaks this link"** — keep them as separate signals.
+Remember: every new field needs adding to the pydantic models too (see gotcha below).
+
 ## The gotcha that cost a round-trip
 `supply_chain` is NOT a fully passthrough panel — it has a pydantic model
 `models.SupplyChainData` registered in `harness.DATA_MODELS`. `run_skill` does

@@ -3,11 +3,16 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 type RiskLevel = "Low" | "Medium" | "High" | "Critical";
 
+type PolicyFlag = "export-controlled" | "tariff-exposed" | "sanctioned";
+
 interface SCRisk {
   riskScore?: RiskLevel;
   riskValue?: number;
   geoRisk?: number;
   singleSource?: boolean;
+  policyRisk?: PolicyFlag | string;
+  policyReason?: string;
+  policySeverity?: number;
 }
 
 interface SCNode extends SCRisk {
@@ -49,9 +54,21 @@ interface SCCountryConcentration {
   geoRisk: number;
 }
 
+interface SCPolicyRisk {
+  country: string;
+  countryName: string;
+  flag: PolicyFlag | string;
+  flagLabel: string;
+  reason: string;
+  severity: number;
+  exposure: number;
+  count: number;
+}
+
 interface SCRiskSummary {
   topRisks: SCTopRisk[];
   countryConcentration: SCCountryConcentration[];
+  policyRisks?: SCPolicyRisk[];
   counts: Record<RiskLevel, number>;
 }
 
@@ -79,6 +96,20 @@ const RISK_BADGE: Record<RiskLevel, string> = {
   Medium: "bg-yellow-500/10 text-yellow-500 border-yellow-500/30",
   Low: "bg-white/5 text-muted-foreground border-border",
 };
+
+const POLICY_BADGE: Record<string, string> = {
+  sanctioned: "bg-red-500/15 text-red-400 border-red-500/40",
+  "export-controlled": "bg-fuchsia-500/15 text-fuchsia-400 border-fuchsia-500/40",
+  "tariff-exposed": "bg-amber-500/15 text-amber-400 border-amber-500/40",
+};
+
+const POLICY_ABBR: Record<string, string> = {
+  sanctioned: "SANC",
+  "export-controlled": "EXPORT",
+  "tariff-exposed": "TARIFF",
+};
+
+const policyBadge = (flag: string) => POLICY_BADGE[flag] || "bg-white/5 text-muted-foreground border-border";
 
 const ROLE_COLOR: Record<string, string> = {
   subject: "#ffffff",
@@ -261,8 +292,34 @@ export function SupplyChainPanel({ data }: { data: SupplyChainData }) {
                 <span className={`text-[8px] leading-none uppercase font-bold px-1 py-0.5 rounded border shrink-0 ${RISK_BADGE[t.level]}`}>
                   {t.level}
                 </span>
+                {t.kind === "policy" && (
+                  <span className="text-[7px] leading-none uppercase font-bold px-1 py-0.5 rounded border shrink-0 bg-fuchsia-500/10 text-fuchsia-400 border-fuchsia-500/30">
+                    Policy
+                  </span>
+                )}
                 <span className="text-[10px] text-white font-medium shrink-0">{t.title}</span>
                 <span className="text-[9px] text-muted-foreground truncate">{t.detail}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {data.riskSummary && data.riskSummary.policyRisks && data.riskSummary.policyRisks.length > 0 && (
+        <div className="mb-2 shrink-0 rounded border border-fuchsia-500/25 bg-fuchsia-500/[0.04] px-2 py-1.5">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[9px] uppercase tracking-widest text-fuchsia-400/90 font-bold">Policy &amp; Trade Exposure</span>
+            <span className="text-[8px] text-muted-foreground uppercase tracking-wider">Tariffs · Export Controls · Sanctions</span>
+          </div>
+          <div className="space-y-0.5">
+            {data.riskSummary.policyRisks.map((p, i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <span className={`text-[8px] leading-none uppercase font-bold px-1 py-0.5 rounded border shrink-0 ${policyBadge(p.flag)}`}>
+                  {POLICY_ABBR[p.flag] || p.flagLabel}
+                </span>
+                <span className="text-[10px] text-white font-medium shrink-0">{p.countryName}</span>
+                <span className="text-[9px] text-fuchsia-300/70 font-mono shrink-0">{p.exposure}%</span>
+                <span className="text-[9px] text-muted-foreground truncate">{p.reason}</span>
               </div>
             ))}
           </div>
@@ -337,12 +394,22 @@ export function SupplyChainPanel({ data }: { data: SupplyChainData }) {
                   </td>
                   <td className="py-1.5 pr-2 text-muted-foreground text-[10px]">{row.category}</td>
                   <td className="py-1.5 pr-2">
-                    {row.riskScore && (
-                      <span className={`inline-flex items-center gap-1 text-[9px] uppercase font-bold px-1.5 py-0.5 rounded border ${RISK_BADGE[row.riskScore]}`}>
-                        {row.riskScore}
-                        {row.singleSource && <span className="text-[7px] opacity-80">SOLE</span>}
-                      </span>
-                    )}
+                    <div className="flex flex-wrap items-center gap-1">
+                      {row.riskScore && (
+                        <span className={`inline-flex items-center gap-1 text-[9px] uppercase font-bold px-1.5 py-0.5 rounded border ${RISK_BADGE[row.riskScore]}`}>
+                          {row.riskScore}
+                          {row.singleSource && <span className="text-[7px] opacity-80">SOLE</span>}
+                        </span>
+                      )}
+                      {row.policyRisk && (
+                        <span
+                          title={row.policyReason}
+                          className={`inline-flex items-center text-[8px] uppercase font-bold px-1.5 py-0.5 rounded border ${policyBadge(row.policyRisk)}`}
+                        >
+                          {POLICY_ABBR[row.policyRisk] || row.policyRisk}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className={`py-1.5 text-right font-mono font-bold ${ROLE_TEXT[row.role] || "text-white"}`}>
                     {row.exposure}%
