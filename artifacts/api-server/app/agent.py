@@ -222,7 +222,7 @@ def _tools() -> list:
         }},
         {"type": "function", "function": {
             "name": "add_yield_curve",
-            "description": f"Add a yield curve panel (spot + historical overlays, inversion highlights). {sizing}",
+            "description": f"Add a yield curve panel (live US Treasury par yields + 1y/2y-ago overlays, inversion highlights). {sizing}",
             "parameters": {"type": "object", "properties": {
                 "region": {"type": "string", "enum": ["US", "UK", "DE", "JP"], "description": "Sovereign issuer. Default US."},
                 "width": {"type": "integer"}, "height": {"type": "integer"},
@@ -238,7 +238,7 @@ def _tools() -> list:
         }},
         {"type": "function", "function": {
             "name": "add_bond_rv",
-            "description": f"Add a bond relative-value panel: Z-spread, OAS and asset-swap vs peers. {sizing}",
+            "description": f"Add a bond relative-value panel: Z-spread, OAS and asset-swap vs peers, anchored to live ICE BofA OAS by rating. {sizing}",
             "parameters": {"type": "object", "properties": {
                 "ticker": {"type": "string", "description": "Bond issuer ticker (e.g. AAPL, MSFT, F, INTC, META, XOM, AMZN, GOOGL, NVDA, CVX)."},
                 "width": {"type": "integer"}, "height": {"type": "integer"},
@@ -246,7 +246,7 @@ def _tools() -> list:
         }},
         {"type": "function", "function": {
             "name": "add_cds_pricer",
-            "description": f"Price a credit default swap on a reference entity. {sizing}",
+            "description": f"Price a credit default swap on a reference entity (running spread proxied from live ICE BofA OAS by rating). {sizing}",
             "parameters": {"type": "object", "properties": {
                 "ticker": {"type": "string", "description": "Reference entity ticker (e.g. F, INTC, OXY, META, AMZN, AAPL, MSFT, XOM, NVDA, GOOGL)."},
                 "tenor": {"type": "string", "enum": ["1Y", "2Y", "3Y", "5Y", "7Y", "10Y"]},
@@ -255,7 +255,7 @@ def _tools() -> list:
         }},
         {"type": "function", "function": {
             "name": "add_cashflow_duration",
-            "description": f"Show bond cash flows, duration, convexity, and rate-shock scenario table. {sizing}",
+            "description": f"Show bond cash flows, duration, convexity, and rate-shock scenario table (yields off the live Treasury curve + live credit spreads). {sizing}",
             "parameters": {"type": "object", "properties": {
                 "bond": {"type": "string", "description": "Bond key: UST10Y, UST30Y, UST5Y, UST2Y, AAPL30, MSFT10, F7Y."},
                 "width": {"type": "integer"}, "height": {"type": "integer"},
@@ -721,7 +721,10 @@ def _system_prompt() -> str:
         "- For macro and fixed income: global view → add_macro_dashboard; single-country yield curve → add_yield_curve; "
         "comparing sovereign curves across countries/currencies (e.g. 'US vs German curve', 'UST vs Bund', "
         "'Treasury vs Gilt 10Y spread') → add_sovereign_compare (pass the 2–4 region codes); "
-        "bond RV → add_bond_rv; CDS → add_cds_pricer; duration/cash flows → add_cashflow_duration.\n"
+        "bond RV → add_bond_rv; CDS → add_cds_pricer; duration/cash flows → add_cashflow_duration. "
+        "Fixed-income panels use live data: US Treasury par yields come from the U.S. Treasury daily "
+        "curve, and credit spreads (bond OAS, CDS proxies) from live ICE BofA OAS indices; each panel "
+        "labels its source live/mock so you can tell when a feed is unavailable.\n"
         "- For microstructure/execution requests: order book → add_order_book; trade flow/unusual activity → add_trade_flow; "
         "TCA / execution simulation / slippage / market impact / VWAP-TWAP-POV / 'cost to trade into a portfolio' → add_tca_report "
         "(pass symbols+target_weights for a portfolio, or symbol+side+notional for one name).\n"

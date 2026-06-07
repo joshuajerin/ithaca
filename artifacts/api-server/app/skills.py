@@ -13,6 +13,7 @@ from typing import Callable, Dict, List, Optional
 
 from . import ai, cache, data, db, engine, factor_model, quality, repo
 from .sources import prices as p_src
+from .sources import rates as rates_src
 
 log = logging.getLogger(__name__)
 
@@ -1468,11 +1469,100 @@ def _region_spot(region: str, i: int) -> float:
     return round(_BASE_SPOT[i] + shift + twist * (_TENOR_YEARS[i] - _TWIST_PIVOT_YEARS), 3)
 
 
+# Tenor (years) used to interpolate the live Treasury curve at a bond's maturity.
+_TENOR_YEARS_MAP = dict(zip(_TENORS, _TENOR_YEARS))
+
+
+def _rates_ttl() -> float:
+    """Configurable refresh interval (seconds) for live rates/credit pulls.
+
+    Defaults to 1 hour — these series update at most daily, so a short TTL only
+    hammers the upstream APIs. Override with ``RATES_REFRESH_SECONDS``.
+    """
+    import os
+    try:
+        return max(30.0, float(os.environ.get("RATES_REFRESH_SECONDS", "3600")))
+    except (TypeError, ValueError):
+        return 3600.0
+
+
+def _live_treasury_curve() -> Optional[dict]:
+    """Cached live Treasury par-yield curve, or None if upstream is unavailable."""
+    return cache.cached("rates:treasury", _rates_ttl(), rates_src.fetch_treasury_curve)
+
+
+def _live_credit_spreads() -> Optional[dict]:
+    """Cached live ICE BofA OAS buckets, or None if no key / upstream down."""
+    return cache.cached("rates:credit", _rates_ttl(), rates_src.fetch_credit_spreads)
+
+
+def _rating_bucket(rating: str) -> str:
+    """Map a composite rating string (e.g. "Baa1/BBB+", "Ba2/BB+") to an OAS bucket."""
+    r = (rating or "").upper()
+    # Prefer the S&P-style half (after the slash) when present.
+    sp = r.split("/")[-1].strip() if "/" in r else r
+    if sp.startswith("AAA"):
+        return "AAA"
+    if sp.startswith("AA"):
+        return "AA"
+    if sp.startswith("A"):
+        return "A"
+    if sp.startswith("BBB"):
+        return "BBB"
+    if sp.startswith("BB"):
+        return "BB"
+    if sp.startswith("B"):
+        return "B"
+    if sp.startswith("CCC") or sp.startswith("CC") or sp.startswith("C") or sp.startswith("D"):
+        return "CCC"
+    # Moody's fallbacks
+    if sp.startswith("BAA"):
+        return "BBB"
+    if sp.startswith("BA"):
+        return "BB"
+    if sp.startswith("CAA") or sp.startswith("CA"):
+        return "CCC"
+    return "BBB"
+
+
 def build_yield_curve(params: dict) -> dict:
     region = (params.get("region") or "US").upper()
     title = f"{region} Treasury Yield Curve"
 
-    # Apply small per-region shifts for variety
+    # Live US Treasury par-yield curve (key-less). Other regions stay on the
+    # curated sovereign mock since this source is US-only.
+    if region == "US":
+        live = _live_treasury_curve()
+        if live and live.get("tenors"):
+            tenors = live["tenors"]
+            ago1y = live.get("ago1y") or {}
+            ago2y = live.get("ago2y") or {}
+            points = []
+            for i, tenor in enumerate(_TENORS):
+                spot = tenors.get(tenor)
+                if spot is None:
+                    continue
+                points.append({
+                    "tenor": tenor,
+                    "spot": round(spot, 3),
+                    "ago1y": round(ago1y.get(tenor, spot), 3),
+                    "ago2y": round(ago2y.get(tenor, ago1y.get(tenor, spot)), 3),
+                })
+            if points:
+                by_tenor = {p["tenor"]: p["spot"] for p in points}
+                spreads = _curve_spreads(by_tenor)
+                inverted = any(s["inverted"] for s in spreads[:2])
+                return {
+                    "title": title,
+                    "points": points,
+                    "spreads": spreads,
+                    "inverted": inverted,
+                    "asOf": live.get("asOf"),
+                    "source": "live",
+                }
+
+    # --- mock fallback (non-US regions, or live source unavailable) ---
+    # Apply per-region parallel shift; points/spreads use the twisted curve.
     shift = _region_shift(region)
 
     points = []
@@ -1497,7 +1587,22 @@ def build_yield_curve(params: dict) -> dict:
     ]
 
     inverted = any(s["inverted"] for s in spreads[:2])
-    return {"title": title, "points": points, "spreads": spreads, "inverted": inverted}
+    return {"title": title, "points": points, "spreads": spreads, "inverted": inverted,
+            "source": "mock"}
+
+
+def _curve_spreads(by_tenor: Dict[str, float]) -> List[dict]:
+    """Key curve spreads (2s10s, 2s30s, 3m10s) from a {tenor: yield} map."""
+    def g(t: str) -> Optional[float]:
+        return by_tenor.get(t)
+    out = []
+    pairs = [("2Y–10Y", "2Y", "10Y"), ("2Y–30Y", "2Y", "30Y"), ("3M–10Y", "3M", "10Y")]
+    for label, a, b in pairs:
+        va, vb = g(a), g(b)
+        if va is None or vb is None:
+            continue
+        out.append({"label": label, "value": round(vb - va, 2), "inverted": vb < va})
+    return out
 
 
 # Key tenors highlighted in the cross-currency spread strip.
@@ -1613,22 +1718,57 @@ def build_bond_rv(params: dict) -> dict:
     peer_rows = [r for r in _BOND_PEERS if r[1] != ticker and r[9][0] == focus_rating[0]][:6]
     all_rows = focus_rows + peer_rows
 
+    # Live anchoring: re-base each bond's OAS/z-spread/ASW to the current ICE
+    # BofA OAS for its rating bucket while preserving the curated *idiosyncratic*
+    # spread of each bond vs its bucket peers. Yields are recomputed off the live
+    # Treasury curve at the bond's tenor + its (live-anchored) OAS so the table
+    # is internally consistent with rates.
+    credit = _live_credit_spreads()
+    treasury = _live_treasury_curve()
+
+    bucket_avg: Dict[str, float] = {}
+    if credit:
+        sums: Dict[str, List[float]] = {}
+        for r in _BOND_PEERS:
+            sums.setdefault(_rating_bucket(r[9]), []).append(r[7])
+        bucket_avg = {b: sum(v) / len(v) for b, v in sums.items()}
+
+    today_year = date.today().year
     rows = []
     for r in all_rows:
+        oas, zspread, asw, yld = r[7], r[6], r[8], r[4]
+        if credit:
+            bucket = _rating_bucket(r[9])
+            live_bucket = credit["buckets"].get(bucket)
+            if live_bucket is not None:
+                idio = oas - bucket_avg.get(bucket, oas)
+                oas = max(round(live_bucket + idio), 1)
+                zspread = max(round(oas + (r[6] - r[7])), 1)
+                asw = max(round(oas + (r[8] - r[7])), 1)
+                yrs = max(r[3] - today_year, 0.5)
+                base = rates_src.interp_treasury(treasury["tenors"], yrs) if treasury else None
+                if base is not None:
+                    yld = round(base + oas / 100.0, 3)
         rows.append({
             "issuer": r[0],
             "ticker": r[1],
             "coupon": r[2],
             "maturityYear": r[3],
-            "yieldPct": r[4],
+            "yieldPct": yld,
             "duration": r[5],
-            "zSpread": r[6],
-            "oas": r[7],
-            "aswSpread": r[8],
+            "zSpread": zspread,
+            "oas": oas,
+            "aswSpread": asw,
             "rating": r[9],
         })
 
-    return {"title": title, "rows": rows, "highlight": ticker}
+    if credit:
+        as_of = credit.get("asOf")
+        if treasury and treasury.get("asOf"):
+            as_of = min(x for x in (as_of, treasury["asOf"]) if x) if as_of else treasury["asOf"]
+        return {"title": title, "rows": rows, "highlight": ticker,
+                "asOf": as_of, "source": "live"}
+    return {"title": title, "rows": rows, "highlight": ticker, "source": "mock"}
 
 
 # CDS entity universe
@@ -1661,6 +1801,25 @@ def build_cds_pricer(params: dict) -> dict:
 
     # Allow tenor override
     req_tenor = (params.get("tenor") or "5Y").upper()
+
+    # Live anchoring: use the current ICE BofA OAS for the entity's rating bucket
+    # as a market proxy for its CDS running spread, preserving each name's
+    # idiosyncratic spread vs its bucket peers. Falls back to the curated spread.
+    credit = _live_credit_spreads()
+    spread_source = "mock"
+    spread_as_of = None
+    if credit:
+        bucket = _rating_bucket(rating)
+        live_bucket = credit["buckets"].get(bucket)
+        if live_bucket is not None:
+            cds_buckets: Dict[str, List[float]] = {}
+            for _n, _t, _r, _rec, _sp in _CDS_ENTITIES.values():
+                cds_buckets.setdefault(_rating_bucket(_r), []).append(_sp)
+            avg = sum(cds_buckets[bucket]) / len(cds_buckets[bucket])
+            idio = spread - avg
+            spread = max(round(live_bucket + idio, 1), 1.0)
+            spread_source = "live"
+            spread_as_of = credit.get("asOf")
 
     survival_curve = []
     for label, years in _CDS_TENORS:
@@ -1697,18 +1856,21 @@ def build_cds_pricer(params: dict) -> dict:
         "survivalCurve": survival_curve,
         "impliedPd1y": implied_pd1y,
         "impliedPd5y": implied_pd5y,
+        "asOf": spread_as_of,
+        "source": spread_source,
     }
 
 
-# Bond universe for cash-flow analysis
+# Bond universe for cash-flow analysis. Trailing bucket is the credit-rating
+# bucket used to anchor the yield off live rates+spreads (None = risk-free UST).
 _CF_BONDS = {
-    "UST10Y": ("US 10Y Treasury", 4.25, "2034-05-15", 100.0, 4.52),
-    "UST30Y": ("US 30Y Treasury", 4.375, "2054-05-15", 100.0, 4.68),
-    "UST5Y": ("US 5Y Treasury", 4.50, "2029-05-15", 100.0, 4.38),
-    "UST2Y": ("US 2Y Treasury", 5.00, "2026-05-15", 100.0, 4.62),
-    "AAPL30": ("Apple 3.85% 2031", 3.85, "2031-08-05", 100.0, 4.72),
-    "MSFT10": ("Microsoft 4.20% 2035", 4.20, "2035-11-03", 100.0, 4.82),
-    "F7Y": ("Ford 6.10% 2032", 6.10, "2032-08-19", 100.0, 6.45),
+    "UST10Y": ("US 10Y Treasury", 4.25, "2034-05-15", 100.0, 4.52, None),
+    "UST30Y": ("US 30Y Treasury", 4.375, "2054-05-15", 100.0, 4.68, None),
+    "UST5Y": ("US 5Y Treasury", 4.50, "2029-05-15", 100.0, 4.38, None),
+    "UST2Y": ("US 2Y Treasury", 5.00, "2026-05-15", 100.0, 4.62, None),
+    "AAPL30": ("Apple 3.85% 2031", 3.85, "2031-08-05", 100.0, 4.72, "AAA"),
+    "MSFT10": ("Microsoft 4.20% 2035", 4.20, "2035-11-03", 100.0, 4.82, "AAA"),
+    "F7Y": ("Ford 6.10% 2032", 6.10, "2032-08-19", 100.0, 6.45, "BB"),
 }
 
 _SCENARIO_SHIFTS = [-200, -100, -50, 0, 50, 100, 200]
@@ -1729,11 +1891,32 @@ def _bond_price(coupon_rate: float, ytm: float, years: float, freq: int = 2) -> 
 def build_cashflow_duration(params: dict) -> dict:
     bond_key = (params.get("bond") or params.get("symbol") or "UST10Y").upper()
     bond_data = _CF_BONDS.get(bond_key, _CF_BONDS["UST10Y"])
-    issuer, coupon, maturity_str, face, ytm = bond_data
+    issuer, coupon, maturity_str, face, ytm, bucket = bond_data
 
     mat = date.fromisoformat(maturity_str)
     today = date.today()
     years_to_mat = max((mat - today).days / 365.25, 0.5)
+
+    # Live yield: Treasury par yield interpolated at this bond's tenor, plus the
+    # current ICE BofA OAS for its rating bucket (zero for UST). Falls back to
+    # the curated YTM if the rate (and, for corporates, credit) feeds are down.
+    cf_source = "mock"
+    cf_as_of = None
+    treasury = _live_treasury_curve()
+    if treasury and treasury.get("tenors"):
+        base = rates_src.interp_treasury(treasury["tenors"], years_to_mat)
+        if base is not None:
+            if bucket is None:
+                ytm = round(base, 3)
+                cf_source = "live"
+                cf_as_of = treasury.get("asOf")
+            else:
+                credit = _live_credit_spreads()
+                live_bucket = credit["buckets"].get(bucket) if credit else None
+                if live_bucket is not None:
+                    ytm = round(base + live_bucket / 100.0, 3)
+                    cf_source = "live"
+                    cf_as_of = credit.get("asOf") or treasury.get("asOf")
 
     freq = 2
     n_periods = int(round(years_to_mat * freq))
@@ -1807,6 +1990,8 @@ def build_cashflow_duration(params: dict) -> dict:
         "dv01": dv01,
         "payments": payments,
         "scenarios": scenarios,
+        "asOf": cf_as_of,
+        "source": cf_source,
     }
 
 
