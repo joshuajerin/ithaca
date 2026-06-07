@@ -25,8 +25,19 @@ interface UseNavigator {
   /** 1-based index of the current stop. */
   index: number;
   total: number;
-  /** Begin running a tour. A tour with no resolvable stops is a no-op. */
-  start: (tour: NavigationTour) => void;
+  /**
+   * Begin running a tour. A tour with no resolvable stops is a no-op.
+   * Pass `{ narrated: true }` to suppress the built-in dwell auto-advance — the
+   * cursor then only moves when an external driver (e.g. the voice conductor)
+   * calls `goTo`, keeping each stop on screen for as long as it is being spoken.
+   */
+  start: (tour: NavigationTour, opts?: { narrated?: boolean }) => void;
+  /**
+   * Move the cursor to the stop at `index` and resolve once it has landed (the
+   * caption is shown and the panel highlighted). Used to sync cursor movement to
+   * spoken narration. Resolves immediately if the tour is no longer active.
+   */
+  goTo: (index: number) => Promise<void>;
   stop: () => void;
   next: () => void;
   prev: () => void;
@@ -70,6 +81,9 @@ export function useNavigator(args: UseNavigatorArgs): UseNavigator {
   const stopsRef = useRef<NavigationStop[]>([]);
   const indexRef = useRef(0);
   const activeRef = useRef(false);
+  // Narrated mode: an external driver (the voice conductor) advances the cursor
+  // in step with spoken narration, so the built-in dwell auto-advance is off.
+  const narratedRef = useRef(false);
   // The panel id the cursor is currently resting on — used to re-measure on resize.
   const currentPanelRef = useRef<string | null>(null);
 
@@ -104,67 +118,78 @@ export function useNavigator(args: UseNavigatorArgs): UseNavigator {
   }, [clearTimers]);
 
   // Forward declaration so goTo can schedule the next hop.
-  const goToRef = useRef<(i: number) => void>(() => {});
+  const goToRef = useRef<(i: number) => Promise<void>>(async () => {});
 
-  const goTo = useCallback((i: number) => {
-    if (!activeRef.current) return;
-    clearTimers();
-    const stops = stopsRef.current;
-    if (i < 0) i = 0;
-    if (i >= stops.length) {
-      // Reached the end — hold the final caption briefly, then dismiss.
-      const finish = () => {
-        if (!activeRef.current) return;
-        const done = completeRef.current;
-        stop();
-        done?.();
-      };
-      dwellTimer.current = setTimeout(finish, 1200);
-      return;
-    }
+  const goTo = useCallback((i: number): Promise<void> => {
+    return new Promise<void>((resolve) => {
+      if (!activeRef.current) return resolve();
+      clearTimers();
+      const stops = stopsRef.current;
+      if (i < 0) i = 0;
+      if (i >= stops.length) {
+        // Reached the end. In narrated mode the driver owns completion (it stops
+        // the tour once the last caption finishes), so just resolve. Otherwise
+        // hold the final caption briefly, then dismiss.
+        if (narratedRef.current) return resolve();
+        const finish = () => {
+          if (!activeRef.current) return;
+          const done = completeRef.current;
+          stop();
+          done?.();
+        };
+        dwellTimer.current = setTimeout(finish, 1200);
+        return resolve();
+      }
 
-    const stop_ = stops[i];
-    const el = findPanelEl(stop_.panelId);
-    if (!el) {
-      // Panel not in the DOM (e.g. removed) — skip to the next stop.
+      const stop_ = stops[i];
+      const el = findPanelEl(stop_.panelId);
+      if (!el) {
+        // Panel not in the DOM (e.g. removed) — skip to the next stop.
+        indexRef.current = i;
+        goToRef.current(i + 1).then(resolve);
+        return;
+      }
+
       indexRef.current = i;
-      goToRef.current(i + 1);
-      return;
-    }
+      currentPanelRef.current = stop_.panelId;
+      setIndex(i + 1);
+      setStatus("moving");
 
-    indexRef.current = i;
-    currentPanelRef.current = stop_.panelId;
-    setIndex(i + 1);
-    setStatus("moving");
-
-    // Bring the panel into view, then measure once the scroll settles so the
-    // cursor lands on its real on-screen position.
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
-    moveTimer.current = setTimeout(() => {
-      if (!activeRef.current) return;
-      const target = findPanelEl(stop_.panelId);
-      if (target) setPoint(centerOf(target));
-      setCaption(stop_.caption);
-      highlightRef.current(stop_.panelId);
-      setStatus("reading");
-      // Auto-advance after the dwell. Manual next/prev cancels this.
-      dwellTimer.current = setTimeout(() => {
-        goToRef.current(indexRef.current + 1);
-      }, dwellFor(stop_.caption));
-    }, 480);
+      // Bring the panel into view, then measure once the scroll settles so the
+      // cursor lands on its real on-screen position.
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      moveTimer.current = setTimeout(() => {
+        if (!activeRef.current) return resolve();
+        const target = findPanelEl(stop_.panelId);
+        if (target) setPoint(centerOf(target));
+        setCaption(stop_.caption);
+        highlightRef.current(stop_.panelId);
+        setStatus("reading");
+        // Auto-advance after the dwell, unless an external driver is narrating
+        // (narrated mode) — then the cursor only advances when goTo is called
+        // again, keeping it on the panel for as long as the caption is spoken.
+        if (!narratedRef.current) {
+          dwellTimer.current = setTimeout(() => {
+            goToRef.current(indexRef.current + 1);
+          }, dwellFor(stop_.caption));
+        }
+        resolve();
+      }, 480);
+    });
   }, [clearTimers, stop]);
 
   useEffect(() => {
     goToRef.current = goTo;
   }, [goTo]);
 
-  const start = useCallback((tour: NavigationTour) => {
+  const start = useCallback((tour: NavigationTour, opts?: { narrated?: boolean }) => {
     clearTimers();
     const stops = (tour.stops || []).filter((s) => s && s.panelId && s.caption);
     if (stops.length === 0) return;
     stopsRef.current = stops;
     indexRef.current = 0;
     activeRef.current = true;
+    narratedRef.current = !!opts?.narrated;
     currentPanelRef.current = null;
     setActive(true);
     setTitle(tour.title || "Guided walkthrough");
@@ -172,7 +197,9 @@ export function useNavigator(args: UseNavigatorArgs): UseNavigator {
     setStatus("moving");
     setPoint(null);
     setCaption("");
-    goTo(0);
+    // In narrated mode the driver kicks off the first hop (and every advance) in
+    // step with the spoken captions; in auto mode we start straight away.
+    if (!narratedRef.current) goTo(0);
   }, [clearTimers, goTo]);
 
   const next = useCallback(() => {
@@ -210,6 +237,7 @@ export function useNavigator(args: UseNavigatorArgs): UseNavigator {
     index,
     total,
     start,
+    goTo,
     stop,
     next,
     prev,

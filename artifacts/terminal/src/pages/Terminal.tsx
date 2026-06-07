@@ -112,6 +112,10 @@ export default function Terminal() {
     sessionIdRef.current = convo.sessionId || undefined;
   }, [convo.sessionId]);
 
+  // Whether any panels are currently on screen — mirrored to a ref so the voice
+  // conductor's tour callbacks (which close over a stale render) can read it.
+  const hasPanelsRef = useRef(false);
+
   // AI navigator cursor — drives across the dashboard, stopping on each panel.
   const navigator = useNavigator({
     onHighlight: setHighlightedPanelId,
@@ -215,6 +219,9 @@ export default function Terminal() {
   );
 
   const hasPanels = !!activeDashboard && activeDashboard.panels.length > 0;
+  useEffect(() => {
+    hasPanelsRef.current = hasPanels;
+  }, [hasPanels]);
 
   // Earnings alert: surface a banner when any earnings_calendar panel on the
   // active dashboard flags a watched company reporting within 24 hours.
@@ -276,6 +283,49 @@ export default function Terminal() {
     [speak],
   );
 
+  // Voice guided walkthrough: if a spoken request is a tour intent, build the
+  // dashboard when needed, start the cursor in narrated mode, and hand the
+  // ordered captions back to the conductor to speak as the cursor lands on each
+  // stop. Returns null for a normal query so regular narration runs instead.
+  const prepareVoiceTour = useCallback(
+    async (text: string): Promise<{ panelId: string; caption: string }[] | null> => {
+      if (!NAV_INTENT.test(text)) return null;
+      const bare = tourSubject(text).length === 0;
+      let sessionId = sessionIdRef.current;
+      // "Walk me through this" with panels already up → tour what's on screen.
+      // Otherwise build the dashboard for the subject first, then wait for the
+      // new panels to render so the cursor can find them in the DOM.
+      if (!(bare && hasPanelsRef.current && sessionId)) {
+        const result = await orchestrate.mutateAsync({
+          data: { query: text, sessionId },
+        });
+        setActiveDashboard(result);
+        sessionId = result.sessionId;
+        await new Promise((r) => window.setTimeout(r, 850));
+      }
+      if (!sessionId) return null;
+      const tour = await navigateTour.mutateAsync({ data: { sessionId, query: text } });
+      const stops = (tour.stops || []).filter((s) => s && s.panelId && s.caption);
+      if (stops.length === 0) {
+        toast({
+          title: "Nothing to walk through yet",
+          description: "Ask for a few panels first, then I'll guide you.",
+          duration: 3000,
+        });
+        return null;
+      }
+      navigatorRef.current.start({ ...tour, stops }, { narrated: true });
+      return stops.map((s) => ({ panelId: s.panelId, caption: s.caption }));
+    },
+    [orchestrate, navigateTour, toast],
+  );
+
+  const moveCursorTo = useCallback(
+    (index: number) => navigatorRef.current.goTo(index),
+    [],
+  );
+  const endVoiceTour = useCallback(() => navigatorRef.current.stop(), []);
+
   const voice = useVoiceConductor({
     active: voiceMode,
     processQuery: processVoiceQuery,
@@ -284,6 +334,13 @@ export default function Terminal() {
     onComplete: useCallback(() => {
       toast({ title: "complete", duration: 2500 });
     }, [toast]),
+    prepareTour: prepareVoiceTour,
+    moveCursorTo,
+    endTour: endVoiceTour,
+  });
+  const voiceRef = useRef(voice);
+  useEffect(() => {
+    voiceRef.current = voice;
   });
 
   // Navigator and voice both drive the highlight — never let them run together.
@@ -554,7 +611,15 @@ export default function Terminal() {
         title={navigator.title}
         index={navigator.index}
         total={navigator.total}
-        onStop={navigator.stop}
+        // During a spoken walkthrough the conductor owns advancing in step with
+        // narration, so hide manual prev/next; Stop still dismisses everything.
+        manualControls={!voiceMode}
+        onStop={() => {
+          // In voice mode, also cut short the in-flight narration so dismissing
+          // the cursor silences the AI too.
+          if (voiceMode) voiceRef.current.cancelNarration();
+          navigatorRef.current.stop();
+        }}
         onNext={navigator.next}
         onPrev={navigator.prev}
       />

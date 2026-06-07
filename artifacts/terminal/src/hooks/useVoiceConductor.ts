@@ -18,6 +18,12 @@ export interface TranscriptEntry {
   at: number;
 }
 
+/** A single guided-tour stop: a panel to point at and the caption to narrate. */
+export interface TourStop {
+  panelId: string;
+  caption: string;
+}
+
 interface UseVoiceConductorArgs {
   active: boolean;
   processQuery: (text: string) => Promise<NarrationSegment[]>;
@@ -25,6 +31,17 @@ interface UseVoiceConductorArgs {
   onHighlight: (panelId: string | null) => void;
   /** Fired once a full turn (listen -> think -> speak) finishes successfully. */
   onComplete?: () => void;
+  /**
+   * Detect whether an utterance is a guided-walkthrough request. If it is,
+   * build the dashboard (when needed), start the navigator cursor in narrated
+   * mode, and return the ordered stops to narrate. Return null for a normal
+   * query so the regular narration path runs instead.
+   */
+  prepareTour?: (text: string) => Promise<TourStop[] | null>;
+  /** Move the navigator cursor to stop `index`; resolves once it has landed. */
+  moveCursorTo?: (index: number) => Promise<void>;
+  /** Tear down the navigator cursor when a tour ends or is interrupted. */
+  endTour?: () => void;
 }
 
 interface UseVoiceConductor {
@@ -45,6 +62,12 @@ interface UseVoiceConductor {
   startListening: () => void;
   /** Stop listening and process whatever was captured — call on release. */
   stopListening: () => void;
+  /**
+   * Cut short any in-flight narration (including a guided tour) and drop to
+   * idle. Used by the navigator's Stop control so dismissing the cursor also
+   * silences the voice.
+   */
+  cancelNarration: () => void;
 }
 
 function base64ToArrayBuffer(b64: string): ArrayBuffer {
@@ -55,7 +78,7 @@ function base64ToArrayBuffer(b64: string): ArrayBuffer {
 }
 
 export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConductor {
-  const { active, processQuery, synthesize, onHighlight, onComplete } = args;
+  const { active, processQuery, synthesize, onHighlight, onComplete, prepareTour, moveCursorTo, endTour } = args;
 
   const [status, setStatus] = useState<VoiceStatus>("idle");
   const [userLevel, setUserLevel] = useState(0);
@@ -81,11 +104,17 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
   const synthRef = useRef(synthesize);
   const highlightRef = useRef(onHighlight);
   const completeRef = useRef(onComplete);
+  const prepareTourRef = useRef(prepareTour);
+  const moveCursorToRef = useRef(moveCursorTo);
+  const endTourRef = useRef(endTour);
   useEffect(() => {
     processRef.current = processQuery;
     synthRef.current = synthesize;
     highlightRef.current = onHighlight;
     completeRef.current = onComplete;
+    prepareTourRef.current = prepareTour;
+    moveCursorToRef.current = moveCursorTo;
+    endTourRef.current = endTour;
   });
 
   const statusRef = useRef<VoiceStatus>("idle");
@@ -304,6 +333,16 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
     setAgentLevel(0);
   }, []);
 
+  // Cancel any in-flight narration (e.g. a guided tour) and settle to idle. The
+  // in-flight handleUtterance loop sees the bumped turn id, breaks, tears down
+  // the cursor, and bails. Wired to the navigator's Stop control.
+  const cancelNarration = useCallback(() => {
+    interruptTurn();
+    if (statusRef.current === "thinking" || statusRef.current === "speaking") {
+      setStatusSafe("idle");
+    }
+  }, [interruptTurn, setStatusSafe]);
+
   // --- startListening: begin a listening session on hold-start (push-to-talk) ---
   const startListening = useCallback(async () => {
     if (!activeRef.current) return;
@@ -367,6 +406,53 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
     recognitionRef.current.stop();
     setStatusSafe("thinking");
     try {
+      // Guided-walkthrough path: if this utterance is a tour request, build the
+      // dashboard (when needed), start the navigator cursor, and narrate each
+      // stop's caption with the cursor advancing only after the audio finishes.
+      if (prepareTourRef.current) {
+        let stops: TourStop[] | null = null;
+        try {
+          stops = await prepareTourRef.current(text);
+        } catch {
+          stops = null;
+        }
+        if (myTurn !== turnIdRef.current) {
+          endTourRef.current?.();
+          return; // interrupted while preparing
+        }
+        if (stops && stops.length > 0) {
+          setStatusSafe("speaking");
+          for (let i = 0; i < stops.length; i++) {
+            if (myTurn !== turnIdRef.current) break; // barged in / stopped
+            // Glide the cursor onto the panel first, then speak its caption. The
+            // navigator owns the caption + highlight; we only narrate.
+            try {
+              await moveCursorToRef.current?.(i);
+            } catch {
+              /* cursor move failed — narrate anyway */
+            }
+            if (myTurn !== turnIdRef.current) break;
+            try {
+              const audio = await synthRef.current(stops[i].caption);
+              if (myTurn !== turnIdRef.current) break;
+              // Advance is synced to narration: we only loop to the next stop
+              // once this caption's audio has fully played.
+              await playSegmentAudio(audio.audio);
+            } catch {
+              // If one caption fails to synthesize, keep walking the rest.
+            }
+          }
+          const interrupted = myTurn !== turnIdRef.current;
+          endTourRef.current?.();
+          if (interrupted) return; // a new turn already owns state
+          busyRef.current = false;
+          setStatusSafe("idle");
+          completeRef.current?.();
+          return;
+        }
+        // Not a tour — fall through to the normal narration path below.
+      }
+
       const segments = await processRef.current(text);
       if (myTurn !== turnIdRef.current) return; // interrupted while thinking
       setStatusSafe("speaking");
@@ -485,5 +571,6 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
     retry,
     startListening,
     stopListening,
+    cancelNarration,
   };
 }

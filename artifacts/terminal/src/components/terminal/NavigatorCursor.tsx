@@ -11,6 +11,8 @@ interface NavigatorCursorProps {
   title: string;
   index: number;
   total: number;
+  /** When false, hide the manual prev/next buttons (advance is driven externally). */
+  manualControls?: boolean;
   onStop: () => void;
   onNext: () => void;
   onPrev: () => void;
@@ -26,6 +28,7 @@ export function NavigatorCursor({
   title,
   index,
   total,
+  manualControls = true,
   onStop,
   onNext,
   onPrev,
@@ -145,24 +148,32 @@ export function NavigatorCursor({
             <span className="font-serif text-sm leading-tight truncate">{title}</span>
           </div>
           <div className="h-7 w-px bg-border" />
-          <button
-            onClick={onPrev}
-            disabled={index <= 1}
-            aria-label="Previous stop"
-            className="text-muted-foreground hover:text-white disabled:opacity-30 disabled:hover:text-muted-foreground transition-colors p-1"
-          >
-            <ChevronLeft className="w-4 h-4" strokeWidth={1.5} />
-          </button>
-          <span className="editorial-label text-[9px] text-muted-foreground nums-tabular w-9 text-center">
-            {index} / {total}
-          </span>
-          <button
-            onClick={onNext}
-            aria-label="Next stop"
-            className="text-muted-foreground hover:text-white transition-colors p-1"
-          >
-            <ChevronRight className="w-4 h-4" strokeWidth={1.5} />
-          </button>
+          {manualControls ? (
+            <>
+              <button
+                onClick={onPrev}
+                disabled={index <= 1}
+                aria-label="Previous stop"
+                className="text-muted-foreground hover:text-white disabled:opacity-30 disabled:hover:text-muted-foreground transition-colors p-1"
+              >
+                <ChevronLeft className="w-4 h-4" strokeWidth={1.5} />
+              </button>
+              <span className="editorial-label text-[9px] text-muted-foreground nums-tabular w-9 text-center">
+                {index} / {total}
+              </span>
+              <button
+                onClick={onNext}
+                aria-label="Next stop"
+                className="text-muted-foreground hover:text-white transition-colors p-1"
+              >
+                <ChevronRight className="w-4 h-4" strokeWidth={1.5} />
+              </button>
+            </>
+          ) : (
+            <span className="editorial-label text-[9px] text-muted-foreground nums-tabular w-9 text-center">
+              {index} / {total}
+            </span>
+          )}
           <div className="h-7 w-px bg-border" />
           <button
             onClick={onStop}
