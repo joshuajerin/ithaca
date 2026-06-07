@@ -6606,6 +6606,76 @@ def _scenario_parse_llm(prompt: str, symbols: List[str], scope_label: str) -> di
     return parsed
 
 
+def _scenario_projection(
+    symbols: List[str],
+    weights: Optional[List[float]],
+    horizon: int,
+    drift_pct: float,
+):
+    """Build a baseline-vs-scenario projection from REAL price history.
+
+    Fetches each symbol's recent closes, converts to daily returns, blends them
+    into a basket, and runs the Monte Carlo scenario projection. Returns
+    ``(projection, source, as_of, used_symbols)`` where ``projection`` is ``None``
+    when there is not enough real history for any requested symbol.
+    """
+    series: List[List[float]] = []
+    used_symbols: List[str] = []
+    as_of = None
+    source = "mock"
+    for s in symbols:
+        meta = repo.price_series_meta(s, days=400)
+        pts = meta.get("points") or []
+        closes = [p["c"] for p in pts if p.get("c")]
+        if len(closes) >= 6:
+            rets = [(closes[i] / closes[i - 1] - 1.0) for i in range(1, len(closes))]
+            series.append(rets)
+            used_symbols.append(s)
+            if meta.get("source") == "live":
+                source = "live"
+            if meta.get("asOf"):
+                as_of = meta["asOf"] if as_of is None else max(as_of, meta["asOf"])
+
+    projection = None
+    if series:
+        try:
+            basket = engine.combine_returns(series, weights)
+            projection = engine.project_scenario(
+                basket.tolist(), drift_pct, horizon=horizon, method="bootstrap",
+            )
+        except Exception:
+            projection = None
+    return projection, source, as_of, used_symbols
+
+
+def recompute_scenario(symbols: List[str], horizon_days: int, drift_pct: float) -> dict:
+    """Re-run only the grounded projection for an already-parsed scenario.
+
+    Lets the user nudge the assumptions (horizon, per-assumption impact, overall
+    drift) and instantly re-project against the SAME real price history without
+    re-parsing the natural-language what-if through the LLM. Pure numpy, no AI
+    call, so it returns fast. Raises ValueError when inputs are unusable.
+    """
+    syms = [str(s).upper().strip() for s in (symbols or []) if str(s).strip()][:6]
+    if not syms:
+        raise ValueError("at least one symbol is required to recompute a scenario")
+    horizon = max(21, min(1260, int(horizon_days or 252)))
+    drift = max(-60.0, min(60.0, float(drift_pct)))
+
+    projection, source, as_of, used_symbols = _scenario_projection(syms, None, horizon, drift)
+    if projection is None:
+        raise ValueError("not enough real price history to recompute this scenario")
+
+    return {
+        "projection": projection,
+        "source": source,
+        "asOf": as_of,
+        "symbols": used_symbols or syms,
+        "horizonDays": horizon,
+        "driftPct": round(drift, 1),
+    }
+
+
 def build_scenario(params: dict) -> dict:
     """What-if / scenario reasoning grounded in the simulation engine.
 
@@ -6652,33 +6722,10 @@ def build_scenario(params: dict) -> dict:
     horizon = int(parsed.get("horizonDays", 252) or 252)
     drift_pct = float(parsed.get("driftPct", 0.0))
 
-    # 2) Build a baseline return series from REAL price history.
-    series: List[List[float]] = []
-    used_symbols: List[str] = []
-    as_of = None
-    source = "mock"
-    for s in symbols:
-        meta = repo.price_series_meta(s, days=400)
-        pts = meta.get("points") or []
-        closes = [p["c"] for p in pts if p.get("c")]
-        if len(closes) >= 6:
-            rets = [(closes[i] / closes[i - 1] - 1.0) for i in range(1, len(closes))]
-            series.append(rets)
-            used_symbols.append(s)
-            if meta.get("source") == "live":
-                source = "live"
-            if meta.get("asOf"):
-                as_of = meta["asOf"] if as_of is None else max(as_of, meta["asOf"])
-
-    projection = None
-    if series:
-        try:
-            basket = engine.combine_returns(series, weights)
-            projection = engine.project_scenario(
-                basket.tolist(), drift_pct, horizon=horizon, method="bootstrap",
-            )
-        except Exception:
-            projection = None
+    # 2) Build a baseline return series from REAL price history and project.
+    projection, source, as_of, used_symbols = _scenario_projection(
+        symbols, weights, horizon, drift_pct,
+    )
 
     if projection is None:
         # Pure AI-reasoned outcome with no grounded path (degraded, but explicit).

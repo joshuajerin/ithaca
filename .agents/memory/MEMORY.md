@@ -28,3 +28,4 @@
 - [Strategy lifecycle & paper book desk](strategy-lifecycle-desk.md) — registry+paperbook+lifecycle; deterministic intent handler before LLM; runtime CREATE TABLE not drizzle push; mark has no weight (use exposures); vite build needs PORT+BASE_PATH.
 - [Multi-ticker analyst compare](analyst-compare.md) — fan out build_analyst_report per symbol concurrently, isolate per-name failures; heuristic keyword traps ("view"⊂"overview").
 - [Macro dashboard overrides](macro-dashboard-overrides.md) — pin/remove macro tiles via refine; overrides persisted in panel data + on the pydantic model, merged latest-op-per-symbol.
+- [Debounced recompute deps](debounced-recompute-deps.md) — panels: a debounced re-run effect must depend on primitives only (refs for symbols/callback), and reset must key off a stable signature, or churning `data` refs starve the timer / wipe edits.

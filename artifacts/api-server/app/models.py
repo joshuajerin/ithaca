@@ -1312,6 +1312,23 @@ class RefineRequest(BaseModel):
     instruction: str
 
 
+class ScenarioRecomputeRequest(BaseModel):
+    # Re-run the grounded projection for a what-if scenario with tweaked
+    # assumptions, without re-parsing the natural-language prompt.
+    symbols: List[str]
+    horizonDays: int
+    driftPct: float
+
+
+class ScenarioRecomputeResult(BaseModel):
+    projection: Optional[dict] = None
+    source: Optional[str] = None
+    asOf: Optional[str] = None
+    symbols: List[str]
+    horizonDays: int
+    driftPct: float
+
+
 # --- skills ---
 class Subskill(BaseModel):
     name: str

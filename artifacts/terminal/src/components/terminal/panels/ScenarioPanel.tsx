@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   ResponsiveContainer,
@@ -10,7 +10,8 @@ import {
   CartesianGrid,
   ReferenceLine,
 } from "recharts";
-import { Sparkles, AlertCircle, ListChecks } from "lucide-react";
+import { Sparkles, AlertCircle, ListChecks, SlidersHorizontal, Loader2, RotateCcw } from "lucide-react";
+import { recomputeScenario } from "@workspace/api-client-react";
 
 interface Assumption {
   label: string;
@@ -64,8 +65,114 @@ function pct(n?: number): string {
   return `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
 }
 
+const RECOMPUTE_TIMEOUT_MS = 12000;
+const DEBOUNCE_MS = 450;
+
 export function ScenarioPanel({ data }: { data: ScenarioData }) {
-  const proj = data.projection;
+  // Local, editable copies of the projection inputs. They reset whenever a fresh
+  // scenario arrives from the agent, but otherwise let the user nudge the
+  // assumptions and instantly re-run the projection without retyping a prompt.
+  const [proj, setProj] = useState<Projection | null | undefined>(data.projection);
+  const [horizon, setHorizon] = useState<number>(data.horizonDays);
+  const [drift, setDrift] = useState<number>(data.driftPct);
+  const [impacts, setImpacts] = useState<number[]>(
+    () => (data.assumptions || []).map((a) => a.impactPct ?? 0),
+  );
+  const [dirty, setDirty] = useState(false);
+  const [recomputing, setRecomputing] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const canTune = Boolean(data.projection) && (data.symbols?.length ?? 0) > 0;
+
+  // A stable signature of the *parsed* scenario. We only reset local edits when
+  // a genuinely new scenario arrives (the agent re-parsed a prompt) — not on
+  // every incidental parent re-render, which would otherwise wipe the user's
+  // in-progress tweaks and the recomputed projection.
+  const sig = `${data.prompt}|${data.scope}|${(data.symbols || []).join(",")}|${data.horizonDays}|${data.driftPct}`;
+
+  useEffect(() => {
+    setProj(data.projection);
+    setHorizon(data.horizonDays);
+    setDrift(data.driftPct);
+    setImpacts((data.assumptions || []).map((a) => a.impactPct ?? 0));
+    setDirty(false);
+    setNotice(null);
+    setRecomputing(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sig]);
+
+  // Keep mutable inputs in a ref so `runRecompute` stays referentially stable.
+  // Otherwise its identity would change whenever the parent passes a new `data`
+  // object, retriggering (and continually rescheduling) the debounce effect —
+  // which can starve the timer so the recompute never actually fires.
+  const liveRef = useRef({ symbols: data.symbols, canTune });
+  liveRef.current = { symbols: data.symbols, canTune };
+
+  const runRecompute = useCallback(async (nextHorizon: number, nextDrift: number) => {
+    const { symbols, canTune: tunable } = liveRef.current;
+    if (!tunable) return;
+    setRecomputing(true);
+    setNotice(null);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), RECOMPUTE_TIMEOUT_MS);
+    try {
+      const res = await recomputeScenario(
+        { symbols, horizonDays: nextHorizon, driftPct: nextDrift },
+        { signal: controller.signal },
+      );
+      if (res?.projection) {
+        setProj(res.projection as unknown as Projection);
+        setNotice(null);
+      } else {
+        setNotice("Recompute returned no projection — showing the previous result.");
+      }
+    } catch (err) {
+      // Timed out or failed: keep the prior projection, surface a quiet notice.
+      setNotice("Couldn't re-run the projection just now — showing the previous result.");
+    } finally {
+      clearTimeout(timer);
+      setRecomputing(false);
+    }
+  }, []);
+
+  // Debounced re-run whenever the user changes horizon or net drift. Depend on
+  // primitives only (not `data`/`runRecompute`) so unrelated re-renders don't
+  // reset the timer.
+  useEffect(() => {
+    if (!dirty || !canTune) return;
+    const t = setTimeout(() => void runRecompute(horizon, drift), DEBOUNCE_MS);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [horizon, drift, dirty]);
+
+  const onHorizon = (v: number) => {
+    setDirty(true);
+    setHorizon(v);
+  };
+  const onDrift = (v: number) => {
+    setDirty(true);
+    setDrift(Number(v.toFixed(1)));
+  };
+  const onImpact = (idx: number, v: number) => {
+    setDirty(true);
+    setImpacts((prev) => {
+      const next = prev.slice();
+      next[idx] = v;
+      // Per-assumption impacts sum into the net drift that drives the projection.
+      const sum = next.reduce((acc, x) => acc + (Number.isFinite(x) ? x : 0), 0);
+      setDrift(Number(sum.toFixed(1)));
+      return next;
+    });
+  };
+
+  const reset = () => {
+    setProj(data.projection);
+    setHorizon(data.horizonDays);
+    setDrift(data.driftPct);
+    setImpacts((data.assumptions || []).map((a) => a.impactPct ?? 0));
+    setDirty(false);
+    setNotice(null);
+  };
 
   const ScenarioTooltip = ({ active, payload, label }: any) => {
     if (active && payload?.length) {
@@ -103,7 +210,7 @@ export function ScenarioPanel({ data }: { data: ScenarioData }) {
           <div className="flex items-center gap-2 mt-2 editorial-label text-[7.5px] text-muted-foreground tracking-widest uppercase">
             <span>{data.scope}</span>
             <span>·</span>
-            <span>{data.horizonDays}d horizon</span>
+            <span>{horizon}d horizon</span>
             {data.symbols && data.symbols.length > 0 && (
               <>
                 <span>·</span>
@@ -134,6 +241,63 @@ export function ScenarioPanel({ data }: { data: ScenarioData }) {
                 p5 {pct(proj.scenario.p5Pct)} · p95 {pct(proj.scenario.p95Pct)}
               </div>
             </div>
+          </section>
+        )}
+
+        {/* ── Tune: editable horizon + overall drift, instant re-run ── */}
+        {canTune && (
+          <section className="border-b border-border pb-4">
+            <div className="flex items-center gap-2 mb-3">
+              <SlidersHorizontal className="w-3 h-3 text-muted-foreground" strokeWidth={1.5} />
+              <span className="editorial-label text-[8.5px] text-muted-foreground tracking-widest uppercase">Tune Assumptions</span>
+              {recomputing && <Loader2 className="w-3 h-3 text-muted-foreground animate-spin" strokeWidth={1.5} />}
+              {dirty && !recomputing && (
+                <button
+                  onClick={reset}
+                  className="ml-auto flex items-center gap-1 editorial-label text-[7.5px] text-muted-foreground hover:text-white tracking-widest uppercase transition-colors"
+                >
+                  <RotateCcw className="w-2.5 h-2.5" strokeWidth={1.5} /> reset
+                </button>
+              )}
+            </div>
+
+            {/* Horizon */}
+            <div className="mb-3">
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="editorial-label text-[8px] text-muted-foreground tracking-widest uppercase">Horizon</label>
+                <span className="editorial-label text-[8px] text-white nums-tabular">{horizon}d</span>
+              </div>
+              <input
+                type="range"
+                min={21}
+                max={1260}
+                step={21}
+                value={horizon}
+                onChange={(e) => onHorizon(Number(e.target.value))}
+                className="w-full accent-white h-1 cursor-pointer"
+              />
+            </div>
+
+            {/* Overall drift */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="editorial-label text-[8px] text-muted-foreground tracking-widest uppercase">Net drift / yr</label>
+                <span className="editorial-label text-[8px] text-white nums-tabular">{pct(drift)}</span>
+              </div>
+              <input
+                type="range"
+                min={-40}
+                max={40}
+                step={0.5}
+                value={drift}
+                onChange={(e) => onDrift(Number(e.target.value))}
+                className="w-full accent-white h-1 cursor-pointer"
+              />
+            </div>
+
+            {notice && (
+              <p className="mt-3 editorial-label text-[8px] text-amber-300/80 leading-relaxed">{notice}</p>
+            )}
           </section>
         )}
 
@@ -176,7 +340,7 @@ export function ScenarioPanel({ data }: { data: ScenarioData }) {
             <div className="flex items-center gap-2 mb-3">
               <ListChecks className="w-3 h-3 text-muted-foreground" strokeWidth={1.5} />
               <span className="editorial-label text-[8.5px] text-muted-foreground tracking-widest uppercase">Assumptions</span>
-              <span className="editorial-label text-[8px] text-white ml-auto nums-tabular">net {pct(data.driftPct)} / yr</span>
+              <span className="editorial-label text-[8px] text-white ml-auto nums-tabular">net {pct(drift)} / yr</span>
             </div>
             <div className="flex flex-col border-t border-border">
               {data.assumptions.map((a, i) => (
@@ -187,8 +351,21 @@ export function ScenarioPanel({ data }: { data: ScenarioData }) {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start gap-2 mb-1">
                       <span className="font-serif text-sm text-white leading-tight flex-1">{a.label}</span>
-                      {a.impactPct !== undefined && (
-                        <span className="editorial-label text-[8px] text-muted-foreground nums-tabular shrink-0">{pct(a.impactPct)}</span>
+                      {canTune ? (
+                        <div className="flex items-center gap-1 shrink-0">
+                          <input
+                            type="number"
+                            step={0.5}
+                            value={impacts[i] ?? 0}
+                            onChange={(e) => onImpact(i, Number(e.target.value))}
+                            className="w-14 bg-transparent border border-border px-1 py-0.5 text-right editorial-label text-[8px] text-white nums-tabular focus:outline-none focus:border-white transition-colors"
+                          />
+                          <span className="editorial-label text-[8px] text-muted-foreground">%</span>
+                        </div>
+                      ) : (
+                        a.impactPct !== undefined && (
+                          <span className="editorial-label text-[8px] text-muted-foreground nums-tabular shrink-0">{pct(a.impactPct)}</span>
+                        )
                       )}
                     </div>
                     <p className="editorial-label text-[8.5px] text-muted-foreground leading-relaxed">{a.detail}</p>

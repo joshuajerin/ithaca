@@ -156,6 +156,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Panel"
+  /scenario/recompute:
+    post:
+      operationId: recomputeScenario
+      tags: [terminal]
+      summary: Re-run a what-if scenario projection
+      description: Re-projects a what-if scenario against the same real price history with tweaked assumptions (horizon and overall drift), without re-parsing the natural-language prompt.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScenarioRecomputeRequest"
+      responses:
+        "200":
+          description: Recomputed scenario projection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScenarioRecomputeResult"
   /watchlist:
     get:
       operationId: getWatchlist
@@ -1204,6 +1223,41 @@ components:
           type: string
         instruction:
           type: string
+    ScenarioRecomputeRequest:
+      type: object
+      required: [symbols, horizonDays, driftPct]
+      properties:
+        symbols:
+          type: array
+          items:
+            type: string
+          description: The scenario's underlying symbols to project against (real price history).
+        horizonDays:
+          type: integer
+          description: Projection horizon in trading days (clamped 21-1260).
+        driftPct:
+          type: number
+          description: Incremental annualized drift to layer on the baseline (clamped -60 to 60).
+    ScenarioRecomputeResult:
+      type: object
+      required: [symbols, horizonDays, driftPct]
+      properties:
+        projection:
+          type: ["object", "null"]
+          additionalProperties: true
+          description: The recomputed baseline-vs-scenario projection (same shape the scenario panel renders).
+        source:
+          type: ["string", "null"]
+        asOf:
+          type: ["string", "null"]
+        symbols:
+          type: array
+          items:
+            type: string
+        horizonDays:
+          type: integer
+        driftPct:
+          type: number
     NavigateRequest:
       type: object
       required: [sessionId]

@@ -149,6 +149,14 @@ def refine(req: models.RefineRequest):
     return updated
 
 
+@api.post("/scenario/recompute", response_model=models.ScenarioRecomputeResult)
+def scenario_recompute(req: models.ScenarioRecomputeRequest):
+    try:
+        return skills.recompute_scenario(req.symbols, req.horizonDays, req.driftPct)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 class StrategyCreateRequest(BaseModel):
     name: str | None = None
     signal: str | None = None

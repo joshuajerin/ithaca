@@ -27,6 +27,8 @@ import type {
   OrchestrationRequest,
   Panel,
   RefineRequest,
+  ScenarioRecomputeRequest,
+  ScenarioRecomputeResult,
   SectorList,
   SkillCatalog,
   SpeakRequest,
@@ -724,6 +726,78 @@ export const useRefinePanel = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getRefinePanelMutationOptions(options));
+    }
+
+export const getRecomputeScenarioUrl = () => {
+
+
+
+
+  return `/api/scenario/recompute`
+}
+
+/**
+ * Re-projects a what-if scenario against the same real price history with tweaked assumptions (horizon and overall drift), without re-parsing the natural-language prompt.
+ * @summary Re-run a what-if scenario projection
+ */
+export const recomputeScenario = async (scenarioRecomputeRequest: ScenarioRecomputeRequest, options?: RequestInit): Promise<ScenarioRecomputeResult> => {
+
+  return customFetch<ScenarioRecomputeResult>(getRecomputeScenarioUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      scenarioRecomputeRequest,)
+  }
+);}
+
+
+
+
+export const getRecomputeScenarioMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recomputeScenario>>, TError,{data: BodyType<ScenarioRecomputeRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof recomputeScenario>>, TError,{data: BodyType<ScenarioRecomputeRequest>}, TContext> => {
+
+const mutationKey = ['recomputeScenario'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof recomputeScenario>>, {data: BodyType<ScenarioRecomputeRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  recomputeScenario(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RecomputeScenarioMutationResult = NonNullable<Awaited<ReturnType<typeof recomputeScenario>>>
+    export type RecomputeScenarioMutationBody = BodyType<ScenarioRecomputeRequest>
+    export type RecomputeScenarioMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Re-run a what-if scenario projection
+ */
+export const useRecomputeScenario = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recomputeScenario>>, TError,{data: BodyType<ScenarioRecomputeRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof recomputeScenario>>,
+        TError,
+        {data: BodyType<ScenarioRecomputeRequest>},
+        TContext
+      > => {
+      return useMutation(getRecomputeScenarioMutationOptions(options));
     }
 
 export const getGetWatchlistUrl = () => {

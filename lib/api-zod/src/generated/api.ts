@@ -1184,6 +1184,26 @@ export const RefinePanelResponse = zod.object({
 
 
 /**
+ * Re-projects a what-if scenario against the same real price history with tweaked assumptions (horizon and overall drift), without re-parsing the natural-language prompt.
+ * @summary Re-run a what-if scenario projection
+ */
+export const RecomputeScenarioBody = zod.object({
+  "symbols": zod.array(zod.string()).describe('The scenario\'s underlying symbols to project against (real price history).'),
+  "horizonDays": zod.number().describe('Projection horizon in trading days (clamped 21-1260).'),
+  "driftPct": zod.number().describe('Incremental annualized drift to layer on the baseline (clamped -60 to 60).')
+})
+
+export const RecomputeScenarioResponse = zod.object({
+  "projection": zod.record(zod.string(), zod.unknown()).nullish().describe('The recomputed baseline-vs-scenario projection (same shape the scenario panel renders).'),
+  "source": zod.string().nullish(),
+  "asOf": zod.string().nullish(),
+  "symbols": zod.array(zod.string()),
+  "horizonDays": zod.number(),
+  "driftPct": zod.number()
+})
+
+
+/**
  * @summary Get watchlist
  */
 export const GetWatchlistResponse = zod.object({

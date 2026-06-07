@@ -607,6 +607,36 @@ export interface RefineRequest {
   instruction: string;
 }
 
+export interface ScenarioRecomputeRequest {
+  /** The scenario's underlying symbols to project against (real price history). */
+  symbols: string[];
+  /** Projection horizon in trading days (clamped 21-1260). */
+  horizonDays: number;
+  /** Incremental annualized drift to layer on the baseline (clamped -60 to 60). */
+  driftPct: number;
+}
+
+/**
+ * The recomputed baseline-vs-scenario projection (same shape the scenario panel renders).
+ * @nullable
+ */
+export type ScenarioRecomputeResultProjection = { [key: string]: unknown } | null;
+
+export interface ScenarioRecomputeResult {
+  /**
+     * The recomputed baseline-vs-scenario projection (same shape the scenario panel renders).
+     * @nullable
+     */
+  projection?: ScenarioRecomputeResultProjection;
+  /** @nullable */
+  source?: string | null;
+  /** @nullable */
+  asOf?: string | null;
+  symbols: string[];
+  horizonDays: number;
+  driftPct: number;
+}
+
 export interface NavigateRequest {
   sessionId: string;
   /**
