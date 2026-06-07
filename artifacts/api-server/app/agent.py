@@ -10,9 +10,15 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from . import ai, data, dynamic_skills, engine, harness, repo, skills, state, strategy, strategy_store
+
+
+# A short, honest notice surfaced to the UI (and spoken in voice mode) when the
+# dashboard/narration had to fall back to the keyword heuristic because the AI
+# was slow or unavailable. Reads well both as a chat banner and read aloud.
+_DEGRADED_NOTE = "The AI was slow to respond, so here's a quick keyword-built dashboard."
 
 
 # ----------------------------- tool schemas -----------------------------
@@ -977,7 +983,14 @@ def _handle_lifecycle(query: str, sid: str, voice: bool) -> Optional[dict]:
     state.append_history(sid, "assistant", msg)
     result: dict = {"sessionId": sid, "summary": msg, "panels": panels, "intent": "build"}
     if voice:
-        result["narration"] = _build_narration(query, msg, panels)
+        narration, narr_degraded = _build_narration(query, msg, panels)
+        result["narration"] = narration
+        # Mirror the orchestrate path: if the narrator fell back because the AI
+        # was slow/unavailable, flag it and speak the same lead-in notice.
+        if bool(panels) and narr_degraded:
+            result["degraded"] = True
+            result["note"] = _DEGRADED_NOTE
+            result["narration"] = [{"text": _DEGRADED_NOTE, "panelId": None}] + narration
     return result
 
 
@@ -1028,12 +1041,19 @@ def orchestrate(query: str, session_id: Optional[str], voice: bool = False) -> d
 
     panels: List[dict] = []
     summary = ""
+    # Tracks whether we fell back to the keyword heuristic because the AI was
+    # slow/unavailable (vs. genuinely AI-composed). Surfaced to the UI so the
+    # user knows why the dashboard may look simpler than usual.
+    ai_degraded = False
 
     if ai.ai_available():
         try:
             panels, summary = _orchestrate_llm(query, sid, kept, dict(cursor))
         except Exception:
             panels, summary = [], ""
+            ai_degraded = True
+    else:
+        ai_degraded = True
 
     if not panels:
         dash_syms, dash_secs = _dashboard_subjects(kept)
@@ -1045,8 +1065,22 @@ def orchestrate(query: str, session_id: Optional[str], voice: bool = False) -> d
     state.append_history(sid, "assistant", summary)
 
     result: dict = {"sessionId": sid, "summary": summary, "panels": combined, "intent": "build"}
+
+    narr_degraded = False
     if voice:
-        result["narration"] = _build_narration(query, summary, panels)
+        narration, narr_degraded = _build_narration(query, summary, panels)
+        result["narration"] = narration
+
+    # Only flag degradation when the fallback actually produced something — an
+    # empty dashboard has nothing to explain.
+    if bool(panels) and (ai_degraded or narr_degraded):
+        result["degraded"] = True
+        result["note"] = _DEGRADED_NOTE
+        if voice:
+            # Speak the same notice as a brief lead-in segment (no panel) so the
+            # hands-free user hears why the walkthrough may be simpler.
+            result["narration"] = [{"text": _DEGRADED_NOTE, "panelId": None}] + result["narration"]
+
     return result
 
 
@@ -1706,20 +1740,25 @@ def _repack(panels: List[dict]):
 
 
 # ----------------------------- spoken narration -----------------------------
-def _build_narration(query: str, summary: str, panels: List[dict]) -> List[dict]:
+def _build_narration(query: str, summary: str, panels: List[dict]) -> Tuple[List[dict], bool]:
     """Produce ordered spoken narration segments, each optionally tied to a panel.
 
     The first segment is a short lead-in (no panel), then one segment per panel
     in layout order so the UI can highlight panels as they are described.
+
+    Returns ``(segments, degraded)`` where ``degraded`` is True when the heuristic
+    narrator was used because the AI was slow/unavailable (an AI call that simply
+    returns nothing is NOT counted as degraded).
     """
     if ai.ai_available():
         try:
             segs = _narration_llm(query, summary, panels)
             if segs:
-                return segs
+                return segs, False
         except Exception:
-            pass
-    return _narration_heuristic(summary, panels)
+            return _narration_heuristic(summary, panels), True
+        return _narration_heuristic(summary, panels), False
+    return _narration_heuristic(summary, panels), True
 
 
 def _narration_llm(query: str, summary: str, panels: List[dict]) -> List[dict]:

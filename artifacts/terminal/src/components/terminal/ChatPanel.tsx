@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useGetSuggestions, useGetSkills, useGetWatchlist, useGetSectors } from "@workspace/api-client-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { Send, ChevronRight, Activity, Command, LayoutGrid, X } from "lucide-react";
+import { Send, ChevronRight, Activity, Command, LayoutGrid, X, AlertTriangle } from "lucide-react";
 import type { ConsoleMessage } from "@/hooks/useConsoleConversation";
 
 interface ChatPanelProps {
@@ -185,26 +185,40 @@ export function ChatPanel({ sessionId, onCommand, isProcessing, messages, inputR
           </AnimatePresence>
 
           {/* Chat History — each message fades/slides in */}
-          {messages.map((msg, i) => (
-            <motion.div
-              key={i}
-              initial={{ opacity: 0, y: 10, filter: "blur(2px)" }}
-              animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-              className={`flex flex-col gap-1.5 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
-            >
-              <div className="editorial-label text-[8.5px] text-muted-foreground">
-                {msg.role === 'user' ? 'Operator' : msg.kind === 'answer' ? 'Terminal · Answer' : 'Terminal'}
-              </div>
-              <div className={`px-3.5 py-2.5 max-w-[90%] font-serif text-base leading-snug ${
-                msg.role === 'user' 
-                  ? 'bg-white text-black' 
-                  : 'border-l border-border text-gray-100'
-              }`}>
-                {msg.content}
-              </div>
-            </motion.div>
-          ))}
+          {messages.map((msg, i) =>
+            msg.kind === 'notice' ? (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, y: 10, filter: "blur(2px)" }}
+                animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+                className="flex items-start gap-2 px-3 py-2.5 border border-amber-500/30 bg-amber-500/5 text-amber-200/90"
+                role="status"
+              >
+                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-400/80" strokeWidth={1.5} />
+                <span className="font-serif text-sm leading-snug italic">{msg.content}</span>
+              </motion.div>
+            ) : (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, y: 10, filter: "blur(2px)" }}
+                animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+                className={`flex flex-col gap-1.5 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
+              >
+                <div className="editorial-label text-[8.5px] text-muted-foreground">
+                  {msg.role === 'user' ? 'Operator' : msg.kind === 'answer' ? 'Terminal · Answer' : 'Terminal'}
+                </div>
+                <div className={`px-3.5 py-2.5 max-w-[90%] font-serif text-base leading-snug ${
+                  msg.role === 'user'
+                    ? 'bg-white text-black'
+                    : 'border-l border-border text-gray-100'
+                }`}>
+                  {msg.content}
+                </div>
+              </motion.div>
+            )
+          )}
 
           <AnimatePresence>
             {isProcessing && (

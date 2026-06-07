@@ -91,6 +91,12 @@ export default function Terminal() {
         return;
       }
       convo.setSessionId(result.sessionId);
+      // When the AI was slow/unavailable the server flags the response; surface
+      // an honest notice (before the summary) so the user knows why the
+      // dashboard may look simpler.
+      if (result.degraded) {
+        convo.addNoticeMessage(result.note || "AI was slow — showing a quick dashboard.");
+      }
       const isAnswer = result.intent === "question";
       const text = (isAnswer ? result.answer : result.summary) || "";
       if (text) convo.addAssistantMessage(text, isAnswer ? "answer" : "summary");

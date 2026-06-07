@@ -421,7 +421,9 @@ export const GetDefaultDashboardResponse = zod.object({
   "panelId": zod.string().nullish()
 }).describe('A spoken narration chunk, optionally tied to a panel to highlight while it is read.')).nullish().describe('Ordered spoken narration segments for voice mode; null\/omitted for text requests.'),
   "intent": zod.string().nullish().describe('\"question\" when the message was answered conversationally (panels unchanged) or \"build\" when the dashboard was composed\/modified.'),
-  "answer": zod.string().nullish().describe('Conversational answer text for a question intent; null\/omitted for a build.')
+  "answer": zod.string().nullish().describe('Conversational answer text for a question intent; null\/omitted for a build.'),
+  "degraded": zod.boolean().nullish().describe('True when the dashboard\/narration fell back to the keyword heuristic because the AI was slow or unavailable (rather than AI-composed).'),
+  "note": zod.string().nullish().describe('Short human-readable notice explaining a degraded\/fallback response (e.g. AI was slow); null\/omitted for normal AI responses.')
 })
 
 
@@ -794,7 +796,9 @@ export const OrchestrateResponse = zod.object({
   "panelId": zod.string().nullish()
 }).describe('A spoken narration chunk, optionally tied to a panel to highlight while it is read.')).nullish().describe('Ordered spoken narration segments for voice mode; null\/omitted for text requests.'),
   "intent": zod.string().nullish().describe('\"question\" when the message was answered conversationally (panels unchanged) or \"build\" when the dashboard was composed\/modified.'),
-  "answer": zod.string().nullish().describe('Conversational answer text for a question intent; null\/omitted for a build.')
+  "answer": zod.string().nullish().describe('Conversational answer text for a question intent; null\/omitted for a build.'),
+  "degraded": zod.boolean().nullish().describe('True when the dashboard\/narration fell back to the keyword heuristic because the AI was slow or unavailable (rather than AI-composed).'),
+  "note": zod.string().nullish().describe('Short human-readable notice explaining a degraded\/fallback response (e.g. AI was slow); null\/omitted for normal AI responses.')
 })
 
 

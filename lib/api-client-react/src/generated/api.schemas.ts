@@ -580,6 +580,16 @@ export interface DashboardSpec {
      * @nullable
      */
   answer?: string | null;
+  /**
+     * True when the dashboard/narration fell back to the keyword heuristic because the AI was slow or unavailable (rather than AI-composed).
+     * @nullable
+     */
+  degraded?: boolean | null;
+  /**
+     * Short human-readable notice explaining a degraded/fallback response (e.g. AI was slow); null/omitted for normal AI responses.
+     * @nullable
+     */
+  note?: string | null;
 }
 
 export interface OrchestrationRequest {

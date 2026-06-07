@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 export interface ConsoleMessage {
   role: "user" | "assistant";
   content: string;
-  kind?: "answer" | "summary";
+  kind?: "answer" | "summary" | "notice";
 }
 
 // Versioned keys so a future schema change can be ignored cleanly rather than
@@ -80,6 +80,12 @@ export function useConsoleConversation() {
     [],
   );
 
+  // A degraded/fallback notice — surfaced when the AI was slow or unavailable so
+  // the user understands why the dashboard may look simpler.
+  const addNoticeMessage = useCallback((content: string) => {
+    setMessages((prev) => [...prev, { role: "assistant", content, kind: "notice" }]);
+  }, []);
+
   // Wipe the transcript and the persisted session — used when the dashboard is
   // reset/cleared so the Console starts fresh too.
   const clear = useCallback(() => {
@@ -98,6 +104,7 @@ export function useConsoleConversation() {
     setSessionId,
     addUserMessage,
     addAssistantMessage,
+    addNoticeMessage,
     clear,
   };
 }

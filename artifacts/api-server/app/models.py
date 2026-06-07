@@ -1276,6 +1276,12 @@ class DashboardSpec(BaseModel):
     intent: Optional[str] = None
     # Conversational answer text for a question intent; null for a build.
     answer: Optional[str] = None
+    # True when the dashboard/narration fell back to the keyword heuristic because
+    # the AI was slow or unavailable (rather than AI-composed).
+    degraded: Optional[bool] = None
+    # Short human-readable notice explaining a degraded/fallback response; null for
+    # normal AI responses.
+    note: Optional[str] = None
 
 
 class OrchestrationRequest(BaseModel):

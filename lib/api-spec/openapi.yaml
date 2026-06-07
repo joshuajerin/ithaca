@@ -1191,6 +1191,12 @@ components:
         answer:
           type: ["string", "null"]
           description: Conversational answer text for a question intent; null/omitted for a build.
+        degraded:
+          type: ["boolean", "null"]
+          description: True when the dashboard/narration fell back to the keyword heuristic because the AI was slow or unavailable (rather than AI-composed).
+        note:
+          type: ["string", "null"]
+          description: Short human-readable notice explaining a degraded/fallback response (e.g. AI was slow); null/omitted for normal AI responses.
     OrchestrationRequest:
       type: object
       required: [query]
