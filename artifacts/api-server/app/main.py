@@ -285,6 +285,45 @@ def feature_request(req: FeatureRequestInput):
     )
 
 
+class DCFModelInput(BaseModel):
+    sessionId: str
+    name: str
+    symbol: str
+    assumptions: dict
+
+
+@api.get("/dcf-models")
+def list_dcf_models(sessionId: str, symbol: str | None = None):
+    if not sessionId or not sessionId.strip():
+        raise HTTPException(status_code=400, detail="sessionId is required")
+    return {"models": state.list_dcf_models(sessionId.strip(), symbol)}
+
+
+@api.post("/dcf-models")
+def save_dcf_model(req: DCFModelInput):
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    if not req.sessionId or not req.sessionId.strip():
+        raise HTTPException(status_code=400, detail="sessionId is required")
+    if not req.symbol or not req.symbol.strip():
+        raise HTTPException(status_code=400, detail="symbol is required")
+    required = {"revenueGrowth", "ebitdaMargin", "wacc", "exitMultiple", "taxRate", "capexPct"}
+    missing = required - set(req.assumptions.keys())
+    if missing:
+        raise HTTPException(status_code=400, detail=f"assumptions missing keys: {sorted(missing)}")
+    models = state.save_dcf_model(req.sessionId.strip(), name, req.symbol.strip(), req.assumptions)
+    return {"models": models}
+
+
+@api.delete("/dcf-models")
+def delete_dcf_model(sessionId: str, name: str, symbol: str):
+    if not sessionId or not sessionId.strip():
+        raise HTTPException(status_code=400, detail="sessionId is required")
+    models = state.delete_dcf_model(sessionId.strip(), name, symbol)
+    return {"models": models}
+
+
 def _watchlist_payload() -> dict:
     items = []
     for s in state.get_watchlist():

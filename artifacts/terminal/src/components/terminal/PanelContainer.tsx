@@ -170,7 +170,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "vol_term_structure": return <VolTermStructurePanel data={panel.data as any} />;
       case "structured_product": return <StructuredProductPanel data={panel.data as any} />;
       case "supply_chain": return <SupplyChainPanel data={panel.data as any} />;
-      case "dcf_model": return <DCFPanel data={panel.data as any} />;
+      case "dcf_model": return <DCFPanel data={panel.data as any} sessionId={sessionId} />;
       case "earnings_transcript": return <TranscriptPanel data={panel.data as any} />;
       case "earnings_calendar": return <EarningsCalendarPanel data={panel.data as any} />;
       case "ma_tracker": return <MACPanel data={panel.data as any} />;

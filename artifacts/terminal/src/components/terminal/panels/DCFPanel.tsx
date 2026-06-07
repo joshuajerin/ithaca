@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Cell } from "recharts";
+import { Save, Trash2, Check } from "lucide-react";
 
 interface DCFAssumptions {
   revenueGrowth: number;
@@ -8,6 +9,13 @@ interface DCFAssumptions {
   exitMultiple: number;
   taxRate: number;
   capexPct: number;
+}
+
+interface SavedDCFModel {
+  name: string;
+  symbol: string;
+  assumptions: DCFAssumptions;
+  savedAt: number;
 }
 
 interface DCFProjectionYear {
@@ -84,9 +92,95 @@ function getSensitivityColor(price: number, current: number): string {
   return "bg-red-900/70 text-red-300";
 }
 
-export function DCFPanel({ data }: { data: DCFData }) {
+export function DCFPanel({ data, sessionId }: { data: DCFData; sessionId?: string }) {
   const [assumptions, setAssumptions] = useState<DCFAssumptions>({ ...data.assumptions });
   const baseYear = data.projections[0]?.year ? data.projections[0].year - 1 : new Date().getFullYear();
+
+  const [savedModels, setSavedModels] = useState<SavedDCFModel[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>("");
+  const [isNaming, setIsNaming] = useState(false);
+  const [modelName, setModelName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [justSaved, setJustSaved] = useState(false);
+
+  const loadModels = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const res = await fetch(
+        `/api/dcf-models?sessionId=${encodeURIComponent(sessionId)}&symbol=${encodeURIComponent(data.symbol)}`
+      );
+      if (!res.ok) return;
+      const json = await res.json();
+      setSavedModels(Array.isArray(json.models) ? json.models : []);
+    } catch {
+      /* non-fatal: saved models just won't show */
+    }
+  }, [sessionId, data.symbol]);
+
+  useEffect(() => {
+    loadModels();
+  }, [loadModels]);
+
+  const handleSave = useCallback(async () => {
+    const name = modelName.trim();
+    if (!name || !sessionId) {
+      setIsNaming(false);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/dcf-models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, name, symbol: data.symbol, assumptions }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const json = await res.json();
+      setSavedModels(Array.isArray(json.models) ? json.models : []);
+      setSelectedModel(name);
+      setIsNaming(false);
+      setModelName("");
+      setJustSaved(true);
+      setTimeout(() => setJustSaved(false), 1500);
+    } catch {
+      setError("Save failed");
+      setTimeout(() => setError(null), 2500);
+    } finally {
+      setBusy(false);
+    }
+  }, [modelName, sessionId, data.symbol, assumptions]);
+
+  const handleLoad = useCallback(
+    (name: string) => {
+      setSelectedModel(name);
+      const model = savedModels.find(m => m.name === name);
+      if (model) setAssumptions({ ...model.assumptions });
+    },
+    [savedModels]
+  );
+
+  const handleDelete = useCallback(async () => {
+    if (!selectedModel || !sessionId) return;
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/dcf-models?sessionId=${encodeURIComponent(sessionId)}&symbol=${encodeURIComponent(data.symbol)}&name=${encodeURIComponent(selectedModel)}`,
+        { method: "DELETE" }
+      );
+      if (res.ok) {
+        const json = await res.json();
+        setSavedModels(Array.isArray(json.models) ? json.models : []);
+      }
+      setSelectedModel("");
+    } catch {
+      setError("Delete failed");
+      setTimeout(() => setError(null), 2500);
+    } finally {
+      setBusy(false);
+    }
+  }, [selectedModel, sessionId, data.symbol]);
 
   const { projections, impliedMid } = useMemo(
     () => runClientDCF(data.baseRevenue, data.sharesOut * 1e6, data.netDebt, assumptions, baseYear),
@@ -134,7 +228,7 @@ export function DCFPanel({ data }: { data: DCFData }) {
 
       <div className="flex-1 min-h-0 flex gap-3">
         {/* Assumptions sidebar */}
-        <div className="w-32 shrink-0 flex flex-col gap-2">
+        <div className="w-36 shrink-0 flex flex-col gap-2">
           <div className="text-[9px] text-muted-foreground uppercase tracking-widest mb-1">Assumptions</div>
           {numInput("Rev Growth", "revenueGrowth", "%", 0.5)}
           {numInput("EBITDA Margin", "ebitdaMargin", "%", 0.5)}
@@ -142,6 +236,84 @@ export function DCFPanel({ data }: { data: DCFData }) {
           {numInput("Exit Multiple", "exitMultiple", "x", 0.5)}
           {numInput("Tax Rate", "taxRate", "%", 1)}
           {numInput("Capex %Rev", "capexPct", "%", 0.5)}
+
+          {/* Saved models */}
+          {sessionId && (
+            <div className="pt-2 mt-1 border-t border-border flex flex-col gap-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] text-muted-foreground uppercase tracking-widest">Models</span>
+                {error && <span className="text-[8px] text-red-400 uppercase">{error}</span>}
+                {justSaved && !error && (
+                  <span className="text-[8px] text-emerald-400 uppercase flex items-center gap-0.5">
+                    <Check className="w-2.5 h-2.5" /> saved
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1">
+                <select
+                  value={selectedModel}
+                  onChange={e => handleLoad(e.target.value)}
+                  disabled={busy || savedModels.length === 0}
+                  className={`${inputCls} flex-1 disabled:opacity-50`}
+                >
+                  <option value="">
+                    {savedModels.length === 0 ? "No saved models" : "Load model…"}
+                  </option>
+                  {savedModels.map(m => (
+                    <option key={m.name} value={m.name}>{m.name}</option>
+                  ))}
+                </select>
+                {selectedModel && (
+                  <button
+                    type="button"
+                    onClick={handleDelete}
+                    disabled={busy}
+                    title="Delete model"
+                    className="shrink-0 text-muted-foreground hover:text-red-400 transition-colors disabled:opacity-50"
+                  >
+                    <Trash2 className="w-3 h-3" strokeWidth={1.5} />
+                  </button>
+                )}
+              </div>
+
+              {isNaming ? (
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    value={modelName}
+                    onChange={e => setModelName(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === "Enter") handleSave();
+                      if (e.key === "Escape") { setIsNaming(false); setModelName(""); }
+                    }}
+                    placeholder="Model name…"
+                    autoFocus
+                    disabled={busy}
+                    className={`${inputCls} flex-1`}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    disabled={busy || !modelName.trim()}
+                    title="Confirm save"
+                    className="shrink-0 text-muted-foreground hover:text-emerald-400 transition-colors disabled:opacity-50"
+                  >
+                    <Check className="w-3.5 h-3.5" strokeWidth={1.5} />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => { setModelName(selectedModel || ""); setIsNaming(true); }}
+                  disabled={busy}
+                  className="flex items-center justify-center gap-1 border border-border bg-black hover:border-white text-[9px] uppercase tracking-wider text-muted-foreground hover:text-white py-1 transition-colors disabled:opacity-50"
+                >
+                  <Save className="w-3 h-3" strokeWidth={1.5} /> Save model
+                </button>
+              )}
+            </div>
+          )}
 
           <div className="mt-auto pt-2 border-t border-border">
             <div className="text-[9px] text-muted-foreground uppercase mb-1">Implied Price</div>

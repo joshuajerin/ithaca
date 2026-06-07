@@ -1,6 +1,7 @@
 """In-memory session and watchlist state (Phase 1, no database)."""
 from __future__ import annotations
 
+import time
 from threading import Lock
 from typing import Dict, List
 
@@ -8,6 +9,8 @@ from typing import Dict, List
 _sessions: Dict[str, List[dict]] = {}
 # sessionId -> last user query (light context)
 _session_history: Dict[str, List[dict]] = {}
+# sessionId -> list of saved DCF model dicts ({name, symbol, assumptions, savedAt})
+_dcf_models: Dict[str, List[dict]] = {}
 
 _watchlist: List[str] = ["NVDA", "XOM", "MSFT"]
 
@@ -54,6 +57,51 @@ def append_history(session_id: str, role: str, content: str) -> None:
         # keep only the last few turns for light context
         if len(hist) > 8:
             del hist[: len(hist) - 8]
+
+
+def list_dcf_models(session_id: str, symbol: str | None = None) -> List[dict]:
+    """Return saved DCF models for a session, optionally filtered by symbol."""
+    with _lock:
+        models = list(_dcf_models.get(session_id, []))
+    if symbol:
+        sym = symbol.upper()
+        models = [m for m in models if m.get("symbol") == sym]
+    return models
+
+
+def save_dcf_model(session_id: str, name: str, symbol: str, assumptions: dict) -> List[dict]:
+    """Save (or overwrite) a named DCF model and return the list for that symbol."""
+    sym = symbol.upper()
+    entry = {
+        "name": name,
+        "symbol": sym,
+        "assumptions": dict(assumptions),
+        "savedAt": time.time(),
+    }
+    with _lock:
+        models = _dcf_models.setdefault(session_id, [])
+        # overwrite a model with the same name + symbol
+        for i, m in enumerate(models):
+            if m.get("name") == name and m.get("symbol") == sym:
+                models[i] = entry
+                break
+        else:
+            models.append(entry)
+        result = [dict(m) for m in models if m.get("symbol") == sym]
+    return result
+
+
+def delete_dcf_model(session_id: str, name: str, symbol: str) -> List[dict]:
+    """Delete a named DCF model and return the remaining list for that symbol."""
+    sym = symbol.upper()
+    with _lock:
+        models = _dcf_models.get(session_id, [])
+        _dcf_models[session_id] = [
+            m for m in models
+            if not (m.get("name") == name and m.get("symbol") == sym)
+        ]
+        result = [dict(m) for m in _dcf_models[session_id] if m.get("symbol") == sym]
+    return result
 
 
 def get_watchlist() -> List[str]:
