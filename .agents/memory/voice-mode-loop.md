@@ -53,6 +53,15 @@ otherwise it stomps the new listening session (stray idle + toast). `source.onen
 VoicePanel gates hold-start on `status !== "listening"` (was idle/error) so only an active listen
 blocks a fresh hold. **Why:** user asked to interject mid-narration to ask the next thing.
 
+**Keyboard barge-in (hold Space):** VoicePanel also wires a window `keydown`/`keyup` push-to-talk on
+`Space` that mirrors the orb exactly — hold to talk, release to send, and pressing during
+thinking/speaking barges in. Guards: skip `e.repeat` (autorepeat), skip when target is an
+INPUT/TEXTAREA/contentEditable, and only arm when `status !== "listening"` (matches the orb's
+`canHoldStart`). A `keyHeldRef` persists the held flag so the effect re-running on status changes
+(it depends on `status`) never drops a key that's still physically down — `keyup` still fires
+`onStopListening`. Effect is inert when `!supported || embedded || status === "error"`. **Why:** the
+"interrupt mid-response" task asked for a key alternative to the orb; Space is the classic PTT key.
+
 **Echo / self-trigger:** the mic MUST stop the instant an utterance finalizes and stay off through
 thinking + speaking, or the recognizer picks up the synthesized TTS and re-triggers. `handleUtterance`
 stops recognition before "thinking"; `startListening` refuses to arm unless status is idle/error, so

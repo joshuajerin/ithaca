@@ -148,6 +148,45 @@ export function VoicePanel({
     onStopListening();
   };
 
+  // Keyboard push-to-talk: hold Space to talk, exactly like holding the orb.
+  // Pressing Space while the agent is thinking/speaking barges in — it stops
+  // playback and starts listening — so users can interrupt without reaching for
+  // the orb. Release to send. We mirror the orb's gating (only arm from a
+  // non-listening, non-error state) and persist the held flag in a ref so the
+  // effect re-running on status changes doesn't drop a key that's still down.
+  const keyHeldRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!supported || embedded || status === "error") return;
+    const isEditable = (el: EventTarget | null) => {
+      const node = el as HTMLElement | null;
+      if (!node || !node.tagName) return false;
+      const tag = node.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || node.isContentEditable;
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space" || e.repeat) return;
+      if (isEditable(e.target)) return;
+      // Only arm/interrupt from a resting/thinking/speaking state — never
+      // restart an active listening session (matches the orb's canHoldStart).
+      if (status === "listening" || keyHeldRef.current) return;
+      e.preventDefault();
+      keyHeldRef.current = true;
+      onStartListening();
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code !== "Space" || !keyHeldRef.current) return;
+      e.preventDefault();
+      keyHeldRef.current = false;
+      onStopListening();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [supported, embedded, status, onStartListening, onStopListening]);
+
   // Embedded = running inside a cross-origin iframe (the Replit preview pane /
   // canvas) where Web Speech + mic capture are blocked. The conductor detects
   // this up front and surfaces an "open in a new tab" escape hatch.
@@ -293,10 +332,10 @@ export function VoicePanel({
             ) : (
               <div className="flex flex-col items-center gap-2 max-w-xs text-center">
                 <p className="text-xs text-muted-foreground leading-relaxed min-h-[2rem]">
-                  {status === "idle" && "Hold the orb and speak. Release when you're done."}
+                  {status === "idle" && "Hold the orb (or Space) and speak. Release when you're done."}
                   {status === "listening" && (interim || "Listening — release when you're done.")}
-                  {status === "thinking" && "Interpreting your request… hold to jump in."}
-                  {status === "speaking" && "Walking you through it — hold the orb to interrupt."}
+                  {status === "thinking" && "Interpreting your request… hold the orb or Space to jump in."}
+                  {status === "speaking" && "Walking you through it — hold the orb or Space to interrupt."}
                 </p>
               </div>
             )}
