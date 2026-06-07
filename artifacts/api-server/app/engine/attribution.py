@@ -17,6 +17,7 @@ identities are exact by construction:
 """
 from __future__ import annotations
 
+import math
 from typing import Dict, List, Sequence
 
 import numpy as np
@@ -202,6 +203,135 @@ def brinson(
             "benchReturn": round(rb_total * 100.0, 2),
             "activeReturn": round((rp_total - rb_total) * 100.0, 2),
         },
+    }
+
+
+def _carino_coeff(rp_total: float, rb_total: float) -> float:
+    """Carino smoothing coefficient for a (compounded) Rp/Rb pair.
+
+    ``k = (ln(1+Rp) - ln(1+Rb)) / (Rp - Rb)`` with the removable singularity at
+    ``Rp == Rb`` filled by its limit ``1 / (1 + Rp)``. Used both for the full
+    window (the denominator ``k``) and for each sub-period (the numerators
+    ``k_t``); ``k_t / k`` is the factor that rescales single-period arithmetic
+    effects so they link geometrically over the window.
+    """
+    diff = rp_total - rb_total
+    if abs(diff) > 1e-12:
+        return (math.log1p(rp_total) - math.log1p(rb_total)) / diff
+    denom = 1.0 + rp_total
+    return 1.0 / denom if abs(denom) > 1e-12 else 1.0
+
+
+def brinson_linked(
+    sectors: Sequence[str],
+    wp: Dict[str, Sequence[float]],
+    wb: Dict[str, Sequence[float]],
+    rp: Dict[str, Sequence[float]],
+    rb: Dict[str, Sequence[float]],
+) -> Dict[str, object]:
+    """Multi-period Brinson-Hood-Beebower attribution with Carino linking.
+
+    Each of ``wp``/``wb``/``rp``/``rb`` maps a sector to a per-sub-period series
+    (length ``T``); a scalar (or length-1 series) is broadcast across all
+    sub-periods, so constant weights can be passed as a single number. For each
+    sub-period ``t`` and sector ``s`` the single-period BHB effects are
+    ``alloc = (wp-wb)*Rb``, ``sel = wb*(Rp-Rb)``, ``inter = (wp-wb)*(Rp-Rb)``.
+
+    The per-period effects are scaled by the Carino factor ``k_t / k`` (see
+    :func:`_carino_coeff`) and summed over sub-periods. This makes the linked
+    effects add up **exactly** to the geometrically compounded active return
+    ``Rp_total - Rb_total`` where ``Rp_total = prod_t(1 + Rp_t) - 1`` (and
+    likewise for the benchmark), eliminating the residual/linking bias that
+    single-period BHB on compounded sector returns accumulates over long windows.
+
+    All inputs/outputs are fractions; outputs are rendered in percent and match
+    the shape of :func:`brinson` (``rows`` + ``totals``) for drop-in use.
+    """
+    secs = list(sectors)
+
+    # Infer the number of sub-periods from the longest provided series.
+    T = 0
+    for d in (wp, wb, rp, rb):
+        for s in secs:
+            if s in d:
+                T = max(T, int(np.atleast_1d(np.asarray(d[s], dtype=float)).size))
+    if T == 0:
+        T = 1
+
+    def col(d: Dict[str, Sequence[float]], s: str) -> np.ndarray:
+        if s not in d:
+            return np.zeros(T, dtype=float)
+        a = np.atleast_1d(np.asarray(d[s], dtype=float)).ravel()
+        if a.size == 1:
+            return np.full(T, float(a[0]))
+        if a.size != T:
+            raise ValueError(
+                f"series for sector {s!r} has length {a.size}, expected {T}"
+            )
+        return a
+
+    WP = {s: col(wp, s) for s in secs}
+    WB = {s: col(wb, s) for s in secs}
+    RP = {s: col(rp, s) for s in secs}
+    RB = {s: col(rb, s) for s in secs}
+
+    # Per-sub-period total portfolio / benchmark returns.
+    rp_t = np.zeros(T, dtype=float)
+    rb_t = np.zeros(T, dtype=float)
+    for s in secs:
+        rp_t += WP[s] * RP[s]
+        rb_t += WB[s] * RB[s]
+
+    rp_total = float(np.prod(1.0 + rp_t) - 1.0)
+    rb_total = float(np.prod(1.0 + rb_t) - 1.0)
+    active_total = rp_total - rb_total
+
+    # Carino linking: scale[t] = k_t / k.
+    k = _carino_coeff(rp_total, rb_total)
+    scale = np.array(
+        [_carino_coeff(float(rp_t[t]), float(rb_t[t])) for t in range(T)],
+        dtype=float,
+    )
+    scale = scale / k if abs(k) > 1e-12 else scale
+
+    rows: List[dict] = []
+    tot_alloc = tot_sel = tot_inter = 0.0
+    for s in secs:
+        d_w = WP[s] - WB[s]
+        alloc_t = d_w * RB[s]
+        sel_t = WB[s] * (RP[s] - RB[s])
+        inter_t = d_w * (RP[s] - RB[s])
+        alloc = float(np.sum(scale * alloc_t))
+        sel = float(np.sum(scale * sel_t))
+        inter = float(np.sum(scale * inter_t))
+        tot_alloc += alloc
+        tot_sel += sel
+        tot_inter += inter
+        # Display weights/returns: time-averaged weight, compounded sector return.
+        rows.append({
+            "sector": s,
+            "portWeight": round(float(WP[s].mean()) * 100.0, 2),
+            "benchWeight": round(float(WB[s].mean()) * 100.0, 2),
+            "portReturn": round(float(np.prod(1.0 + RP[s]) - 1.0) * 100.0, 2),
+            "benchReturn": round(float(np.prod(1.0 + RB[s]) - 1.0) * 100.0, 2),
+            "allocation": round(alloc * 100.0, 2),
+            "selection": round(sel * 100.0, 2),
+            "interaction": round(inter * 100.0, 2),
+            "total": round((alloc + sel + inter) * 100.0, 2),
+        })
+    return {
+        "rows": rows,
+        "totals": {
+            "allocation": round(tot_alloc * 100.0, 2),
+            "selection": round(tot_sel * 100.0, 2),
+            "interaction": round(tot_inter * 100.0, 2),
+            "total": round((tot_alloc + tot_sel + tot_inter) * 100.0, 2),
+            "portReturn": round(rp_total * 100.0, 2),
+            "benchReturn": round(rb_total * 100.0, 2),
+            "activeReturn": round(active_total * 100.0, 2),
+        },
+        "linked": True,
+        "subPeriods": int(T),
     }
 
 

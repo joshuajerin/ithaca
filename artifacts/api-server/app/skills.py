@@ -3260,6 +3260,7 @@ def _basket_benchmark(
     rets,
     wp_raw: Dict[str, float],
     rp_num: Dict[str, float],
+    rp_daily_num: Dict[str, "np.ndarray"],
     secs_all: List[str],
     caps_all,
     cum_all,
@@ -3307,22 +3308,28 @@ def _basket_benchmark(
     bench = engine.book_returns(rets[:, idxs], bw)  # real daily series, date-aligned
 
     # Brinson benchmark side from the basket's own sectors.
+    T = rets.shape[0]
     sec_w: Dict[str, float] = {}
     sec_num: Dict[str, float] = {}
     sec_cap: Dict[str, float] = {}
+    sec_daily_num: Dict[str, "np.ndarray"] = {}
     for kk, i in enumerate(idxs):
         sec = secs_all[i]
         sec_w[sec] = sec_w.get(sec, 0.0) + float(bw[kk])
         c = max(float(caps_all[i]), 0.0) or 1.0
         sec_num[sec] = sec_num.get(sec, 0.0) + c * float(cum_all[i])
         sec_cap[sec] = sec_cap.get(sec, 0.0) + c
+        sec_daily_num[sec] = sec_daily_num.get(sec, np.zeros(T)) + c * rets[:, i]
 
     rb: Dict[str, float] = {}
+    rb_daily: Dict[str, "np.ndarray"] = {}
     wb_raw: Dict[str, float] = {}
     excluded_sectors: List[str] = []
     for sec in wp_raw:
         if sec in sec_w and sec_cap.get(sec, 0.0) > 0:
             rb[sec] = sec_num[sec] / sec_cap[sec]
+            # Per-day cap-weighted (daily-rebalanced) sector return for linking.
+            rb_daily[sec] = sec_daily_num[sec] / sec_cap[sec]
             wb_raw[sec] = sec_w[sec]
         else:
             # A book sector the chosen basket does not span — can't attribute it
@@ -3339,9 +3346,11 @@ def _basket_benchmark(
         "asOf": None,
         "missing": 0,
         "rb": rb,
+        "rb_daily": rb_daily,
         "wb_raw": wb_raw,
         "wp_raw": wp_raw,
         "rp_num": rp_num,
+        "rp_daily_num": rp_daily_num,
         "sector_etf": {},
         "excluded_sectors": excluded_sectors,
         "brinsonName": f"{name} (cap-weighted constituents)",
@@ -3361,6 +3370,7 @@ def _build_benchmark(
     w,
     wp_raw: Dict[str, float],
     rp_num: Dict[str, float],
+    rp_daily_num: Dict[str, "np.ndarray"],
     secs_all: List[str],
     caps_all,
     cum_all,
@@ -3385,8 +3395,8 @@ def _build_benchmark(
     cons, dropped_pre = _resolve_bench_constituents(params)
     if cons:
         basket = _basket_benchmark(
-            cons, params, model, rets, wp_raw, rp_num, secs_all, caps_all,
-            cum_all, source, dropped_pre=dropped_pre,
+            cons, params, model, rets, wp_raw, rp_num, rp_daily_num, secs_all,
+            caps_all, cum_all, source, dropped_pre=dropped_pre,
         )
         if basket is not None:
             return basket
@@ -3418,14 +3428,18 @@ def _build_benchmark(
     etf_w = _etf_sector_weights(bench_ticker)
     if etf_w:
         # Re-bucket the book into the GICS space the ETF reports its weights in.
+        T = rets.shape[0]
         g_wp_raw: Dict[str, float] = {}
         g_rp_num: Dict[str, float] = {}
+        g_rp_daily_num: Dict[str, "np.ndarray"] = {}
         for kk, i in enumerate(idx):
             g = _GRANULAR_TO_GICS.get(secs_all[i], "other")
             g_wp_raw[g] = g_wp_raw.get(g, 0.0) + float(w[kk])
             g_rp_num[g] = g_rp_num.get(g, 0.0) + float(w[kk]) * float(cum_all[i])
+            g_rp_daily_num[g] = g_rp_daily_num.get(g, np.zeros(T)) + float(w[kk]) * rets[:, i]
 
         rb: Dict[str, float] = {}
+        rb_daily: Dict[str, "np.ndarray"] = {}
         wb_raw: Dict[str, float] = {}
         sector_etf: Dict[str, str] = {}
         excluded_sectors: List[str] = []
@@ -3437,14 +3451,17 @@ def _build_benchmark(
                 continue
             arr, _ = engine.align_benchmark_returns(ser["closes"], dates)
             rb[sec] = float(np.prod(1.0 + arr) - 1.0)
+            rb_daily[sec] = arr
             wb_raw[sec] = float(etf_w.get(sec, 0.0))  # the ETF's REAL weight
             sector_etf[sec] = etf
 
         base.update({
             "rb": rb,
+            "rb_daily": rb_daily,
             "wb_raw": wb_raw,
             "wp_raw": g_wp_raw,
             "rp_num": g_rp_num,
+            "rp_daily_num": g_rp_daily_num,
             "sector_etf": sector_etf,
             "excluded_sectors": excluded_sectors,
             "brinsonName": f"{bench_name} — its real sector weights × sector-ETF returns",
@@ -3459,6 +3476,7 @@ def _build_benchmark(
         bench_cap[secs_all[j]] = bench_cap.get(secs_all[j], 0.0) + float(caps_all[j])
 
     rb = {}
+    rb_daily: Dict[str, "np.ndarray"] = {}
     wb_raw = {}
     sector_etf = {}
     excluded_sectors = []
@@ -3470,14 +3488,17 @@ def _build_benchmark(
             continue
         arr, _ = engine.align_benchmark_returns(ser["closes"], dates)
         rb[sec] = float(np.prod(1.0 + arr) - 1.0)
+        rb_daily[sec] = arr
         wb_raw[sec] = bench_cap.get(sec, 0.0)
         sector_etf[sec] = etf
 
     base.update({
         "rb": rb,
+        "rb_daily": rb_daily,
         "wb_raw": wb_raw,
         "wp_raw": wp_raw,
         "rp_num": rp_num,
+        "rp_daily_num": rp_daily_num,
         "sector_etf": sector_etf,
         "excluded_sectors": excluded_sectors,
         "brinsonName": f"Diversified sector-ETF proxy ({bench_name} sector weights unavailable)",
@@ -3513,34 +3534,41 @@ def _compute_attribution(params: dict) -> dict:
     # Book daily return series over the window.
     book = engine.book_returns(rets[:, idx], w)
 
-    # Single-period portfolio sector returns over the window (real per-stock).
-    cum_all = np.prod(1.0 + rets, axis=0) - 1.0  # (N,)
+    # Sector membership & cap weights for the estimation universe.
+    cum_all = np.prod(1.0 + rets, axis=0) - 1.0  # (N,) compounded per-stock
     secs_all = [(data.get_company(s) or {}).get("sector") or "Other" for s in model.symbols]
     caps_all = np.array(
         [float((data.get_company(s) or {}).get("marketCap") or 0.0) for s in model.symbols],
         dtype=float,
     )
 
-    # Portfolio side: weight & real return by the book's sectors.
+    # Portfolio side: book sector weights + the per-DAY sector sub-portfolio
+    # return series (within-sector book-weighted), so attribution can be linked
+    # geometrically across sub-periods rather than collapsed to a single period.
     wp_raw: Dict[str, float] = {}
-    rp_num: Dict[str, float] = {}
+    rp_num: Dict[str, float] = {}              # weighted compounded return (display)
+    rp_daily_num: Dict[str, np.ndarray] = {}   # weighted daily return numerator (k,)
     for kk, i in enumerate(idx):
         sec = secs_all[i]
-        wp_raw[sec] = wp_raw.get(sec, 0.0) + float(w[kk])
-        rp_num[sec] = rp_num.get(sec, 0.0) + float(w[kk]) * float(cum_all[i])
+        wi = float(w[kk])
+        wp_raw[sec] = wp_raw.get(sec, 0.0) + wi
+        rp_num[sec] = rp_num.get(sec, 0.0) + wi * float(cum_all[i])
+        contrib = wi * rets[:, i]
+        rp_daily_num[sec] = rp_daily_num.get(sec, np.zeros(k)) + contrib
 
     # Chosen benchmark (user-selectable): a custom real basket OR a real traded
     # ETF (default SPY). This yields the headline daily series and the Brinson
     # benchmark sector side (weights/returns). Every number is real or excluded.
     bm = _build_benchmark(
-        params, model, rets, dates, rng, idx, w, wp_raw, rp_num, secs_all,
-        caps_all, cum_all, res.coverage.source,
+        params, model, rets, dates, rng, idx, w, wp_raw, rp_num, rp_daily_num,
+        secs_all, caps_all, cum_all, res.coverage.source,
     )
     bench = bm["bench"]
     bench_name = bm["name"]
     bench_ticker = bm["ticker"]
     bench_missing = bm["missing"]
     rb = bm["rb"]
+    rb_daily = bm["rb_daily"]
     wb_raw = bm["wb_raw"]
     sector_etf = bm["sector_etf"]
     excluded_sectors = bm["excluded_sectors"]
@@ -3549,6 +3577,7 @@ def _compute_attribution(params: dict) -> dict:
     # portfolio side it returns to keep both sides in the same buckets.
     wp_raw = bm["wp_raw"]
     rp_num = bm["rp_num"]
+    rp_daily_num = bm["rp_daily_num"]
 
     # Cumulative equity curves + drawdown for the chart (length k, date-aligned).
     book_eq = engine.attribution.equity_curve(book)[1:]
@@ -3573,10 +3602,23 @@ def _compute_attribution(params: dict) -> dict:
     wp = {s: wp_raw[s] / wp_sum for s in included}
     wb = {s: (wb_raw.get(s, 0.0) / wb_sum) for s in included}
     rp = {s: (rp_num[s] / wp_raw[s] if wp_raw[s] else 0.0) for s in included}
+    # Per-day portfolio sector return = within-sector book-weighted daily return.
+    rp_daily = {s: (rp_daily_num[s] / wp_raw[s] if wp_raw[s] else rp_daily_num[s]) for s in included}
 
     sectors = sorted(included, key=lambda s: -wb.get(s, 0.0))
     sector_labels = {s: (_GICS_LABELS.get(s) or repo.sector_name(s)) for s in sectors}
-    brinson = engine.brinson(sectors, wp, wb, rp, {s: rb[s] for s in sectors})
+    # Multi-period (Carino-linked) Brinson for any window with >1 sub-period; the
+    # single-period BHB only for a degenerate 1-day window. Linking keeps the
+    # allocation/selection/interaction effects additive to the geometric active
+    # return over long horizons (6M/1Y/YTD).
+    if k > 1:
+        brinson = engine.brinson_linked(
+            sectors, wp, wb,
+            {s: rp_daily[s] for s in sectors},
+            {s: rb_daily[s] for s in sectors},
+        )
+    else:
+        brinson = engine.brinson(sectors, wp, wb, rp, {s: rb[s] for s in sectors})
     brinson["benchmarkName"] = bm["brinsonName"]
     if excluded_sectors:
         brinson["excludedSectors"] = [

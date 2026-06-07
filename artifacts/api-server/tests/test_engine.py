@@ -277,6 +277,60 @@ def test_brinson_effects_sum_to_active_return():
         assert abs((row["allocation"] + row["selection"] + row["interaction"]) - row["total"]) < 0.02
 
 
+def test_brinson_linked_effects_sum_to_geometric_active_return():
+    # Multi-period sector returns over a long window; constant weights.
+    rng = np.random.default_rng(11)
+    sectors = ["Tech", "Health", "Energy", "Financials"]
+    T = 252
+    wp = {"Tech": 0.45, "Health": 0.25, "Energy": 0.10, "Financials": 0.20}
+    wb = {"Tech": 0.35, "Health": 0.30, "Energy": 0.15, "Financials": 0.20}
+    rp = {s: rng.normal(0.0006, 0.013, size=T) for s in sectors}
+    rb = {s: rng.normal(0.0004, 0.011, size=T) for s in sectors}
+    out = attr.brinson_linked(sectors, wp, wb, rp, rb)
+    t = out["totals"]
+    assert out["linked"] is True
+    assert out["subPeriods"] == T
+    # Geometric active return from the compounded per-period totals.
+    rp_t = sum(np.asarray(rp[s]) * wp[s] for s in sectors)
+    rb_t = sum(np.asarray(rb[s]) * wb[s] for s in sectors)
+    rp_total = float(np.prod(1.0 + rp_t) - 1.0) * 100.0
+    rb_total = float(np.prod(1.0 + rb_t) - 1.0) * 100.0
+    active = rp_total - rb_total
+    # Linked effects add up exactly (within rounding) to the geometric active return.
+    assert abs(t["activeReturn"] - active) < 0.02
+    assert abs((t["allocation"] + t["selection"] + t["interaction"]) - active) < 0.02
+    assert abs(t["portReturn"] - rp_total) < 0.02
+    assert abs(t["benchReturn"] - rb_total) < 0.02
+    for row in out["rows"]:
+        assert abs((row["allocation"] + row["selection"] + row["interaction"]) - row["total"]) < 0.02
+
+
+def test_brinson_linked_reduces_single_period_linking_bias():
+    # Over a long window with a clear trend, single-period BHB on compounded
+    # sector returns drifts from the true geometric active return; the linked
+    # version is additive to it by construction.
+    rng = np.random.default_rng(3)
+    sectors = ["A", "B"]
+    T = 252
+    wp = {"A": 0.7, "B": 0.3}
+    wb = {"A": 0.5, "B": 0.5}
+    rp = {"A": rng.normal(0.0010, 0.02, size=T), "B": rng.normal(0.0002, 0.02, size=T)}
+    rb = {"A": rng.normal(0.0006, 0.018, size=T), "B": rng.normal(0.0003, 0.018, size=T)}
+    rp_t = sum(np.asarray(rp[s]) * wp[s] for s in sectors)
+    rb_t = sum(np.asarray(rb[s]) * wb[s] for s in sectors)
+    active = (float(np.prod(1.0 + rp_t) - 1.0) - float(np.prod(1.0 + rb_t) - 1.0)) * 100.0
+    # Single-period BHB on compounded sector returns.
+    rp_c = {s: float(np.prod(1.0 + np.asarray(rp[s])) - 1.0) for s in sectors}
+    rb_c = {s: float(np.prod(1.0 + np.asarray(rb[s])) - 1.0) for s in sectors}
+    sp = attr.brinson(sectors, wp, wb, rp_c, rb_c)["totals"]
+    sp_sum = sp["allocation"] + sp["selection"] + sp["interaction"]
+    linked = attr.brinson_linked(sectors, wp, wb, rp, rb)["totals"]
+    linked_sum = linked["allocation"] + linked["selection"] + linked["interaction"]
+    # Linked sum matches geometric active return; single-period leaves a residual.
+    assert abs(linked_sum - active) < 0.02
+    assert abs(sp_sum - active) > abs(linked_sum - active)
+
+
 def test_factor_contributions_plus_specific_reconstruct_realized():
     asset_returns, weights, exposures, factor_returns = _attr_panel()
     book = attr.book_returns(asset_returns, weights)
@@ -349,7 +403,8 @@ def test_resolve_benchmark_validates_real_instruments():
     assert skills._resolve_benchmark({"benchmark": "$IWM"})[0] == "IWM"  # strips $
     # An unknown / non-real ticker must NOT be used; fall back to the default.
     assert skills._resolve_benchmark({"benchmark": "FAKE"})[0] == "SPY"
-    assert skills._resolve_benchmark({"benchmark": "NVDA"})[0] == "SPY"
+    # A real, tradable instrument is now honored as a user-selected benchmark.
+    assert skills._resolve_benchmark({"benchmark": "NVDA"})[0] == "NVDA"
 
 
 def test_benchmark_closes_degrades_on_source_failure():
