@@ -90,6 +90,70 @@ def generate_orders(
     return out
 
 
+def estimate_trade_costs(
+    orders: Sequence[dict],
+    advs: Dict[str, float],
+    daily_vols: Dict[str, float],
+    coef: float = DEFAULT_IMPACT_COEF,
+) -> tuple:
+    """Attach the modeled square-root market-impact cost to each order.
+
+    ``advs`` / ``daily_vols`` map a symbol to its average daily volume (shares)
+    and daily return volatility (a fraction, 0.02 = 2%). For each order with a
+    usable ADV + daily vol the impact is the published square-root law; the per
+    order dollar cost is ``impactBps/1e4 · notional``. Orders whose ADV or vol is
+    genuinely missing (<= 0) are flagged ``costSupported: False`` with a reason
+    rather than assigned a fabricated cost — the caller reports them.
+
+    Returns ``(enriched_orders, aggregate)`` where the aggregate carries the
+    supported/unsupported counts, gross notional, the notional-weighted impact in
+    bps and the summed dollar cost. This is the reusable diff -> cost step shared
+    by the optimizer's cost-aware construction and the rebalancing pipeline.
+    """
+    enriched: List[dict] = []
+    total_cost = 0.0
+    gross = 0.0
+    supported = 0
+    for o in orders:
+        sym = (o.get("symbol") or "").upper()
+        shares = float(o.get("shares") or 0.0)
+        notional = float(o.get("notional") or 0.0)
+        adv = float(advs.get(sym, 0.0) or 0.0)
+        dv = float(daily_vols.get(sym, 0.0) or 0.0)
+        row = dict(o)
+        if adv > 0 and dv > 0 and shares > 0:
+            bps = square_root_impact(shares, adv, dv, coef)
+            cost = bps / 1e4 * notional
+            row.update({
+                "costSupported": True,
+                "impactBps": bps,
+                "costUsd": cost,
+                "adv": adv,
+                "dailyVol": dv,
+            })
+            total_cost += cost
+            gross += notional
+            supported += 1
+        else:
+            row.update({
+                "costSupported": False,
+                "impactBps": 0.0,
+                "costUsd": 0.0,
+                "reason": "no real ADV / daily vol to model impact",
+            })
+        enriched.append(row)
+
+    agg = {
+        "orderCount": len(enriched),
+        "supportedCount": supported,
+        "unsupportedCount": len(enriched) - supported,
+        "grossNotional": gross,
+        "totalCostUsd": total_cost,
+        "impactBps": (total_cost / gross * 1e4) if gross > 0 else 0.0,
+    }
+    return enriched, agg
+
+
 # ----------------------------- intraday helpers -----------------------------
 def _typical(bar: dict) -> float:
     """Typical price (H+L+C)/3, falling back to whatever fields exist."""

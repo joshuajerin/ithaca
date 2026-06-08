@@ -371,70 +371,132 @@ def _current_weights(positions: List[dict], prices: Dict[str, float], book_val: 
     return out
 
 
-def rebalance(view: dict, cost_bps: float = DEFAULT_COST_BPS) -> Tuple[dict, dict]:
-    """Re-derive target weights, diff against the current book and apply the trades.
+def _trade_cost_inputs(symbols: List[str]) -> Tuple[Dict[str, float], Dict[str, float]]:
+    """Real ADV (avg daily volume, shares) + daily return vol per name, for the
+    square-root impact model. ADV is the company's reported volume; daily vol is
+    estimated from the real ~90d close series. Names with no usable data map to
+    0.0 and the cost model flags them ``costSupported: False`` rather than faking
+    an impact figure."""
+    advs: Dict[str, float] = {}
+    vols: Dict[str, float] = {}
+    for s in symbols:
+        u = (s or "").upper()
+        c = repo.get_company(u) or {}
+        advs[u] = float(c.get("volume") or 0.0)
+        meta = repo.price_series_meta(u, days=90)
+        closes = [p.get("c") for p in meta.get("points", []) if p.get("c") is not None]
+        vols[u] = engine.daily_vol_from_closes(closes)
+    return advs, vols
 
-    Returns ``(view, info)`` where ``info`` carries the realized turnover, the
-    modeled transaction cost and the trade list. The book's value continuity is
-    preserved (the trades are notional-neutral apart from the modeled cost); the
-    P&L baseline is re-anchored to the rebalance date because the marked-book and
-    NAV model assume a single set of positions held since inception.
-    """
+
+def _diff_book(view: dict) -> dict:
+    """Re-derive target weights and diff against the current book at real prices.
+
+    Returns the shared ingredients of a rebalance — fresh targets, current
+    weights, reference prices, book value and the resulting order list — WITHOUT
+    mutating the view, so both the read-only trade-list preview and the applying
+    rebalance run identical math. An empty book is treated as all-cash at the
+    strategy's capital (a rebalance from there establishes the book)."""
     sig = engine.normalize_signal(view.get("signal") or "momentum")
     new_w, picks, excluded, label = derive_target_weights(sig, None, None, None)
-    if not new_w:
-        return view, {"applied": False, "reason": "could not derive new target weights from the signal"}
-
     positions = view.get("positions") or []
-    # No existing book — a rebalance just establishes one from the fresh targets.
-    if not positions:
-        view["targetWeights"] = new_w
-        cons = dict(view.get("construction") or {})
-        cons["picks"] = picks
-        if excluded:
-            cons["excluded"] = excluded
-        view["construction"] = cons
-        try:
-            saved = paper_trade(view)
-        except ComplianceBlock as cb:
-            return view, {
-                "applied": False,
-                "blocked": True,
-                "reason": cb.result.get("reason"),
-                "compliance": cb.result,
-                "at": date.today().isoformat(),
-            }
-        capital = float(saved.get("capital") or DEFAULT_CAPITAL)
-        invested = capital - float(saved.get("cash") or 0.0)
-        cost = round(invested * (cost_bps / 10_000.0), 2)
-        info = {
-            "applied": True,
-            "established": True,
-            "trades": len(saved.get("positions") or []),
-            "turnoverPct": 100.0,
-            "costUsd": cost,
-            "costBps": cost_bps,
-            "at": date.today().isoformat(),
-        }
-        return _record_rebalance(saved, info), info
-
     cash = float(view.get("cash") or 0.0)
     cur_syms = [(p.get("symbol") or "").upper() for p in positions]
     all_syms = list({*cur_syms, *new_w.keys()})
     prices = _price_map(all_syms)
-    book_val = engine.paperbook.book_value(positions, cash, prices)
-    cur_w = _current_weights(positions, prices, book_val)
-
+    if positions:
+        book_val = engine.paperbook.book_value(positions, cash, prices)
+        cur_w = _current_weights(positions, prices, book_val)
+    else:
+        book_val = float(view.get("capital") or DEFAULT_CAPITAL)
+        cash = book_val
+        cur_w = {}
     orders = engine.generate_orders(new_w, cur_w, prices, book_val)
+    return {
+        "signal": sig, "newW": new_w, "picks": picks, "excluded": excluded,
+        "label": label, "positions": positions, "cash": cash, "prices": prices,
+        "bookValue": book_val, "curW": cur_w, "orders": orders,
+        "established": not positions,
+    }
 
-    pos_by_sym: Dict[str, dict] = {(p.get("symbol") or "").upper(): dict(p) for p in positions}
+
+def compute_trade_list(view: dict) -> dict:
+    """Read-only trade list to move the book from its current weights to target.
+
+    Re-derives targets, diffs against the live book and attaches the REAL modeled
+    square-root impact cost per order (orders with no ADV/vol are flagged, not
+    faked). Mutates nothing — used by the 'what trades to get to target' preview
+    and as the body of an applied rebalance plan. ``navAfter`` nets the expected
+    cost off the current book value."""
+    d = _diff_book(view)
+    orders = d["orders"]
+    advs, vols = _trade_cost_inputs([o["symbol"] for o in orders])
+    enriched, agg = engine.estimate_trade_costs(orders, advs, vols)
+    traded_notional = sum(o["notional"] for o in orders)
+    book_val = d["bookValue"]
+    turnover_pct = round((traded_notional / book_val) * 50.0, 2) if book_val > 0 else 0.0
+    total_cost = round(agg["totalCostUsd"], 2)
+    return {
+        "signal": d["signal"],
+        "signalLabel": engine.signal_label(d["signal"]),
+        "established": d["established"],
+        "hasTrades": bool(orders),
+        "bookValue": round(book_val, 2),
+        "navBefore": round(book_val, 2),
+        "navAfter": round(book_val - total_cost, 2),
+        "cash": round(d["cash"], 2),
+        "turnoverPct": turnover_pct,
+        "tradedNotional": round(traded_notional, 2),
+        "expectedCostUsd": total_cost,
+        "expectedCostBps": round(agg["impactBps"], 2),
+        "costSupportedCount": agg["supportedCount"],
+        "costUnsupportedCount": agg["unsupportedCount"],
+        "orders": enriched,
+        "currentWeights": {k: round(v * 100.0, 2) for k, v in d["curW"].items()},
+        "targetWeights": {k: round(v * 100.0, 2) for k, v in d["newW"].items()},
+        "picks": d["picks"],
+        "excluded": d["excluded"],
+        "universeLabel": d["label"],
+    }
+
+
+def rebalance(view: dict, cost_bps: Optional[float] = None) -> Tuple[dict, dict]:
+    """Re-derive target weights, diff against the current book and APPLY the trades.
+
+    Transaction cost is the REAL square-root market-impact model (per-name ADV +
+    daily vol), not a flat bps charge — so churn is paid for at a realistic rate
+    and orders with no modelable impact are flagged rather than faked. The modeled
+    cost is debited from cash; book-value continuity otherwise holds. The P&L
+    baseline is re-anchored to the rebalance date because the marked-book / NAV
+    model assumes a single set of positions held since inception. ``cost_bps`` is
+    retained for API compatibility but only used as a floor for orders the impact
+    model cannot price.
+    """
+    d = _diff_book(view)
+    if not d["newW"]:
+        return view, {"applied": False, "reason": "could not derive new target weights from the signal"}
+    orders = d["orders"]
+    if not orders:
+        return view, {"applied": False, "reason": "no trades needed — book already at target"}
+
+    advs, vols = _trade_cost_inputs([o["symbol"] for o in orders])
+    enriched, agg = engine.estimate_trade_costs(orders, advs, vols)
+
+    prices = d["prices"]
+    pos_by_sym: Dict[str, dict] = {(p.get("symbol") or "").upper(): dict(p) for p in d["positions"]}
     traded_notional = 0.0
     cash_delta = 0.0
-    for o in orders:
+    fallback_cost = 0.0
+    floor_bps = float(cost_bps) if cost_bps is not None else 0.0
+    for o in enriched:
         s = o["symbol"]
         signed = o["shares"] if o["side"] == "buy" else -o["shares"]
         traded_notional += o["notional"]
         cash_delta += -o["notional"] if o["side"] == "buy" else o["notional"]
+        # Orders the impact model can't price fall back to the flat floor (0 by
+        # default) so cash isn't silently understated, but stay flagged.
+        if not o.get("costSupported") and floor_bps > 0:
+            fallback_cost += o["notional"] * (floor_bps / 10_000.0)
         existing = pos_by_sym.get(s)
         new_shares = (float(existing["shares"]) if existing else 0.0) + signed
         if new_shares <= 1e-6:
@@ -442,8 +504,8 @@ def rebalance(view: dict, cost_bps: float = DEFAULT_COST_BPS) -> Tuple[dict, dic
         else:
             pos_by_sym[s] = {"symbol": s, "shares": new_shares, "entryPrice": o["price"]}
 
-    cost = round(traded_notional * (cost_bps / 10_000.0), 2)
-    new_cash = round(cash + cash_delta - cost, 2)
+    cost = round(agg["totalCostUsd"] + fallback_cost, 2)
+    new_cash = round(d["cash"] + cash_delta - cost, 2)
 
     # Re-anchor entry prices to the current mark so the marked-book / NAV model
     # stays internally consistent from the rebalance date forward.
@@ -451,6 +513,8 @@ def rebalance(view: dict, cost_bps: float = DEFAULT_COST_BPS) -> Tuple[dict, dic
     for s, p in pos_by_sym.items():
         px = prices.get(s) or float(p.get("entryPrice") or 0.0)
         new_positions.append({"symbol": s, "shares": round(float(p["shares"]), 4), "entryPrice": round(px, 4)})
+
+    book_val = d["bookValue"]
 
     # Pre-trade gate: validate the resulting book before any of it is applied.
     # On a hard violation the existing book is left untouched and the caller is
@@ -469,29 +533,38 @@ def rebalance(view: dict, cost_bps: float = DEFAULT_COST_BPS) -> Tuple[dict, dic
     # One-way turnover = 0.5 * sum(|target - current|); equals half the gross
     # traded notional over book value.
     turnover_pct = round((traded_notional / book_val) * 50.0, 2) if book_val > 0 else 0.0
+    blended_bps = round((cost / traded_notional) * 1e4, 2) if traded_notional > 0 else 0.0
 
     cons = dict(view.get("construction") or {})
-    cons["picks"] = picks
-    if excluded:
-        cons["excluded"] = excluded
+    cons["picks"] = d["picks"]
+    if d["excluded"]:
+        cons["excluded"] = d["excluded"]
     view["construction"] = cons
-    view["targetWeights"] = new_w
+    view["targetWeights"] = d["newW"]
     view["positions"] = new_positions
     view["cash"] = new_cash
     view["inceptionDate"] = date.today().isoformat()
 
     info = {
         "applied": True,
-        "established": False,
+        "established": d["established"],
         "trades": len(orders),
         "turnoverPct": turnover_pct,
         "costUsd": cost,
-        "costBps": cost_bps,
+        "costBps": blended_bps,
+        "costModel": "square_root_impact",
+        "costSupportedCount": agg["supportedCount"],
+        "costUnsupportedCount": agg["unsupportedCount"],
         "tradedNotional": round(traded_notional, 2),
+        "navBefore": round(book_val, 2),
+        "navAfter": round(book_val - cost, 2),
         "orders": [
             {"symbol": o["symbol"], "side": o["side"], "deltaWeight": o["deltaWeight"],
-             "notional": round(o["notional"], 2)}
-            for o in orders
+             "notional": round(o["notional"], 2), "shares": round(o["shares"], 2),
+             "costSupported": bool(o.get("costSupported")),
+             "impactBps": round(float(o.get("impactBps") or 0.0), 2),
+             "costUsd": round(float(o.get("costUsd") or 0.0), 2)}
+            for o in enriched
         ],
         "at": date.today().isoformat(),
     }
@@ -520,6 +593,108 @@ def _record_rebalance(view: dict, info: dict) -> dict:
     })
     view["stageHistory"] = history
     return _persist(view)
+
+
+# --------------------------- resolve + scheduling ---------------------------
+def resolve(name: Optional[str] = None, signal: Optional[str] = None) -> Optional[dict]:
+    """Find the strategy a rebalance request refers to: exact/loose name match,
+    then by signal, else the single / most recently touched book."""
+    strategies = strategy_store.list_strategies()
+    if not strategies:
+        return None
+    if name:
+        nl = name.strip().lower()
+        for s in strategies:
+            if (s.get("name") or "").lower() == nl:
+                return s
+        toks = [t for t in re.split(r"[^a-z0-9]+", nl)
+                if len(t) > 2 and t not in ("the", "strategy")]
+        best, best_len = None, -1
+        for s in strategies:
+            nm = (s.get("name") or "").lower()
+            if toks and all(t in nm for t in toks) and len(nm) > best_len:
+                best, best_len = s, len(nm)
+        if best:
+            return best
+    if signal:
+        sg = engine.normalize_signal(signal)
+        for s in strategies:
+            if s.get("signal") == sg:
+                return s
+    if len(strategies) == 1:
+        return strategies[0]
+    return max(strategies, key=lambda s: s.get("updatedAt") or "")
+
+
+def set_schedule(view: dict, every_days: int, enabled: bool = True) -> dict:
+    """Opt a strategy into (or out of) automated rebalancing every N calendar
+    days. Persisted on ``construction`` so the background worker can pick it up."""
+    cons = dict(view.get("construction") or {})
+    cons["autoRebalance"] = bool(enabled) and int(every_days) > 0
+    cons["rebalanceEvery"] = max(0, int(every_days))
+    view["construction"] = cons
+    return _persist(view)
+
+
+def is_due(view: dict, as_of: Optional[date] = None) -> bool:
+    """Whether an auto-rebalancing strategy is due to rebalance on ``as_of``.
+
+    A strategy is due when it has auto-rebalancing on with a positive cadence, is
+    in an active (paper/live) stage, and the days since its last rebalance (or
+    inception) have reached the cadence."""
+    cons = view.get("construction") or {}
+    if not cons.get("autoRebalance"):
+        return False
+    every = int(cons.get("rebalanceEvery") or 0)
+    if every <= 0:
+        return False
+    if (view.get("stage") or "").lower() not in ACTIVE_STAGES:
+        return False
+    day = as_of or date.today()
+    last = (cons.get("lastRebalance") or {}).get("at") or view.get("inceptionDate")
+    if not last:
+        return True
+    try:
+        last_d = date.fromisoformat(str(last))
+    except (ValueError, TypeError):
+        return True
+    return (day - last_d).days >= every
+
+
+def run_scheduled_rebalances(as_of: Optional[date] = None) -> dict:
+    """Rebalance every active strategy that is due, applying real cost.
+
+    Called by the background worker. Weekends are skipped (consistent with the
+    daily-snapshot cadence). Each strategy is isolated: one failure never blocks
+    the rest. Returns a small summary the worker logs."""
+    day = as_of or date.today()
+    if day.weekday() >= 5:
+        return {"rebalanced": 0, "skipped": 0, "errors": 0, "weekend": True, "date": day.isoformat()}
+
+    done = 0
+    skipped = 0
+    errors = 0
+    results: List[dict] = []
+    for s in strategy_store.list_strategies():
+        try:
+            if not is_due(s, day):
+                skipped += 1
+                continue
+            _, info = rebalance(s)
+            if info.get("applied"):
+                done += 1
+                results.append({"id": s.get("id"), "name": s.get("name"),
+                                "trades": info.get("trades"), "costUsd": info.get("costUsd"),
+                                "turnoverPct": info.get("turnoverPct")})
+            else:
+                skipped += 1
+        except Exception as exc:  # noqa: BLE001 — one bad book must not block the rest
+            log.warning("scheduled rebalance failed for %s: %s", s.get("id"), exc)
+            errors += 1
+    log.info("scheduled rebalances: %d done, %d skipped, %d errors (%s)",
+             done, skipped, errors, day.isoformat())
+    return {"rebalanced": done, "skipped": skipped, "errors": errors,
+            "results": results, "date": day.isoformat()}
 
 
 def mark(view: dict) -> dict:

@@ -200,6 +200,22 @@ def _sector_members(sectors: Optional[Sequence], cons: Constraints, n: int):
     return out
 
 
+def impact_cost(w: np.ndarray, current: np.ndarray, kappa: np.ndarray) -> float:
+    """Total modeled square-root transaction cost (a fraction of NAV) for moving
+    ``current`` -> ``w``: ``sum_i kappa_i · |w_i - current_i|^{3/2}``.
+
+    Each ``kappa_i`` folds the Almgren square-root impact law into per-name units:
+    ``kappa_i = coef · sigma_daily_i · sqrt(NAV / (price_i · ADV_i))`` so that for
+    a trade of weight ``|dw_i|`` the cost-as-fraction-of-NAV is exactly
+    ``coef · sigma_i · sqrt(Q_i / ADV_i) · |dw_i|`` — the same impact a TCA report
+    would model — but expressed convexly in the weights for the optimizer.
+    """
+    if kappa is None or current is None:
+        return 0.0
+    d = np.abs(np.asarray(w) - np.asarray(current))
+    return float(np.sum(np.asarray(kappa) * np.power(d, 1.5)))
+
+
 def _solve_utility(
     mu: np.ndarray,
     cov: np.ndarray,
@@ -210,13 +226,18 @@ def _solve_utility(
     iters: int = 400,
     w_init: Optional[np.ndarray] = None,
     eig: Optional[float] = None,
+    kappa: Optional[np.ndarray] = None,
 ) -> np.ndarray:
-    """Maximize w'mu - (gamma/2) w'cov w - turnover_penalty * ||w - current||_1.
+    """Maximize w'mu - (gamma/2) w'cov w - turnover_penalty·||w-current||_1
+    - sum_i kappa_i·|w_i - current_i|^{3/2}.
 
     Projected (sub)gradient ascent onto the constraint set. The step size is set
     from the largest eigenvalue of ``gamma*cov`` (Lipschitz constant of the
     smooth part) for stable convergence. ``w_init`` warm-starts the iteration
     (used to chain a gamma sweep cheaply) and ``eig`` caches the cov spectrum.
+    ``kappa`` (per-name square-root impact curvature) folds realistic transaction
+    cost into the objective so churn from ``current`` is penalized by modeled
+    impact, not just an L1 turnover budget.
     """
     n = mu.size
     lo, hi = cons.bounds(n)
@@ -229,6 +250,7 @@ def _solve_utility(
     step = 1.0 / L
     to = float(cons.turnover_penalty)
     w0 = current if current is not None else None
+    kap = None if kappa is None else np.asarray(kappa, dtype=float)
 
     sc = None
     if cons.short_cost is not None:
@@ -240,8 +262,13 @@ def _solve_utility(
     w = _project_feasible(start, lo, hi, cons.net, members, gross)
     for _ in range(iters):
         grad = mu - gamma * (cov @ w)
-        if to > 0 and w0 is not None:
-            grad = grad - to * np.sign(w - w0)
+        if w0 is not None:
+            d = w - w0
+            if to > 0:
+                grad = grad - to * np.sign(d)
+            if kap is not None:
+                # d/dw_i of kappa_i·|d_i|^{3/2} = 1.5·kappa_i·sqrt(|d_i|)·sign(d_i)
+                grad = grad - 1.5 * kap * np.sqrt(np.abs(d)) * np.sign(d)
         if sc is not None:
             # Linear borrow-cost penalty on the short leg: cost = sum sc_i*max(-w_i,0),
             # whose subgradient pushes shorted names (w<0) back up toward zero so a
@@ -283,6 +310,7 @@ def mean_variance(
     current: Optional[np.ndarray] = None,
     rf: float = 0.0,
     target_vol: float = 0.15,
+    kappa: Optional[np.ndarray] = None,
 ) -> OptResult:
     """Mean-variance optimal weights for the requested ``mode``.
 
@@ -303,7 +331,7 @@ def mean_variance(
     eig = float(np.linalg.eigvalsh(cov).max()) if n else 1.0
 
     if mode == "min_variance":
-        w = _solve_utility(np.zeros(n), cov, 1.0, cons, sectors, current, eig=eig)
+        w = _solve_utility(np.zeros(n), cov, 1.0, cons, sectors, current, eig=eig, kappa=kappa)
         return OptResult(w, "optimal", 0, _binding(w, cons, sectors))
 
     gammas = np.geomspace(0.5, 200.0, 14)
@@ -315,7 +343,7 @@ def mean_variance(
         for _ in range(14):
             mid = (lo_i + hi_i) // 2
             w = _solve_utility(mu, cov, float(gammas[mid]), cons, sectors, current,
-                               w_init=w, eig=eig)
+                               w_init=w, eig=eig, kappa=kappa)
             vol = float(np.sqrt(max(w @ cov @ w, 0.0)))
             if vol > target_vol:
                 lo_i = mid + 1  # need more risk aversion
@@ -324,7 +352,7 @@ def mean_variance(
             if lo_i >= hi_i:
                 break
         w = _solve_utility(mu, cov, float(gammas[min(lo_i, len(gammas) - 1)]), cons,
-                           sectors, current, w_init=w, eig=eig)
+                           sectors, current, w_init=w, eig=eig, kappa=kappa)
         return OptResult(w, "optimal", 0, _binding(w, cons, sectors))
 
     # max_sharpe (default): pick the gamma with the best realized Sharpe. Sweep
@@ -334,7 +362,7 @@ def mean_variance(
     best_sharpe = -np.inf
     w = None
     for g in gammas:
-        w = _solve_utility(mu, cov, float(g), cons, sectors, current, w_init=w, eig=eig)
+        w = _solve_utility(mu, cov, float(g), cons, sectors, current, w_init=w, eig=eig, kappa=kappa)
         vol = float(np.sqrt(max(w @ cov @ w, 0.0)))
         if vol <= 1e-9:
             continue
@@ -343,7 +371,7 @@ def mean_variance(
             best_sharpe = sharpe
             best_w = w.copy()
     if best_w is None:
-        best_w = _solve_utility(mu, cov, 1.0, cons, sectors, current, eig=eig)
+        best_w = _solve_utility(mu, cov, 1.0, cons, sectors, current, eig=eig, kappa=kappa)
     return OptResult(best_w, "optimal", 0, _binding(best_w, cons, sectors))
 
 

@@ -42,6 +42,9 @@ PIT_INTERVAL = 6 * 3600
 # trading day (one row per strategy per day), so an hourly pass simply keeps the
 # day's NAV fresh and settles to the close once prices stop moving.
 SNAPSHOT_INTERVAL = 3600
+# How often to check for due scheduled rebalances. The check itself is cheap and
+# per-strategy cadence is enforced in days by ``strategy.is_due``.
+REBALANCE_INTERVAL = 3600
 
 # Breadth market-cap refresh: a deliberately slow round-robin that touches only
 # the single market_cap field on mock breadth names (is_live = FALSE), so the
@@ -653,6 +656,27 @@ async def _snapshot_loop():
         await asyncio.sleep(SNAPSHOT_INTERVAL)
 
 
+async def _rebalance_loop():
+    """Run the automated, cost-aware rebalance pipeline for due strategies.
+
+    Each pass asks the strategy service which active books have hit their cadence
+    (``strategy.is_due``) and rebalances them with the real square-root impact
+    cost model, then refreshes their daily snapshot so the applied trades show up
+    in the audited NAV series immediately. ``run_scheduled_rebalances`` skips
+    weekends and isolates per-strategy failures, so this loop is safe to run
+    hourly across restarts (cadence is enforced in days)."""
+    while True:
+        try:
+            res = await asyncio.to_thread(strategy.run_scheduled_rebalances)
+            if res.get("rebalanced"):
+                log.info("rebalance cycle: %s", res)
+                # Re-snapshot so the just-applied trades land in the audited curve.
+                await asyncio.to_thread(strategy.record_daily_snapshots)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("rebalance loop error: %s", exc)
+        await asyncio.sleep(REBALANCE_INTERVAL)
+
+
 async def _breadth_market_cap_loop():
     """Slowly round-robin a real market_cap onto mock breadth names.
 
@@ -840,6 +864,7 @@ async def start() -> None:
     _tasks.append(asyncio.create_task(_pit_loop()))
     _tasks.append(asyncio.create_task(_ondemand_loop()))
     _tasks.append(asyncio.create_task(_snapshot_loop()))
+    _tasks.append(asyncio.create_task(_rebalance_loop()))
     log.info("data worker started (%d loops)", len(_tasks))
 
 

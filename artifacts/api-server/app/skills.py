@@ -6545,6 +6545,146 @@ def build_shorting_desk(params: dict) -> dict:
     return payload
 
 
+def build_rebalance_plan(params: dict) -> dict:
+    """Cost-aware rebalance plan: the share-level trade list to move a strategy's
+    book from its current weights to its latest signal targets, priced with the
+    REAL square-root impact model — and, when ``apply`` is set, actually applied
+    to the paper book.
+
+    The expected cost per order is the modeled square-root impact (ADV + daily
+    vol). When intraday data exists, the order is also simulated against the REAL
+    intraday volume profile (the same execution/TCA engine) to show realized
+    implementation shortfall vs the modeled estimate; orders with no real
+    intraday data are flagged unsupported, never faked. Applying nets the modeled
+    cost off cash and reports the updated weights / NAV."""
+    from . import strategy
+
+    name = params.get("strategy") or params.get("strategyName") or params.get("name")
+    signal = params.get("signal")
+    apply = bool(params.get("apply"))
+
+    view = strategy.resolve(name, signal)
+    if view is None:
+        return {
+            "title": "Rebalance Plan",
+            "status": "empty",
+            "applied": False,
+            "message": "You don't have any strategies yet — create one first "
+                       "(e.g. 'create a momentum strategy') then ask to rebalance it.",
+        }
+
+    plan = strategy.compute_trade_list(view)
+    orders = plan.get("orders") or []
+
+    # Realized execution cost: simulate each order against REAL intraday volume
+    # (unsupported when no intraday data — flagged, not faked).
+    interval = (params.get("interval") or _TCA_DEFAULT_INTERVAL).lower()
+    rng = (params.get("range") or _TCA_DEFAULT_RANGE).lower()
+    chosen = (params.get("algo") or "vwap").lower()
+    try:
+        pov_rate = float(params.get("pov_rate") or engine.execution.DEFAULT_POV_RATE)
+    except (TypeError, ValueError):
+        pov_rate = engine.execution.DEFAULT_POV_RATE
+
+    realized_by_sym: Dict[str, dict] = {}
+    realized_supported = 0
+    realized_cost = 0.0
+    for o in orders:
+        sim = _tca_simulate_order(o, interval, rng, pov_rate, chosen)
+        realized_by_sym[o["symbol"]] = sim
+        if sim.get("supported"):
+            realized_supported += 1
+            realized_cost += float(sim.get("costUsd") or 0.0)
+
+    rows: List[dict] = []
+    for o in orders:
+        sim = realized_by_sym.get(o["symbol"], {})
+        rows.append({
+            "symbol": o["symbol"],
+            "side": o["side"],
+            "shares": round(float(o.get("shares") or 0.0), 2),
+            "notional": round(float(o.get("notional") or 0.0), 0),
+            "price": round(float(o.get("price") or 0.0), 2),
+            "currentWeight": o.get("currentWeight"),
+            "targetWeight": o.get("targetWeight"),
+            "deltaWeight": o.get("deltaWeight"),
+            "expectedCostSupported": bool(o.get("costSupported")),
+            "expectedImpactBps": round(float(o.get("impactBps") or 0.0), 2),
+            "expectedCostUsd": round(float(o.get("costUsd") or 0.0), 2),
+            "realizedSupported": bool(sim.get("supported")),
+            "realizedAllInBps": round(float(sim.get("allInBps") or 0.0), 2) if sim.get("supported") else None,
+            "realizedCostUsd": round(float(sim.get("costUsd") or 0.0), 2) if sim.get("supported") else None,
+            "realizedReason": None if sim.get("supported") else sim.get("reason"),
+        })
+
+    applied_info = None
+    if apply and plan.get("hasTrades"):
+        view, applied_info = strategy.rebalance(view)
+        marked = strategy.mark(view)
+        plan["navAfter"] = marked.get("bookValue")
+        plan["cash"] = marked.get("cash")
+        updated_weights = {
+            (m.get("symbol") or "").upper(): round(float(m.get("weight") or 0.0), 2)
+            for m in (marked.get("exposures") or [])
+        }
+    else:
+        marked = None
+        updated_weights = None
+
+    expected_supported = sum(1 for o in orders if o.get("costSupported"))
+    realized_as_ofs = [s.get("asOf") for s in realized_by_sym.values()
+                       if s.get("supported") and s.get("asOf")]
+
+    return {
+        "title": f"Rebalance Plan — {view.get('name')}",
+        "status": "ok",
+        "applied": bool(applied_info and applied_info.get("applied")),
+        "strategyId": view.get("id"),
+        "strategyName": view.get("name"),
+        "stage": view.get("stage"),
+        "signalLabel": plan.get("signalLabel"),
+        "established": plan.get("established"),
+        "hasTrades": plan.get("hasTrades"),
+        "tradeCount": len(orders),
+        "bookValue": plan.get("bookValue"),
+        "navBefore": plan.get("navBefore"),
+        "navAfter": plan.get("navAfter"),
+        "cash": plan.get("cash"),
+        "turnoverPct": plan.get("turnoverPct"),
+        "tradedNotional": plan.get("tradedNotional"),
+        "expected": {
+            "costUsd": plan.get("expectedCostUsd"),
+            "costBps": plan.get("expectedCostBps"),
+            "supportedCount": expected_supported,
+            "unsupportedCount": len(orders) - expected_supported,
+        },
+        "realized": {
+            "costUsd": round(realized_cost, 2),
+            "supportedCount": realized_supported,
+            "unsupportedCount": len(orders) - realized_supported,
+            "asOf": max(realized_as_ofs) if realized_as_ofs else None,
+            "interval": interval,
+            "intervalLabel": _INTERVAL_LABELS.get(interval, interval),
+            "chosenAlgo": chosen if chosen in engine.execution.ALGOS else "vwap",
+        },
+        "orders": rows,
+        "currentWeights": plan.get("currentWeights"),
+        "targetWeights": plan.get("targetWeights"),
+        "updatedWeights": updated_weights,
+        "excluded": plan.get("excluded"),
+        "universeLabel": plan.get("universeLabel"),
+        "model": {
+            "name": "Square-root market impact (Almgren-style)",
+            "formula": "cost(bps) = Y · σ_daily · √(Q / ADV) · 1e4",
+            "coef": engine.execution.DEFAULT_IMPACT_COEF,
+            "note": ("Expected cost is the modeled square-root impact (ADV + daily "
+                     "vol). Realized cost is simulated against REAL intraday volume; "
+                     "names without intraday data are flagged, not faked."),
+        },
+        "applyInfo": applied_info,
+    }
+
+
 # ----------------------------- registry -----------------------------
 class SkillDef:
     def __init__(self, id, name, panel_type, description, subskills, builder, default_title):
@@ -6613,6 +6753,23 @@ _reg(SkillDef(
         {"name": "margin_profile", "description": "Compute Reg-T initial/maintenance margin and leverage.", "expectedOutput": "Margin requirement, leverage and breach status."},
     ],
     build_shorting_desk, "Shorting Desk",
+))
+_reg(SkillDef(
+    "rebalance-plan", "Cost-Aware Rebalance Plan", "rebalance_plan",
+    "The share-level trade list to move a strategy's paper book from its current "
+    "weights to its latest signal targets, with the REAL square-root impact cost "
+    "(expected modeled cost + realized intraday-sim cost) per name and an updated "
+    "weights/NAV view. Use for 'rebalance my strategy', 'what trades to get to "
+    "target', 'rebalance plan', 'preview the trades'. Set `apply` to actually "
+    "apply the trades to the book; omit it to just preview. Pass `strategy` to "
+    "target one by name.",
+    [
+        {"name": "resolve_strategy", "description": "Find the strategy to rebalance by name / signal / recency.", "expectedOutput": "A target strategy view."},
+        {"name": "diff_to_target", "description": "Diff the current book against fresh signal targets at real prices.", "expectedOutput": "A share-level trade list."},
+        {"name": "price_costs", "description": "Attach modeled square-root impact + realized intraday-sim cost per order.", "expectedOutput": "Expected vs realized cost per trade."},
+        {"name": "apply_optional", "description": "Optionally apply the trades to the paper book and re-mark.", "expectedOutput": "Updated weights and NAV."},
+    ],
+    build_rebalance_plan, "Rebalance Plan",
 ))
 _reg(SkillDef(
     "price-chart", "Live Price Charts", "price_chart",

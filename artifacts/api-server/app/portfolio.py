@@ -25,8 +25,14 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from . import data, factor_model, repo, shorting
+from .engine import execution as execu
 from .engine import optimize as opt
 from .engine import riskmodel
+
+# Default book value (USD) used to scale the modeled impact cost when the caller
+# does not supply an explicit capital base. The rebalancing pipeline always
+# passes the real paper-book value; this only matters for a bare optimize call.
+_DEFAULT_COST_CAPITAL = 10_000_000.0
 
 _DEFAULT_UNIVERSE = ["NVDA", "AMD", "AVGO", "MSFT", "GOOGL", "META", "AMZN", "AAPL"]
 _UNIVERSE_CAP = 40
@@ -171,6 +177,47 @@ def _current_book(params: dict, symbols: List[str]) -> Optional[np.ndarray]:
     return vec
 
 
+def _cost_curvature(symbols: List[str], capital: float, coef: float) -> Tuple[np.ndarray, dict]:
+    """Per-name square-root impact curvature ``kappa`` for cost-aware solving.
+
+    ``kappa_i = coef · sigma_daily_i · sqrt(capital / (price_i · ADV_i))`` from
+    REAL data: ADV is the company's average daily volume, price its last close,
+    and ``sigma_daily`` is estimated from the real ~90d close series. Names with
+    no usable ADV / price get ``kappa_i = 0`` (no penalty) and are reported as
+    uncovered so the panel can be honest about which trades were cost-modeled.
+    """
+    n = len(symbols)
+    kappa = np.zeros(n, dtype=float)
+    covered: List[str] = []
+    uncovered: List[str] = []
+    advs: Dict[str, float] = {}
+    vols: Dict[str, float] = {}
+    prices: Dict[str, float] = {}
+    for i, s in enumerate(symbols):
+        c = repo.get_company(s) or {}
+        adv = float(c.get("volume") or 0.0)
+        px = float(c.get("price") or 0.0)
+        meta = repo.price_series_meta(s, days=90)
+        closes = [p.get("c") for p in meta.get("points", []) if p.get("c") is not None]
+        sigma = execu.daily_vol_from_closes(closes)
+        advs[s], prices[s], vols[s] = adv, px, sigma
+        if adv > 0 and px > 0 and sigma > 0 and capital > 0:
+            kappa[i] = coef * sigma * np.sqrt(capital / (px * adv))
+            covered.append(s)
+        else:
+            uncovered.append(s)
+    info = {
+        "covered": covered,
+        "uncovered": uncovered,
+        "advs": advs,
+        "dailyVols": vols,
+        "prices": prices,
+        "capital": capital,
+        "coef": coef,
+    }
+    return kappa, info
+
+
 def optimize(params: dict) -> Tuple[dict, "factor_model.RiskModelResult", List[str]]:
     """Construct an optimal portfolio from real expected returns + covariance.
 
@@ -266,6 +313,18 @@ def optimize(params: dict) -> Tuple[dict, "factor_model.RiskModelResult", List[s
             ),
         }
 
+    # Cost-aware construction: fold the square-root impact model into the
+    # objective so trades away from the current book are penalized by realistic
+    # transaction cost, not just an L1 turnover budget. Only meaningful when we
+    # actually hold something (a current book) to trade away from.
+    cost_aware = bool(params.get("cost_aware")) and current is not None
+    kappa = None
+    cost_info: Optional[dict] = None
+    if cost_aware:
+        capital = float(params.get("capital") or _DEFAULT_COST_CAPITAL)
+        coef = float(params.get("impact_coef") or execu.DEFAULT_IMPACT_COEF)
+        kappa, cost_info = _cost_curvature(kept, capital, coef)
+
     bl_prior = None
     if method == "risk_parity":
         w = opt.apply_long_only_constraints(opt.risk_parity(cov), cons, sectors)
@@ -286,12 +345,14 @@ def optimize(params: dict) -> Tuple[dict, "factor_model.RiskModelResult", List[s
             sub_mode = "max_sharpe"
         result = opt.mean_variance(mu, cov, mode=sub_mode, cons=cons, sectors=sectors,
                                    current=current, rf=rf,
-                                   target_vol=float(params.get("target_vol", 0.15)))
+                                   target_vol=float(params.get("target_vol", 0.15)),
+                                   kappa=kappa)
         w, binding = result.weights, result.binding
     else:
         result = opt.mean_variance(mu, cov, mode=method, cons=cons, sectors=sectors,
                                    current=current, rf=rf,
-                                   target_vol=float(params.get("target_vol", 0.15)))
+                                   target_vol=float(params.get("target_vol", 0.15)),
+                                   kappa=kappa)
         w, binding = result.weights, result.binding
 
     stats = opt.portfolio_stats(w, mu, cov, rf)
@@ -315,6 +376,19 @@ def optimize(params: dict) -> Tuple[dict, "factor_model.RiskModelResult", List[s
         if current is not None:
             row["currentWeight"] = round(float(current[k]) * 100.0, 2)
             row["trade"] = round(float(w[k] - current[k]) * 100.0, 2)
+            if cost_info is not None:
+                cap = cost_info["capital"]
+                px = float(cost_info["prices"].get(s, 0.0))
+                adv = float(cost_info["advs"].get(s, 0.0))
+                dv = float(cost_info["dailyVols"].get(s, 0.0))
+                dw = abs(float(w[k] - current[k]))
+                if px > 0 and adv > 0 and dv > 0 and dw > 1e-6:
+                    shares = dw * cap / px
+                    bps = execu.square_root_impact(shares, adv, dv, cost_info["coef"])
+                    row["tradeCostBps"] = round(bps, 2)
+                    row["tradeCostUsd"] = round(bps / 1e4 * dw * cap, 2)
+                else:
+                    row["tradeCostBps"] = None
         if bl_prior is not None:
             row["priorReturn"] = round(float(bl_prior[k]) * 100.0, 2)
         holdings.append(row)
@@ -339,6 +413,20 @@ def optimize(params: dict) -> Tuple[dict, "factor_model.RiskModelResult", List[s
     turnover = None
     if current is not None:
         turnover = round(float(np.abs(w - current).sum()) * 50.0, 2)  # one-way %
+
+    cost_report = None
+    if cost_info is not None:
+        cap = cost_info["capital"]
+        cost_frac = opt.impact_cost(w, current, kappa)
+        cost_report = {
+            "capital": round(cap, 2),
+            "estCostUsd": round(cost_frac * cap, 2),
+            "estCostBps": round(cost_frac * 1e4, 2),
+            "coef": cost_info["coef"],
+            "coveredCount": len(cost_info["covered"]),
+            "uncoveredCount": len(cost_info["uncovered"]),
+            "uncovered": cost_info["uncovered"],
+        }
 
     method_labels = {
         "max_sharpe": "Max Sharpe (mean-variance)",
@@ -382,6 +470,8 @@ def optimize(params: dict) -> Tuple[dict, "factor_model.RiskModelResult", List[s
         "factorTilts": tilts,
         "sectorAllocation": sector_alloc,
         "turnover": turnover,
+        "costAware": cost_aware,
+        "costReport": cost_report,
         "blDelta": None if bl_prior is None else round(float(opt.implied_risk_aversion(
             float((res.returns[:, idx] @ w_mkt).mean() * riskmodel.TRADING_DAYS),
             float((res.returns[:, idx] @ w_mkt).var(ddof=1) * riskmodel.TRADING_DAYS), rf)), 2),

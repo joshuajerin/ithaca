@@ -767,6 +767,24 @@ def _tools() -> list:
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }},
         }},
+        {"type": "function", "function": {
+            "name": "add_rebalance_plan",
+            "description": (
+                "Add a COST-AWARE REBALANCE PLAN: the share-level trade list (buy/sell per name) to "
+                "move a strategy's paper book from its CURRENT weights to its latest signal TARGETS, "
+                "priced with the REAL square-root market-impact model — expected (modeled) cost plus a "
+                "realized intraday-execution-sim cost per name, with names lacking real intraday data "
+                f"flagged (never faked), and an updated weights/NAV view. {sizing} Use for 'rebalance my "
+                "strategy', 'what trades to get to target', 'rebalance plan', 'preview the trades'. Set "
+                "`apply` to TRUE to actually apply the trades to the paper book, or FALSE / omit to only "
+                "PREVIEW them. Pass `strategy` to target one by name."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "strategy": {"type": "string", "description": "Optional strategy name to rebalance."},
+                "apply": {"type": "boolean", "description": "True = apply trades to the book; False/omit = preview only."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
     ]
 
 
@@ -832,6 +850,7 @@ _TOOL_TO_TYPE = {
     "add_stress_test": "stress_test",
     "add_strategy_desk": "strategy_desk",
     "add_multi_strategy": "multi_strategy",
+    "add_rebalance_plan": "rebalance_plan",
 }
 
 
@@ -991,13 +1010,18 @@ def _system_prompt() -> str:
         "- For STRATEGY LIFECYCLE / paper-book / 'desk' requests that only VIEW state ('show the desk', "
         "'my strategies', 'the paper book', 'strategy lifecycle', 'how is the momentum strategy doing'), "
         "use add_strategy_desk (pass `strategy` to focus one). Lifecycle ACTIONS — create / paper-trade / "
-        "promote / demote / retire a strategy — are handled before you are called, so do not try to "
+        "promote / demote / retire / REBALANCE a strategy — are handled before you are called, so do not try to "
         "perform them; just present the desk.\n"
         "- For FIRM-LEVEL capital allocation across MANY strategies ('allocate capital across my strategies', "
         "'firm-level risk', 'how should I split capital between my sleeves', 'risk budget across strategies'), "
         "use add_multi_strategy — it treats each paper/live strategy as a sleeve, combines them into one firm "
         "book and recommends sleeve weights (equal_weight / risk_parity / target_risk). This is distinct from "
         "add_strategy_desk (single-strategy roster) and add_portfolio_optimizer (weights of individual tickers).\n"
+        "- For COST-AWARE REBALANCING of a strategy's paper book ('rebalance my strategy', 'what trades to "
+        "get to target', 'rebalance plan', 'preview the trades'), use add_rebalance_plan: it diffs the book "
+        "to its latest signal targets and prices the trade list with the real square-root impact model. Set "
+        "`apply` true only when the user clearly wants to execute the trades; otherwise leave it off to "
+        "preview. (Strategy rebalances are usually handled before you are called.)\n"
         "- Decide each panel's width (3-12 grid columns) and height (2-6 row units). Make the "
         "primary panel larger; supporting panels narrower. A full-width hero is width 12.\n"
         "- Only use tickers and sectors that exist in the dataset.\n"
@@ -1032,6 +1056,59 @@ def _signal_in_query(q: str) -> Optional[str]:
     return None
 
 
+def _wants_trade_preview(q: str) -> bool:
+    """Phrasings that ask for the trade list to reach a strategy's targets but do
+    not contain the word "rebalance" (e.g. 'what trades to get to target')."""
+    return bool(
+        re.search(r"\bwhat trades?\b", q)
+        or re.search(r"\btrade list\b", q)
+        or re.search(r"\brebalance plan\b", q)
+        or re.search(r"\bget (me )?to (the )?targets?\b", q)
+        or re.search(r"\btrades?\b[^.]*\bto (the )?targets?\b", q)
+        or re.search(r"\bpreview (the )?trades?\b", q)
+    )
+
+
+def _rebalance_should_apply(q: str) -> bool:
+    """True = actually apply the trades, False = preview only. Default is apply
+    ('rebalance my strategy'); preview/plan phrasings opt out unless the user is
+    explicit about applying/executing."""
+    explicit_apply = bool(re.search(r"\bapply\b|\bexecute\b|\bactually\b|\bcommit\b|\bgo ahead\b", q))
+    if explicit_apply:
+        return True
+    preview = bool(
+        re.search(r"\bpreview\b|\bplan\b|\bdry[- ]?run\b|\bsimulate\b|\bwhat trades?\b|\btrade list\b", q)
+        or re.search(r"\bwithout (applying|executing|trading|rebalanc)", q)
+        or re.search(r"\bget (me )?to (the )?targets?\b", q)
+    )
+    return not preview
+
+
+def _rebalance_summary(data: dict, target: dict, applied: bool) -> str:
+    """Build the chat summary from a rebalance_plan panel payload."""
+    name = data.get("strategyName") or target.get("name")
+    if data.get("status") == "empty":
+        return data.get("message") or "You don't have any strategies to rebalance yet."
+    if not data.get("hasTrades"):
+        return f"{name} is already at its latest targets — no trades needed."
+    n = data.get("tradeCount") or 0
+    exp = (data.get("expected") or {})
+    cost = exp.get("costUsd")
+    cost_txt = f"${cost:,.0f}" if isinstance(cost, (int, float)) else "n/a"
+    turn = data.get("turnoverPct")
+    turn_txt = f"{turn:.1f}% turnover, " if isinstance(turn, (int, float)) else ""
+    unsupported = exp.get("unsupportedCount") or 0
+    flag = f" ({unsupported} flagged — no real cost data)" if unsupported else ""
+    if applied and data.get("applied"):
+        if data.get("established"):
+            return (f"Built {name}'s book from its latest targets — {n} positions, "
+                    f"{cost_txt} modeled cost{flag}.")
+        return (f"Rebalanced {name} to its latest targets — {n} trades, {turn_txt}"
+                f"{cost_txt} modeled cost{flag}.")
+    return (f"Here's the plan to rebalance {name} to its latest targets — {n} trades, "
+            f"{turn_txt}{cost_txt} estimated cost{flag}. Say 'apply' to execute them.")
+
+
 def _lifecycle_action(q: str) -> Optional[str]:
     if re.search(r"\bretire\b|\bdecommission\b|\bshut down\b|\barchive\b|\bkill the\b", q):
         return "retire"
@@ -1043,10 +1120,14 @@ def _lifecycle_action(q: str) -> Optional[str]:
         return "paper"
     # Rebalance is only a lifecycle action when it clearly refers to a strategy
     # (the word "strateg", "book", or a signal keyword) — otherwise "rebalance a
-    # portfolio" must fall through to the portfolio-optimization path.
+    # portfolio" must fall through to the portfolio-optimization path. The
+    # trade-list preview phrasings ("what trades to get to target", "rebalance
+    # plan", "trade list") also resolve to a strategy here.
     if re.search(r"\brebalanc\w*\b", q) and (
         re.search(r"\bstrateg|\bbook\b", q) or _signal_in_query(q) is not None
     ):
+        return "rebalance"
+    if _wants_trade_preview(q):
         return "rebalance"
     if re.search(r"\b(create|register|set up|build|spin up|make)\b[^.]*\bstrateg", q) or re.search(r"\bnew strateg", q):
         return "create"
@@ -1134,22 +1215,10 @@ def _handle_lifecycle(query: str, sid: str, voice: bool) -> Optional[dict]:
             elif action == "retire":
                 target, _ok, msg = strategy.transition(target, "retired")
             elif action == "rebalance":
-                target, info = strategy.rebalance(target)
-                if info.get("applied"):
-                    label = engine.signal_label(target.get("signal") or "momentum")
-                    if info.get("established"):
-                        msg = (f"Built {target['name']}'s book from the latest {label} targets — "
-                               f"{info['trades']} positions, ${info['costUsd']:,.0f} modeled cost.")
-                    else:
-                        msg = (f"Rebalanced {target['name']} to its latest {label} targets — "
-                               f"{info['trades']} trades, {info['turnoverPct']:.1f}% turnover, "
-                               f"${info['costUsd']:,.0f} modeled cost.")
-                elif info.get("blocked"):
-                    block_result = info.get("compliance")
-                    msg = (f"Rebalance refused for {target['name']} by pre-trade compliance: "
-                           f"{info.get('reason')}. The book was left unchanged.")
-                else:
-                    msg = f"Couldn't rebalance {target['name']}: {info.get('reason', 'no trades generated')}."
+                # The cost-aware trade list (and the optional apply) is produced by
+                # the rebalance_plan panel builder below — leave the book untouched
+                # here so preview and apply share one code path.
+                pass
     except strategy.ComplianceBlock as cb:
         # A hard pre-trade violation refused the trade. Surface the specific
         # reason and the compliance panel rather than silently dropping it.
@@ -1179,14 +1248,32 @@ def _handle_lifecycle(query: str, sid: str, voice: bool) -> Optional[dict]:
         state.append_history(sid, "assistant", msg)
         return {"sessionId": sid, "summary": msg, "panels": panels, "intent": "build"}
 
-    add("strategy_desk", {"strategy": target["name"]}, 12, 5)
-    wmap = target.get("targetWeights") or {}
-    # Link the desk into the Risk Management + Attribution pillars for the book.
-    if block_result is None and target.get("stage") in ("paper", "live") and wmap:
-        syms = list(wmap.keys())
-        ws = [wmap[s] for s in syms]
-        add("risk_monitor", {"symbols": syms, "weights": ws, "portfolio_name": target["name"]}, 12, 6)
-        add("factor_analysis", {"symbols": syms}, 12, 5)
+    if action == "rebalance":
+        apply = _rebalance_should_apply(q)
+        panel = harness.run_skill(
+            "rebalance_plan", {"strategy": target["name"], "apply": apply},
+            harness.pack_layout(12, 6, cursor),
+        )
+        panels.append(panel)
+        msg = _rebalance_summary(panel.get("data") or {}, target, apply)
+        # After applying, surface the marked desk + risk pillar for the new book.
+        if apply and (panel.get("data") or {}).get("applied"):
+            target = _resolve_target_strategy(query, signal) or target
+            add("strategy_desk", {"strategy": target["name"]}, 12, 5)
+            wmap = target.get("targetWeights") or {}
+            if target.get("stage") in ("paper", "live") and wmap:
+                syms = list(wmap.keys())
+                ws = [wmap[s] for s in syms]
+                add("risk_monitor", {"symbols": syms, "weights": ws, "portfolio_name": target["name"]}, 12, 6)
+    else:
+        add("strategy_desk", {"strategy": target["name"]}, 12, 5)
+        wmap = target.get("targetWeights") or {}
+        # Link the desk into the Risk Management + Attribution pillars for the book.
+        if block_result is None and target.get("stage") in ("paper", "live") and wmap:
+            syms = list(wmap.keys())
+            ws = [wmap[s] for s in syms]
+            add("risk_monitor", {"symbols": syms, "weights": ws, "portfolio_name": target["name"]}, 12, 6)
+            add("factor_analysis", {"symbols": syms}, 12, 5)
 
     state.set_dashboard(sid, panels)
     state.append_history(sid, "user", query)
@@ -2443,6 +2530,7 @@ _TYPE_LABELS = {
     "risk_monitor": "a risk monitor",
     "strategy_desk": "the strategy desk",
     "multi_strategy": "the multi-strategy allocation",
+    "rebalance_plan": "a cost-aware rebalance plan",
 }
 
 

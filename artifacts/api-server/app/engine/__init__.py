@@ -34,6 +34,7 @@ from .backtest import resolve_entry, run_backtest, run_walk_forward
 from .execution import (
     aggregate_tca,
     daily_vol_from_closes,
+    estimate_trade_costs,
     generate_orders,
     simulate_all,
     square_root_impact,
