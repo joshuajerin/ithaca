@@ -18,8 +18,8 @@ import { FeatureRequestModal } from "@/components/terminal/FeatureRequestModal";
 import { SavedDashboardsModal } from "@/components/terminal/SavedDashboardsModal";
 import { DotWaveCanvas } from "@/components/terminal/DotWaveCanvas";
 import { useToast } from "@/hooks/use-toast";
-import { useIsMobile } from "@/hooks/use-mobile";
-import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles, Compass, CalendarClock, X, LayoutGrid } from "lucide-react";
+import { useIsMobile, useBreakpoint } from "@/hooks/use-mobile";
+import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles, Compass, CalendarClock, Command, X, LayoutGrid } from "lucide-react";
 import {
   formatEarningsCountdown,
   type EarningsRow,
@@ -61,6 +61,7 @@ export default function Terminal() {
   const [voiceMode, setVoiceMode] = useState(false);
   const [highlightedPanelId, setHighlightedPanelId] = useState<string | null>(null);
   const [chatOpen, setChatOpen] = useState(true);
+  const [mobileConsoleOpen, setMobileConsoleOpen] = useState(false);
   const [showFeatureModal, setShowFeatureModal] = useState(false);
   const [showDashboardsModal, setShowDashboardsModal] = useState(false);
   // The latest assistant reply to surface in the Console, carried with an
@@ -129,6 +130,8 @@ export default function Terminal() {
   const navigateTour = useNavigate();
   const { toast } = useToast();
   const isMobile = useIsMobile();
+  const breakpoint = useBreakpoint();
+  const isDesktop = breakpoint === "desktop";
 
   // Keep a ref to the latest sessionId for the voice conductor callbacks. The
   // source of truth is the persisted conversation, so a reloaded page keeps
@@ -488,22 +491,22 @@ export default function Terminal() {
             </button>
             <button
               onClick={() => setShowFeatureModal(true)}
-              className="flex items-center gap-2 px-3 py-2 editorial-label text-[9px] border border-border bg-black text-white hover:border-white transition-colors group/btn"
+              className="flex items-center gap-2 px-2.5 sm:px-3 py-2 editorial-label text-[9px] border border-border bg-black text-white hover:border-white transition-colors group/btn"
             >
               <Sparkles className="w-3.5 h-3.5 text-muted-foreground group-hover/btn:text-white transition-colors" strokeWidth={1.5} />
-              Build Feature
+              <span className="hidden sm:inline">Build Feature</span>
             </button>
             <button
               onClick={() => setVoiceMode((v) => !v)}
               aria-pressed={voiceMode}
-              className={`flex items-center gap-2 px-3 py-2 editorial-label text-[9px] border transition-colors ${
+              className={`flex items-center gap-2 px-2.5 sm:px-3 py-2 editorial-label text-[9px] border transition-colors ${
                 voiceMode
                   ? "bg-white text-black border-white"
                   : "bg-black text-white border-border hover:border-white"
               }`}
             >
               {voiceMode ? <Mic className="w-3.5 h-3.5" strokeWidth={1.5} /> : <MicOff className="w-3.5 h-3.5" strokeWidth={1.5} />}
-              {voiceMode ? "Voice On" : "Voice Off"}
+              <span className="hidden sm:inline">{voiceMode ? "Voice On" : "Voice Off"}</span>
             </button>
           </div>
         </header>
@@ -621,7 +624,8 @@ export default function Terminal() {
         </div>
       </main>
 
-      {!voiceMode && !isMobile && (
+      {/* Desktop — fixed, collapsible console sidebar. */}
+      {!voiceMode && isDesktop && (
         <div className="relative flex-shrink-0 flex">
           <button
             onClick={() => setChatOpen(o => !o)}
@@ -668,6 +672,46 @@ export default function Terminal() {
           {chatOpen ? "Console Open" : "Console Collapsed"}
         </span>
       </footer>
+
+      {/* Mobile & tablet — the console lives in a slide-up drawer, opened from a
+          floating button so it never crowds the dashboard. */}
+      {!voiceMode && !isDesktop && (
+        <>
+          {!mobileConsoleOpen && (
+            <button
+              onClick={() => setMobileConsoleOpen(true)}
+              className="fixed bottom-5 right-5 z-30 flex items-center gap-2 px-4 py-3 bg-white text-black editorial-label text-[10px] shadow-2xl active:scale-95 transition-transform"
+              aria-label="Open command console"
+            >
+              <Command className="w-4 h-4" strokeWidth={1.5} />
+              Console
+            </button>
+          )}
+          <AnimatePresence>
+            {mobileConsoleOpen && (
+              <motion.div
+                key="mobile-console"
+                initial={{ y: "100%" }}
+                animate={{ y: 0 }}
+                exit={{ y: "100%" }}
+                transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+                className="fixed inset-0 z-40 bg-black flex flex-col"
+              >
+                <ChatPanel
+                  sessionId={convo.sessionId}
+                  onCommand={(cmd) => {
+                    setMobileConsoleOpen(false);
+                    handleCommand(cmd);
+                  }}
+                  isProcessing={orchestrate.isPending}
+                  messages={convo.messages}
+                  onClose={() => setMobileConsoleOpen(false)}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </>
+      )}
 
       <NavigatorCursor
         active={navigator.active}

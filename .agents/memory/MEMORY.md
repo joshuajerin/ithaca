@@ -42,3 +42,4 @@
 - [Running Python scripts interactively](python-subprocess-maxpath.md) — ad-hoc `python3 foo.py` dies with a MAX_PATH wrapper error; run via `env -i …/.pythonlibs/bin/python3.11`.
 - [Saved dashboard layouts](saved-dashboards.md) — name→save/restore; dashboard_store jsonb panels (full payload inline), dedup-by-name; restore mints fresh session; status enum ok|loading|error not "ready".
 - [Generated-panel production runtime test](panel-runtime-test.md) — real vite build + post-build panel proves runtime fetch→sucrase→eval path; runs under vitest+jsdom; registry glob try/catch-guarded so it imports outside Vite.
+- [Terminal responsive layout](responsive-layout.md) — 3-tier breakpoints: mobile stack / tablet 6-col flow (drops AI x/y) / desktop 12-col placed; console is a drawer on non-desktop.

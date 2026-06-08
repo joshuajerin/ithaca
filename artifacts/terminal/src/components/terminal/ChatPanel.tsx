@@ -17,9 +17,12 @@ interface ChatPanelProps {
   // Forwarded ref to the command input so power-user hotkeys (e.g. "/" or ⌘K)
   // can focus it from anywhere in the terminal.
   inputRef?: React.Ref<HTMLInputElement>;
+  // When provided, renders a close affordance in the header (used by the mobile
+  // console drawer).
+  onClose?: () => void;
 }
 
-export function ChatPanel({ sessionId, onCommand, isProcessing, messages, inputRef }: ChatPanelProps) {
+export function ChatPanel({ sessionId, onCommand, isProcessing, messages, inputRef, onClose }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const [showSectors, setShowSectors] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -58,25 +61,36 @@ export function ChatPanel({ sessionId, onCommand, isProcessing, messages, inputR
 
   return (
     <div className="flex flex-col h-full border-l border-border bg-black">
-      <div className="px-5 pt-4 pb-3 border-b border-border flex items-end justify-between gap-3">
+      <div className="px-5 pt-4 pb-3 border-b border-border flex items-start justify-between gap-3">
         <div>
           <span className="editorial-label text-[9px] text-muted-foreground">Command Input</span>
           <h2 className="font-serif text-xl leading-none mt-1.5 flex items-center gap-2">
             Console
           </h2>
         </div>
-        <button
-          onClick={() => setShowSectors((v) => !v)}
-          aria-pressed={showSectors}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 editorial-label text-[9px] border transition-colors ${
-            showSectors
-              ? "bg-white text-black border-white"
-              : "bg-black text-white border-border hover:border-white"
-          }`}
-        >
-          <LayoutGrid className="w-3 h-3" strokeWidth={1.5} />
-          Themes
-        </button>
+        <div className="flex items-center gap-2 mt-0.5">
+          <button
+            onClick={() => setShowSectors((v) => !v)}
+            aria-pressed={showSectors}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 editorial-label text-[9px] border transition-colors ${
+              showSectors
+                ? "bg-white text-black border-white"
+                : "bg-black text-white border-border hover:border-white"
+            }`}
+          >
+            <LayoutGrid className="w-3 h-3" strokeWidth={1.5} />
+            Themes
+          </button>
+          {onClose && (
+            <button
+              onClick={onClose}
+              aria-label="Close console"
+              className="text-muted-foreground hover:text-white transition-colors -mr-1"
+            >
+              <X className="w-5 h-5" strokeWidth={1.5} />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Sector / theme browser — lists every classified sector for one-click screening. */}

@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import type { DashboardSpec, PanelLayout } from "@workspace/api-client-react";
 import { PanelContainer } from "./PanelContainer";
 import { resolvePanelLayouts, GRID_COLUMNS } from "@/lib/layout";
+import { useBreakpoint } from "@/hooks/use-mobile";
 
 interface DashboardProps {
   dashboard: DashboardSpec;
@@ -69,6 +70,7 @@ export function Dashboard({
   highlightedPanelId,
 }: DashboardProps) {
   const columns = useResponsiveColumns();
+  const breakpoint = useBreakpoint();
   const gridRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
   // Live preview of the panel currently being resized. Only the dragged panel
@@ -154,6 +156,14 @@ export function Dashboard({
     [resizable, columns],
   );
 
+// Shared entrance choreography for every panel, regardless of layout mode.
+const PANEL_MOTION = {
+  initial: { opacity: 0, y: 14, scale: 0.98, filter: "blur(2px)" },
+  animate: { opacity: 1, y: 0, scale: 1, filter: "blur(0px)" },
+  exit: { opacity: 0, scale: 0.97, filter: "blur(2px)" },
+  transition: { duration: 0.45, ease: [0.22, 1, 0.36, 1] as const },
+};
+
   if (!dashboard.panels || dashboard.panels.length === 0) {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center gap-2 py-24 text-center">
@@ -168,7 +178,78 @@ export function Dashboard({
   // the viewport so wide panels collapse gracefully on smaller windows.
   const panels = resolvePanelLayouts(dashboard.panels, columns);
 
-  // Row height is ~100px. We use CSS Grid where each unit of height represents roughly that.
+  const renderPanel = (panel: (typeof panels)[number]) => (
+    <PanelContainer
+      panel={panel}
+      sessionId={dashboard.sessionId}
+      onRefined={onPanelRefined}
+      highlighted={highlightedPanelId === panel.id}
+    />
+  );
+
+  // --- Mobile: a single-column stack. AI x/y placement (which assumes 12 cols)
+  // is dropped; each panel takes the full width and a height proportional to its
+  // assigned h so charts and tables keep room to breathe. ---
+  if (breakpoint === "mobile") {
+    return (
+      <div className="flex flex-col gap-4 w-full">
+        <AnimatePresence>
+          {panels.map((panel) => (
+            <motion.div
+              key={panel.id}
+              data-panel-id={panel.id}
+              layout
+              {...PANEL_MOTION}
+              className="min-h-0"
+              style={{ height: Math.max(2, panel.layout.h) * 110 }}
+            >
+              {renderPanel(panel)}
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+    );
+  }
+
+  // --- Tablet: a 6-column auto-flowing grid. We drop the explicit x/y (12-col
+  // coordinates) and let panels flow in reading order with halved spans, so
+  // nothing overflows horizontally on a narrow-but-not-phone screen. ---
+  if (breakpoint === "tablet") {
+    return (
+      <div
+        className="grid gap-5 w-full"
+        style={{
+          gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+          gridAutoRows: "120px",
+          gridAutoFlow: "row dense",
+        }}
+      >
+        <AnimatePresence>
+          {panels.map((panel) => {
+            const w = Math.min(6, Math.max(2, Math.ceil(panel.layout.w / 2)));
+            return (
+              <motion.div
+                key={panel.id}
+                data-panel-id={panel.id}
+                layout
+                {...PANEL_MOTION}
+                className="min-h-0"
+                style={{
+                  gridColumn: `span ${w}`,
+                  gridRow: `span ${panel.layout.h}`,
+                }}
+              >
+                {renderPanel(panel)}
+              </motion.div>
+            );
+          })}
+        </AnimatePresence>
+      </div>
+    );
+  }
+
+  // --- Desktop: the full 12-column grid honoring the AI's intended placement.
+  // Row height is ~120px; each unit of height represents roughly that. ---
   return (
     <div
       ref={gridRef}
@@ -188,10 +269,7 @@ export function Dashboard({
               key={panel.id}
               data-panel-id={panel.id}
               layout={!isDragging}
-              initial={{ opacity: 0, y: 14, scale: 0.98, filter: "blur(2px)" }}
-              animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
-              exit={{ opacity: 0, scale: 0.97, filter: "blur(2px)" }}
-              transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+              {...PANEL_MOTION}
               className="min-h-0 relative group/panel"
               style={{
                 gridColumnStart: panel.layout.x + 1,
