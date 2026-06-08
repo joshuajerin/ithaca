@@ -50,7 +50,7 @@ from .riskmodel import (
     pca_variance,
 )
 from .scenario import combine_returns, project_scenario
-from .stress import asset_shock_pnl, factor_shock_pnl, replay_window
+from .stress import asset_shock_pnl, factor_shock_pnl, replay_window, univariate_beta
 from .stats import (
     cagr,
     cvar_historical,
@@ -95,6 +95,7 @@ __all__ = [
     "factor_shock_pnl",
     "asset_shock_pnl",
     "replay_window",
+    "univariate_beta",
     "STRATEGIES",
     "available_strategies",
     "normalize_strategy",

@@ -48,6 +48,7 @@ import { AnalystReportPanel } from "./panels/AnalystReportPanel";
 import { AnalystComparePanel } from "./panels/AnalystComparePanel";
 import { ScenarioPanel } from "./panels/ScenarioPanel";
 import { RiskMonitorPanel } from "./panels/RiskMonitorPanel";
+import { StressTestPanel } from "./panels/StressTestPanel";
 import { PerformancePnlPanel } from "./panels/PerformancePnlPanel";
 import { BrinsonPanel } from "./panels/BrinsonPanel";
 import { FactorAttributionPanel } from "./panels/FactorAttributionPanel";
@@ -214,6 +215,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "analyst_compare": return <AnalystComparePanel data={panel.data as any} />;
       case "scenario": return <ScenarioPanel data={panel.data as any} />;
       case "risk_monitor": return <RiskMonitorPanel data={panel.data as any} onShock={submitRefine} onEditLimits={submitRefine} />;
+      case "stress_test": return <StressTestPanel data={panel.data as any} />;
       case "performance_pnl": return <PerformancePnlPanel data={panel.data as any} />;
       case "brinson_attribution": return <BrinsonPanel data={panel.data as any} />;
       case "factor_attribution": return <FactorAttributionPanel data={panel.data as any} />;

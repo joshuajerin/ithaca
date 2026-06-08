@@ -87,6 +87,29 @@ def asset_shock_pnl(
     return {"contributions": contributions, "totalPnlPct": round(total * 100.0, 2)}
 
 
+def univariate_beta(asset: np.ndarray, factor: np.ndarray) -> Optional[float]:
+    """Least-squares sensitivity of ``asset`` to ``factor`` (the OLS slope).
+
+    ``asset`` and ``factor`` are equal-length, date-aligned series (e.g. a
+    stock's daily returns and a market proxy's daily returns, or a stock's
+    returns and the daily CHANGE in a yield level). Returns the slope
+    ``cov(asset, factor) / var(factor)`` — the estimated move in ``asset`` per
+    one unit move in ``factor`` — or ``None`` when the inputs are mismatched,
+    too short, or the factor has no variance (so a credible beta can't be fit).
+    Nothing is imputed; callers treat ``None`` as "no coverage" for that name.
+    """
+    a = np.asarray(asset, dtype=float)
+    f = np.asarray(factor, dtype=float)
+    if a.size != f.size or a.size < 2:
+        return None
+    fv = f - f.mean()
+    denom = float(fv @ fv)
+    if denom <= 0.0:
+        return None
+    av = a - a.mean()
+    return float((fv @ av) / denom)
+
+
 def replay_window(
     weights: Dict[str, float],
     closes_by_sym: Dict[str, Dict[str, float]],

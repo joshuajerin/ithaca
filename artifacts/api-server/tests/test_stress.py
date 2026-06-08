@@ -44,6 +44,30 @@ def test_asset_shock_identity_and_case_insensitive():
     assert math.isclose(out["totalPnlPct"], -2.0, abs_tol=1e-6)
 
 
+# --------------------------- univariate beta ---------------------------
+def test_univariate_beta_recovers_slope():
+    import numpy as np
+
+    rng = np.random.default_rng(7)
+    f = rng.normal(0.0, 0.01, 500)
+    # asset = 1.5 * factor + small idiosyncratic noise
+    a = 1.5 * f + rng.normal(0.0, 1e-4, 500)
+    b = stress.univariate_beta(a, f)
+    assert b is not None
+    assert math.isclose(b, 1.5, abs_tol=0.05)
+
+
+def test_univariate_beta_guards():
+    import numpy as np
+
+    # Mismatched lengths -> None
+    assert stress.univariate_beta(np.array([1.0, 2.0]), np.array([1.0])) is None
+    # Too few points -> None
+    assert stress.univariate_beta(np.array([1.0]), np.array([1.0])) is None
+    # Zero-variance factor -> None (no credible slope)
+    assert stress.univariate_beta(np.array([1.0, 2.0, 3.0]), np.array([5.0, 5.0, 5.0])) is None
+
+
 # --------------------------- historical replay ---------------------------
 def _ramp(start_price, daily, days, start_iso="2020-03-01"):
     """A simple deterministic close series stepping by a fixed daily return."""

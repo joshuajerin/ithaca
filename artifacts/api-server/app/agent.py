@@ -624,6 +624,28 @@ def _tools() -> list:
             }},
         }},
         {"type": "function", "function": {
+            "name": "add_stress_test",
+            "description": (
+                "Add a SCENARIO ANALYSIS & STRESS TEST panel for a book: estimates the P&L impact "
+                "under named historical stress events (2020 COVID −34%, 2022 rate shock −28%, 2008 GFC "
+                "−55%) and macro shocks (+200bps rate shock, oil +50%) by scaling each holding's REAL "
+                "measured beta (to the market / 10y yield / crude oil) by the scenario's headline shock, "
+                f"then weighting by positions. {sizing} Shows per-scenario portfolio impact plus the "
+                "individual holding impacts. Use when the user asks to 'stress test my portfolio', wants "
+                "scenario P&L, 'how would my book do in a 2008/COVID/rate-shock/oil scenario', or 'crash "
+                "test'. For a dashboard-wide test of what's on screen, omit symbols. This is the focused "
+                "scenario table; add_risk_monitor is the fuller risk DESK (exposures + limits). Names "
+                "whose beta can't be fit from real data are flagged, never imputed."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Book tickers. Valid: {syms}"},
+                "weights": {"type": "array", "items": {"type": "number"}, "description": "Optional signed NAV-fraction weights aligned with symbols (negative = short). Default: equal-weight long."},
+                "nav": {"type": "number", "description": "Book NAV in USD (default 10,000,000)."},
+                "portfolio_name": {"type": "string", "description": "Optional display name for the book."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
+        {"type": "function", "function": {
             "name": "add_strategy_desk",
             "description": (
                 "Add the STRATEGY LIFECYCLE DESK: a roster of every systematic strategy across the "
@@ -694,6 +716,7 @@ _TOOL_TO_TYPE = {
     "add_analyst_compare": "analyst_compare",
     "add_scenario": "scenario",
     "add_risk_monitor": "risk_monitor",
+    "add_stress_test": "stress_test",
     "add_strategy_desk": "strategy_desk",
 }
 
@@ -813,8 +836,13 @@ def _system_prompt() -> str:
         "- For WHAT-IF / hypothetical requests ('what if', 'if I do X then Y', 'if rates fall 100bps', "
         "'if X margins compress to 40%', 'suppose', 'scenario where'), use add_scenario and pass the user's "
         "full hypothetical as the prompt argument.\n"
+        "- For SCENARIO ANALYSIS / STRESS TEST requests ('stress test my portfolio', 'scenario P&L', 'crash "
+        "test', 'how would my book do in a 2008 / COVID / rate-shock / oil scenario'), use add_stress_test. "
+        "It returns a focused table of per-scenario portfolio impacts (2020 COVID, 2022 rate shock, 2008 GFC, "
+        "+200bps rates, oil +50%) with per-holding impacts, scaling each name's REAL beta. Prefer it over "
+        "add_risk_monitor when the user wants scenario P&L specifically rather than the full risk desk.\n"
         "- For RISK MANAGEMENT / MONITORING requests ('monitor/manage my risk', 'risk dashboard', 'check my "
-        "exposures', 'gross/net exposure', 'am I within limits', 'any limit breaches', 'stress test my book', "
+        "exposures', 'gross/net exposure', 'am I within limits', 'any limit breaches', "
         "'how much could I lose if markets crash / rates spike / momentum reverses'), use add_risk_monitor. "
         "Pass signed weights (negative = short) when the user describes a long/short book; pass limits to "
         "override defaults, and factor_shocks/asset_shocks/market_shock for a specific hypothetical stress. "
@@ -1705,6 +1733,9 @@ def _apply_dashboard_scope(name: str, args: dict, dash_syms: List[str], dash_sec
     elif name == "add_risk_monitor":
         if not args.get("symbols") and dash_syms:
             args["symbols"] = dash_syms
+    elif name == "add_stress_test":
+        if not args.get("symbols") and dash_syms:
+            args["symbols"] = dash_syms
 
 
 def _relevance_heuristic(query: str, existing: List[dict]) -> List[dict]:
@@ -2021,6 +2052,7 @@ _TYPE_LABELS = {
     "analyst_report": "an analyst report",
     "analyst_compare": "an analyst comparison",
     "scenario": "a what-if scenario",
+    "stress_test": "a stress test",
     "risk_monitor": "a risk monitor",
     "strategy_desk": "the strategy desk",
 }
@@ -2289,6 +2321,14 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
     wants_cashflow = any(k in q for k in ["cash flow", "cashflow", "duration", "convexity", "dv01", "rate sensitivity", "bond cash", "modified duration"])
     wants_risk = any(k in q for k in ["risk", "var", "value at risk", "tracking error", "factor exposure", "portfolio risk"])
     wants_riskmodel = any(k in q for k in ["risk model", "risk decomp", "decompose risk", "factor vs specific", "specific risk", "mctr", "marginal contribution", "where is my risk", "risk contribution", "factor risk"])
+    wants_stresstest = any(k in q for k in [
+        "stress test", "stress-test", "stresstest", "stress my book", "stress the book",
+        "stress my portfolio", "crash test", "crash-test", "scenario analysis", "scenario p&l",
+        "scenario pnl", "scenario impact", "covid crash", "covid scenario", "2008 crash",
+        "2008 gfc", "gfc", "global financial crisis", "rate shock", "rates shock", "+200bps",
+        "200bps rate", "oil shock", "oil spike", "oil +50",
+        "how would my portfolio do", "how would my book do", "how would my portfolio perform",
+    ])
     wants_riskmonitor = any(k in q for k in [
         "risk monitor", "risk management", "manage my risk", "manage risk", "monitor my risk",
         "monitor risk", "risk dashboard", "risk desk", "risk limit", "limit breach", "breach",
@@ -2472,6 +2512,23 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         "analy", "review", "report", "take", "thesis", "assess", "summary",
         "summarize", "overview", "opinion", "view",
     ])
+
+    if wants_stresstest:
+        st_params: dict = {}
+        if symbols:
+            st_params["symbols"] = symbols
+        elif dash_syms:
+            st_params["symbols"] = dash_syms
+        add("stress_test", st_params, 12, 6)
+        scope = (
+            "the symbols you named" if symbols
+            else "your dashboard book" if dash_syms
+            else "a representative book"
+        )
+        return panels, (
+            f"Stress test for {scope}: scenario P&L across the 2020 COVID, 2022 rate-shock and "
+            "2008 GFC crises plus +200bps rate and oil shocks, with per-holding impacts."
+        )
 
     if wants_riskmonitor:
         rm_params: dict = {}

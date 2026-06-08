@@ -3145,6 +3145,217 @@ def build_risk_monitor(params: dict) -> dict:
     }
 
 
+# --------------------------- stress test ---------------------------
+# Named stress scenarios applied to a book by scaling each holding's REAL
+# sensitivity (beta) to the relevant risk factor by the scenario's headline
+# shock. Unlike the risk-monitor's crisis REPLAY (which needs each name to have
+# actually traded during the window — META has no 2008 prints), this scales a
+# stock's CURRENT measured beta, so every holding with enough recent history is
+# covered. Equity scenarios use the headline index drawdown × the name's market
+# (SPY) beta; the rate scenario uses each name's sensitivity to changes in the
+# 10-year Treasury yield (^TNX); the oil scenario uses each name's beta to WTI
+# crude (CL=F). Betas that can't be fit from real data are reported missing,
+# never imputed.
+STRESS_SCENARIOS = [
+    {"id": "covid2020", "label": "2020 COVID Crash", "factor": "market", "shockPct": -34.0,
+     "shockLabel": "−34%",
+     "narrative": "Feb–Mar 2020 pandemic crash; the S&P 500 fell ~34% peak-to-trough."},
+    {"id": "rateshock2022", "label": "2022 Rate Shock", "factor": "market", "shockPct": -28.0,
+     "shockLabel": "−28%",
+     "narrative": "2022 Fed hiking cycle; the broad equity market drew down ~28%."},
+    {"id": "gfc2008", "label": "2008 Global Financial Crisis", "factor": "market", "shockPct": -55.0,
+     "shockLabel": "−55%",
+     "narrative": "2007–09 financial crisis; the S&P 500 fell ~55% peak-to-trough."},
+    {"id": "rates_200bps", "label": "+200bps Rate Shock", "factor": "rate", "shockBps": 200.0,
+     "shockLabel": "+200bps",
+     "narrative": "A parallel +200bps jump in the 10-year Treasury yield, applied through each name's rate beta."},
+    {"id": "oil_50", "label": "Oil +50%", "factor": "oil", "shockPct": 50.0,
+     "shockLabel": "+50%",
+     "narrative": "A 50% spike in WTI crude oil, applied through each name's oil beta."},
+]
+
+# Real proxy instruments whose returns/level-changes define each risk factor.
+_STRESS_PROXIES = {"market": "SPY", "rate": "^TNX", "oil": "CL=F"}
+# A name needs at least this many overlapping daily observations with a proxy to
+# fit a credible beta.
+_STRESS_MIN_OBS = 40
+
+
+def _returns_from_closes(closes: Dict[str, float]) -> Dict[str, float]:
+    """Map {iso_date: close} -> {iso_date: daily simple return} (chronological)."""
+    ds = sorted(closes.keys())
+    out: Dict[str, float] = {}
+    for i in range(1, len(ds)):
+        prev = closes[ds[i - 1]]
+        if prev:
+            out[ds[i]] = closes[ds[i]] / prev - 1.0
+    return out
+
+
+def _level_changes_from_closes(closes: Dict[str, float]) -> Dict[str, float]:
+    """Map {iso_date: level} -> {iso_date: day-over-day level change}.
+
+    Used for the yield proxy (^TNX), whose closes are yield LEVELS in percent,
+    so the daily change is already in percentage points (1.00 == +100bps).
+    """
+    ds = sorted(closes.keys())
+    out: Dict[str, float] = {}
+    for i in range(1, len(ds)):
+        out[ds[i]] = closes[ds[i]] - closes[ds[i - 1]]
+    return out
+
+
+def _aligned_pair(asset_r: Dict[str, float], factor_r: Dict[str, float]):
+    """Return (asset_arr, factor_arr) over the dates both series share."""
+    import numpy as np
+
+    common = sorted(set(asset_r.keys()) & set(factor_r.keys()))
+    a = np.asarray([asset_r[d] for d in common], dtype=float)
+    f = np.asarray([factor_r[d] for d in common], dtype=float)
+    return a, f, len(common)
+
+
+def build_stress_test(params: dict) -> dict:
+    """Scenario analysis & stress testing: scenario P&L for a book.
+
+    Estimates how the book would perform under named historical stress events
+    (2020 COVID, 2022 rate shock, 2008 GFC) and macro shocks (+200bps rates,
+    oil +50%) by scaling each holding's REAL measured sensitivity (beta) to the
+    relevant risk factor by the scenario's headline shock, then weighting by the
+    book's positions. Reports a per-scenario portfolio impact plus the
+    individual holding impacts, and flags any name whose beta could not be fit
+    from real history (never imputed).
+    """
+    name, symbols, ws, nav = _resolve_book(params)
+    weights_map = {s: w for s, w in zip(symbols, ws)}
+
+    # --- real recent returns for every holding + each factor proxy ---
+    src = "mock"
+    as_of: Optional[str] = None
+    asset_rets: Dict[str, Dict[str, float]] = {}
+    for s in symbols:
+        ser = _benchmark_closes(s, "1Y")
+        if ser and ser.get("closes"):
+            asset_rets[s] = _returns_from_closes(ser["closes"])
+            src = "live"
+            if ser.get("asOf"):
+                as_of = ser["asOf"] if as_of is None else max(as_of, ser["asOf"])
+
+    proxy_rets: Dict[str, Dict[str, float]] = {}
+    proxy_available: Dict[str, bool] = {}
+    for factor, ticker in _STRESS_PROXIES.items():
+        ser = _benchmark_closes(ticker, "1Y")
+        if ser and ser.get("closes"):
+            if factor == "rate":
+                proxy_rets[factor] = _level_changes_from_closes(ser["closes"])
+            else:
+                proxy_rets[factor] = _returns_from_closes(ser["closes"])
+            proxy_available[factor] = True
+        else:
+            proxy_rets[factor] = {}
+            proxy_available[factor] = False
+
+    # --- per-holding betas to each factor (real, fitted; None == no coverage) ---
+    betas: Dict[str, Dict[str, Optional[float]]] = {}
+    obs: Dict[str, Dict[str, int]] = {}
+    for s in symbols:
+        betas[s] = {}
+        obs[s] = {}
+        ar = asset_rets.get(s) or {}
+        for factor in _STRESS_PROXIES:
+            if not ar or not proxy_available.get(factor):
+                betas[s][factor] = None
+                obs[s][factor] = 0
+                continue
+            a, f, n = _aligned_pair(ar, proxy_rets[factor])
+            if n < _STRESS_MIN_OBS:
+                betas[s][factor] = None
+                obs[s][factor] = n
+                continue
+            b = engine.univariate_beta(a, f)
+            betas[s][factor] = b
+            obs[s][factor] = n
+
+    # --- per-scenario impacts ---
+    scenarios_out: List[dict] = []
+    for sc in STRESS_SCENARIOS:
+        factor = sc["factor"]
+        # Translate the headline shock into the proxy's own units.
+        if factor == "rate":
+            shock_units = float(sc["shockBps"]) / 100.0  # bps -> percentage points
+        else:
+            shock_units = float(sc["shockPct"]) / 100.0  # percent -> fraction
+
+        holdings: List[dict] = []
+        missing: List[dict] = []
+        port_impact = 0.0
+        for s, w in weights_map.items():
+            b = betas.get(s, {}).get(factor)
+            if b is None:
+                reason = (
+                    "factor proxy unavailable" if not proxy_available.get(factor)
+                    else "no usable price history" if not asset_rets.get(s)
+                    else "insufficient overlap to fit beta"
+                )
+                missing.append({"symbol": s, "reason": reason})
+                continue
+            impact = float(b) * shock_units  # holding return as a fraction
+            port_impact += w * impact
+            c = repo.get_company(s)
+            holdings.append({
+                "symbol": s,
+                "name": c["name"] if c else s,
+                "weightPct": round(w * 100.0, 2),
+                "beta": round(float(b), 3),
+                "impactPct": round(impact * 100.0, 2),
+                "impactUsd": round(w * impact * nav, 0),
+            })
+        holdings.sort(key=lambda h: h["impactPct"])
+
+        scenarios_out.append({
+            "id": sc["id"],
+            "label": sc["label"],
+            "factor": factor,
+            "shock": sc["shockLabel"],
+            "narrative": sc["narrative"],
+            "available": bool(holdings),
+            "portfolioImpactPct": round(port_impact * 100.0, 2) if holdings else None,
+            "portfolioImpactUsd": round(port_impact * nav, 0) if holdings else None,
+            "holdings": holdings,
+            "missing": missing,
+        })
+
+    # --- coverage (honest: names with no usable history are excluded) ---
+    excluded = [{"symbol": s, "reason": "no usable price history"} for s in symbols if s not in asset_rets]
+    proxies_meta = [
+        {"factor": f, "ticker": t, "available": proxy_available.get(f, False)}
+        for f, t in _STRESS_PROXIES.items()
+    ]
+    worst = min(
+        (sc["portfolioImpactPct"] for sc in scenarios_out if sc["portfolioImpactPct"] is not None),
+        default=None,
+    )
+
+    return {
+        "bookName": name,
+        "nav": round(nav, 0),
+        "positionCount": len(symbols),
+        "longCount": sum(1 for w in ws if w >= 0),
+        "shortCount": sum(1 for w in ws if w < 0),
+        "scenarios": scenarios_out,
+        "worstImpactPct": worst,
+        "proxies": proxies_meta,
+        "coverage": {
+            "included": len(asset_rets),
+            "excluded": len(excluded),
+            "excludedNames": excluded[:12],
+            "source": src,
+        },
+        "asOf": as_of,
+        "source": src,
+    }
+
+
 def build_factor_exposures(params: dict) -> dict:
     """Portfolio factor tilts: the weighted-average exposure to each factor plus
     a per-holding exposure breakdown, alongside the realized factor premia."""
@@ -5837,6 +6048,24 @@ _reg(SkillDef(
         {"name": "stress_hypothetical", "description": "Map factor/asset/market shocks through the book's real exposures.", "expectedOutput": "Estimated P&L per hypothetical scenario."},
     ],
     build_risk_monitor, "Risk Monitor",
+))
+_reg(SkillDef(
+    "stress-test", "Scenario Analysis & Stress Test", "stress_test",
+    "Estimates a book's P&L under named stress scenarios — 2020 COVID crash, "
+    "2022 rate shock, 2008 GFC, a +200bps rate shock and oil +50% — by scaling "
+    "each holding's REAL measured beta (to the market, the 10-year Treasury "
+    "yield, and WTI crude) by the scenario's headline shock, then weighting by "
+    "the book's positions. Returns a per-scenario portfolio impact plus the "
+    "individual holding impacts. Use when the user asks to 'stress test my "
+    "portfolio', wants scenario P&L, a 'crash test', or 'how would my book do "
+    "in a 2008 / COVID / rate / oil scenario'. Names whose beta cannot be fit "
+    "from real history are flagged, never imputed.",
+    [
+        {"name": "resolve_book", "description": "Map tickers + signed weights + NAV to a real book.", "expectedOutput": "A weighted long/short book."},
+        {"name": "estimate_betas", "description": "Fit each holding's real beta to the market, 10y yield and crude oil from recent returns.", "expectedOutput": "Per-holding factor betas with coverage."},
+        {"name": "apply_scenarios", "description": "Scale each beta by the scenario's headline shock and weight by positions.", "expectedOutput": "Per-scenario portfolio and per-holding P&L impacts."},
+    ],
+    build_stress_test, "Stress Test",
 ))
 _reg(SkillDef(
     "factor-exposures", "Portfolio Factor Exposures", "factor_exposures",
