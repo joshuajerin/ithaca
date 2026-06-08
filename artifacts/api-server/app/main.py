@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import agent, dynamic_skills, feature_builder, harness, models, repo, skills, state, worker
+from . import agent, dashboard_store, dynamic_skills, feature_builder, harness, models, repo, skills, state, worker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -114,6 +114,56 @@ def orchestrate(req: models.OrchestrationRequest):
     if not req.query or not req.query.strip():
         raise HTTPException(status_code=400, detail="query is required")
     return agent.orchestrate(req.query.strip(), req.sessionId, voice=bool(req.voice))
+
+
+@api.get("/dashboards", response_model=models.SavedDashboardList)
+def list_saved_dashboards():
+    return {"dashboards": dashboard_store.list_dashboards()}
+
+
+@api.post("/dashboards", response_model=models.SavedDashboardMeta)
+def save_dashboard(req: models.SaveDashboardRequest):
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    if not req.panels:
+        raise HTTPException(status_code=400, detail="cannot save an empty dashboard")
+    panels = [p.model_dump() for p in req.panels]
+    record = dashboard_store.save_dashboard(name, req.summary or "", panels)
+    return {
+        "id": record["id"],
+        "name": record["name"],
+        "summary": record.get("summary") or "",
+        "panelCount": len(record.get("panels") or []),
+        "createdAt": record.get("createdAt"),
+        "updatedAt": record.get("updatedAt"),
+    }
+
+
+@api.get("/dashboards/{dashboard_id}", response_model=models.DashboardSpec)
+def restore_dashboard(dashboard_id: str):
+    """Load a saved dashboard into a fresh session and return its full spec so
+    the terminal can render it and keep refining from there."""
+    import uuid
+
+    record = dashboard_store.get_dashboard(dashboard_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="saved dashboard not found")
+    panels = record.get("panels") or []
+    sid = uuid.uuid4().hex[:12]
+    state.set_dashboard(sid, panels)
+    return {
+        "sessionId": sid,
+        "summary": record.get("summary") or f"Restored \u201c{record['name']}\u201d.",
+        "panels": panels,
+        "intent": "build",
+    }
+
+
+@api.delete("/dashboards/{dashboard_id}", response_model=models.SavedDashboardList)
+def delete_saved_dashboard(dashboard_id: str):
+    dashboard_store.delete_dashboard(dashboard_id)
+    return {"dashboards": dashboard_store.list_dashboards()}
 
 
 @api.post("/speak", response_model=models.SpeechAudio)

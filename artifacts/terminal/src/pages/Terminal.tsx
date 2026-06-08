@@ -15,10 +15,11 @@ import { useVoiceConductor } from "@/hooks/useVoiceConductor";
 import { useNavigator } from "@/hooks/useNavigator";
 import { useConsoleConversation } from "@/hooks/useConsoleConversation";
 import { FeatureRequestModal } from "@/components/terminal/FeatureRequestModal";
+import { SavedDashboardsModal } from "@/components/terminal/SavedDashboardsModal";
 import { DotWaveCanvas } from "@/components/terminal/DotWaveCanvas";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles, Compass, CalendarClock, X } from "lucide-react";
+import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles, Compass, CalendarClock, X, LayoutGrid } from "lucide-react";
 import {
   formatEarningsCountdown,
   type EarningsRow,
@@ -61,6 +62,12 @@ export default function Terminal() {
   const [highlightedPanelId, setHighlightedPanelId] = useState<string | null>(null);
   const [chatOpen, setChatOpen] = useState(true);
   const [showFeatureModal, setShowFeatureModal] = useState(false);
+  const [showDashboardsModal, setShowDashboardsModal] = useState(false);
+  // The latest assistant reply to surface in the Console, carried with an
+  // incrementing nonce so every reply renders — including a question's answer
+  // even when panels did not change.
+  const [reply, setReply] = useState<{ text: string; kind: 'answer' | 'summary'; nonce: number } | null>(null);
+  const replyNonce = useRef(0);
 
   // Ref to the command input so keyboard shortcuts can focus it from anywhere.
   const commandInputRef = useRef<HTMLInputElement>(null);
@@ -76,6 +83,16 @@ export default function Terminal() {
   // stored session id keeps follow-up questions in context with the same
   // backend session.
   const convo = useConsoleConversation();
+
+  // Surface an assistant reply in the UI with a fresh nonce.
+  const pushReply = useCallback((spec: DashboardSpec) => {
+    const isAnswer = spec.intent === "question";
+    const text = (isAnswer ? spec.answer : spec.summary) || "";
+    if (text) {
+      replyNonce.current += 1;
+      setReply({ text, kind: isAnswer ? 'answer' : 'summary', nonce: replyNonce.current });
+    }
+  }, []);
 
   // Adopt a backend result into the conversation: keep the session id in sync,
   // surface the assistant reply in the Console, and — when a reset minted a new
@@ -101,8 +118,9 @@ export default function Terminal() {
       const isAnswer = result.intent === "question";
       const text = (isAnswer ? result.answer : result.summary) || "";
       if (text) convo.addAssistantMessage(text, isAnswer ? "answer" : "summary");
+      pushReply(result);
     },
-    [convo],
+    [convo, pushReply],
   );
 
   const orchestrate = useOrchestrate();
@@ -462,6 +480,13 @@ export default function Terminal() {
               </button>
             )}
             <button
+              onClick={() => setShowDashboardsModal(true)}
+              className="flex items-center gap-2 px-3 py-2 editorial-label text-[9px] border border-border bg-black text-white hover:border-white transition-colors group/btn"
+            >
+              <LayoutGrid className="w-3.5 h-3.5 text-muted-foreground group-hover/btn:text-white transition-colors" strokeWidth={1.5} />
+              Dashboards
+            </button>
+            <button
               onClick={() => setShowFeatureModal(true)}
               className="flex items-center gap-2 px-3 py-2 editorial-label text-[9px] border border-border bg-black text-white hover:border-white transition-colors group/btn"
             >
@@ -666,6 +691,16 @@ export default function Terminal() {
       />
 
       <FeatureRequestModal open={showFeatureModal} onClose={() => setShowFeatureModal(false)} />
+
+      <SavedDashboardsModal
+        open={showDashboardsModal}
+        onClose={() => setShowDashboardsModal(false)}
+        current={activeDashboard}
+        onRestore={(spec) => {
+          setActiveDashboard(spec);
+          pushReply(spec);
+        }}
+      />
     </div>
   );
 }

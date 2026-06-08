@@ -27,6 +27,9 @@ import type {
   OrchestrationRequest,
   Panel,
   RefineRequest,
+  SaveDashboardRequest,
+  SavedDashboardList,
+  SavedDashboardMeta,
   ScenarioRecomputeRequest,
   ScenarioRecomputeResult,
   SectorList,
@@ -512,6 +515,304 @@ export const useOrchestrate = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getOrchestrateMutationOptions(options));
+    }
+
+export const getListSavedDashboardsUrl = () => {
+
+
+
+
+  return `/api/dashboards`
+}
+
+/**
+ * Returns metadata for every saved (named) dashboard layout, newest first.
+ * @summary List saved dashboards
+ */
+export const listSavedDashboards = async ( options?: RequestInit): Promise<SavedDashboardList> => {
+
+  return customFetch<SavedDashboardList>(getListSavedDashboardsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListSavedDashboardsQueryKey = () => {
+    return [
+    `/api/dashboards`
+    ] as const;
+    }
+
+
+export const getListSavedDashboardsQueryOptions = <TData = Awaited<ReturnType<typeof listSavedDashboards>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSavedDashboards>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSavedDashboardsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSavedDashboards>>> = ({ signal }) => listSavedDashboards({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSavedDashboards>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListSavedDashboardsQueryResult = NonNullable<Awaited<ReturnType<typeof listSavedDashboards>>>
+export type ListSavedDashboardsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List saved dashboards
+ */
+
+export function useListSavedDashboards<TData = Awaited<ReturnType<typeof listSavedDashboards>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSavedDashboards>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListSavedDashboardsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getSaveDashboardUrl = () => {
+
+
+
+
+  return `/api/dashboards`
+}
+
+/**
+ * Persists the supplied panels under a name so they can be restored later. Saving an existing name overwrites that layout.
+ * @summary Save the current dashboard
+ */
+export const saveDashboard = async (saveDashboardRequest: SaveDashboardRequest, options?: RequestInit): Promise<SavedDashboardMeta> => {
+
+  return customFetch<SavedDashboardMeta>(getSaveDashboardUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      saveDashboardRequest,)
+  }
+);}
+
+
+
+
+export const getSaveDashboardMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveDashboard>>, TError,{data: BodyType<SaveDashboardRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof saveDashboard>>, TError,{data: BodyType<SaveDashboardRequest>}, TContext> => {
+
+const mutationKey = ['saveDashboard'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveDashboard>>, {data: BodyType<SaveDashboardRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveDashboard(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveDashboardMutationResult = NonNullable<Awaited<ReturnType<typeof saveDashboard>>>
+    export type SaveDashboardMutationBody = BodyType<SaveDashboardRequest>
+    export type SaveDashboardMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Save the current dashboard
+ */
+export const useSaveDashboard = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveDashboard>>, TError,{data: BodyType<SaveDashboardRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof saveDashboard>>,
+        TError,
+        {data: BodyType<SaveDashboardRequest>},
+        TContext
+      > => {
+      return useMutation(getSaveDashboardMutationOptions(options));
+    }
+
+export const getRestoreDashboardUrl = (dashboardId: string,) => {
+
+
+
+
+  return `/api/dashboards/${dashboardId}`
+}
+
+/**
+ * Loads a saved dashboard into a fresh session and returns its full spec.
+ * @summary Restore a saved dashboard
+ */
+export const restoreDashboard = async (dashboardId: string, options?: RequestInit): Promise<DashboardSpec> => {
+
+  return customFetch<DashboardSpec>(getRestoreDashboardUrl(dashboardId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getRestoreDashboardQueryKey = (dashboardId: string,) => {
+    return [
+    `/api/dashboards/${dashboardId}`
+    ] as const;
+    }
+
+
+export const getRestoreDashboardQueryOptions = <TData = Awaited<ReturnType<typeof restoreDashboard>>, TError = ErrorType<unknown>>(dashboardId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof restoreDashboard>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getRestoreDashboardQueryKey(dashboardId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof restoreDashboard>>> = ({ signal }) => restoreDashboard(dashboardId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(dashboardId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof restoreDashboard>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type RestoreDashboardQueryResult = NonNullable<Awaited<ReturnType<typeof restoreDashboard>>>
+export type RestoreDashboardQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Restore a saved dashboard
+ */
+
+export function useRestoreDashboard<TData = Awaited<ReturnType<typeof restoreDashboard>>, TError = ErrorType<unknown>>(
+ dashboardId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof restoreDashboard>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getRestoreDashboardQueryOptions(dashboardId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getDeleteSavedDashboardUrl = (dashboardId: string,) => {
+
+
+
+
+  return `/api/dashboards/${dashboardId}`
+}
+
+/**
+ * @summary Delete a saved dashboard
+ */
+export const deleteSavedDashboard = async (dashboardId: string, options?: RequestInit): Promise<SavedDashboardList> => {
+
+  return customFetch<SavedDashboardList>(getDeleteSavedDashboardUrl(dashboardId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteSavedDashboardMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteSavedDashboard>>, TError,{dashboardId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteSavedDashboard>>, TError,{dashboardId: string}, TContext> => {
+
+const mutationKey = ['deleteSavedDashboard'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteSavedDashboard>>, {dashboardId: string}> = (props) => {
+          const {dashboardId} = props ?? {};
+
+          return  deleteSavedDashboard(dashboardId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteSavedDashboardMutationResult = NonNullable<Awaited<ReturnType<typeof deleteSavedDashboard>>>
+
+    export type DeleteSavedDashboardMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Delete a saved dashboard
+ */
+export const useDeleteSavedDashboard = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteSavedDashboard>>, TError,{dashboardId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteSavedDashboard>>,
+        TError,
+        {dashboardId: string},
+        TContext
+      > => {
+      return useMutation(getDeleteSavedDashboardMutationOptions(options));
     }
 
 export const getSpeakUrl = () => {

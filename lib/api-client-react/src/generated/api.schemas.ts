@@ -603,6 +603,28 @@ export interface OrchestrationRequest {
   voice?: boolean | null;
 }
 
+export interface SaveDashboardRequest {
+  name: string;
+  /** @nullable */
+  summary?: string | null;
+  panels: Panel[];
+}
+
+export interface SavedDashboardMeta {
+  id: string;
+  name: string;
+  summary: string;
+  panelCount: number;
+  /** @nullable */
+  createdAt?: string | null;
+  /** @nullable */
+  updatedAt?: string | null;
+}
+
+export interface SavedDashboardList {
+  dashboards: SavedDashboardMeta[];
+}
+
 export interface SpeakRequest {
   text: string;
   /**

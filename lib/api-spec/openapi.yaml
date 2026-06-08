@@ -99,6 +99,73 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DashboardSpec"
+  /dashboards:
+    get:
+      operationId: listSavedDashboards
+      tags: [terminal]
+      summary: List saved dashboards
+      description: Returns metadata for every saved (named) dashboard layout, newest first.
+      responses:
+        "200":
+          description: Saved dashboard list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedDashboardList"
+    post:
+      operationId: saveDashboard
+      tags: [terminal]
+      summary: Save the current dashboard
+      description: Persists the supplied panels under a name so they can be restored later. Saving an existing name overwrites that layout.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveDashboardRequest"
+      responses:
+        "200":
+          description: Saved dashboard metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedDashboardMeta"
+  /dashboards/{dashboardId}:
+    get:
+      operationId: restoreDashboard
+      tags: [terminal]
+      summary: Restore a saved dashboard
+      description: Loads a saved dashboard into a fresh session and returns its full spec.
+      parameters:
+        - name: dashboardId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Restored dashboard spec
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSpec"
+    delete:
+      operationId: deleteSavedDashboard
+      tags: [terminal]
+      summary: Delete a saved dashboard
+      parameters:
+        - name: dashboardId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Updated saved dashboard list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedDashboardList"
   /speak:
     post:
       operationId: speak
@@ -1227,6 +1294,42 @@ components:
         voice:
           type: ["boolean", "null"]
           description: When true, the agent also returns spoken narration segments.
+    SaveDashboardRequest:
+      type: object
+      required: [name, panels]
+      properties:
+        name:
+          type: string
+        summary:
+          type: ["string", "null"]
+        panels:
+          type: array
+          items:
+            $ref: "#/components/schemas/Panel"
+    SavedDashboardMeta:
+      type: object
+      required: [id, name, summary, panelCount]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        summary:
+          type: string
+        panelCount:
+          type: integer
+        createdAt:
+          type: ["string", "null"]
+        updatedAt:
+          type: ["string", "null"]
+    SavedDashboardList:
+      type: object
+      required: [dashboards]
+      properties:
+        dashboards:
+          type: array
+          items:
+            $ref: "#/components/schemas/SavedDashboardMeta"
     SpeakRequest:
       type: object
       required: [text]

@@ -803,6 +803,774 @@ export const OrchestrateResponse = zod.object({
 
 
 /**
+ * Returns metadata for every saved (named) dashboard layout, newest first.
+ * @summary List saved dashboards
+ */
+export const ListSavedDashboardsResponse = zod.object({
+  "dashboards": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "summary": zod.string(),
+  "panelCount": zod.number(),
+  "createdAt": zod.string().nullish(),
+  "updatedAt": zod.string().nullish()
+}))
+})
+
+
+/**
+ * Persists the supplied panels under a name so they can be restored later. Saving an existing name overwrites that layout.
+ * @summary Save the current dashboard
+ */
+export const SaveDashboardBody = zod.object({
+  "name": zod.string(),
+  "summary": zod.string().nullish(),
+  "panels": zod.array(zod.object({
+  "id": zod.string(),
+  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'risk_model', 'factor_exposures', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'sovereign_compare', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product', 'signal_research', 'signal_scorecard']),
+  "title": zod.string(),
+  "layout": zod.object({
+  "x": zod.number(),
+  "y": zod.number(),
+  "w": zod.number(),
+  "h": zod.number()
+}).describe('Grid placement, 12-column grid. h is in row units.'),
+  "status": zod.enum(['ok', 'loading', 'error']),
+  "note": zod.string().nullish(),
+  "asOf": zod.string().nullish().describe('ISO timestamp of the freshest underlying data, when known.'),
+  "source": zod.string().nullish().describe('Data provenance for this panel (\"live\" or \"mock\").'),
+  "data": zod.union([zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "currency": zod.string(),
+  "last": zod.number(),
+  "change": zod.number(),
+  "changePct": zod.number(),
+  "range": zod.string(),
+  "ranges": zod.array(zod.string()).optional(),
+  "points": zod.array(zod.object({
+  "t": zod.string(),
+  "o": zod.number(),
+  "h": zod.number(),
+  "l": zod.number(),
+  "c": zod.number(),
+  "v": zod.number()
+}))
+}),zod.object({
+  "scope": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.string(),
+  "headline": zod.string(),
+  "source": zod.string(),
+  "summary": zod.string(),
+  "url": zod.string().nullish(),
+  "publishedAt": zod.string(),
+  "sentiment": zod.enum(['positive', 'neutral', 'negative']),
+  "tickers": zod.array(zod.string())
+}))
+}),zod.object({
+  "scope": zod.string(),
+  "headline": zod.string(),
+  "summary": zod.string(),
+  "bullets": zod.array(zod.string()),
+  "stance": zod.enum(['bullish', 'neutral', 'bearish']),
+  "confidence": zod.number()
+}),zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "metrics": zod.array(zod.object({
+  "label": zod.string(),
+  "value": zod.string(),
+  "change": zod.number().nullish(),
+  "hint": zod.string().nullish()
+}))
+}),zod.object({
+  "title": zod.string(),
+  "rows": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "price": zod.number(),
+  "changePct": zod.number(),
+  "ret1Y": zod.number().nullish(),
+  "marketCap": zod.number(),
+  "peRatio": zod.number().nullish(),
+  "volume": zod.number(),
+  "sector": zod.string()
+}))
+}),zod.object({
+  "title": zod.string(),
+  "cells": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "changePct": zod.number(),
+  "ret1Y": zod.number().nullish(),
+  "marketCap": zod.number(),
+  "sector": zod.string()
+}))
+}),zod.object({
+  "scope": zod.string(),
+  "overall": zod.number(),
+  "label": zod.enum(['very_bearish', 'bearish', 'neutral', 'bullish', 'very_bullish']),
+  "sources": zod.array(zod.object({
+  "channel": zod.string(),
+  "score": zod.number(),
+  "volume": zod.number(),
+  "change": zod.number()
+})),
+  "trend": zod.array(zod.object({
+  "t": zod.string(),
+  "score": zod.number()
+}))
+}),zod.object({
+  "title": zod.string(),
+  "metricLabels": zod.array(zod.string()),
+  "companies": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "values": zod.array(zod.object({
+  "label": zod.string(),
+  "value": zod.string()
+}))
+}))
+}),zod.object({
+  "portfolioName": zod.string(),
+  "symbols": zod.array(zod.string()),
+  "varHistogram": zod.array(zod.object({
+  "bin": zod.number(),
+  "count": zod.number()
+})),
+  "factorExposures": zod.array(zod.object({
+  "factor": zod.string(),
+  "exposure": zod.number()
+})),
+  "summary": zod.object({
+  "var95": zod.number(),
+  "trackingError": zod.number(),
+  "beta": zod.number(),
+  "portfolioName": zod.string(),
+  "cvar95": zod.number().optional()
+})
+}),zod.object({
+  "symbol": zod.string(),
+  "strategy": zod.string(),
+  "curve": zod.array(zod.object({
+  "t": zod.string(),
+  "strategy": zod.number(),
+  "benchmark": zod.number()
+})),
+  "drawdown": zod.array(zod.object({
+  "t": zod.string(),
+  "dd": zod.number()
+})),
+  "stats": zod.object({
+  "sharpe": zod.number(),
+  "sortino": zod.number(),
+  "cagr": zod.number(),
+  "maxDD": zod.number(),
+  "winRate": zod.number(),
+  "totalReturn": zod.number().optional(),
+  "vol": zod.number().optional(),
+  "turnover": zod.number().optional(),
+  "var95": zod.number().optional(),
+  "cvar95": zod.number().optional()
+}),
+  "tradeLog": zod.array(zod.object({
+  "t": zod.string(),
+  "action": zod.string(),
+  "price": zod.number(),
+  "fromPos": zod.number(),
+  "toPos": zod.number(),
+  "pnl": zod.number().optional().describe('Realized P&L on the portion closed by this trade, in points on the rebased capital base.'),
+  "pnlPct": zod.number().optional().describe('Percent return on the closed leg of this trade.')
+})).optional()
+}),zod.object({
+  "symbol": zod.string(),
+  "method": zod.string(),
+  "horizon": zod.number(),
+  "startValue": zod.number(),
+  "fan": zod.array(zod.object({
+  "step": zod.number(),
+  "p5": zod.number(),
+  "p25": zod.number(),
+  "p50": zod.number(),
+  "p75": zod.number(),
+  "p95": zod.number()
+})),
+  "samplePaths": zod.array(zod.object({
+  "id": zod.number(),
+  "values": zod.array(zod.number())
+})),
+  "summary": zod.object({
+  "method": zod.string(),
+  "startValue": zod.number(),
+  "horizon": zod.number(),
+  "paths": zod.number(),
+  "expectedTerminal": zod.number(),
+  "medianTerminal": zod.number(),
+  "p5Terminal": zod.number(),
+  "p95Terminal": zod.number(),
+  "expectedReturn": zod.number(),
+  "probLoss": zod.number(),
+  "var95": zod.number(),
+  "cvar95": zod.number()
+})
+}),zod.object({
+  "symbols": zod.array(zod.string()),
+  "matrix": zod.array(zod.array(zod.number())),
+  "window": zod.number(),
+  "betas": zod.array(zod.object({
+  "symbol": zod.string(),
+  "beta": zod.number(),
+  "hedgeRatio": zod.number()
+}))
+}),zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "monthlyAttribution": zod.array(zod.object({
+  "month": zod.string(),
+  "momentum": zod.number(),
+  "value": zod.number(),
+  "size": zod.number(),
+  "quality": zod.number(),
+  "residual": zod.number()
+})),
+  "loadings": zod.array(zod.object({
+  "factor": zod.string(),
+  "loading": zod.number(),
+  "tStat": zod.number(),
+  "contribution": zod.number()
+}))
+}),zod.object({
+  "portfolioName": zod.string(),
+  "totalVol": zod.number(),
+  "factorVol": zod.number(),
+  "specificVol": zod.number(),
+  "factorVarPct": zod.number(),
+  "specificVarPct": zod.number(),
+  "diversificationRatio": zod.number(),
+  "rSquared": zod.number(),
+  "factorContributions": zod.array(zod.object({
+  "factor": zod.string(),
+  "exposure": zod.number(),
+  "volContribution": zod.number(),
+  "pctOfRisk": zod.number()
+})),
+  "holdings": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "weight": zod.number(),
+  "mctr": zod.number(),
+  "pctOfRisk": zod.number(),
+  "specificVol": zod.number()
+})),
+  "coverage": zod.object({
+  "included": zod.number(),
+  "excluded": zod.number(),
+  "excludedNames": zod.array(zod.object({
+  "symbol": zod.string(),
+  "reason": zod.string()
+})),
+  "days": zod.number(),
+  "source": zod.string(),
+  "pcaVarExplained": zod.array(zod.number())
+})
+}),zod.object({
+  "portfolioName": zod.string(),
+  "exposures": zod.array(zod.object({
+  "factor": zod.string(),
+  "exposure": zod.number(),
+  "factorReturn": zod.number(),
+  "tStat": zod.number()
+})),
+  "holdings": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "weight": zod.number(),
+  "market": zod.number(),
+  "size": zod.number(),
+  "value": zod.number(),
+  "momentum": zod.number(),
+  "volatility": zod.number(),
+  "quality": zod.number()
+})),
+  "coverage": zod.object({
+  "included": zod.number(),
+  "excluded": zod.number(),
+  "excludedNames": zod.array(zod.object({
+  "symbol": zod.string(),
+  "reason": zod.string()
+})),
+  "days": zod.number(),
+  "source": zod.string(),
+  "pcaVarExplained": zod.array(zod.number())
+})
+}),zod.object({
+  "signal": zod.string(),
+  "label": zod.string(),
+  "description": zod.string(),
+  "universe": zod.string(),
+  "universeSize": zod.number(),
+  "included": zod.number(),
+  "excluded": zod.number(),
+  "excludedNames": zod.array(zod.object({
+  "symbol": zod.string(),
+  "reason": zod.string()
+})),
+  "horizons": zod.array(zod.number()),
+  "primaryHorizon": zod.number(),
+  "holding": zod.number(),
+  "quantiles": zod.number(),
+  "ic": zod.object({
+  "mean": zod.number(),
+  "std": zod.number(),
+  "ir": zod.number(),
+  "tStat": zod.number(),
+  "hitRate": zod.number(),
+  "n": zod.number()
+}),
+  "decay": zod.array(zod.object({
+  "horizon": zod.number(),
+  "ic": zod.number()
+})),
+  "turnover": zod.number(),
+  "turnoverAnnual": zod.number(),
+  "rebalances": zod.number(),
+  "quantileReturns": zod.array(zod.object({
+  "quantile": zod.number(),
+  "ret": zod.number()
+})),
+  "spread": zod.array(zod.object({
+  "t": zod.string(),
+  "value": zod.number(),
+  "long": zod.number(),
+  "short": zod.number()
+})),
+  "spreadStats": zod.object({
+  "totalReturn": zod.number(),
+  "sharpe": zod.number(),
+  "cagr": zod.number()
+})
+}),zod.object({
+  "universe": zod.string(),
+  "universeSize": zod.number(),
+  "primaryHorizon": zod.number(),
+  "holding": zod.number(),
+  "quantiles": zod.number(),
+  "rows": zod.array(zod.object({
+  "signal": zod.string(),
+  "label": zod.string(),
+  "meanIC": zod.number(),
+  "icIR": zod.number(),
+  "tStat": zod.number(),
+  "hitRate": zod.number(),
+  "turnover": zod.number(),
+  "spreadReturn": zod.number(),
+  "spreadSharpe": zod.number(),
+  "included": zod.number(),
+  "rank": zod.number(),
+  "spark": zod.array(zod.number())
+}))
+})]).optional()
+}))
+})
+
+export const SaveDashboardResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "summary": zod.string(),
+  "panelCount": zod.number(),
+  "createdAt": zod.string().nullish(),
+  "updatedAt": zod.string().nullish()
+})
+
+
+/**
+ * Loads a saved dashboard into a fresh session and returns its full spec.
+ * @summary Restore a saved dashboard
+ */
+export const RestoreDashboardParams = zod.object({
+  "dashboardId": zod.coerce.string()
+})
+
+export const RestoreDashboardResponse = zod.object({
+  "sessionId": zod.string(),
+  "summary": zod.string(),
+  "panels": zod.array(zod.object({
+  "id": zod.string(),
+  "type": zod.enum(['price_chart', 'news', 'analysis', 'fundamentals', 'screener', 'heatmap', 'sentiment', 'comparison', 'portfolio_risk', 'backtest', 'monte_carlo', 'correlation_matrix', 'factor_analysis', 'risk_model', 'factor_exposures', 'order_book', 'trade_flow', 'tca_report', 'macro_dashboard', 'yield_curve', 'sovereign_compare', 'bond_rv', 'cds_pricer', 'cashflow_duration', 'iv_surface', 'options_strategy', 'vol_term_structure', 'structured_product', 'signal_research', 'signal_scorecard']),
+  "title": zod.string(),
+  "layout": zod.object({
+  "x": zod.number(),
+  "y": zod.number(),
+  "w": zod.number(),
+  "h": zod.number()
+}).describe('Grid placement, 12-column grid. h is in row units.'),
+  "status": zod.enum(['ok', 'loading', 'error']),
+  "note": zod.string().nullish(),
+  "asOf": zod.string().nullish().describe('ISO timestamp of the freshest underlying data, when known.'),
+  "source": zod.string().nullish().describe('Data provenance for this panel (\"live\" or \"mock\").'),
+  "data": zod.union([zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "currency": zod.string(),
+  "last": zod.number(),
+  "change": zod.number(),
+  "changePct": zod.number(),
+  "range": zod.string(),
+  "ranges": zod.array(zod.string()).optional(),
+  "points": zod.array(zod.object({
+  "t": zod.string(),
+  "o": zod.number(),
+  "h": zod.number(),
+  "l": zod.number(),
+  "c": zod.number(),
+  "v": zod.number()
+}))
+}),zod.object({
+  "scope": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.string(),
+  "headline": zod.string(),
+  "source": zod.string(),
+  "summary": zod.string(),
+  "url": zod.string().nullish(),
+  "publishedAt": zod.string(),
+  "sentiment": zod.enum(['positive', 'neutral', 'negative']),
+  "tickers": zod.array(zod.string())
+}))
+}),zod.object({
+  "scope": zod.string(),
+  "headline": zod.string(),
+  "summary": zod.string(),
+  "bullets": zod.array(zod.string()),
+  "stance": zod.enum(['bullish', 'neutral', 'bearish']),
+  "confidence": zod.number()
+}),zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "metrics": zod.array(zod.object({
+  "label": zod.string(),
+  "value": zod.string(),
+  "change": zod.number().nullish(),
+  "hint": zod.string().nullish()
+}))
+}),zod.object({
+  "title": zod.string(),
+  "rows": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "price": zod.number(),
+  "changePct": zod.number(),
+  "ret1Y": zod.number().nullish(),
+  "marketCap": zod.number(),
+  "peRatio": zod.number().nullish(),
+  "volume": zod.number(),
+  "sector": zod.string()
+}))
+}),zod.object({
+  "title": zod.string(),
+  "cells": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "changePct": zod.number(),
+  "ret1Y": zod.number().nullish(),
+  "marketCap": zod.number(),
+  "sector": zod.string()
+}))
+}),zod.object({
+  "scope": zod.string(),
+  "overall": zod.number(),
+  "label": zod.enum(['very_bearish', 'bearish', 'neutral', 'bullish', 'very_bullish']),
+  "sources": zod.array(zod.object({
+  "channel": zod.string(),
+  "score": zod.number(),
+  "volume": zod.number(),
+  "change": zod.number()
+})),
+  "trend": zod.array(zod.object({
+  "t": zod.string(),
+  "score": zod.number()
+}))
+}),zod.object({
+  "title": zod.string(),
+  "metricLabels": zod.array(zod.string()),
+  "companies": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "values": zod.array(zod.object({
+  "label": zod.string(),
+  "value": zod.string()
+}))
+}))
+}),zod.object({
+  "portfolioName": zod.string(),
+  "symbols": zod.array(zod.string()),
+  "varHistogram": zod.array(zod.object({
+  "bin": zod.number(),
+  "count": zod.number()
+})),
+  "factorExposures": zod.array(zod.object({
+  "factor": zod.string(),
+  "exposure": zod.number()
+})),
+  "summary": zod.object({
+  "var95": zod.number(),
+  "trackingError": zod.number(),
+  "beta": zod.number(),
+  "portfolioName": zod.string(),
+  "cvar95": zod.number().optional()
+})
+}),zod.object({
+  "symbol": zod.string(),
+  "strategy": zod.string(),
+  "curve": zod.array(zod.object({
+  "t": zod.string(),
+  "strategy": zod.number(),
+  "benchmark": zod.number()
+})),
+  "drawdown": zod.array(zod.object({
+  "t": zod.string(),
+  "dd": zod.number()
+})),
+  "stats": zod.object({
+  "sharpe": zod.number(),
+  "sortino": zod.number(),
+  "cagr": zod.number(),
+  "maxDD": zod.number(),
+  "winRate": zod.number(),
+  "totalReturn": zod.number().optional(),
+  "vol": zod.number().optional(),
+  "turnover": zod.number().optional(),
+  "var95": zod.number().optional(),
+  "cvar95": zod.number().optional()
+}),
+  "tradeLog": zod.array(zod.object({
+  "t": zod.string(),
+  "action": zod.string(),
+  "price": zod.number(),
+  "fromPos": zod.number(),
+  "toPos": zod.number(),
+  "pnl": zod.number().optional().describe('Realized P&L on the portion closed by this trade, in points on the rebased capital base.'),
+  "pnlPct": zod.number().optional().describe('Percent return on the closed leg of this trade.')
+})).optional()
+}),zod.object({
+  "symbol": zod.string(),
+  "method": zod.string(),
+  "horizon": zod.number(),
+  "startValue": zod.number(),
+  "fan": zod.array(zod.object({
+  "step": zod.number(),
+  "p5": zod.number(),
+  "p25": zod.number(),
+  "p50": zod.number(),
+  "p75": zod.number(),
+  "p95": zod.number()
+})),
+  "samplePaths": zod.array(zod.object({
+  "id": zod.number(),
+  "values": zod.array(zod.number())
+})),
+  "summary": zod.object({
+  "method": zod.string(),
+  "startValue": zod.number(),
+  "horizon": zod.number(),
+  "paths": zod.number(),
+  "expectedTerminal": zod.number(),
+  "medianTerminal": zod.number(),
+  "p5Terminal": zod.number(),
+  "p95Terminal": zod.number(),
+  "expectedReturn": zod.number(),
+  "probLoss": zod.number(),
+  "var95": zod.number(),
+  "cvar95": zod.number()
+})
+}),zod.object({
+  "symbols": zod.array(zod.string()),
+  "matrix": zod.array(zod.array(zod.number())),
+  "window": zod.number(),
+  "betas": zod.array(zod.object({
+  "symbol": zod.string(),
+  "beta": zod.number(),
+  "hedgeRatio": zod.number()
+}))
+}),zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "monthlyAttribution": zod.array(zod.object({
+  "month": zod.string(),
+  "momentum": zod.number(),
+  "value": zod.number(),
+  "size": zod.number(),
+  "quality": zod.number(),
+  "residual": zod.number()
+})),
+  "loadings": zod.array(zod.object({
+  "factor": zod.string(),
+  "loading": zod.number(),
+  "tStat": zod.number(),
+  "contribution": zod.number()
+}))
+}),zod.object({
+  "portfolioName": zod.string(),
+  "totalVol": zod.number(),
+  "factorVol": zod.number(),
+  "specificVol": zod.number(),
+  "factorVarPct": zod.number(),
+  "specificVarPct": zod.number(),
+  "diversificationRatio": zod.number(),
+  "rSquared": zod.number(),
+  "factorContributions": zod.array(zod.object({
+  "factor": zod.string(),
+  "exposure": zod.number(),
+  "volContribution": zod.number(),
+  "pctOfRisk": zod.number()
+})),
+  "holdings": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "weight": zod.number(),
+  "mctr": zod.number(),
+  "pctOfRisk": zod.number(),
+  "specificVol": zod.number()
+})),
+  "coverage": zod.object({
+  "included": zod.number(),
+  "excluded": zod.number(),
+  "excludedNames": zod.array(zod.object({
+  "symbol": zod.string(),
+  "reason": zod.string()
+})),
+  "days": zod.number(),
+  "source": zod.string(),
+  "pcaVarExplained": zod.array(zod.number())
+})
+}),zod.object({
+  "portfolioName": zod.string(),
+  "exposures": zod.array(zod.object({
+  "factor": zod.string(),
+  "exposure": zod.number(),
+  "factorReturn": zod.number(),
+  "tStat": zod.number()
+})),
+  "holdings": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "weight": zod.number(),
+  "market": zod.number(),
+  "size": zod.number(),
+  "value": zod.number(),
+  "momentum": zod.number(),
+  "volatility": zod.number(),
+  "quality": zod.number()
+})),
+  "coverage": zod.object({
+  "included": zod.number(),
+  "excluded": zod.number(),
+  "excludedNames": zod.array(zod.object({
+  "symbol": zod.string(),
+  "reason": zod.string()
+})),
+  "days": zod.number(),
+  "source": zod.string(),
+  "pcaVarExplained": zod.array(zod.number())
+})
+}),zod.object({
+  "signal": zod.string(),
+  "label": zod.string(),
+  "description": zod.string(),
+  "universe": zod.string(),
+  "universeSize": zod.number(),
+  "included": zod.number(),
+  "excluded": zod.number(),
+  "excludedNames": zod.array(zod.object({
+  "symbol": zod.string(),
+  "reason": zod.string()
+})),
+  "horizons": zod.array(zod.number()),
+  "primaryHorizon": zod.number(),
+  "holding": zod.number(),
+  "quantiles": zod.number(),
+  "ic": zod.object({
+  "mean": zod.number(),
+  "std": zod.number(),
+  "ir": zod.number(),
+  "tStat": zod.number(),
+  "hitRate": zod.number(),
+  "n": zod.number()
+}),
+  "decay": zod.array(zod.object({
+  "horizon": zod.number(),
+  "ic": zod.number()
+})),
+  "turnover": zod.number(),
+  "turnoverAnnual": zod.number(),
+  "rebalances": zod.number(),
+  "quantileReturns": zod.array(zod.object({
+  "quantile": zod.number(),
+  "ret": zod.number()
+})),
+  "spread": zod.array(zod.object({
+  "t": zod.string(),
+  "value": zod.number(),
+  "long": zod.number(),
+  "short": zod.number()
+})),
+  "spreadStats": zod.object({
+  "totalReturn": zod.number(),
+  "sharpe": zod.number(),
+  "cagr": zod.number()
+})
+}),zod.object({
+  "universe": zod.string(),
+  "universeSize": zod.number(),
+  "primaryHorizon": zod.number(),
+  "holding": zod.number(),
+  "quantiles": zod.number(),
+  "rows": zod.array(zod.object({
+  "signal": zod.string(),
+  "label": zod.string(),
+  "meanIC": zod.number(),
+  "icIR": zod.number(),
+  "tStat": zod.number(),
+  "hitRate": zod.number(),
+  "turnover": zod.number(),
+  "spreadReturn": zod.number(),
+  "spreadSharpe": zod.number(),
+  "included": zod.number(),
+  "rank": zod.number(),
+  "spark": zod.array(zod.number())
+}))
+})]).optional()
+})),
+  "narration": zod.array(zod.object({
+  "text": zod.string(),
+  "panelId": zod.string().nullish()
+}).describe('A spoken narration chunk, optionally tied to a panel to highlight while it is read.')).nullish().describe('Ordered spoken narration segments for voice mode; null\/omitted for text requests.'),
+  "intent": zod.string().nullish().describe('\"question\" when the message was answered conversationally (panels unchanged) or \"build\" when the dashboard was composed\/modified.'),
+  "answer": zod.string().nullish().describe('Conversational answer text for a question intent; null\/omitted for a build.')
+})
+
+
+/**
+ * @summary Delete a saved dashboard
+ */
+export const DeleteSavedDashboardParams = zod.object({
+  "dashboardId": zod.coerce.string()
+})
+
+export const DeleteSavedDashboardResponse = zod.object({
+  "dashboards": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "summary": zod.string(),
+  "panelCount": zod.number(),
+  "createdAt": zod.string().nullish(),
+  "updatedAt": zod.string().nullish()
+}))
+})
+
+
+/**
  * Converts a short narration string into natural-sounding speech audio (base64-encoded mp3)
  * @summary Synthesize narration audio
  */

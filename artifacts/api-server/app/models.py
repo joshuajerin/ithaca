@@ -1290,6 +1290,25 @@ class OrchestrationRequest(BaseModel):
     voice: Optional[bool] = None
 
 
+class SaveDashboardRequest(BaseModel):
+    name: str
+    summary: Optional[str] = None
+    panels: List[Panel]
+
+
+class SavedDashboardMeta(BaseModel):
+    id: str
+    name: str
+    summary: str
+    panelCount: int
+    createdAt: Optional[str] = None
+    updatedAt: Optional[str] = None
+
+
+class SavedDashboardList(BaseModel):
+    dashboards: List[SavedDashboardMeta]
+
+
 # --- navigator (AI cursor tour) ---
 class NavigationStop(BaseModel):
     panelId: str
