@@ -1,0 +1,220 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1760" height="1330" viewBox="0 0 1760 1330" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif">
+<defs>
+<radialGradient id="bgg" cx="50%" cy="34%" r="80%"><stop offset="0%" stop-color="#101319"/><stop offset="60%" stop-color="#0a0b0d"/><stop offset="100%" stop-color="#060709"/></radialGradient>
+<marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#e3b25c"/></marker>
+<marker id="gf" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#3a3a42"/></marker>
+<marker id="vf" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#a99bf2"/></marker>
+<marker id="gn" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#6fb87f"/></marker>
+<linearGradient id="coreg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#1c1a14"/><stop offset="100%" stop-color="#121117"/></linearGradient>
+</defs>
+<rect width="1760" height="1330" fill="url(#bgg)"/>
+<text x="40" y="64" font-family="Georgia, 'DejaVu Serif', serif" font-size="46" fill="#f5f5f6" font-weight="bold" text-anchor="start">doomberg</text>
+<text x="330" y="64" font-family="Georgia, 'DejaVu Serif', serif" font-size="23" fill="#e3b25c" font-weight="normal" text-anchor="start" font-style="italic">Agentic Terminal</text>
+<text x="42" y="96" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="12.5" fill="#a1a1aa" font-weight="bold" text-anchor="start" letter-spacing="3.6">TECHNICAL ARCHITECTURE</text>
+<text x="42" y="118" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="13.5" fill="#71717a" font-weight="normal" text-anchor="start">A self-building market-intelligence dashboard — the Agent Harness sits at the core, turning one natural-language query into a live panel dashboard.</text>
+<rect x="1330" y="36" width="390" height="84" rx="10" ry="10" fill="#101216" stroke="#27272a" stroke-width="1.1"/>
+<text x="1346" y="60" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11" fill="#e3b25c" font-weight="bold" text-anchor="start" letter-spacing="2.6">REQUEST FLOW</text>
+<circle cx="1356" cy="90" r="12.5" fill="#0a0b0d" stroke="#e3b25c" stroke-width="1.6"/>
+<text x="1356" y="94.5" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="13" fill="#e3b25c" font-weight="bold" text-anchor="middle">1</text>
+<text x="1374" y="95" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="12" fill="#a1a1aa" font-weight="normal" text-anchor="start">query → orchestrate → harness</text>
+<text x="1580" y="95" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="12" fill="#a1a1aa" font-weight="normal" text-anchor="start">→ panels → render</text>
+<text x="1346" y="112" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="10.8" fill="#71717a" font-weight="normal" text-anchor="start">amber path = one round-trip   ·   ⑦ = self-building side loop</text>
+<rect x="790" y="150" width="180" height="44" rx="22" ry="22" fill="#1b1e24" stroke="#3a3a42" stroke-width="1.2"/>
+<text x="880" y="170" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11" fill="#f5f5f6" font-weight="bold" text-anchor="middle" letter-spacing="3">USER</text>
+<text x="880" y="186" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="11" fill="#71717a" font-weight="normal" text-anchor="middle">types a query / speaks</text>
+<rect x="372" y="206" width="1016" height="196" rx="14" ry="14" fill="#101216" stroke="#27272a" stroke-width="1.4"/>
+<rect x="372" y="222" width="4" height="34" rx="2" fill="#74a9cf"/>
+<text x="394" y="236" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="12" fill="#74a9cf" font-weight="bold" text-anchor="start" letter-spacing="2.4">FRONTEND · AGENTIC TERMINAL</text>
+<text x="394" y="254" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="12.5" fill="#71717a" font-weight="normal" text-anchor="start">React + Vite · artifacts/terminal</text>
+<rect x="390" y="272" width="233" height="116" rx="10" ry="10" fill="#16181d" stroke="#27272a" stroke-width="1.1"/>
+<rect x="390" y="272" width="233" height="3" rx="1.5" fill="#74a9cf"/>
+<text x="404" y="299" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="14.5" fill="#f5f5f6" font-weight="bold" text-anchor="start">Console</text>
+<text x="404" y="318" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.8" fill="#a1a1aa" font-weight="normal" text-anchor="start">ChatPanel.tsx</text>
+<text x="404" y="333" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.8" fill="#a1a1aa" font-weight="normal" text-anchor="start">typed chat · streamed</text>
+<text x="404" y="348" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.8" fill="#a1a1aa" font-weight="normal" text-anchor="start">answers (SSE)</text>
+<rect x="639" y="272" width="233" height="116" rx="10" ry="10" fill="#16181d" stroke="#27272a" stroke-width="1.1"/>
+<rect x="639" y="272" width="233" height="3" rx="1.5" fill="#74a9cf"/>
+<text x="653" y="299" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="14.5" fill="#f5f5f6" font-weight="bold" text-anchor="start">Voice Orb</text>
+<text x="653" y="318" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.8" fill="#a1a1aa" font-weight="normal" text-anchor="start">VoicePanel.tsx</text>
+<text x="653" y="333" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.8" fill="#a1a1aa" font-weight="normal" text-anchor="start">push-to-talk · STT in,</text>
+<text x="653" y="348" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.8" fill="#a1a1aa" font-weight="normal" text-anchor="start">TTS narration out</text>
+<rect x="888" y="272" width="233" height="116" rx="10" ry="10" fill="#16181d" stroke="#27272a" stroke-width="1.1"/>
+<rect x="888" y="272" width="233" height="3" rx="1.5" fill="#74a9cf"/>
+<text x="902" y="299" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="14.5" fill="#f5f5f6" font-weight="bold" text-anchor="start">Dashboard</text>
+<text x="902" y="318" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.8" fill="#a1a1aa" font-weight="normal" text-anchor="start">Dashboard.tsx</text>
+<text x="902" y="333" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.8" fill="#a1a1aa" font-weight="normal" text-anchor="start">12-column panel grid,</text>
+<text x="902" y="348" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.8" fill="#a1a1aa" font-weight="normal" text-anchor="start">drag / resize / fade</text>
+<rect x="1137" y="272" width="233" height="116" rx="10" ry="10" fill="#16181d" stroke="#27272a" stroke-width="1.1"/>
+<rect x="1137" y="272" width="233" height="3" rx="1.5" fill="#74a9cf"/>
+<text x="1151" y="299" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="14.5" fill="#f5f5f6" font-weight="bold" text-anchor="start">Dynamic Panel</text>
+<text x="1151" y="318" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.8" fill="#a1a1aa" font-weight="normal" text-anchor="start">DynamicPanel.tsx</text>
+<text x="1151" y="333" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.8" fill="#a1a1aa" font-weight="normal" text-anchor="start">runtime-loads AI panels</text>
+<text x="1151" y="348" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.8" fill="#a1a1aa" font-weight="normal" text-anchor="start">(sucrase in browser)</text>
+<rect x="372" y="432" width="1016" height="140" rx="14" ry="14" fill="#101216" stroke="#27272a" stroke-width="1.4"/>
+<rect x="372" y="448" width="4" height="34" rx="2" fill="#5bb6a8"/>
+<text x="394" y="462" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="12" fill="#5bb6a8" font-weight="bold" text-anchor="start" letter-spacing="2.4">TRANSPORT / API · FASTAPI</text>
+<text x="394" y="480" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="12.5" fill="#71717a" font-weight="normal" text-anchor="start">artifacts/api-server · app/main.py</text>
+<rect x="392" y="492" width="150" height="26" rx="13" ry="13" fill="#1b1e24" stroke="#27272a" stroke-width="1.0"/>
+<text x="467.0" y="509" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="11.5" fill="#a1a1aa" font-weight="normal" text-anchor="middle">/api/orchestrate</text>
+<rect x="554" y="492" width="220" height="26" rx="13" ry="13" fill="#1b1e24" stroke="#27272a" stroke-width="1.0"/>
+<text x="664.0" y="509" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="11.5" fill="#a1a1aa" font-weight="normal" text-anchor="middle">/api/orchestrate/stream  SSE</text>
+<rect x="786" y="492" width="170" height="26" rx="13" ry="13" fill="#1b1e24" stroke="#27272a" stroke-width="1.0"/>
+<text x="871.0" y="509" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="11.5" fill="#a1a1aa" font-weight="normal" text-anchor="middle">/api/transcribe  STT</text>
+<rect x="968" y="492" width="110" height="26" rx="13" ry="13" fill="#1b1e24" stroke="#27272a" stroke-width="1.0"/>
+<text x="1023.0" y="509" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="11.5" fill="#a1a1aa" font-weight="normal" text-anchor="middle">TTS / speak</text>
+<rect x="1090" y="492" width="210" height="26" rx="13" ry="13" fill="#1b1e24" stroke="#27272a" stroke-width="1.0"/>
+<text x="1195.0" y="509" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="11.5" fill="#a1a1aa" font-weight="normal" text-anchor="middle">/api/feature-request  SSE</text>
+<rect x="392" y="528" width="180" height="26" rx="13" ry="13" fill="#1b1e24" stroke="#27272a" stroke-width="1.0"/>
+<text x="482.0" y="545" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="11.5" fill="#a1a1aa" font-weight="normal" text-anchor="middle">/api/generated-panels</text>
+<rect x="584" y="528" width="120" height="26" rx="13" ry="13" fill="#1b1e24" stroke="#27272a" stroke-width="1.0"/>
+<text x="644.0" y="545" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="11.5" fill="#a1a1aa" font-weight="normal" text-anchor="middle">/api/features</text>
+<rect x="372" y="600" width="1016" height="360" rx="16" ry="16" fill="url(#coreg)" stroke="#e3b25c" stroke-width="2.0"/>
+<rect x="372" y="618" width="4" height="40" rx="2" fill="#e3b25c"/>
+<text x="394" y="634" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="14" fill="#e3b25c" font-weight="bold" text-anchor="start" letter-spacing="3">CORE · AGENT HARNESS</text>
+<text x="394" y="654" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="12.5" fill="#a1a1aa" font-weight="normal" text-anchor="start">orchestration engine — decides what to build, builds it, validates it</text>
+<text x="1368" y="634" font-family="Georgia, 'DejaVu Serif', serif" font-size="12" fill="#5f4d28" font-weight="normal" text-anchor="end" font-style="italic">the core</text>
+<rect x="392" y="672" width="313" height="132" rx="10" ry="10" fill="#1b1e24" stroke="#27272a" stroke-width="1.1"/>
+<rect x="392" y="672" width="313" height="3" rx="1.5" fill="#e3b25c"/>
+<text x="406" y="699" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="14.5" fill="#f5f5f6" font-weight="bold" text-anchor="start">Orchestrator</text>
+<text x="406" y="718.0" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.6" fill="#a1a1aa" font-weight="normal" text-anchor="start">agent.py</text>
+<text x="406" y="732.6" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.6" fill="#a1a1aa" font-weight="normal" text-anchor="start">LLM tool-calling picks which</text>
+<text x="406" y="747.2" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.6" fill="#a1a1aa" font-weight="normal" text-anchor="start">skills / panels to build;</text>
+<text x="406" y="761.8" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.6" fill="#a1a1aa" font-weight="normal" text-anchor="start">context-aware keep / drop of</text>
+<text x="406" y="776.4" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.6" fill="#a1a1aa" font-weight="normal" text-anchor="start">panels; question-vs-build split</text>
+<rect x="723" y="672" width="313" height="132" rx="10" ry="10" fill="#1b1e24" stroke="#27272a" stroke-width="1.1"/>
+<rect x="723" y="672" width="313" height="3" rx="1.5" fill="#e3b25c"/>
+<text x="737" y="699" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="14.5" fill="#f5f5f6" font-weight="bold" text-anchor="start">Harness</text>
+<text x="737" y="718.0" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.6" fill="#a1a1aa" font-weight="normal" text-anchor="start">harness.py</text>
+<text x="737" y="732.6" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.6" fill="#a1a1aa" font-weight="normal" text-anchor="start">runs each skill builder →</text>
+<text x="737" y="747.2" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.6" fill="#a1a1aa" font-weight="normal" text-anchor="start">validates vs Pydantic model →</text>
+<text x="737" y="761.8" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.6" fill="#a1a1aa" font-weight="normal" text-anchor="start">Panel Envelope {id, layout,</text>
+<text x="737" y="776.4" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.6" fill="#a1a1aa" font-weight="normal" text-anchor="start">status, data}; pack_layout grid</text>
+<rect x="1054" y="672" width="313" height="132" rx="10" ry="10" fill="#1b1e24" stroke="#27272a" stroke-width="1.1"/>
+<rect x="1054" y="672" width="313" height="3" rx="1.5" fill="#e3b25c"/>
+<text x="1068" y="699" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="14.5" fill="#f5f5f6" font-weight="bold" text-anchor="start">Skill Registry</text>
+<text x="1068" y="718.0" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.6" fill="#a1a1aa" font-weight="normal" text-anchor="start">skills.py</text>
+<text x="1068" y="732.6" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.6" fill="#a1a1aa" font-weight="normal" text-anchor="start">each skill = metadata</text>
+<text x="1068" y="747.2" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.6" fill="#a1a1aa" font-weight="normal" text-anchor="start">(params / JSON schema +</text>
+<text x="1068" y="761.8" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.6" fill="#a1a1aa" font-weight="normal" text-anchor="start">description) + a builder fn;</text>
+<text x="1068" y="776.4" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.6" fill="#a1a1aa" font-weight="normal" text-anchor="start">~50 built-in panel types</text>
+<rect x="392" y="822" width="976" height="116" rx="10" ry="10" fill="#16181d" stroke="#5f4d28" stroke-width="1.3" stroke-dasharray="5 4"/>
+<rect x="392" y="822" width="976" height="3" rx="1.5" fill="#e3b25c"/>
+<circle cx="416" cy="842" r="12.5" fill="#0a0b0d" stroke="#e3b25c" stroke-width="1.6"/>
+<text x="416" y="846.5" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="13" fill="#e3b25c" font-weight="bold" text-anchor="middle">7</text>
+<text x="440" y="848" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="14" fill="#f5f5f6" font-weight="bold" text-anchor="start">Self-Building Feature Pipeline</text>
+<text x="712" y="848" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.6" fill="#71717a" font-weight="normal" text-anchor="start">AI writes a new skill + panel at runtime — hot-loaded in-process, no restart</text>
+<rect x="406" y="866" width="250" height="50" rx="8" ry="8" fill="#1b1e24" stroke="#27272a" stroke-width="1.0"/>
+<text x="418" y="888" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="12.5" fill="#f5f5f6" font-weight="normal" text-anchor="start">feature_builder.py</text>
+<text x="418" y="905" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11" fill="#71717a" font-weight="normal" text-anchor="start">LLM authors Python</text>
+<rect x="692" y="866" width="230" height="50" rx="8" ry="8" fill="#1b1e24" stroke="#27272a" stroke-width="1.0"/>
+<text x="704" y="888" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="12.5" fill="#f5f5f6" font-weight="normal" text-anchor="start">code_guard.py</text>
+<text x="704" y="905" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11" fill="#71717a" font-weight="normal" text-anchor="start">AST allow-list audit</text>
+<rect x="952" y="866" width="230" height="50" rx="8" ry="8" fill="#1b1e24" stroke="#27272a" stroke-width="1.0"/>
+<text x="964" y="888" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="12.5" fill="#f5f5f6" font-weight="normal" text-anchor="start">dynamic_skills.py</text>
+<text x="964" y="905" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11" fill="#71717a" font-weight="normal" text-anchor="start">validate · hot-load</text>
+<path d="M 656 891.0 L 688 891.0" fill="none" stroke="#e3b25c" stroke-width="1.8" marker-end="url(#af)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M 922 891.0 L 948 891.0" fill="none" stroke="#e3b25c" stroke-width="1.8" marker-end="url(#af)" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="1198" y="888" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11" fill="#71717a" font-weight="normal" text-anchor="start">registered into</text>
+<text x="1198" y="905" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="11.5" fill="#e3b25c" font-weight="normal" text-anchor="start">Skill Registry ↑</text>
+<rect x="40" y="648" width="300" height="264" rx="14" ry="14" fill="#101216" stroke="#27272a" stroke-width="1.4"/>
+<rect x="40" y="664" width="4" height="34" rx="2" fill="#a99bf2"/>
+<text x="62" y="678" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="12" fill="#a99bf2" font-weight="bold" text-anchor="start" letter-spacing="2.4">AI CLIENTS · ai.py</text>
+<text x="62" y="696" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="12.5" fill="#71717a" font-weight="normal" text-anchor="start">via Replit AI proxy</text>
+<rect x="58" y="706" width="264" height="55" rx="9" ry="9" fill="#16181d" stroke="#27272a" stroke-width="1.0"/>
+<rect x="58" y="706" width="3" height="55" rx="1.5" fill="#a99bf2"/>
+<text x="72" y="728" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="13" fill="#f5f5f6" font-weight="bold" text-anchor="start">GPT · orchestration</text>
+<text x="72" y="746" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="10.6" fill="#71717a" font-weight="normal" text-anchor="start">tool-calling + analysis + streamed answers</text>
+<rect x="58" y="773" width="264" height="55" rx="9" ry="9" fill="#16181d" stroke="#27272a" stroke-width="1.0"/>
+<rect x="58" y="773" width="3" height="55" rx="1.5" fill="#a99bf2"/>
+<text x="72" y="795" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="13" fill="#f5f5f6" font-weight="bold" text-anchor="start">gpt-audio · TTS</text>
+<text x="72" y="813" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="10.6" fill="#71717a" font-weight="normal" text-anchor="start">spoken narration for Voice Mode</text>
+<rect x="58" y="840" width="264" height="55" rx="9" ry="9" fill="#16181d" stroke="#27272a" stroke-width="1.0"/>
+<rect x="58" y="840" width="3" height="55" rx="1.5" fill="#a99bf2"/>
+<text x="72" y="862" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="13" fill="#f5f5f6" font-weight="bold" text-anchor="start">transcribe · STT</text>
+<text x="72" y="880" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="10.6" fill="#71717a" font-weight="normal" text-anchor="start">mic audio → text for non-Web-Speech browsers</text>
+<rect x="372" y="990" width="1016" height="230" rx="14" ry="14" fill="#101216" stroke="#27272a" stroke-width="1.4"/>
+<rect x="372" y="1006" width="4" height="34" rx="2" fill="#6fb87f"/>
+<text x="394" y="1020" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="12" fill="#6fb87f" font-weight="bold" text-anchor="start" letter-spacing="2.4">DATA LAYER</text>
+<text x="394" y="1038" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="12.5" fill="#71717a" font-weight="normal" text-anchor="start">live data, mediated — never an empty panel</text>
+<rect x="392" y="1046" width="976" height="34" rx="8" ry="8" fill="#1b1e24" stroke="#27272a" stroke-width="1.0"/>
+<rect x="392" y="1046" width="3" height="34" rx="1.5" fill="#6fb87f"/>
+<text x="406" y="1068" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="13" fill="#f5f5f6" font-weight="bold" text-anchor="start">Repository  ·  repo.py</text>
+<text x="712" y="1068" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#71717a" font-weight="normal" text-anchor="start">mediates live data vs. mocks; surfaces asOf / source freshness</text>
+<rect x="392" y="1096" width="314" height="104" rx="10" ry="10" fill="#16181d" stroke="#27272a" stroke-width="1.1"/>
+<rect x="392" y="1096" width="314" height="3" rx="1.5" fill="#6fb87f"/>
+<text x="406" y="1123" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="14.5" fill="#f5f5f6" font-weight="bold" text-anchor="start">Live Sources</text>
+<text x="406" y="1142" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">sources/  ·  resilient</text>
+<text x="406" y="1157" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">Yahoo prices / news / fundamentals;</text>
+<text x="406" y="1172" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">US Treasury + FRED (rates, credit);</text>
+<text x="406" y="1187" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">retry + circuit breaker per source</text>
+<rect x="722" y="1096" width="314" height="104" rx="10" ry="10" fill="#16181d" stroke="#27272a" stroke-width="1.1"/>
+<rect x="722" y="1096" width="314" height="3" rx="1.5" fill="#6fb87f"/>
+<text x="736" y="1123" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="14.5" fill="#f5f5f6" font-weight="bold" text-anchor="start">Postgres</text>
+<text x="736" y="1142" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">db.py  ·  lib/db (Drizzle)</text>
+<text x="736" y="1157" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">fundamentals, news,</text>
+<text x="736" y="1172" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">OHLCV price history;</text>
+<text x="736" y="1187" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">ingested by a background worker</text>
+<rect x="1052" y="1096" width="314" height="104" rx="10" ry="10" fill="#16181d" stroke="#27272a" stroke-width="1.1"/>
+<rect x="1052" y="1096" width="314" height="3" rx="1.5" fill="#6fb87f"/>
+<text x="1066" y="1123" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="14.5" fill="#f5f5f6" font-weight="bold" text-anchor="start">Mock / Curated</text>
+<text x="1066" y="1142" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">data.py</text>
+<text x="1066" y="1157" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">deterministic fallback that</text>
+<text x="1066" y="1172" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">keeps the terminal warm when</text>
+<text x="1066" y="1187" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">a source is throttled or down</text>
+<rect x="1420" y="206" width="300" height="1014" rx="14" ry="14" fill="#101216" stroke="#27272a" stroke-width="1.4"/>
+<rect x="1420" y="222" width="4" height="34" rx="2" fill="#d3899c"/>
+<text x="1442" y="236" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="12" fill="#d3899c" font-weight="bold" text-anchor="start" letter-spacing="2.4">SHARED CONTRACT</text>
+<text x="1442" y="254" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="12.5" fill="#71717a" font-weight="normal" text-anchor="start">the typed FE ↔ BE boundary</text>
+<rect x="1444" y="276" width="252" height="116" rx="10" ry="10" fill="#16181d" stroke="#27272a" stroke-width="1.1"/>
+<rect x="1444" y="276" width="252" height="3" rx="1.5" fill="#d3899c"/>
+<text x="1460" y="304" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="14" fill="#f5f5f6" font-weight="bold" text-anchor="start">lib/api-spec</text>
+<text x="1460" y="326" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">OpenAPI schema — the</text>
+<text x="1460" y="342" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">single source of truth</text>
+<text x="1460" y="358" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">for every endpoint</text>
+<text x="1460" y="374" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">and panel data shape</text>
+<path d="M 1570.0 398 L 1570.0 444" fill="none" stroke="#d3899c" stroke-width="2.0" marker-end="url(#vf)" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="1582.0" y="428" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="11" fill="#71717a" font-weight="normal" text-anchor="start">codegen</text>
+<rect x="1444" y="450" width="252" height="116" rx="10" ry="10" fill="#16181d" stroke="#27272a" stroke-width="1.1"/>
+<rect x="1444" y="450" width="252" height="3" rx="1.5" fill="#d3899c"/>
+<text x="1460" y="478" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="13.5" fill="#f5f5f6" font-weight="bold" text-anchor="start">lib/api-client-react</text>
+<text x="1460" y="500" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">generated React hooks</text>
+<text x="1460" y="516" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">+ types consumed by</text>
+<text x="1460" y="532" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">the frontend — one</text>
+<text x="1460" y="548" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.4" fill="#a1a1aa" font-weight="normal" text-anchor="start">compile-checked contract</text>
+<text x="1570.0" y="640" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.5" fill="#71717a" font-weight="normal" text-anchor="middle">every request &amp;</text>
+<text x="1570.0" y="658" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.5" fill="#71717a" font-weight="normal" text-anchor="middle">panel envelope is</text>
+<text x="1570.0" y="676" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.5" fill="#d3899c" font-weight="bold" text-anchor="middle">typed end-to-end</text>
+<line x1="1390" y1="302" x2="1418" y2="302" stroke="#d3899c" stroke-width="1.1" stroke-dasharray="3 5" opacity="0.5"/>
+<line x1="1390" y1="492" x2="1418" y2="492" stroke="#d3899c" stroke-width="1.1" stroke-dasharray="3 5" opacity="0.5"/>
+<path d="M 880 196 L 880 202" fill="none" stroke="#e3b25c" stroke-width="2.4" marker-end="url(#af)" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="916" cy="184" r="12.5" fill="#0a0b0d" stroke="#e3b25c" stroke-width="1.6"/>
+<text x="916" y="188.5" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="13" fill="#e3b25c" font-weight="bold" text-anchor="middle">1</text>
+<path d="M 700 404 L 700 428" fill="none" stroke="#e3b25c" stroke-width="2.4" marker-end="url(#af)" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="676" cy="417.0" r="12.5" fill="#0a0b0d" stroke="#e3b25c" stroke-width="1.6"/>
+<text x="676" y="421.5" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="13" fill="#e3b25c" font-weight="bold" text-anchor="middle">2</text>
+<text x="714" y="421.0" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="10.8" fill="#71717a" font-weight="normal" text-anchor="start">POST query (SSE)</text>
+<path d="M 700 574 L 700 596" fill="none" stroke="#e3b25c" stroke-width="2.4" marker-end="url(#af)" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="714" y="590.0" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="10.8" fill="#71717a" font-weight="normal" text-anchor="start">dispatch</text>
+<path d="M 390 712 L 344 712" fill="none" stroke="#a99bf2" stroke-width="2.2" marker-end="url(#vf)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M 344 746 L 390 746" fill="none" stroke="#a99bf2" stroke-width="1.6" marker-end="url(#vf)" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4"/>
+<circle cx="362" cy="694" r="12.5" fill="#0a0b0d" stroke="#e3b25c" stroke-width="1.6"/>
+<text x="362" y="698.5" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="13" fill="#e3b25c" font-weight="bold" text-anchor="middle">3</text>
+<text x="366.0" y="702" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="10.4" fill="#71717a" font-weight="normal" text-anchor="middle">tool-calling</text>
+<path d="M 700 962 L 700 986" fill="none" stroke="#e3b25c" stroke-width="2.4" marker-end="url(#af)" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="676" cy="975.0" r="12.5" fill="#0a0b0d" stroke="#e3b25c" stroke-width="1.6"/>
+<text x="676" y="979.5" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="13" fill="#e3b25c" font-weight="bold" text-anchor="middle">4</text>
+<text x="714" y="979.0" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="10.8" fill="#71717a" font-weight="normal" text-anchor="start">build panels · repo → sources</text>
+<path d="M 1060 596 L 1060 574" fill="none" stroke="#e3b25c" stroke-width="2.4" marker-end="url(#af)" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="1086" cy="586.0" r="12.5" fill="#0a0b0d" stroke="#e3b25c" stroke-width="1.6"/>
+<text x="1086" y="590.5" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="13" fill="#e3b25c" font-weight="bold" text-anchor="middle">5</text>
+<text x="1046" y="590.0" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="10.8" fill="#71717a" font-weight="normal" text-anchor="end">Panel Envelopes → DashboardSpec</text>
+<path d="M 1060 428 L 1060 404" fill="none" stroke="#e3b25c" stroke-width="2.4" marker-end="url(#af)" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="1086" cy="417.0" r="12.5" fill="#0a0b0d" stroke="#e3b25c" stroke-width="1.6"/>
+<text x="1086" y="421.5" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="13" fill="#e3b25c" font-weight="bold" text-anchor="middle">6</text>
+<text x="1046" y="421.0" font-family="'DejaVu Sans Mono', Menlo, monospace" font-size="10.8" fill="#71717a" font-weight="normal" text-anchor="end">render panels</text>
+<path d="M 1210.5 820 L 1210.5 807" fill="none" stroke="#e3b25c" stroke-width="2.0" marker-end="url(#af)" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="6 4"/>
+<line x1="40" y1="1238" x2="1720" y2="1238" stroke="#27272a" stroke-width="1.0"/>
+<text x="40" y="1258" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.5" fill="#71717a" font-weight="normal" text-anchor="start">Every box maps to real source under artifacts/api-server/app and artifacts/terminal/src.</text>
+<text x="40" y="1278" font-family="Helvetica, 'DejaVu Sans', Arial, sans-serif" font-size="11.5" fill="#52525b" font-weight="normal" text-anchor="start">Built-in panels are validated against Pydantic models; AI-generated panels pass through untyped and render via DynamicPanel.</text>
+<text x="1720" y="1258" font-family="Georgia, 'DejaVu Serif', serif" font-size="11.5" fill="#71717a" font-weight="normal" text-anchor="end" font-style="italic">doomberg · Agentic Terminal</text>
+</svg>
