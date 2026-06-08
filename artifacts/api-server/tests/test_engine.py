@@ -318,6 +318,92 @@ def test_construct_portfolio_too_few_names_returns_empty_curve():
     assert res["holdings"] == []
 
 
+def test_normalize_combine_method_aliases():
+    assert engine.normalize_combine_method("equal") == "equal_weight"
+    assert engine.normalize_combine_method("naive") == "equal_weight"
+    assert engine.normalize_combine_method("ic weighted") == "ic_weighted"
+    assert engine.normalize_combine_method("ic-weighted") == "ic_weighted"
+    assert engine.normalize_combine_method("inverse correlation") == "inverse_correlation"
+    assert engine.normalize_combine_method("risk weighted") == "inverse_correlation"
+    assert engine.normalize_combine_method(None) == "equal_weight"
+    assert engine.normalize_combine_method("garbage") == "equal_weight"
+
+
+def test_combine_signals_shape_and_weights_sum_to_one():
+    series = _ramp_series()
+    res = engine.combine_signals(series, signals=["momentum", "low_volatility"], method="equal_weight", holding=21)
+    # Composite scored with the same scorecard keys as a single signal.
+    comp = res["composite"]
+    for k in ("ic", "decay", "turnover", "turnoverAnnual", "rebalances",
+              "quantileReturns", "spread", "spreadStats"):
+        assert k in comp
+    # Weights present for every requested component and sum to ~1.
+    assert len(res["weights"]) == 2
+    assert math.isclose(sum(w["weight"] for w in res["weights"]), 1.0, abs_tol=1e-9)
+    # Equal weight is exactly 1/N.
+    for w in res["weights"]:
+        assert math.isclose(w["weight"], 0.5, abs_tol=1e-9)
+    # Correlation matrix is square, symmetric and unit-diagonal.
+    M = res["correlation"]["matrix"]
+    assert len(M) == 2 and all(len(r) == 2 for r in M)
+    assert math.isclose(M[0][0], 1.0, abs_tol=1e-9)
+    assert math.isclose(M[0][1], M[1][0], abs_tol=1e-9)
+
+
+def test_combine_signals_ic_weighted_favors_stronger_component():
+    series = _ramp_series()
+    # Momentum is the clean trend signal here; short_reversal is its inverse.
+    res = engine.combine_signals(series, signals=["momentum", "short_reversal"], method="ic_weighted", holding=21)
+    assert res["method"] == "ic_weighted"
+    wmap = {w["signal"]: w["weight"] for w in res["weights"]}
+    # IC weighting floors negative IC at 0, so the inverse signal gets ~no weight.
+    assert wmap["momentum"] >= wmap["short_reversal"]
+    assert math.isclose(sum(wmap.values()), 1.0, abs_tol=1e-9)
+
+
+def test_combine_signals_inverse_correlation_weights_sum_to_one():
+    series = _ramp_series()
+    res = engine.combine_signals(series, signals=["momentum", "low_volatility", "short_reversal"], method="inverse_correlation", holding=21)
+    assert res["method"] == "inverse_correlation"
+    assert math.isclose(sum(w["weight"] for w in res["weights"]), 1.0, abs_tol=1e-9)
+    assert all(w["weight"] >= 0 for w in res["weights"])
+
+
+def test_combine_signals_excludes_missing_history():
+    series = _ramp_series()
+    series["BAD"] = [{"t": "2024-01-01", "c": 100.0}]
+    res = engine.combine_signals(series, signals=["momentum", "low_volatility"])
+    assert "BAD" in [e["symbol"] for e in res["excluded"]]
+
+
+def test_combine_signals_strict_intersection_excludes_partial_inputs():
+    # value needs per-name fundamentals; provide them for only some names. A name
+    # missing ANY selected component's input must be excluded from the composite
+    # (strict intersection, real data only — never imputed).
+    series = _ramp_series()
+    ctx = {"value": {f"S{k}": {"fval": float(k)} for k in range(7)}}
+    res = engine.combine_signals(series, signals=["momentum", "value"], ctx_by_signal=ctx, holding=21)
+    excluded = {e["symbol"] for e in res["excluded"]}
+    assert {"S7", "S8", "S9"} <= excluded
+    included = set(res["included"])
+    assert not ({"S7", "S8", "S9"} & included)
+    # Names that DO have both inputs survive into the composite universe.
+    assert "S0" in included
+    assert res["composite"]["included"] == len(included)
+    # The exclusion is auditable: it names the missing component.
+    bad = next(e for e in res["excluded"] if e["symbol"] == "S9")
+    assert "value" in bad["reason"].lower()
+
+
+def test_combine_signals_is_deterministic():
+    series = _ramp_series()
+    a = engine.combine_signals(series, signals=["momentum", "low_volatility"], method="ic_weighted", holding=21)
+    b = engine.combine_signals(series, signals=["momentum", "low_volatility"], method="ic_weighted", holding=21)
+    assert a["weights"] == b["weights"]
+    assert a["correlation"] == b["correlation"]
+    assert a["composite"]["spread"] == b["composite"]["spread"]
+
+
 from app.engine import attribution as attr
 
 

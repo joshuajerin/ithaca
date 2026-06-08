@@ -257,33 +257,20 @@ def _clean_series(points: Sequence[dict]) -> Tuple[List[str], np.ndarray]:
     return dates, np.asarray(closes, dtype=float)
 
 
-def evaluate_signal(
+def _prep_series(
     series_by_symbol: Dict[str, Sequence[dict]],
-    signal: str = "momentum",
-    ctx_by_symbol: Optional[Dict[str, dict]] = None,
-    horizons: Sequence[int] = (1, 5, 10, 21, 42),
-    holding: int = 21,
-    quantiles: int = 5,
-    ic_stride: int = 5,
-    min_names: int = 5,
-) -> dict:
-    """Evaluate one signal cross-sectionally over many symbols' close series.
+    horizons: Sequence[int],
+    holding: int,
+) -> Tuple[Dict[str, dict], List[dict], List[int]]:
+    """Clean each name's close series and precompute its forward returns.
 
-    Returns a dict with rank-IC stats (per horizon -> decay curve), turnover, a
-    quantile long-short spread equity curve and per-quantile mean forward return,
-    plus the included / excluded symbol sets so coverage can be reported honestly.
-
-    ``ctx_by_symbol`` carries any per-symbol context the signal needs (e.g.
-    ``{"fval": 0.05}`` for fundamental signals). Price signals ignore it.
+    Returns ``(per, excluded, horizons)`` where ``per[sym]`` carries the dates,
+    closes, per-horizon forward returns and a date->index map (but no signal
+    yet). Names with too little history are dropped and reported, never imputed.
     """
-    signal = normalize_signal(signal)
-    fn = SIGNALS[signal]
-    ctx_by_symbol = ctx_by_symbol or {}
     horizons = sorted({int(h) for h in horizons if int(h) >= 1})
-    if holding not in horizons:
+    if int(holding) not in horizons:
         horizons = sorted(set(horizons) | {int(holding)})
-    quantiles = max(2, int(quantiles))
-    min_names = max(quantiles, int(min_names))
 
     per: Dict[str, dict] = {}
     excluded: List[dict] = []
@@ -292,14 +279,8 @@ def evaluate_signal(
         if closes.size < 5:
             excluded.append({"symbol": sym, "reason": "insufficient price history"})
             continue
-        ctx = dict(ctx_by_symbol.get(sym) or {})
-        sig = np.asarray(fn(closes, ctx), dtype=float)
-        if not np.isfinite(sig).any():
-            reason = "missing fundamental" if SIGNAL_META.get(signal, {}).get("kind") == "fundamental" else "signal not computable"
-            excluded.append({"symbol": sym, "reason": reason})
-            continue
-        fret: Dict[int, np.ndarray] = {}
         n = closes.size
+        fret: Dict[int, np.ndarray] = {}
         for h in horizons:
             fr = np.full(n, np.nan, dtype=float)
             if h < n:
@@ -308,15 +289,37 @@ def evaluate_signal(
         per[sym] = {
             "dates": dates,
             "closes": closes,
-            "sig": sig,
+            "sig": None,
             "fret": fret,
             "date_idx": {d: i for i, d in enumerate(dates)},
         }
+    return per, excluded, horizons
 
+
+def _score_panel(
+    per: Dict[str, dict],
+    *,
+    signal: str,
+    label: str,
+    horizons: List[int],
+    holding: int,
+    quantiles: int,
+    ic_stride: int,
+    min_names: int,
+    excluded: List[dict],
+) -> dict:
+    """Score a prepared cross-section (each ``per[sym]`` must carry a ``sig``).
+
+    This is the shared rank-IC / IC-decay / quantile-spread / turnover block used
+    by both single-signal evaluation and the blended composite alpha, so a
+    composite is measured with the *exact same* scorecard as its components.
+    """
+    quantiles = max(2, int(quantiles))
+    min_names = max(quantiles, int(min_names))
     included = list(per.keys())
     result: dict = {
         "signal": signal,
-        "label": SIGNAL_META.get(signal, {}).get("label", signal),
+        "label": label,
         "horizons": list(horizons),
         "holding": int(holding),
         "quantiles": quantiles,
@@ -458,3 +461,340 @@ def evaluate_signal(
         }
 
     return result
+
+
+def evaluate_signal(
+    series_by_symbol: Dict[str, Sequence[dict]],
+    signal: str = "momentum",
+    ctx_by_symbol: Optional[Dict[str, dict]] = None,
+    horizons: Sequence[int] = (1, 5, 10, 21, 42),
+    holding: int = 21,
+    quantiles: int = 5,
+    ic_stride: int = 5,
+    min_names: int = 5,
+) -> dict:
+    """Evaluate one signal cross-sectionally over many symbols' close series.
+
+    Returns a dict with rank-IC stats (per horizon -> decay curve), turnover, a
+    quantile long-short spread equity curve and per-quantile mean forward return,
+    plus the included / excluded symbol sets so coverage can be reported honestly.
+
+    ``ctx_by_symbol`` carries any per-symbol context the signal needs (e.g.
+    ``{"fval": 0.05}`` for fundamental signals). Price signals ignore it.
+    """
+    signal = normalize_signal(signal)
+    fn = SIGNALS[signal]
+    ctx_by_symbol = ctx_by_symbol or {}
+    per, excluded, horizons = _prep_series(series_by_symbol, horizons, holding)
+    for sym in list(per.keys()):
+        P = per[sym]
+        ctx = dict(ctx_by_symbol.get(sym) or {})
+        sig = np.asarray(fn(P["closes"], ctx), dtype=float)
+        if not np.isfinite(sig).any():
+            reason = "missing fundamental" if SIGNAL_META.get(signal, {}).get("kind") == "fundamental" else "signal not computable"
+            excluded.append({"symbol": sym, "reason": reason})
+            del per[sym]
+        else:
+            P["sig"] = sig
+    label = SIGNAL_META.get(signal, {}).get("label", signal)
+    return _score_panel(
+        per,
+        signal=signal,
+        label=label,
+        horizons=horizons,
+        holding=holding,
+        quantiles=quantiles,
+        ic_stride=ic_stride,
+        min_names=min_names,
+        excluded=excluded,
+    )
+
+
+# ----------------------------- alpha combination -----------------------------
+COMBINE_METHODS = {
+    "equal_weight": "Equal Weight",
+    "ic_weighted": "IC-Weighted",
+    "inverse_correlation": "Inverse-Correlation (Risk-Weighted)",
+}
+
+
+def normalize_combine_method(method: Optional[str]) -> str:
+    """Resolve a free-text combination method to a registered key."""
+    if not method:
+        return "equal_weight"
+    key = str(method).strip().lower().replace("-", "_").replace(" ", "_")
+    if key in COMBINE_METHODS:
+        return key
+    if any(w in key for w in ("ic_weight", "icweight", "ic_ir", "information_coefficient")):
+        return "ic_weighted"
+    if any(w in key for w in ("inverse", "inv_corr", "risk_weight", "risk_parity", "correlation", "decorrel", "diversif")):
+        return "inverse_correlation"
+    if any(w in key for w in ("equal", "naive", "1_n", "1n", "uniform")):
+        return "equal_weight"
+    return "equal_weight"
+
+
+def _component_per(per: Dict[str, dict], comp: str) -> Tuple[Dict[str, dict], List[dict]]:
+    """Slice a prepared cross-section down to one component signal's own sig,
+    dropping (and reporting) names where that component is not computable."""
+    sub: Dict[str, dict] = {}
+    excluded: List[dict] = []
+    for sym, P in per.items():
+        sig = P["comp_raw"][comp]
+        if np.isfinite(sig).any():
+            sub[sym] = {
+                "dates": P["dates"],
+                "closes": P["closes"],
+                "fret": P["fret"],
+                "date_idx": P["date_idx"],
+                "sig": sig,
+            }
+        else:
+            reason = "missing fundamental" if SIGNAL_META.get(comp, {}).get("kind") == "fundamental" else "signal not computable"
+            excluded.append({"symbol": sym, "reason": reason})
+    return sub, excluded
+
+
+def combine_signals(
+    series_by_symbol: Dict[str, Sequence[dict]],
+    signals: Sequence[str],
+    ctx_by_signal: Optional[Dict[str, Dict[str, dict]]] = None,
+    method: str = "equal_weight",
+    horizons: Sequence[int] = (1, 5, 10, 21, 42),
+    holding: int = 21,
+    quantiles: int = 5,
+    ic_stride: int = 5,
+    min_names: int = 5,
+) -> dict:
+    """Blend several cross-sectional signals into one composite alpha.
+
+    Each component is standardized cross-sectionally (per-date z-score) so the
+    blend is unit-free, then combined by one of three weighting schemes:
+
+    - ``equal_weight``        — naive 1/N.
+    - ``ic_weighted``         — proportional to each component's mean rank IC at
+                                the holding horizon (floored at 0; falls back to
+                                equal weight if no component has positive IC).
+    - ``inverse_correlation`` — risk-weighted: inversely proportional to a
+                                component's average absolute cross-sectional rank
+                                correlation with the others, so redundant signals
+                                are down-weighted.
+
+    The composite is scored with the *same* scorecard as its components (rank IC,
+    IC decay, quantile spread, turnover) so it is directly comparable, and a
+    component overlap (rank-correlation) matrix is returned. Real data only:
+    names lacking inputs are excluded and reported, never imputed.
+
+    ``ctx_by_signal[signal][symbol]`` carries per-component context (e.g.
+    ``{"fval": ...}`` for value/quality), so fundamentals that share a signal
+    function still get their own distinct cross-sectional value.
+    """
+    method = normalize_combine_method(method)
+    norm_signals: List[str] = []
+    for s in signals:
+        k = normalize_signal(s)
+        if k not in norm_signals:
+            norm_signals.append(k)
+    if not norm_signals:
+        norm_signals = ["momentum"]
+    ctx_by_signal = ctx_by_signal or {}
+    quantiles = max(2, int(quantiles))
+    min_names = max(quantiles, int(min_names))
+    stride = max(1, int(ic_stride))
+
+    per, excluded, horizons = _prep_series(series_by_symbol, horizons, holding)
+
+    # Raw component signal per name.
+    for sym, P in per.items():
+        P["comp_raw"] = {}
+        for c in norm_signals:
+            ctx = dict((ctx_by_signal.get(c) or {}).get(sym) or {})
+            P["comp_raw"][c] = np.asarray(SIGNALS[c](P["closes"], ctx), dtype=float)
+
+    all_dates = sorted(set().union(*[set(p["date_idx"].keys()) for p in per.values()])) if per else []
+    k = len(norm_signals)
+
+    # Cross-sectional z-score per component per date (unit-free blend inputs).
+    for P in per.values():
+        P["comp_z"] = {c: np.full(P["closes"].size, np.nan) for c in norm_signals}
+    for d in all_dates:
+        for c in norm_signals:
+            entries: List[Tuple[str, int, float]] = []
+            for sym, P in per.items():
+                i = P["date_idx"].get(d)
+                if i is None:
+                    continue
+                v = P["comp_raw"][c][i]
+                if np.isfinite(v):
+                    entries.append((sym, i, float(v)))
+            if len(entries) < 2:
+                continue
+            vals = np.asarray([e[2] for e in entries], dtype=float)
+            mean = float(vals.mean())
+            sd = float(vals.std())
+            for sym, i, v in entries:
+                per[sym]["comp_z"][c][i] = (v - mean) / sd if sd > 0 else 0.0
+
+    # Component overlap: averaged per-date cross-sectional rank correlation.
+    corr = [[1.0 if a == b else 0.0 for b in range(k)] for a in range(k)]
+    pair_acc: Dict[Tuple[int, int], List[float]] = {}
+    for di in range(0, len(all_dates), stride):
+        d = all_dates[di]
+        for a in range(k):
+            for b in range(a + 1, k):
+                xs: List[float] = []
+                ys: List[float] = []
+                for P in per.values():
+                    i = P["date_idx"].get(d)
+                    if i is None:
+                        continue
+                    va = P["comp_raw"][norm_signals[a]][i]
+                    vb = P["comp_raw"][norm_signals[b]][i]
+                    if np.isfinite(va) and np.isfinite(vb):
+                        xs.append(float(va))
+                        ys.append(float(vb))
+                if len(xs) >= min_names:
+                    c_ab = spearman_ic(xs, ys)
+                    if np.isfinite(c_ab):
+                        pair_acc.setdefault((a, b), []).append(c_ab)
+    for (a, b), vals in pair_acc.items():
+        m = round(float(np.mean(vals)), 3)
+        corr[a][b] = m
+        corr[b][a] = m
+
+    # Score each component on its own (also yields IC for IC-weighting).
+    component_results: Dict[str, dict] = {}
+    for c in norm_signals:
+        sub, _ex = _component_per(per, c)
+        component_results[c] = _score_panel(
+            sub,
+            signal=c,
+            label=SIGNAL_META.get(c, {}).get("label", c),
+            horizons=horizons,
+            holding=holding,
+            quantiles=quantiles,
+            ic_stride=stride,
+            min_names=min_names,
+            excluded=[],
+        )
+
+    # Blend weights.
+    if method == "ic_weighted":
+        raw = {c: max(float(component_results[c]["ic"]["mean"]), 0.0) for c in norm_signals}
+        tot = sum(raw.values())
+        weights = {c: raw[c] / tot for c in norm_signals} if tot > 0 else {c: 1.0 / k for c in norm_signals}
+    elif method == "inverse_correlation":
+        raw = {}
+        for a, c in enumerate(norm_signals):
+            offs = [abs(corr[a][b]) for b in range(k) if b != a]
+            avg = float(np.mean(offs)) if offs else 0.0
+            raw[c] = 1.0 / (avg + 0.10)
+        tot = sum(raw.values())
+        weights = {c: raw[c] / tot for c in norm_signals} if tot > 0 else {c: 1.0 / k for c in norm_signals}
+    else:
+        weights = {c: 1.0 / k for c in norm_signals}
+
+    # Composite alpha: weighted sum of standardized components. Real data only —
+    # STRICT eligibility: a name/date contributes to the composite only when
+    # EVERY selected component is available there. Names that lack any selected
+    # component's input (e.g. a missing fundamental) are excluded and reported,
+    # never imputed, so the composite is scored on the strict intersection
+    # universe of the chosen signals.
+    comp_per: Dict[str, dict] = {}
+    comp_excluded: List[dict] = list(excluded)
+    for sym, P in per.items():
+        n = P["closes"].size
+        sig = np.full(n, np.nan, dtype=float)
+        any_finite = False
+        for i in range(n):
+            zs = [P["comp_z"][c][i] for c in norm_signals]
+            if all(np.isfinite(z) for z in zs):
+                sig[i] = float(sum(weights[c] * z for c, z in zip(norm_signals, zs)))
+                any_finite = True
+        if any_finite:
+            comp_per[sym] = {
+                "dates": P["dates"],
+                "closes": P["closes"],
+                "fret": P["fret"],
+                "date_idx": P["date_idx"],
+                "sig": sig,
+            }
+        else:
+            # Report which selected components the name lacks entirely so the
+            # exclusion is auditable rather than silent.
+            missing = [
+                SIGNAL_META.get(c, {}).get("label", c)
+                for c in norm_signals
+                if not np.isfinite(P["comp_z"][c]).any()
+            ]
+            reason = (
+                "missing inputs for " + ", ".join(missing)
+                if missing
+                else "no date where all selected signals overlap"
+            )
+            comp_excluded.append({"symbol": sym, "reason": reason})
+
+    comp_res = _score_panel(
+        comp_per,
+        signal="composite",
+        label="Composite Alpha",
+        horizons=horizons,
+        holding=holding,
+        quantiles=quantiles,
+        ic_stride=stride,
+        min_names=min_names,
+        excluded=comp_excluded,
+    )
+
+    components = []
+    for c in norm_signals:
+        res = component_results[c]
+        components.append({
+            "signal": c,
+            "label": res["label"],
+            "weight": round(weights[c], 4),
+            "meanIC": res["ic"]["mean"],
+            "icIR": res["ic"]["ir"],
+            "tStat": res["ic"]["tStat"],
+            "hitRate": res["ic"]["hitRate"],
+            "turnover": res["turnover"],
+            "spreadReturn": res["spreadStats"]["totalReturn"],
+            "spreadSharpe": res["spreadStats"]["sharpe"],
+            "included": len(res["included"]),
+            "spreadCurve": [p["value"] for p in res["spread"]],
+        })
+
+    composite = {
+        "label": comp_res["label"],
+        "ic": comp_res["ic"],
+        "decay": comp_res["decay"],
+        "quantileReturns": comp_res["quantileReturns"],
+        "spread": comp_res["spread"],
+        "spreadStats": comp_res["spreadStats"],
+        "turnover": comp_res["turnover"],
+        "turnoverAnnual": comp_res["turnoverAnnual"],
+        "rebalances": comp_res["rebalances"],
+        "included": len(comp_res["included"]),
+    }
+
+    return {
+        "method": method,
+        "methodLabel": COMBINE_METHODS[method],
+        "signals": norm_signals,
+        "holding": int(holding),
+        "quantiles": quantiles,
+        "horizons": list(horizons),
+        "weights": [
+            {"signal": c, "label": SIGNAL_META.get(c, {}).get("label", c), "weight": round(weights[c], 4)}
+            for c in norm_signals
+        ],
+        "correlation": {
+            "signals": norm_signals,
+            "labels": [SIGNAL_META.get(c, {}).get("label", c) for c in norm_signals],
+            "matrix": corr,
+        },
+        "components": components,
+        "composite": composite,
+        "included": comp_res["included"],
+        "excluded": comp_excluded,
+    }

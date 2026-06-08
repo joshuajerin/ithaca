@@ -34,6 +34,7 @@
 - [Refine with explicit params](refine-explicit-params.md) — RefineRequest.params bypasses LLM/heuristic for deterministic in-panel controls; include symbol, use a separate mutation for in-panel spinner.
 - [Company profiles (sub-industry + logos)](company-profiles.md) — subIndustry+logoUrl on every record; _apply_company_profiles must run AFTER bulk _load() or bulk names (incl AAPL) miss stamping; live Yahoo industry/website override curated.
 - [Signal → portfolio construction](signal-portfolio.md) — "build a portfolio from <signal>" → tradeable book; top_quantile (long-only) vs long_short (dollar-neutral); dispatch before scorecard/backtest and off the word "strategy".
+- [Combined alpha (signal blend)](combined-alpha.md) — blend N signals into one composite (equal/ic/inverse-corr), scored vs components + overlap matrix; per-component ctx for value+quality; routed before scorecard, after portfolio-build.
 - [Scenario stress test panel](stress-test-panel.md) — stress_test scales each name's REAL fitted beta (SPY/^TNX-level-Δ/CL=F) by the scenario shock; distinct from risk_monitor replay; honest coverage.
 - [Company analytics head-to-head compare](company-analytics-compare.md) — `company_analytics_compare` panel: two columns of drivers+catalysts + per-metric leader scoreboard; query-order symbol ordering.
 - [Data wall removal](data-wall-removal.md) — arbitrary Yahoo tickers via note_symbol+pending envelope; live macro in SEPARATE macro_quotes table (no equity-screener leak); news uncapped to 100.

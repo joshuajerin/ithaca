@@ -4800,6 +4800,119 @@ def build_signal_portfolio(params: dict) -> dict:
     }
 
 
+_DEFAULT_COMBINE_SIGNALS = ["momentum", "value", "quality"]
+
+
+def build_combined_alpha(params: dict) -> dict:
+    """Blend several cross-sectional signals into one composite alpha and score it.
+
+    The user picks the component signals (momentum, short-term reversal, low
+    volatility, value, quality) and a combination method (equal-weight,
+    IC-weighted, or inverse-correlation/risk-weighted). Each component is
+    standardized cross-sectionally and blended into a single alpha score per name;
+    the composite is then evaluated with the SAME scorecard as its components
+    (rank IC, IC decay, quantile spread, turnover) so the blend is directly
+    comparable, plus a component overlap (rank-correlation) matrix. Real data
+    only — names lacking the required inputs are excluded and reported.
+    """
+    requested = params.get("signals") or []
+    signals: List[str] = []
+    for s in requested:
+        key = engine.normalize_signal(s)
+        if key not in signals:
+            signals.append(key)
+    if len(signals) < 2:
+        signals = list(_DEFAULT_COMBINE_SIGNALS)
+
+    method = engine.normalize_combine_method(params.get("method"))
+    symbols, universe_label = _resolve_signal_universe(params)
+    if len(symbols) < _SIGNAL_QUANTILES:
+        raise ValueError("need a broader universe to blend cross-sectional signals")
+
+    bulk = repo.price_closes_bulk(symbols, days=_SIGNAL_DAYS)
+    series = bulk["series"]
+    need_fundamentals = any(engine.SIGNAL_META.get(s, {}).get("kind") == "fundamental" for s in signals)
+    companies = repo.companies_bulk(symbols) if need_fundamentals else {}
+
+    # Per-component context so value AND quality can be blended together (both
+    # share the same signal fn but read a distinct cross-sectional fundamental).
+    ctx_by_signal: Dict[str, Dict[str, dict]] = {}
+    for s in signals:
+        ctx_by_signal[s] = _signal_ctx(s, companies)[0]
+
+    result = engine.combine_signals(
+        series,
+        signals,
+        ctx_by_signal=ctx_by_signal,
+        method=method,
+        horizons=_SIGNAL_HORIZONS,
+        holding=_SIGNAL_HOLDING,
+        quantiles=_SIGNAL_QUANTILES,
+    )
+
+    comp = result["composite"]
+    if comp["included"] < _SIGNAL_QUANTILES:
+        raise ValueError("not enough names with usable history to blend these signals")
+
+    rows = []
+    for c in result["components"]:
+        rows.append({
+            "signal": c["signal"],
+            "label": c["label"],
+            "weight": c["weight"],
+            "meanIC": c["meanIC"],
+            "icIR": c["icIR"],
+            "tStat": c["tStat"],
+            "hitRate": c["hitRate"],
+            "turnover": c["turnover"],
+            "spreadReturn": c["spreadReturn"],
+            "spreadSharpe": c["spreadSharpe"],
+            "included": c["included"],
+            "spark": _downsample(c["spreadCurve"]),
+            "isComposite": False,
+        })
+    rows.append({
+        "signal": "composite",
+        "label": comp["label"],
+        "weight": None,
+        "meanIC": comp["ic"]["mean"],
+        "icIR": comp["ic"]["ir"],
+        "tStat": comp["ic"]["tStat"],
+        "hitRate": comp["ic"]["hitRate"],
+        "turnover": comp["turnover"],
+        "spreadReturn": comp["spreadStats"]["totalReturn"],
+        "spreadSharpe": comp["spreadStats"]["sharpe"],
+        "included": comp["included"],
+        "spark": _downsample([p["value"] for p in comp["spread"]]),
+        "isComposite": True,
+    })
+
+    excluded_all = list(result.get("excluded") or [])
+    labels = [w["label"] for w in result["weights"]]
+    description = "Composite alpha blending " + ", ".join(labels) + f" ({result['methodLabel']})"
+
+    return {
+        "signal": "composite",
+        "label": comp["label"],
+        "method": result["method"],
+        "methodLabel": result["methodLabel"],
+        "description": description,
+        "universe": universe_label,
+        "universeSize": len(symbols),
+        "included": comp["included"],
+        "excluded": len(excluded_all),
+        "excludedNames": excluded_all[:30],
+        "holding": result["holding"],
+        "quantiles": result["quantiles"],
+        "weights": result["weights"],
+        "correlation": result["correlation"],
+        "composite": comp,
+        "rows": rows,
+        "asOf": bulk.get("asOf"),
+        "source": bulk.get("source", "mock"),
+    }
+
+
 # ----------------------------- supply chain builder -----------------------------
 _SUPPLY_CHAIN_DB: dict = {
     "NVDA": {
@@ -6621,6 +6734,23 @@ _reg(SkillDef(
         {"name": "construct_and_backtest", "description": "Rank the cross-section, size positions and backtest the realized book on real data.", "expectedOutput": "Holdings with weights, equity curve, drawdown, performance stats and coverage."},
     ],
     build_signal_portfolio, "Signal Portfolio",
+))
+_reg(SkillDef(
+    "combined-alpha", "Combined Alpha (Signal Blend)", "combined_alpha",
+    "Blends several cross-sectional alpha signals (momentum, short-term reversal, low "
+    "volatility, value, quality) into ONE composite alpha score per name. Each component is "
+    "standardized cross-sectionally and combined by equal-weight, IC-weighted, or "
+    "inverse-correlation/risk-weighted blending (the chosen method is reported). The composite is "
+    "scored with the same scorecard as its components (rank IC, IC decay, quantile spread, "
+    "turnover) so the blend is directly comparable, alongside a component overlap (rank-correlation) "
+    "matrix. Names missing inputs are excluded and reported, never imputed. Use when the user wants "
+    "to combine/blend/ensemble multiple signals into a single composite alpha.",
+    [
+        {"name": "resolve_signals", "description": "Resolve the component signals to blend and the combination method.", "expectedOutput": "A list of signal keys and a method."},
+        {"name": "select_universe", "description": "Resolve one shared cross-section for all components.", "expectedOutput": "A capped list of tickers."},
+        {"name": "combine_and_score", "description": "Standardize and blend the components, then score the composite vs each component and compute their overlap.", "expectedOutput": "Composite scorecard, component weights/rows and a correlation matrix."},
+    ],
+    build_combined_alpha, "Combined Alpha",
 ))
 
 

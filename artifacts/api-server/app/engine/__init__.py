@@ -62,10 +62,13 @@ from .stats import (
 )
 from .strategies import STRATEGIES, available_strategies, normalize_strategy
 from .signals import (
+    COMBINE_METHODS,
     SIGNAL_META,
     SIGNALS,
     available_signals,
+    combine_signals,
     evaluate_signal,
+    normalize_combine_method,
     normalize_signal,
     signal_label,
     spearman_ic,
@@ -110,6 +113,9 @@ __all__ = [
     "SIGNAL_META",
     "available_signals",
     "evaluate_signal",
+    "combine_signals",
+    "COMBINE_METHODS",
+    "normalize_combine_method",
     "normalize_signal",
     "signal_label",
     "spearman_ic",

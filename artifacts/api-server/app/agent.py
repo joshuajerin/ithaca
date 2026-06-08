@@ -477,6 +477,17 @@ def _tools() -> list:
             }, "required": ["signal"]},
         }},
         {"type": "function", "function": {
+            "name": "add_combined_alpha",
+            "description": f"Blend SEVERAL cross-sectional signals into ONE composite alpha score per name, then score the blend with the same scorecard as its components (rank IC, IC decay, quantile spread, turnover) and show how much the components overlap (a correlation matrix). Combination methods: equal_weight, ic_weighted, or inverse_correlation (risk-weighted); the chosen method is reported. {sizing} Use for 'combine/blend signals', 'composite alpha', 'signal ensemble', or 'blend momentum, value and quality into one alpha'. Signals: momentum, short_reversal, low_volatility, value, quality.",
+            "parameters": {"type": "object", "properties": {
+                "signals": {"type": "array", "items": {"type": "string"}, "description": "Component signals to blend (2+). Subset of: momentum, short_reversal, low_volatility, value, quality."},
+                "method": {"type": "string", "description": "Combination method.", "enum": ["equal_weight", "ic_weighted", "inverse_correlation"]},
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Optional explicit universe. Valid: {syms}"},
+                "sector": {"type": "string", "description": "Optional sector to scope the universe."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": []},
+        }},
+        {"type": "function", "function": {
             "name": "add_iv_surface",
             "description": f"Add an implied volatility surface heatmap for a ticker. {sizing} Use for vol surface, IV surface, or skew requests.",
             "parameters": {"type": "object", "properties": {
@@ -743,6 +754,7 @@ _TOOL_TO_TYPE = {
     "add_signal_research": "signal_research",
     "add_signal_scorecard": "signal_scorecard",
     "add_signal_portfolio": "signal_portfolio",
+    "add_combined_alpha": "combined_alpha",
     "add_iv_surface": "iv_surface",
     "add_options_chain": "options_chain",
     "add_options_strategy": "options_strategy",
@@ -870,7 +882,10 @@ def _system_prompt() -> str:
         "('signal scorecard', 'which signal works best', 'compare value vs momentum'), use add_signal_scorecard. "
         "To BUILD a tradeable portfolio/strategy FROM a signal ('build a portfolio from momentum', 'turn the value "
         "signal into a strategy', 'size positions from <signal>', 'long-short book from <signal>'), use "
-        "add_signal_portfolio (scheme=top_quantile for long-only, long_short for a dollar-neutral spread).\n"
+        "add_signal_portfolio (scheme=top_quantile for long-only, long_short for a dollar-neutral spread). "
+        "To BLEND several signals into ONE composite alpha ('combine momentum, value and quality', 'composite "
+        "alpha', 'signal ensemble', 'blend these signals'), use add_combined_alpha with the component signals and "
+        "a method (equal_weight, ic_weighted, or inverse_correlation).\n"
         "- For company analytics requests ('why is X up/down', 'what drives X', 'analyze X vs competitors', "
         "'company analytics for X', 'competition for X', 'price drivers for X'), use add_company_analytics. "
         "For a head-to-head deep dive of EXACTLY TWO named companies ('compare X vs Y', 'X vs Y company "
@@ -1594,9 +1609,53 @@ def _ser_signal_portfolio(data: dict) -> str:
     return "; ".join(p for p in parts if p)
 
 
+def _ser_combined_alpha(data: dict) -> str:
+    parts: List[str] = []
+    head = []
+    if data.get("methodLabel"):
+        head.append(f"method={data['methodLabel']}")
+    weights = data.get("weights") or []
+    if weights:
+        head.append("weights: " + ", ".join(f"{w.get('label')} {_ser_scalar(round((w.get('weight') or 0.0) * 100, 1))}%" for w in weights))
+    if head:
+        parts.append("; ".join(head))
+    comp = data.get("composite") or {}
+    ic = comp.get("ic") or {}
+    if ic:
+        parts.append(f"composite rank IC mean {_ser_scalar(ic.get('mean'))}, IC IR {_ser_scalar(ic.get('ir'))}, hit rate {_ser_scalar(ic.get('hitRate'))}%")
+    sstats = comp.get("spreadStats") or {}
+    if sstats:
+        parts.append(f"composite long-short spread return {_ser_scalar(sstats.get('totalReturn'))}%, Sharpe {_ser_scalar(sstats.get('sharpe'))}")
+    if comp.get("turnover") is not None:
+        parts.append(f"composite turnover {_ser_scalar(comp.get('turnover'))}%")
+    rows = data.get("rows") or []
+    comp_rows = [r for r in rows if not r.get("isComposite")]
+    if comp_rows:
+        parts.append("components: " + "; ".join(f"{r.get('label')} IC {_ser_scalar(r.get('meanIC'))}/spread {_ser_scalar(r.get('spreadReturn'))}%" for r in comp_rows))
+    corr = data.get("correlation") or {}
+    matrix = corr.get("matrix") or []
+    labels = corr.get("labels") or []
+    if len(matrix) >= 2 and len(labels) == len(matrix):
+        offs = []
+        for a in range(len(matrix)):
+            for b in range(a + 1, len(matrix)):
+                offs.append(f"{labels[a]}/{labels[b]} {_ser_scalar(matrix[a][b])}")
+        if offs:
+            parts.append("overlap (rank corr): " + ", ".join(offs))
+    cov = []
+    if data.get("included") is not None:
+        cov.append(f"{data['included']}/{data.get('universeSize')} included")
+    if data.get("excluded"):
+        cov.append(f"{data['excluded']} excluded (never imputed)")
+    if cov:
+        parts.append(", ".join(cov))
+    return "; ".join(p for p in parts if p)
+
+
 _PANEL_SERIALIZERS = {
     "backtest": _ser_backtest,
     "signal_portfolio": _ser_signal_portfolio,
+    "combined_alpha": _ser_combined_alpha,
 }
 
 
@@ -2170,6 +2229,7 @@ _TYPE_LABELS = {
     "signal_research": "an alpha signal research panel",
     "signal_scorecard": "an alpha signal scorecard",
     "signal_portfolio": "a signal portfolio",
+    "combined_alpha": "a combined alpha blend",
     "iv_surface": "an IV surface",
     "options_chain": "an options chain",
     "options_strategy": "an options strategy",
@@ -2680,6 +2740,25 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         or ("portfolio" in q and any(k in q for k in ["build", "construct", "from", "make", "form"]))
     )
 
+    # Blend several signals into ONE composite alpha. Checked before the
+    # scorecard/research routes (which also catch signal mentions) but after the
+    # portfolio build route (so "blend ... into a portfolio" still builds a book).
+    _combine_words = any(k in q for k in [
+        "combined alpha", "composite alpha", "composite signal", "combine signals",
+        "combine the signals", "combine alphas", "blend signals", "blend the signals",
+        "blend alphas", "blended alpha", "blended signal", "signal blend", "signal ensemble",
+        "ensemble of signals", "blend these signals", "mix signals", "alpha blend",
+    ])
+    wants_combine = _combine_words or (
+        (_mentions_signal or len(_signals_found) >= 2)
+        and any(k in q for k in ["combine", "blend", "ensemble", "composite", "mix "])
+    )
+    _combine_method = (
+        "ic_weighted" if any(k in q for k in ["ic-weight", "ic weight", "ic weighted", "ic-weighted", "information coefficient weight"])
+        else "inverse_correlation" if any(k in q for k in ["inverse correlation", "inverse-correlation", "risk weight", "risk-weight", "risk parity", "risk-parity", "decorrel", "diversif"])
+        else "equal_weight"
+    )
+
     if wants_desk:
         add("strategy_desk", {}, 12, 5)
         return panels, "Here's the strategy desk: every strategy across the lifecycle with live P&L."
@@ -3139,6 +3218,24 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         add("correlation_matrix", {"symbols": symbols[:6], "window": 90}, 12, 5)
         summary = f"Pairwise correlation matrix for {', '.join(symbols[:4])}{'...' if len(symbols) > 4 else ''} with beta/hedge-ratio table."
         return panels, summary
+
+    if wants_combine:
+        chosen = _signals_in_query()
+        params = {"method": _combine_method}
+        if len(chosen) >= 2:
+            params["signals"] = chosen
+        if symbols:
+            params["symbols"] = symbols
+        elif sector:
+            params["sector"] = sector
+        add("combined_alpha", params, 12, 6)
+        method_label = {
+            "ic_weighted": "IC-weighted",
+            "inverse_correlation": "inverse-correlation (risk-weighted)",
+            "equal_weight": "equal-weight",
+        }[_combine_method]
+        return panels, (f"Combined alpha ({method_label}): blended the component signals into one composite score, "
+                        "scored it against each component (rank IC, IC decay, quantile spread, turnover) and mapped their overlap.")
 
     if wants_scorecard:
         chosen = _signals_in_query()
