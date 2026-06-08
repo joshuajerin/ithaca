@@ -372,6 +372,8 @@ class MacroTile(BaseModel):
     unit: str
     sparkline: List[float]
     isLive: bool = False
+    source: Optional[str] = None
+    asOf: Optional[str] = None
 
 
 class MacroGroup(BaseModel):
@@ -396,8 +398,8 @@ class MacroDashboardData(BaseModel):
     groups: List[MacroGroup]
     overrides: List[MacroOverride] = []
     regime: Optional[MacroRegime] = None
-    asOf: Optional[str] = None
     source: Optional[str] = None
+    asOf: Optional[str] = None
 
 
 # --- yield_curve ---

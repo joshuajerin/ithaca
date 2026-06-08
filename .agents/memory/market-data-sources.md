@@ -29,6 +29,19 @@ yfinance `.info` unit quirks (**Why:** these silently produce 100x-wrong numbers
 **Schema note:** sector is stored only on the `universe` registry table, NOT on
 `fundamentals`. Join `fundamentals f LEFT JOIN universe u` and read `u.sector`.
 
+**Yahoo chart `changePct` over a long range is a multi-month move, not 1D**
+(**Why:** the chart `meta.chartPreviousClose` is the close at the *start* of the
+requested range — a "6mo" pull made SPX show +8% and WTI +54% as the "change").
+Equity tiles get a correct daily change from the fundamentals/quote loop, but
+macro tiles have no such loop, so for macro ingestion recompute the 1D change
+from the **last two daily closes** of the series: `base=closes[-2]`,
+`ref=quote price or closes[-1]`, `changePct=(ref-base)/base*100`.
+
+**Yield/derived-spread scales (macro feed):** `^TNX`/`2YY=F` are already in
+**percent** (don't ×100). The 2s10s spread (`US2Y10Y`) is reported in **bps**
+(10Y%−2Y%)×100; derive its prev value per-leg from each yield's own changePct
+(`prev = price/(1+chg/100)`), not from a single blended change.
+
 **Freshness contract:** panels carry optional `asOf`/`source` ("live"|"mock") on the
 Panel envelope. Builders return them in their raw dict; the harness pops them off
 before validating against the data model (data models intentionally exclude them).

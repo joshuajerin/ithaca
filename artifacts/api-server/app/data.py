@@ -1474,7 +1474,7 @@ _NEWS: List[dict] = [
 MACRO_ASSETS: Dict[str, dict] = {
     # --- Rates ---
     "US10Y":   {"name": "US 10Y Yield",       "group": "rates",       "price": 4.42,    "changePct":  1.15, "unit": "%"},
-    "US2Y10Y": {"name": "2Y-10Y Spread",      "group": "rates",       "price": -0.18,   "changePct": -5.20, "unit": "bps"},
+    "US2Y10Y": {"name": "2Y-10Y Spread",      "group": "rates",       "price": -43.0,   "changePct": -5.20, "unit": "bps"},
     "US2Y":    {"name": "US 2Y Yield",         "group": "rates",       "price": 4.85,    "changePct":  0.62, "unit": "%"},
     "TIPS10Y": {"name": "10Y Breakeven",       "group": "rates",       "price": 2.31,    "changePct":  0.43, "unit": "%"},
     # --- FX ---
@@ -1496,25 +1496,40 @@ MACRO_ASSETS: Dict[str, dict] = {
     "VIX":     {"name": "VIX",                 "group": "equities",    "price": 14.82,   "changePct": -3.21, "unit": "index"},
 }
 
-# Internal macro symbol -> the symbol Yahoo Finance expects for a live quote.
-# Only assets with a clean, free Yahoo series are mapped; the rest (US2Y,
-# US2Y10Y spread, TIPS10Y breakeven, IRON) have no clean free feed and keep the
-# curated mock value, per-tile, in build_macro_dashboard.
+# Internal macro key -> the symbol Yahoo Finance's chart endpoint expects. Only
+# assets with a genuine free Yahoo source are listed; the worker fetches these on
+# the normal price cadence and the dashboard serves them live. Yields (^TNX,
+# 2YY=F) already come back in percent, FX as the pair rate, indices/commodities
+# as price levels — matching each MACRO_ASSETS `unit`, so no rescaling is needed.
 MACRO_YAHOO: Dict[str, str] = {
-    "US10Y":  "^TNX",        # 10Y yield, already quoted in percent
-    "DXY":    "DX-Y.NYB",    # US Dollar Index
+    # Rates (yields already in %)
+    "US10Y":  "^TNX",
+    "US2Y":   "2YY=F",
+    # FX
+    "DXY":    "DX-Y.NYB",
     "EURUSD": "EURUSD=X",
     "USDJPY": "JPY=X",
     "USDCNH": "CNH=X",
-    "WTI":    "CL=F",        # WTI crude front-month future
-    "GOLD":   "GC=F",        # Gold front-month future
-    "COPPER": "HG=F",        # Copper front-month future
-    "SPX":    "^GSPC",       # S&P 500
-    "NDX":    "^NDX",        # Nasdaq 100
-    "EEM":    "EEM",         # iShares EM ETF
-    "HSCEI":  "^HSCE",       # Hang Seng China Enterprises
-    "CSI300": "000300.SS",   # CSI 300
+    # Commodities
+    "WTI":    "CL=F",
+    "GOLD":   "GC=F",
+    "COPPER": "HG=F",
+    "IRON":   "TIO=F",
+    # Equities
+    "SPX":    "^GSPC",
+    "NDX":    "^NDX",
+    "EEM":    "EEM",
+    "HSCEI":  "^HSCE",
+    "CSI300": "000300.SS",
     "VIX":    "^VIX",
+}
+
+# Derived macro series computed from other live legs rather than fetched. The
+# 2s10s spread is (10Y - 2Y) expressed in basis points, so it is "live" only when
+# both underlying yields are live. TIPS10Y (10Y breakeven) has no free Yahoo feed
+# and stays curated-mock.
+MACRO_DERIVED_PARTS: Dict[str, tuple] = {
+    "US2Y10Y": ("US10Y", "US2Y"),
 }
 
 MACRO_THEMES: Dict[str, dict] = {

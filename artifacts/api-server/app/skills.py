@@ -1308,11 +1308,6 @@ def build_macro_dashboard(params: dict) -> dict:
     theme_raw = params.get("theme") or "global"
     theme_key = data.resolve_macro_theme(theme_raw)
     theme_def = data.MACRO_THEMES[theme_key]
-    # Live macro quotes from the dedicated worker feed; falls back to the curated
-    # mock per tile when an asset has no clean feed or hasn't been ingested yet.
-    live = repo.macro_quotes()  # {sym: {price, changePct, sparkline, asOf}}
-    as_ofs: List[str] = []
-
     # Start from the theme's default groups, then apply user pin/remove overrides.
     group_syms: dict = {}
     for label, symbols in theme_def["groups"].items():
@@ -1336,35 +1331,26 @@ def build_macro_dashboard(params: dict) -> dict:
             if sym not in group_syms[label]:
                 group_syms[label].append(sym)
 
+    # Resolve every tile (after overrides applied) to live Yahoo data
+    # (price/changePct/sparkline with asOf + source:"live") with a clean
+    # per-tile fallback to the curated mock when a feed is unavailable.
+    all_syms = [s for syms in group_syms.values() for s in syms]
+    resolved = repo.macro_assets(all_syms)
+    any_live = False
+    as_of_stamps: List[str] = []
+
     groups = []
     for label, symbols in group_syms.items():
         tiles = []
         for sym in symbols:
-            asset = data.MACRO_ASSETS.get(sym)
-            if not asset:
+            tile = resolved.get(sym)
+            if not tile:
                 continue
-            q = live.get(sym)
-            if q and q.get("price") is not None:
-                price = float(q["price"])
-                change = float(q["changePct"]) if q.get("changePct") is not None else float(asset["changePct"])
-                spark = q.get("sparkline") or data.macro_sparkline(sym)
-                is_live = True
-                if q.get("asOf"):
-                    as_ofs.append(q["asOf"])
-            else:
-                price = float(asset["price"])
-                change = float(asset["changePct"])
-                spark = data.macro_sparkline(sym)
-                is_live = False
-            tiles.append({
-                "symbol": sym,
-                "name": asset["name"],
-                "price": price,
-                "changePct": change,
-                "unit": asset["unit"],
-                "sparkline": spark,
-                "isLive": is_live,
-            })
+            tiles.append(tile)
+            if tile.get("source") == "live":
+                any_live = True
+            if tile.get("asOf"):
+                as_of_stamps.append(tile["asOf"])
         if tiles:
             groups.append({"label": label, "tiles": tiles})
     result = {
@@ -1373,8 +1359,8 @@ def build_macro_dashboard(params: dict) -> dict:
         "groups": groups,
         "overrides": applied,
         # Panel-level freshness: "live" when any tile resolved to a real quote.
-        "source": "live" if as_ofs else "mock",
-        "asOf": max(as_ofs) if as_ofs else None,
+        "asOf": max(as_of_stamps) if as_of_stamps else None,
+        "source": "live" if any_live else "mock",
     }
     regime = _compute_macro_regime(groups)
     if regime:

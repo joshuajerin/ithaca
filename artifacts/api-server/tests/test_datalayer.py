@@ -720,6 +720,125 @@ def test_derive_sentiment_empty_items_is_neutral():
 
 
 # ============================================================================
+# repo.macro_assets — live vs mock vs derived spread
+# ============================================================================
+_MACRO_TILE_KEYS = {"symbol", "name", "price", "changePct", "unit",
+                    "sparkline", "source", "asOf"}
+
+
+def _macro_db(quotes, ohlcv=None):
+    """Build a fake db.query that serves macro_prices then ohlcv rows.
+
+    ``quotes`` maps macro key -> (price, change_pct); ``ohlcv`` maps key ->
+    list of closes. The first SELECT (macro_prices) and the second (ohlcv) are
+    distinguished by the SQL text.
+    """
+    ohlcv = ohlcv or {}
+
+    def _q(sql, params=None):
+        if "macro_prices" in sql:
+            return [
+                {"symbol": k, "name": None, "price": p, "change_pct": c,
+                 "updated_at": datetime(2026, 6, 1, 20, 0, tzinfo=timezone.utc)}
+                for k, (p, c) in quotes.items()
+            ]
+        if "ohlcv" in sql:
+            rows = []
+            base = date(2026, 1, 1)
+            from datetime import timedelta
+            for k, closes in ohlcv.items():
+                for i, c in enumerate(closes):
+                    rows.append({"symbol": k, "d": base + timedelta(days=i), "c": c})
+            return rows
+        raise AssertionError(f"unexpected SQL: {sql}")
+
+    return _q
+
+
+def test_macro_assets_live_sets_schema_source_and_asof():
+    q = _macro_db({"SPX": (7405.7, -2.56)}, {"SPX": [7600.0, 7500.0, 7405.7]})
+    with fake_db(query=q):
+        out = repo.macro_assets(["SPX"])
+    tile = out["SPX"]
+    assert set(tile.keys()) == _MACRO_TILE_KEYS
+    assert tile["price"] == 7405.7
+    assert tile["changePct"] == -2.56
+    assert tile["unit"] == "index"
+    assert tile["source"] == "live"
+    assert tile["asOf"] == "2026-06-01T20:00:00+00:00"
+    # Sparkline comes from the real OHLCV closes, not the mock generator.
+    assert tile["sparkline"] == [7600.0, 7500.0, 7405.7]
+
+
+def test_macro_assets_falls_back_to_mock_when_db_unavailable():
+    with fake_db(available=False):
+        out = repo.macro_assets(["SPX"])
+    tile = out["SPX"]
+    assert set(tile.keys()) == _MACRO_TILE_KEYS
+    assert tile["source"] == "mock"
+    assert tile["asOf"] is None
+    assert tile["price"] == float(data.MACRO_ASSETS["SPX"]["price"])
+    assert tile["sparkline"]  # mock sparkline still populated
+
+
+def test_macro_assets_falls_back_to_mock_on_db_error():
+    with fake_db(available=True, query=_boom):
+        out = repo.macro_assets(["SPX"])
+    assert out["SPX"]["source"] == "mock"
+
+
+def test_macro_assets_missing_live_row_uses_mock_per_tile():
+    # DXY has a live quote; SPX is absent from the feed -> SPX must degrade to
+    # mock while DXY stays live (per-tile fallback, never all-or-nothing).
+    q = _macro_db({"DXY": (104.0, 0.3)}, {"DXY": [103.0, 104.0]})
+    with fake_db(query=q):
+        out = repo.macro_assets(["SPX", "DXY"])
+    assert out["DXY"]["source"] == "live"
+    assert out["SPX"]["source"] == "mock"
+
+
+def test_macro_assets_derived_spread_from_live_legs():
+    # 10Y=4.55 (+2.0%), 2Y=3.80 (-1.0%). Spread now = (4.55-3.80)*100 = 75 bps.
+    q = _macro_db({"US10Y": (4.55, 2.0), "US2Y": (3.80, -1.0)},
+                  {"US10Y": [4.40, 4.55], "US2Y": [3.85, 3.80]})
+    with fake_db(query=q):
+        out = repo.macro_assets(["US2Y10Y"])
+    tile = out["US2Y10Y"]
+    assert tile["source"] == "live"
+    assert tile["unit"] == "bps"
+    assert tile["price"] == round((4.55 - 3.80) * 100, 2)  # 75.0 bps
+    # Spread sparkline is the bp difference of the two aligned close series.
+    assert tile["sparkline"] == [round((4.40 - 3.85) * 100, 4),
+                                 round((4.55 - 3.80) * 100, 4)]
+
+
+def test_macro_assets_derived_spread_mock_when_a_leg_missing():
+    # Only one leg live -> the spread cannot be derived honestly -> mock.
+    q = _macro_db({"US10Y": (4.55, 2.0)}, {"US10Y": [4.40, 4.55]})
+    with fake_db(query=q):
+        out = repo.macro_assets(["US2Y10Y"])
+    assert out["US2Y10Y"]["source"] == "mock"
+    assert out["US2Y10Y"]["unit"] == "bps"
+
+
+def test_macro_assets_curated_only_key_stays_mock_even_live_db():
+    # TIPS10Y has no Yahoo feed; even with a populated DB it stays mock.
+    q = _macro_db({"US10Y": (4.55, 2.0)}, {})
+    with fake_db(query=q):
+        out = repo.macro_assets(["TIPS10Y"])
+    assert out["TIPS10Y"]["source"] == "mock"
+
+
+def test_macro_assets_live_and_mock_have_identical_schema():
+    q = _macro_db({"SPX": (7405.7, -2.56)}, {"SPX": [7600.0, 7405.7]})
+    with fake_db(query=q):
+        live = repo.macro_assets(["SPX"])["SPX"]
+    with fake_db(available=False):
+        mock = repo.macro_assets(["SPX"])["SPX"]
+    assert set(live.keys()) == set(mock.keys())
+
+
+# ============================================================================
 # runner
 # ============================================================================
 def _run_all():

@@ -472,43 +472,6 @@ def price_series_meta(symbol: str, days: int = 90, rng: Optional[str] = None) ->
     return {"points": data.price_series(sym, days=days), "source": "mock", "asOf": None}
 
 
-# ----------------------------- macro assets -----------------------------
-def macro_quotes() -> Dict[str, dict]:
-    """Live macro quotes keyed by internal macro code.
-
-    Returns ``{symbol: {"price", "changePct", "sparkline", "asOf"}}`` for every
-    macro asset the worker has ingested live. Names absent from the result have
-    no live quote and the caller must fall back to the curated mock value and
-    label the tile accordingly. Empty dict when the DB is unavailable/empty.
-    """
-    if not db.db_available():
-        return {}
-    try:
-        rows = db.query(
-            "SELECT symbol, price, change_pct, sparkline, updated_at "
-            "FROM macro_quotes WHERE is_live = TRUE"
-        )
-    except Exception as exc:  # noqa: BLE001
-        log.warning("macro_quotes DB error: %s", exc)
-        return {}
-    out: Dict[str, dict] = {}
-    for r in rows:
-        spark = r.get("sparkline")
-        if isinstance(spark, str):
-            try:
-                import json
-                spark = json.loads(spark)
-            except Exception:  # noqa: BLE001
-                spark = None
-        out[r["symbol"]] = {
-            "price": _num(r.get("price")),
-            "changePct": _num(r.get("change_pct")),
-            "sparkline": [float(x) for x in spark] if isinstance(spark, list) else None,
-            "asOf": _iso(r.get("updated_at")),
-        }
-    return out
-
-
 # ----------------------------- period returns -----------------------------
 # We fetch enough calendar history to anchor a 1Y / YTD window. Live series are
 # trading days (this many rows comfortably spans a year); mock series are
@@ -694,6 +657,121 @@ def price_closes_bulk(symbols: List[str], days: int = _RETURN_DAYS) -> dict:
         "source": "live" if any(live.values()) else "mock",
         "asOf": max(as_of_stamps) if as_of_stamps else None,
     }
+
+
+# ----------------------------- macro -----------------------------
+def _macro_spark(closes: Optional[List[float]], points: int = 14) -> Optional[List[float]]:
+    if not closes or len(closes) < 2:
+        return None
+    tail = closes[-points:]
+    return [round(float(c), 6) for c in tail]
+
+
+def _spread_spark(a_closes, b_closes, points: int = 14) -> Optional[List[float]]:
+    """Basis-point spread sparkline from two aligned yield close series."""
+    if not a_closes or not b_closes:
+        return None
+    n = min(len(a_closes), len(b_closes), points)
+    if n < 2:
+        return None
+    a = a_closes[-n:]
+    b = b_closes[-n:]
+    return [round((float(a[i]) - float(b[i])) * 100.0, 4) for i in range(n)]
+
+
+def macro_assets(keys: List[str]) -> Dict[str, dict]:
+    """Live-or-mock macro tiles keyed by internal macro symbol.
+
+    Returns ``{key: {symbol, name, price, changePct, unit, sparkline, source,
+    asOf}}``. Each fetchable key is served from the ``macro_prices`` table (real
+    Yahoo quote on the worker's price cadence) with its sparkline drawn from real
+    OHLCV; the 2s10s spread is derived from the two live yields. Any key without a
+    live row — feed unavailable, DB empty, or a curated-only series like the 10Y
+    breakeven — falls back to the deterministic ``MACRO_ASSETS`` mock so a tile is
+    never blank.
+    """
+    keys = list(keys)
+    # Resolve which underlying symbols we need (direct + derived components).
+    needed = set()
+    for k in keys:
+        if k in data.MACRO_YAHOO:
+            needed.add(k)
+        for part in data.MACRO_DERIVED_PARTS.get(k, ()):  # spread legs
+            if part in data.MACRO_YAHOO:
+                needed.add(part)
+
+    live: Dict[str, dict] = {}
+    closes: Dict[str, List[float]] = {}
+    if needed and db.db_available():
+        want = sorted(needed)
+        try:
+            rows = db.query(
+                "SELECT symbol, name, price, change_pct, updated_at "
+                "FROM macro_prices WHERE symbol = ANY(%s)",
+                (want,),
+            )
+            for r in rows:
+                if r.get("price") is not None:
+                    live[r["symbol"]] = r
+        except Exception as exc:  # noqa: BLE001
+            log.warning("macro_assets quote DB error: %s", exc)
+        try:
+            crows = db.query(
+                "SELECT symbol, d, c FROM ohlcv "
+                "WHERE symbol = ANY(%s) AND c IS NOT NULL ORDER BY symbol ASC, d ASC",
+                (want,),
+            )
+            for r in crows:
+                closes.setdefault(r["symbol"], []).append(_num(r.get("c")))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("macro_assets ohlcv DB error: %s", exc)
+
+    out: Dict[str, dict] = {}
+    for key in keys:
+        mock = data.MACRO_ASSETS.get(key, {})
+        name = mock.get("name", key)
+        unit = mock.get("unit", "index")
+
+        parts = data.MACRO_DERIVED_PARTS.get(key)
+        if parts:
+            a, b = parts
+            if a in live and b in live:
+                ya, yb = _num(live[a]["price"]), _num(live[b]["price"])
+                ca, cb = _num(live[a].get("change_pct")), _num(live[b].get("change_pct"))
+                ya_prev = ya / (1 + ca / 100.0) if (1 + ca / 100.0) else ya
+                yb_prev = yb / (1 + cb / 100.0) if (1 + cb / 100.0) else yb
+                spread = (ya - yb) * 100.0          # basis points
+                spread_prev = (ya_prev - yb_prev) * 100.0
+                chg = ((spread - spread_prev) / abs(spread_prev) * 100.0
+                       if spread_prev else 0.0)
+                spark = (_spread_spark(closes.get(a), closes.get(b))
+                         or data.macro_sparkline(key))
+                stamps = [s for s in (_iso(live[a].get("updated_at")),
+                                      _iso(live[b].get("updated_at"))) if s]
+                asof = max(stamps) if stamps else None
+                out[key] = {
+                    "symbol": key, "name": name, "price": round(spread, 2),
+                    "changePct": round(chg, 2), "unit": unit, "sparkline": spark,
+                    "source": "live", "asOf": asof,
+                }
+                continue
+        elif key in live:
+            r = live[key]
+            spark = _macro_spark(closes.get(key)) or data.macro_sparkline(key)
+            out[key] = {
+                "symbol": key, "name": name, "price": _num(r["price"]),
+                "changePct": _num(r.get("change_pct")), "unit": unit,
+                "sparkline": spark, "source": "live", "asOf": _iso(r.get("updated_at")),
+            }
+            continue
+
+        if mock:
+            out[key] = {
+                "symbol": key, "name": mock["name"], "price": float(mock["price"]),
+                "changePct": float(mock["changePct"]), "unit": mock["unit"],
+                "sparkline": data.macro_sparkline(key), "source": "mock", "asOf": None,
+            }
+    return out
 
 
 # ----------------------------- news -----------------------------

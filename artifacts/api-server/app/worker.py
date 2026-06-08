@@ -39,11 +39,6 @@ ONDEMAND_INTERVAL = 15
 # day's NAV fresh and settles to the close once prices stop moving.
 SNAPSHOT_INTERVAL = 3600
 
-# A macro quote is only treated as "live" when its upstream timestamp is within
-# this many days. Some Yahoo macro symbols (illiquid futures, etc.) go stale or
-# stop updating; we never present a month-old print as a live quote.
-MACRO_STALE_DAYS = 5
-
 # Breadth market-cap refresh: a deliberately slow round-robin that touches only
 # the single market_cap field on mock breadth names (is_live = FALSE), so the
 # hand-entered cap hints don't drift over months. Small batch + long sleep so it
@@ -89,6 +84,20 @@ def _seed_universe() -> None:
         "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS mcap_refreshed_at TIMESTAMPTZ",
     ):
         db.execute(ddl)
+
+    # Dedicated macro quote table — kept separate from `fundamentals` so live
+    # macro instruments never leak into equity screeners/heatmaps/all_symbols.
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS macro_prices (
+            symbol TEXT PRIMARY KEY,
+            name TEXT,
+            price DOUBLE PRECISION,
+            change_pct DOUBLE PRECISION,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        """
+    )
 
     for sid, name in data.SECTORS.items():
         db.execute(
@@ -141,33 +150,6 @@ def _seed_universe() -> None:
     )
 
 
-def _ensure_macro_schema() -> None:
-    """Dedicated, isolated table for live macro/cross-asset quotes.
-
-    Kept separate from `universe`/`fundamentals` so macro pseudo-symbols
-    (^TNX, indices, FX, futures) never leak into equity screeners/heatmaps."""
-    db.execute(
-        """
-        CREATE TABLE IF NOT EXISTS macro_quotes (
-            symbol      TEXT PRIMARY KEY,
-            price       DOUBLE PRECISION,
-            change_pct  DOUBLE PRECISION,
-            sparkline   JSONB,
-            is_live     BOOLEAN NOT NULL DEFAULT FALSE,
-            updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-        )
-        """
-    )
-    # Reconcile a table left by an earlier macro schema (name/spark columns):
-    # CREATE TABLE IF NOT EXISTS is a no-op when the table already exists, so add
-    # the live-feed columns idempotently in case the table predates this shape.
-    for ddl in (
-        "ALTER TABLE macro_quotes ADD COLUMN IF NOT EXISTS sparkline JSONB",
-        "ALTER TABLE macro_quotes ADD COLUMN IF NOT EXISTS is_live BOOLEAN NOT NULL DEFAULT FALSE",
-    ):
-        db.execute(ddl)
-
-
 def _tracked_symbols() -> List[str]:
     rows = db.query("SELECT symbol FROM universe WHERE tracked = TRUE ORDER BY symbol")
     return [r["symbol"] for r in rows]
@@ -214,6 +196,21 @@ def _upsert_quote(q: dict) -> None:
         """,
         (q.get("symbol"), q.get("name"), q.get("price"), q.get("changePct"),
          q.get("volume"), q.get("week52High"), q.get("week52Low")),
+    )
+
+
+def _upsert_macro_quote(key: str, q: dict) -> None:
+    db.execute(
+        """
+        INSERT INTO macro_prices (symbol, name, price, change_pct, updated_at)
+        VALUES (%s, %s, %s, %s, now())
+        ON CONFLICT (symbol) DO UPDATE SET
+          name = COALESCE(EXCLUDED.name, macro_prices.name),
+          price = COALESCE(EXCLUDED.price, macro_prices.price),
+          change_pct = COALESCE(EXCLUDED.change_pct, macro_prices.change_pct),
+          updated_at = now()
+        """,
+        (key, q.get("name"), q.get("price"), q.get("changePct")),
     )
 
 
@@ -371,63 +368,36 @@ async def _ingest_prices(symbol: str) -> None:
         log.warning("price ingest failed for %s: %s", symbol, exc)
 
 
-def _upsert_macro(symbol: str, price, change_pct, sparkline: list, is_live: bool) -> None:
-    import json
-    db.execute(
-        """
-        INSERT INTO macro_quotes (symbol, price, change_pct, sparkline, is_live, updated_at)
-        VALUES (%s, %s, %s, %s, %s, now())
-        ON CONFLICT (symbol) DO UPDATE SET
-          price = EXCLUDED.price,
-          change_pct = EXCLUDED.change_pct,
-          sparkline = EXCLUDED.sparkline,
-          is_live = EXCLUDED.is_live,
-          updated_at = now()
-        """,
-        (symbol, price, change_pct, json.dumps(sparkline), is_live),
-    )
+async def _ingest_macro_one(key: str, ysym: str) -> None:
+    """Fetch one macro instrument and persist its quote + sparkline OHLCV.
 
-
-def _macro_is_stale(as_of: Optional[str]) -> bool:
-    if not as_of:
-        return True
+    Stored under the internal macro key (e.g. ``SPX``) in a dedicated
+    ``macro_prices`` table so equity screeners/heatmaps (which read
+    ``fundamentals``) are never polluted, plus ``ohlcv`` for the sparkline."""
     try:
-        from datetime import datetime, timezone
-        then = datetime.fromisoformat(as_of)
-        if then.tzinfo is None:
-            then = then.replace(tzinfo=timezone.utc)
-        return (datetime.now(timezone.utc) - then).days > MACRO_STALE_DAYS
-    except Exception:  # noqa: BLE001
-        return True
-
-
-async def _ingest_macro(symbol: str) -> None:
-    """Fetch a live quote + short sparkline for one macro asset.
-
-    Persists the latest close-series tail as the sparkline and marks the row
-    live only when the upstream quote is fresh; a stale/illiquid symbol is
-    stored with ``is_live = FALSE`` so the dashboard falls back to its curated
-    mock value and labels the tile honestly."""
-    ysym = data.macro_yahoo_symbol(symbol)
-    if not ysym:
-        return
-    try:
-        res = await _net(p_src.fetch_price_history, ysym, "1mo", "1d")
-        quote = res.get("quote") or {}
-        price = quote.get("price")
-        if price is None:
-            return
-        change_pct = quote.get("changePct")
-        closes = [p["c"] for p in (res.get("points") or []) if p.get("c") is not None]
-        sparkline = closes[-14:] if closes else [float(price)]
-        is_live = not _macro_is_stale(quote.get("asOf"))
-        await asyncio.to_thread(
-            _upsert_macro, symbol, float(price),
-            float(change_pct) if change_pct is not None else None,
-            sparkline, is_live,
-        )
+        res = await _net(p_src.fetch_price_history, ysym, "6mo", "1d")
+        pts = res.get("points") or []
+        if pts:
+            await asyncio.to_thread(_upsert_ohlcv, key, pts)
+        q = dict(res.get("quote") or {})
+        # The 6mo chart's `chartPreviousClose` is the close ~6 months ago, so the
+        # adapter's changePct is a multi-month move, not the 1-day change the macro
+        # tiles label. Equities get corrected by the fundamentals loop; macro has
+        # none, so recompute the true 1D move from the last two real daily closes.
+        if len(pts) >= 2 and pts[-2].get("c"):
+            base = pts[-2]["c"]
+            ref = q.get("price") if q.get("price") is not None else pts[-1].get("c")
+            if ref is not None and base:
+                q["changePct"] = round((ref - base) / base * 100, 2)
+        if q.get("price") is not None:
+            await asyncio.to_thread(_upsert_macro_quote, key, q)
     except Exception as exc:  # noqa: BLE001
-        log.warning("macro ingest failed for %s (%s): %s", symbol, ysym, exc)
+        log.warning("macro ingest failed for %s (%s): %s", key, ysym, exc)
+
+
+async def _ingest_macro() -> None:
+    items = list(data.MACRO_YAHOO.items())
+    await asyncio.gather(*(_ingest_macro_one(k, y) for k, y in items))
 
 
 async def _ingest_fundamentals(symbol: str) -> None:
@@ -494,21 +464,12 @@ async def _price_loop():
         try:
             syms = await asyncio.to_thread(_tracked_symbols)
             await asyncio.gather(*(_ingest_prices(s) for s in syms))
-            log.info("price cycle complete (%d symbols)", len(syms))
+            await _ingest_macro()
+            log.info("price cycle complete (%d symbols + %d macro)",
+                     len(syms), len(data.MACRO_YAHOO))
         except Exception as exc:  # noqa: BLE001
             log.warning("price loop error: %s", exc)
         await asyncio.sleep(PRICE_INTERVAL)
-
-
-async def _macro_loop():
-    syms = data.macro_symbols()
-    while True:
-        try:
-            await asyncio.gather(*(_ingest_macro(s) for s in syms))
-            log.info("macro cycle complete (%d symbols)", len(syms))
-        except Exception as exc:  # noqa: BLE001
-            log.warning("macro loop error: %s", exc)
-        await asyncio.sleep(MACRO_INTERVAL)
 
 
 async def _fundamentals_loop():
@@ -700,15 +661,10 @@ async def start() -> None:
         await asyncio.to_thread(_seed_universe)
     except Exception as exc:  # noqa: BLE001
         log.warning("universe seeding failed: %s", exc)
-    try:
-        await asyncio.to_thread(_ensure_macro_schema)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("macro schema ensure failed: %s", exc)
     # One-time backfill of industry for symbols ingested before industry
     # capture existed; runs once concurrently and exits (not a loop).
     _tasks.append(asyncio.create_task(_backfill_industry()))
     _tasks.append(asyncio.create_task(_price_loop()))
-    _tasks.append(asyncio.create_task(_macro_loop()))
     _tasks.append(asyncio.create_task(_fundamentals_loop()))
     _tasks.append(asyncio.create_task(_news_loop()))
     _tasks.append(asyncio.create_task(_sentiment_loop()))
