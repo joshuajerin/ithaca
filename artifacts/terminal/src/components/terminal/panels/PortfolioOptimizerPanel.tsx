@@ -40,6 +40,7 @@ export function PortfolioOptimizerPanel({ data }: { data: any }) {
     turnover,
     coverage,
     notes = [],
+    shorting,
   } = data;
 
   const hs: Holding[] = holdings;
@@ -130,6 +131,53 @@ export function PortfolioOptimizerPanel({ data }: { data: any }) {
             <span className="text-[9px] font-mono px-1.5 py-0.5 border border-border text-muted-foreground ml-auto">
               turnover {turnover.toFixed(0)}%
             </span>
+          )}
+        </div>
+      )}
+
+      {/* Short-availability / borrow / margin (long-short books only) */}
+      {shorting && (
+        <div className="shrink-0 border border-border/60 px-2 py-1.5 space-y-1">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span className="text-[9px] text-muted-foreground uppercase tracking-widest">
+              Short-Aware · GC {shorting.financing?.gcRatePct?.toFixed(2)}% ({shorting.financing?.source})
+            </span>
+            {shorting.margin && (
+              <span className="text-[9px] font-mono flex items-center gap-2">
+                <span className={shorting.margin.grossLeverage > 4 ? "text-red-400" : shorting.margin.grossLeverage > 2 ? "text-amber-300" : "text-white"}>
+                  lev {shorting.margin.grossLeverage.toFixed(2)}×
+                </span>
+                <span className={shorting.margin.excessLiquidityPct < 0 ? "text-red-400" : "text-emerald-400/80"}>
+                  excess liq {shorting.margin.excessLiquidityPct.toFixed(0)}%
+                </span>
+                {shorting.margin.breach && <span className="text-red-400">⚠ BREACH</span>}
+              </span>
+            )}
+          </div>
+          {shorting.blocked?.length > 0 && (
+            <div className="text-[9px] text-amber-300/80 font-mono">
+              Short blocked (locate-infeasible): {shorting.blocked.join(", ")}
+            </div>
+          )}
+          {shorting.borrow?.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {shorting.borrow.slice(0, 8).map((b: any) => (
+                <span
+                  key={b.symbol}
+                  className={`text-[9px] font-mono px-1.5 py-0.5 border ${
+                    !b.shortable
+                      ? "border-red-500/40 text-red-300/90"
+                      : b.tier === "htb"
+                      ? "border-orange-500/40 text-orange-300/90"
+                      : "border-border text-muted-foreground"
+                  }`}
+                  title={b.tierLabel}
+                >
+                  {b.symbol} {b.feeBps != null ? `${b.feeBps.toFixed(0)}bp` : ""}
+                  {!b.shortable && " ✕"}
+                </span>
+              ))}
+            </div>
           )}
         </div>
       )}

@@ -24,7 +24,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from . import data, factor_model, repo
+from . import data, factor_model, repo, shorting
 from .engine import optimize as opt
 from .engine import riskmodel
 
@@ -217,6 +217,55 @@ def optimize(params: dict) -> Tuple[dict, "factor_model.RiskModelResult", List[s
     cons = _expand_sector_caps(cons, sectors)
     current = _current_book(params, kept)
 
+    # Short-availability / borrow-cost awareness: only for genuine long/short
+    # books and only for methods that actually solve the utility (mean-variance
+    # family / BL). Risk-parity & HRP are long-only by construction and skip it.
+    shorting_block: Optional[dict] = None
+    if (not cons.long_only) and method not in ("risk_parity", "hrp"):
+        prof = shorting.borrow_profile(kept)
+        gc_pct, fin_source, fin_asof = shorting.financing_anchor()
+        lb = np.full(len(kept), -float(cons.max_position), dtype=float)
+        sc = np.zeros(len(kept), dtype=float)
+        blocked: List[str] = []
+        borrow_rows: List[dict] = []
+        for k, s in enumerate(kept):
+            p = prof.get(s)
+            if not p:
+                continue
+            if not bool(p.get("shortable", True)):
+                lb[k] = 0.0  # locate-infeasible: forbid the short, allow the long
+                blocked.append(s)
+            sc[k] = float(p.get("feeBps") or 0.0) / 10000.0  # annual borrow drag
+            borrow_rows.append({
+                "symbol": s,
+                "tier": p.get("tier"),
+                "tierLabel": p.get("label"),
+                "feeBps": p.get("feeBps"),
+                "shortable": bool(p.get("shortable", True)),
+            })
+        cons.lb_override = lb
+        cons.short_cost = sc
+        if blocked:
+            notes.append(
+                "Short blocked (locate-infeasible borrow): " + ", ".join(blocked)
+                + " — held flat or long-only for those names."
+            )
+        shorting_block = {
+            "financing": {
+                "gcRatePct": gc_pct,
+                "anchor": "3M U.S. Treasury par yield",
+                "source": fin_source,
+                "asOf": fin_asof,
+            },
+            "borrow": sorted(borrow_rows, key=lambda r: (r["feeBps"] or 0.0), reverse=True),
+            "blocked": blocked,
+            "note": (
+                "Optimizer is short-aware: names that can't be borrowed are barred "
+                "from the short side and each short pays its modeled borrow fee, so a "
+                "name is only shorted when its alpha clears its cost to borrow."
+            ),
+        }
+
     bl_prior = None
     if method == "risk_parity":
         w = opt.apply_long_only_constraints(opt.risk_parity(cov), cons, sectors)
@@ -337,4 +386,30 @@ def optimize(params: dict) -> Tuple[dict, "factor_model.RiskModelResult", List[s
             float((res.returns[:, idx] @ w_mkt).mean() * riskmodel.TRADING_DAYS),
             float((res.returns[:, idx] @ w_mkt).var(ddof=1) * riskmodel.TRADING_DAYS), rf)), 2),
     }
+    if shorting_block is not None:
+        # Add the realized Reg-T margin / leverage profile of the *solved* book so
+        # the panel can show leverage + any breach alongside the borrow detail.
+        long_mv = float(np.sum(w[w > 0]))
+        short_mv = float(-np.sum(w[w < 0]))
+        shorting_block["margin"] = opt_margin(long_mv, short_mv)
+        payload["shorting"] = shorting_block
     return payload, res, dropped
+
+
+def opt_margin(long_frac: float, short_frac: float) -> dict:
+    """Reg-T margin / leverage profile for a book expressed as NAV fractions.
+
+    The optimizer works in weight space (fractions of NAV), so we scale by a
+    notional $1 of equity and read the engine's margin profile; leverage and
+    utilization are scale-free, so the absolute notional is irrelevant here.
+    """
+    from .engine import borrow
+    m = borrow.margin_profile(long_frac, short_frac, 1.0)
+    return {
+        "grossLeverage": round(m["grossLeverage"], 3),
+        "netLeverage": round(m["netLeverage"], 3),
+        "maintenancePct": round(m["maintenanceMargin"] * 100.0, 2),
+        "excessLiquidityPct": round(m["excessLiquidity"] * 100.0, 2),
+        "breach": bool(m["breach"]),
+        "warnings": m["warnings"],
+    }

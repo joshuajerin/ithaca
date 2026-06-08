@@ -496,6 +496,18 @@ def _tools() -> list:
             }, "required": []},
         }},
         {"type": "function", "function": {
+            "name": "add_shorting_desk",
+            "description": f"Model the REAL cost of being short for a long/short book: per-name borrow tier and stock-loan fee (general-collateral vs hard-to-borrow), locate-infeasible names that cannot be shorted at all, the carrying-cost drag (borrow fees + financing − cash rebate, anchored to the live 3M Treasury bill) and the Reg-T margin requirement, gross/net leverage and any maintenance-margin breach. {sizing} Use for 'borrow cost', 'cost to short', 'how expensive to short', 'is it hard to borrow', 'margin and leverage', 'financing cost', 'carrying cost of my shorts'. Pass `symbols` to build a dollar-neutral book, or `longs`/`shorts`/`weights` and `capital`.",
+            "parameters": {"type": "object", "properties": {
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Universe to build a dollar-neutral book from. Valid: {syms}"},
+                "longs": {"type": "array", "items": {"type": "string"}, "description": "Explicit long names (equal-weighted)."},
+                "shorts": {"type": "array", "items": {"type": "string"}, "description": "Explicit short names (equal-weighted)."},
+                "weights": {"type": "object", "description": "Explicit {symbol: signed weight} book (negative = short)."},
+                "capital": {"type": "number", "description": "Book equity in USD (default 1,000,000)."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": []},
+        }},
+        {"type": "function", "function": {
             "name": "add_iv_surface",
             "description": f"Add an implied volatility surface heatmap for a ticker. {sizing} Use for vol surface, IV surface, or skew requests.",
             "parameters": {"type": "object", "properties": {
@@ -786,6 +798,7 @@ _TOOL_TO_TYPE = {
     "add_signal_scorecard": "signal_scorecard",
     "add_signal_portfolio": "signal_portfolio",
     "add_combined_alpha": "combined_alpha",
+    "add_shorting_desk": "shorting_desk",
     "add_iv_surface": "iv_surface",
     "add_options_chain": "options_chain",
     "add_options_strategy": "options_strategy",
@@ -922,6 +935,13 @@ def _system_prompt() -> str:
         "To BLEND several signals into ONE composite alpha ('combine momentum, value and quality', 'composite "
         "alpha', 'signal ensemble', 'blend these signals'), use add_combined_alpha with the component signals and "
         "a method (equal_weight, ic_weighted, or inverse_correlation).\n"
+        "- For the REAL COST OF SHORTING ('borrow cost', 'cost/fee to short X', 'how expensive is it to short', "
+        "'is X hard to borrow', 'can I even short X', 'carrying cost of my shorts', 'financing cost', 'margin "
+        "and leverage on my book', 'maintenance margin / am I over-levered'), use add_shorting_desk. It tiers "
+        "each name's borrow fee from real liquidity (general-collateral vs hard-to-borrow vs locate-infeasible), "
+        "anchors financing to the live 3M Treasury bill, and reports the carrying drag plus the Reg-T margin / "
+        "leverage / breach profile. Pass `symbols` for a dollar-neutral book, or `longs`/`shorts`/`weights` and "
+        "`capital`. Prefer add_risk_monitor for exposures/limits and add_portfolio_optimizer to CONSTRUCT a book.\n"
         "- For company analytics requests ('why is X up/down', 'what drives X', 'analyze X vs competitors', "
         "'company analytics for X', 'competition for X', 'price drivers for X'), use add_company_analytics. "
         "For a head-to-head deep dive of EXACTLY TWO named companies ('compare X vs Y', 'X vs Y company "
@@ -1718,10 +1738,48 @@ def _ser_combined_alpha(data: dict) -> str:
     return "; ".join(p for p in parts if p)
 
 
+def _ser_shorting_desk(data: dict) -> str:
+    parts: List[str] = []
+    if data.get("label"):
+        parts.append(f"book={data['label']}")
+    lc, sc = data.get("longCount"), data.get("shortCount")
+    if lc is not None:
+        parts.append(f"{lc} long / {sc or 0} short on ${_ser_scalar(data.get('capital'))} capital")
+    margin = data.get("margin") or {}
+    if margin:
+        parts.append(
+            f"gross leverage {_ser_scalar(margin.get('grossLeverage'))}x, "
+            f"maint margin ${_ser_scalar(margin.get('maintenanceMargin'))}, "
+            f"excess liquidity ${_ser_scalar(margin.get('excessLiquidity'))}"
+            + (" — BREACH" if margin.get("breach") else "")
+        )
+    carry = data.get("carry") or {}
+    if carry:
+        parts.append(
+            f"carry: borrow ${_ser_scalar(carry.get('borrowCostAnnual'))}/yr, "
+            f"financing ${_ser_scalar(carry.get('financingCostAnnual'))}, "
+            f"rebate ${_ser_scalar(carry.get('cashRebateAnnual'))}, "
+            f"net drag {_ser_scalar(carry.get('dragBpsAnnual'))}bps/yr"
+        )
+    fin = data.get("financing") or {}
+    if fin.get("gcRatePct") is not None:
+        parts.append(f"GC anchor {_ser_scalar(fin.get('gcRatePct'))}% ({fin.get('source')})")
+    shorts = [h for h in (data.get("holdings") or []) if h.get("side") == "short"][:6]
+    if shorts:
+        parts.append("shorts: " + ", ".join(
+            f"{h.get('symbol')} {h.get('tierLabel')} {_ser_scalar(h.get('feeBps'))}bps"
+            + ("(no-locate)" if not h.get("shortable") else "")
+            for h in shorts))
+    if data.get("blocked"):
+        parts.append("locate-infeasible: " + ", ".join(data["blocked"]))
+    return "; ".join(p for p in parts if p)
+
+
 _PANEL_SERIALIZERS = {
     "backtest": _ser_backtest,
     "signal_portfolio": _ser_signal_portfolio,
     "combined_alpha": _ser_combined_alpha,
+    "shorting_desk": _ser_shorting_desk,
 }
 
 
@@ -1991,6 +2049,9 @@ def _apply_dashboard_scope(name: str, args: dict, dash_syms: List[str], dash_sec
             args["symbols"] = dash_syms
     elif name == "add_stress_test":
         if not args.get("symbols") and dash_syms:
+            args["symbols"] = dash_syms
+    elif name == "add_shorting_desk":
+        if not any(args.get(k) for k in ("symbols", "longs", "shorts", "weights")) and dash_syms:
             args["symbols"] = dash_syms
 
 
@@ -2297,6 +2358,7 @@ _TYPE_LABELS = {
     "signal_scorecard": "an alpha signal scorecard",
     "signal_portfolio": "a signal portfolio",
     "combined_alpha": "a combined alpha blend",
+    "shorting_desk": "a shorting desk (borrow cost, financing & margin)",
     "iv_surface": "an IV surface",
     "options_chain": "an options chain",
     "options_strategy": "an options strategy",
@@ -2770,6 +2832,16 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         and any(k in q for k in ["strateg", "sleeve"])
     )
     wants_multistrat = _sleeve_words or _firm_words or _alloc_across_strats
+    wants_shorting = any(k in q for k in [
+        "borrow cost", "borrow fee", "cost to short", "cost of shorting", "cost of being short",
+        "shorting cost", "short cost", "carry cost", "carrying cost", "hard to borrow",
+        "hard-to-borrow", "htb", "locate", "can i short", "can i even short",
+        "stock loan", "stock-loan", "financing cost", "financing rate", "short rebate",
+        "margin requirement", "maintenance margin", "reg-t", "reg t", "over-levered",
+        "over levered", "shorting desk", "short book cost",
+    ]) or (
+        any(k in q for k in ["margin", "leverage"]) and any(k in q for k in ["short", "book", "borrow"])
+    )
     wants_backtest = wants_invest or any(k in q for k in ["backtest", "back test", "back-test", "momentum strategy", "strategy", "sharpe", "cagr", "drawdown"])
     wants_montecarlo = any(k in q for k in ["monte carlo", "montecarlo", "monte-carlo", "simulate", "simulation", "forward project", "project price", "scenario analysis", "probability of loss", "forecast price", "gbm", "geometric brownian", "bootstrap"])
     wants_correlation = any(k in q for k in ["correlation", "correlat", "hedge ratio", "co-movement", "diversif", "beta table"])
@@ -2862,6 +2934,34 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         add("multi_strategy", mp, 12, 6)
         return panels, ("Firm-level multi-strategy allocation: every paper/live strategy as a sleeve of "
                         "one combined book, with cross-strategy risk and recommended vs current capital weights.")
+
+    if wants_shorting:
+        params: dict = {}
+        if symbols:
+            # A vs/short pivot lets the user name the short side explicitly.
+            pivot = next((d for d in [" short ", " shorting ", " against "] if d in q), None)
+            if pivot and len(symbols) >= 2:
+                params["symbols"] = symbols
+            else:
+                params["symbols"] = symbols
+        elif sector:
+            sec_syms = data.symbols_in_sector(sector)[:10]
+            if sec_syms:
+                params["symbols"] = sec_syms
+        m = re.search(r"\$?\s*([\d,]+(?:\.\d+)?)\s*(k|m|mm|million|thousand)?\s*(?:of\s+)?(?:capital|equity|book|nav)", q)
+        if m:
+            amt = float(m.group(1).replace(",", ""))
+            unit = (m.group(2) or "").lower()
+            if unit in ("k", "thousand"):
+                amt *= 1_000
+            elif unit in ("m", "mm", "million"):
+                amt *= 1_000_000
+            if amt > 0:
+                params["capital"] = amt
+        add("shorting_desk", params, 12, 6)
+        return panels, ("Shorting desk: per-name borrow tier and fee, locate-infeasible names, the "
+                        "carrying-cost drag (borrow + financing − rebate) and the Reg-T margin, "
+                        "leverage and any breach for the book.")
 
     if wants_desk:
         add("strategy_desk", {}, 12, 5)

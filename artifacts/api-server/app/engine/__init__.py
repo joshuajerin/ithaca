@@ -10,7 +10,16 @@ points and for the live/mock fallback decision.
 """
 from __future__ import annotations
 
-from . import attribution, compliance, execution, optimize, paperbook, portfolio, riskmodel
+from . import attribution, borrow, compliance, execution, optimize, paperbook, portfolio, riskmodel
+from .borrow import (
+    BORROW_TIERS,
+    MarginRules,
+    book_cash,
+    borrow_fees_by_symbol,
+    carry_breakdown,
+    classify_borrow,
+    margin_profile,
+)
 from .attribution import (
     active_stats,
     align_benchmark_returns,
@@ -125,6 +134,14 @@ __all__ = [
     "normalize_scheme",
     "execution",
     "paperbook",
+    "borrow",
+    "BORROW_TIERS",
+    "MarginRules",
+    "book_cash",
+    "borrow_fees_by_symbol",
+    "carry_breakdown",
+    "classify_borrow",
+    "margin_profile",
     "generate_orders",
     "simulate_all",
     "square_root_impact",

@@ -58,6 +58,8 @@ interface SignalPortfolioData {
   benchStats: StatBlock;
   turnover: number;
   turnoverAnnual: number;
+  borrowDragBpsAnnual?: number | null;
+  borrowCostTotalPct?: number | null;
 }
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
@@ -92,6 +94,7 @@ export function SignalPortfolioPanel({ data }: { data: SignalPortfolioData }) {
     benchStats,
     turnover,
     turnoverAnnual,
+    borrowDragBpsAnnual,
   } = data;
 
   const retTone = stats.totalReturn > 0 ? "text-emerald-400" : stats.totalReturn < 0 ? "text-red-400" : "text-white";
@@ -147,7 +150,11 @@ export function SignalPortfolioPanel({ data }: { data: SignalPortfolioData }) {
         <Stat label="Max DD" value={`${stats.maxDD.toFixed(1)}%`} tone="text-red-400" />
         <Stat label="Vol (ann)" value={`${stats.vol.toFixed(1)}%`} />
         <Stat label="VaR 95" value={`${stats.var95.toFixed(1)}%`} tone="text-muted-foreground" />
-        <Stat label="Ann. Turnover" value={`${turnoverAnnual.toFixed(0)}%`} />
+        {shortCount > 0 && borrowDragBpsAnnual != null ? (
+          <Stat label="Borrow Drag" value={`${borrowDragBpsAnnual.toFixed(0)} bps/yr`} tone="text-orange-300" />
+        ) : (
+          <Stat label="Ann. Turnover" value={`${turnoverAnnual.toFixed(0)}%`} />
+        )}
         <Stat label="vs Benchmark" value={`${vsB > 0 ? "+" : ""}${vsB.toFixed(1)}%`} tone={vsTone} />
       </div>
 

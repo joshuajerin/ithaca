@@ -5006,6 +5006,17 @@ def build_signal_portfolio(params: dict) -> dict:
     excluded_syms = {e["symbol"] for e in pre_excluded}
     eval_series = {s: pts for s, pts in series.items() if s not in excluded_syms}
 
+    # Long/short books carry a real cost to borrow on the short leg. Classify each
+    # name's borrow fee from its real liquidity and pass it to the engine so the
+    # realized P&L is net of carrying cost (long-only books have no short leg).
+    borrow_by_symbol: Dict[str, float] = {}
+    if scheme == "long_short":
+        from . import shorting
+        prof = shorting.borrow_profile(symbols)
+        borrow_by_symbol = {
+            s: float(p.get("feeBps") or 0.0) / 10000.0 for s, p in prof.items()
+        }
+
     result = engine.construct_portfolio(
         eval_series,
         signal=signal,
@@ -5013,6 +5024,7 @@ def build_signal_portfolio(params: dict) -> dict:
         scheme=scheme,
         quantiles=_SIGNAL_QUANTILES,
         holding=_SIGNAL_HOLDING,
+        borrow_by_symbol=borrow_by_symbol or None,
     )
 
     excluded_all = pre_excluded + list(result.get("excluded") or [])
@@ -5051,6 +5063,8 @@ def build_signal_portfolio(params: dict) -> dict:
         "turnover": result["turnover"],
         "turnoverAnnual": result["turnoverAnnual"],
         "coverage": coverage,
+        "borrowDragBpsAnnual": result.get("borrowDragBpsAnnual"),
+        "borrowCostTotalPct": result.get("borrowCostTotalPct"),
         "asOf": bulk.get("asOf"),
         "source": bulk.get("source", "mock"),
     }
@@ -6480,6 +6494,21 @@ def build_multi_strategy(params: dict) -> dict:
     return payload
 
 
+def build_shorting_desk(params: dict) -> dict:
+    """Shorting desk: borrow cost, financing & margin for a long/short book.
+
+    Pure orchestration over the borrow engine — classifies each name's borrow
+    tier from its real liquidity, anchors financing to the live 3M Treasury bill,
+    and reports the carrying-cost drag plus the Reg-T margin / leverage / breach
+    profile. Locate-infeasible names are flagged (and dropped from a book this
+    desk constructed itself)."""
+    from . import shorting
+
+    payload = shorting.build(params)
+    payload["title"] = "Shorting Desk"
+    return payload
+
+
 # ----------------------------- registry -----------------------------
 class SkillDef:
     def __init__(self, id, name, panel_type, description, subskills, builder, default_title):
@@ -6530,6 +6559,24 @@ _reg(SkillDef(
         {"name": "allocate_capital", "description": "Recommend sleeve weights under the chosen allocation method.", "expectedOutput": "Recommended vs current sleeve weights."},
     ],
     build_multi_strategy, "Multi-Strategy Allocation",
+))
+_reg(SkillDef(
+    "shorting-desk", "Shorting Desk", "shorting_desk",
+    "Models the real cost of being short for a long/short book: per-name borrow "
+    "tier and stock-loan fee (general-collateral vs hard-to-borrow), locate-"
+    "infeasible names that cannot be shorted, the carrying-cost drag (borrow fees "
+    "+ financing − cash rebate, anchored to the live 3M Treasury bill) and the "
+    "Reg-T margin requirement, gross/net leverage and any maintenance-margin "
+    "breach. Use for 'borrow cost', 'cost to short', 'shorting cost', 'is it "
+    "hard to borrow', 'margin and leverage', 'financing cost'. Pass `symbols` to "
+    "build a dollar-neutral book, or `longs`/`shorts`/`weights` and `capital`.",
+    [
+        {"name": "classify_borrow", "description": "Tier each name from its real dollar ADV + market cap.", "expectedOutput": "Per-name borrow fee and shortable flag."},
+        {"name": "anchor_financing", "description": "Read the 3M Treasury bill as the GC financing rate.", "expectedOutput": "A live (or labeled-mock) GC rate."},
+        {"name": "accrue_carry", "description": "Sum borrow fees + financing − cash rebate into a drag.", "expectedOutput": "Annual and daily carrying cost in $ and bps."},
+        {"name": "margin_profile", "description": "Compute Reg-T initial/maintenance margin and leverage.", "expectedOutput": "Margin requirement, leverage and breach status."},
+    ],
+    build_shorting_desk, "Shorting Desk",
 ))
 _reg(SkillDef(
     "price-chart", "Live Price Charts", "price_chart",

@@ -47,11 +47,27 @@ class Constraints:
     gross: Optional[float] = None
     sector_caps: Dict[str, float] = field(default_factory=dict)
     turnover_penalty: float = 0.0
+    # Per-name lower-bound override (length n). Used to forbid shorting a name
+    # whose borrow is locate-infeasible: set its floor to 0 so the optimizer can
+    # still go long but never short it. Tightens (raises) the box floor only.
+    lb_override: Optional[np.ndarray] = None
+    # Per-name annual borrow/short cost (length n, as a return drag e.g. 0.03 =
+    # 300bps). Enters the utility as a linear penalty on the short leg, so the
+    # optimizer only shorts a name when its expected alpha clears its borrow fee.
+    short_cost: Optional[np.ndarray] = None
 
     def bounds(self, n: int) -> Tuple[np.ndarray, np.ndarray]:
         hi = float(max(1e-6, self.max_position))
         lo = 0.0 if self.long_only else -hi
-        return np.full(n, lo, dtype=float), np.full(n, hi, dtype=float)
+        lo_arr = np.full(n, lo, dtype=float)
+        hi_arr = np.full(n, hi, dtype=float)
+        if self.lb_override is not None:
+            ov = np.asarray(self.lb_override, dtype=float)
+            if ov.shape == lo_arr.shape:
+                # Raise the floor toward (at most) 0 where shorting is blocked;
+                # never loosen below the structural lower bound.
+                lo_arr = np.maximum(lo_arr, ov)
+        return lo_arr, hi_arr
 
     def gross_limit(self) -> float:
         # Gross = sum|w| >= |sum w| = |net| is a hard identity, so a gross budget
@@ -214,12 +230,23 @@ def _solve_utility(
     to = float(cons.turnover_penalty)
     w0 = current if current is not None else None
 
+    sc = None
+    if cons.short_cost is not None:
+        sc_arr = np.asarray(cons.short_cost, dtype=float)
+        if sc_arr.shape == (n,):
+            sc = np.maximum(sc_arr, 0.0)
+
     start = w_init if w_init is not None else np.full(n, cons.net / n)
     w = _project_feasible(start, lo, hi, cons.net, members, gross)
     for _ in range(iters):
         grad = mu - gamma * (cov @ w)
         if to > 0 and w0 is not None:
             grad = grad - to * np.sign(w - w0)
+        if sc is not None:
+            # Linear borrow-cost penalty on the short leg: cost = sum sc_i*max(-w_i,0),
+            # whose subgradient pushes shorted names (w<0) back up toward zero so a
+            # name is only shorted when its alpha clears its borrow fee.
+            grad = grad + sc * (w < 0)
         w_new = _project_feasible(w + step * grad, lo, hi, cons.net, members, gross)
         if float(np.max(np.abs(w_new - w))) < 1e-9:
             w = w_new

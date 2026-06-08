@@ -78,6 +78,7 @@ def construct_portfolio(
     min_names: int = 5,
     cost_bps: float = 5.0,
     rebase: float = 100.0,
+    borrow_by_symbol: Optional[Dict[str, float]] = None,
 ) -> dict:
     """Build a portfolio from one signal and backtest its realized performance.
 
@@ -85,10 +86,16 @@ def construct_portfolio(
     equity curve vs an equal-weight benchmark, a drawdown series, the full
     performance stat block, turnover, and the included / excluded coverage so the
     panel can report it honestly (names without a usable signal are never imputed).
+
+    ``borrow_by_symbol`` maps a symbol to its *annual* borrow fee (e.g. 0.03 =
+    300bps). When supplied (long/short books), every short leg accrues a daily
+    carrying cost ``|weight| * fee / TRADING_DAYS`` that is netted off the book's
+    daily return, so the realized P&L reflects the real cost to borrow.
     """
     signal = normalize_signal(signal)
     fn = SIGNALS[signal]
     ctx_by_symbol = ctx_by_symbol or {}
+    borrow_by_symbol = {s.upper(): float(f) for s, f in (borrow_by_symbol or {}).items()}
     scheme = normalize_scheme(scheme)
     quantiles = max(2, int(quantiles))
     holding = max(1, int(holding))
@@ -197,6 +204,16 @@ def construct_portfolio(
             vals.append(float(P["dr"][i]))
         return float(np.mean(vals)) if vals else 0.0
 
+    def borrow_drag(book: Dict[str, float]) -> float:
+        """Daily carrying cost of the short leg: sum |w| * annual_fee / 252."""
+        if not borrow_by_symbol:
+            return 0.0
+        d = 0.0
+        for sym, wt in book.items():
+            if wt < 0:
+                d += abs(wt) * borrow_by_symbol.get(sym, 0.0)
+        return d / TRADING_DAYS
+
     held: Dict[str, float] = {}
     last_holdings: List[dict] = []
     prev_top: Optional[set] = None
@@ -215,6 +232,7 @@ def construct_portfolio(
     curve: List[dict] = [{"t": all_dates[0], "strategy": round(equity, 2), "benchmark": round(bench_eq, 2)}]
     dd_list: List[dict] = [{"t": all_dates[0], "dd": 0.0}]
     port_rets: List[float] = []
+    borrow_cost_total = 0.0
 
     for k in range(1, n):
         d = all_dates[k]
@@ -232,7 +250,9 @@ def construct_portfolio(
                 prev_top = top_set
                 held, last_holdings = new_w, new_h
                 n_rebal += 1
-        net_r = r - cost
+        drag = borrow_drag(held)
+        borrow_cost_total += drag
+        net_r = r - cost - drag
         equity *= 1.0 + net_r
         bench_eq *= 1.0 + bench_return(d)
         peak = max(peak, equity)
@@ -273,4 +293,10 @@ def construct_portfolio(
         "turnover": round(t_mean, 1),
         "turnoverAnnual": round(turnover_annual, 1),
     })
+    if borrow_by_symbol:
+        # Annualized realized borrow drag (bps) over the sample, so the panel can
+        # show how much carrying-cost the short leg cost the book.
+        years = max(len(port_rets) / TRADING_DAYS, 1e-9)
+        result["borrowDragBpsAnnual"] = round(borrow_cost_total / years * 10000.0, 1)
+        result["borrowCostTotalPct"] = round(borrow_cost_total * 100.0, 3)
     return result
