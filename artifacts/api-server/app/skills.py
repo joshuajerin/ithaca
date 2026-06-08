@@ -6590,57 +6590,19 @@ def _company_analytics_fallback(symbol: str, company: dict) -> dict:
     return drivers[:5]
 
 
-def build_company_analytics(params: dict) -> dict:
-    symbol = (params.get("symbol") or "NVDA").upper()
-    company = repo.get_company(symbol)
-    if not company:
-        raise ValueError(f"Unknown symbol: {symbol}")
-
-    name = company["name"]
-    chg_pct = company["changePct"]
-    period_rets = repo.period_returns(symbol, windows=("1M", "YTD", "1Y"))["returns"]
-
-    # --- Peers & competitive comparison ---
-    peer_syms = data.get_peers(symbol)
-    all_syms = [symbol] + peer_syms
-    rev_growth = _resolve_revenue_growth(symbol, company)
-    peers_table = []
-    for sym in all_syms:
-        c = repo.get_company(sym)
-        if not c:
-            continue
-        rg = _resolve_revenue_growth(sym, c)
-        mc_b = round(c["marketCap"] / 1_000_000_000, 1)
-        peers_table.append({
-            "symbol": sym,
-            "name": c["name"],
-            "logoUrl": c.get("logoUrl"),
-            "isSubject": sym == symbol,
-            "revenueGrowth": rg,
-            "opMargin": c["netMargin"],
-            "pe": c["peRatio"],
-            "marketCapB": mc_b,
-        })
-
-    # --- KPI correlations (live rolling price correlations, curated fallback) ---
-    correlations = _company_correlations(symbol, peer_syms) or data.get_kpi_correlations(symbol)
-
-    # --- Catalysts (live earnings/dividend calendar merged with curated events,
-    #     then enriched with a sentiment read + expandable breakdown) ---
-    catalysts = [_enrich_catalyst(symbol, company, cat) for cat in _company_catalysts(symbol, company)]
-
-    # --- Price drivers (AI preferred, rules fallback) ---
+def _company_price_drivers(symbol: str, company: dict) -> list:
+    """Price drivers for one company (AI preferred, rules-based fallback)."""
     if ai.ai_available():
         try:
             news = repo.news_for("symbol", symbol)
             ctx = {
                 "symbol": symbol,
-                "name": name,
+                "name": company["name"],
                 "price": company["price"],
-                "changePct": chg_pct,
+                "changePct": company["changePct"],
                 "peRatio": company["peRatio"],
                 "netMargin": company["netMargin"],
-                "revenueGrowthPct": rev_growth,
+                "revenueGrowthPct": data.get_revenue_growth(symbol),
                 "beta": company["beta"],
                 "description": company["description"],
                 "recentHeadlines": [{"headline": n["headline"], "sentiment": n["sentiment"]} for n in news[:5]],
@@ -6682,11 +6644,52 @@ def build_company_analytics(params: dict) -> dict:
                 # echoes the one-line explanation.
                 if not detail or detail == (d.get("explanation") or "").strip():
                     d["detail"] = _compose_driver_detail(company, d)
-            drivers = drivers[:5]
+            return drivers[:5]
         except Exception:
-            drivers = _company_analytics_fallback(symbol, company)
-    else:
-        drivers = _company_analytics_fallback(symbol, company)
+            return _company_analytics_fallback(symbol, company)
+    return _company_analytics_fallback(symbol, company)
+
+
+def build_company_analytics(params: dict) -> dict:
+    symbol = (params.get("symbol") or "NVDA").upper()
+    company = repo.get_company(symbol)
+    if not company:
+        raise ValueError(f"Unknown symbol: {symbol}")
+
+    name = company["name"]
+    chg_pct = company["changePct"]
+    period_rets = repo.period_returns(symbol, windows=("1M", "YTD", "1Y"))["returns"]
+
+    # --- Peers & competitive comparison ---
+    peer_syms = data.get_peers(symbol)
+    all_syms = [symbol] + peer_syms
+    peers_table = []
+    for sym in all_syms:
+        c = repo.get_company(sym)
+        if not c:
+            continue
+        rg = _resolve_revenue_growth(sym, c)
+        mc_b = round(c["marketCap"] / 1_000_000_000, 1)
+        peers_table.append({
+            "symbol": sym,
+            "name": c["name"],
+            "logoUrl": c.get("logoUrl"),
+            "isSubject": sym == symbol,
+            "revenueGrowth": rg,
+            "opMargin": c["netMargin"],
+            "pe": c["peRatio"],
+            "marketCapB": mc_b,
+        })
+
+    # --- KPI correlations (live rolling price correlations, curated fallback) ---
+    correlations = _company_correlations(symbol, peer_syms) or data.get_kpi_correlations(symbol)
+
+    # --- Catalysts (live earnings/dividend calendar merged with curated events,
+    #     then enriched with a sentiment read + expandable breakdown) ---
+    catalysts = [_enrich_catalyst(symbol, company, cat) for cat in _company_catalysts(symbol, company)]
+
+    # --- Price drivers (AI preferred, rules fallback) ---
+    drivers = _company_price_drivers(symbol, company)
 
     return {
         "symbol": symbol,
@@ -6708,6 +6711,105 @@ def build_company_analytics(params: dict) -> dict:
         "catalysts": catalysts,
         "asOf": company.get("_asOf"),
         "source": company.get("_source") or _live_source(),
+    }
+
+
+def _company_side(symbol: str) -> dict:
+    """Build one company's column for the head-to-head compare view."""
+    company = repo.get_company(symbol)
+    if not company:
+        raise ValueError(f"Unknown symbol: {symbol}")
+    chg_pct = company["changePct"]
+    period_rets = repo.period_returns(symbol, windows=("1M", "YTD", "1Y"))["returns"]
+    return {
+        "symbol": symbol,
+        "name": company["name"],
+        "priceTrendPct": chg_pct,
+        "returns": {
+            "1D": chg_pct,
+            "1M": period_rets.get("1M"),
+            "YTD": period_rets.get("YTD"),
+            "1Y": period_rets.get("1Y"),
+        },
+        "revenueGrowth": _resolve_revenue_growth(symbol, company),
+        "opMargin": company["netMargin"],
+        "pe": company["peRatio"],
+        "marketCapB": round(company["marketCap"] / 1_000_000_000, 1),
+        "drivers": _company_price_drivers(symbol, company),
+        "catalysts": [_enrich_catalyst(symbol, company, cat) for cat in _company_catalysts(symbol, company)],
+        "_asOf": company.get("_asOf"),
+        "_source": company.get("_source"),
+    }
+
+
+def build_company_analytics_compare(params: dict) -> dict:
+    """Two-column head-to-head comparison of two companies' analytics."""
+    raw = params.get("symbols") or []
+    if isinstance(raw, str):
+        raw = [s for s in re.split(r"[ ,/]+", raw) if s]
+    syms = [str(s).upper() for s in raw if str(s).strip()]
+    # de-dup, preserve order
+    seen: set = set()
+    syms = [s for s in syms if not (s in seen or seen.add(s))]
+    if params.get("symbol") and params["symbol"].upper() not in syms:
+        syms.insert(0, params["symbol"].upper())
+    if len(syms) < 2:
+        raise ValueError("Need two symbols to compare (e.g. NVDA vs AMD).")
+    a_sym, b_sym = syms[0], syms[1]
+
+    a = _company_side(a_sym)
+    b = _company_side(b_sym)
+
+    def _winner(va, vb, higher_is_better: bool):
+        if va is None or vb is None:
+            return None
+        if abs(va - vb) < 1e-9:
+            return "tie"
+        a_wins = va > vb if higher_is_better else va < vb
+        return a_sym if a_wins else b_sym
+
+    metrics_def = [
+        ("Revenue Growth", "revenueGrowth", "%", True),
+        ("Operating Margin", "opMargin", "%", True),
+        ("P/E Ratio", "pe", "x", False),
+        ("Market Cap", "marketCapB", "B", True),
+    ]
+    comparison = []
+    for label, key, unit, hib in metrics_def:
+        va, vb = a.get(key), b.get(key)
+        comparison.append({
+            "metric": label,
+            "unit": unit,
+            "a": va,
+            "b": vb,
+            "higherIsBetter": hib,
+            "leader": _winner(va, vb, hib),
+        })
+    for label, rk in [("YTD Return", "YTD"), ("1Y Return", "1Y")]:
+        va = a["returns"].get(rk)
+        vb = b["returns"].get(rk)
+        comparison.append({
+            "metric": label,
+            "unit": "%",
+            "a": va,
+            "b": vb,
+            "higherIsBetter": True,
+            "leader": _winner(va, vb, True),
+        })
+
+    a_lead = sum(1 for c in comparison if c["leader"] == a_sym)
+    b_lead = sum(1 for c in comparison if c["leader"] == b_sym)
+
+    return {
+        "symbols": [a_sym, b_sym],
+        "companies": [
+            {k: v for k, v in a.items() if not k.startswith("_")},
+            {k: v for k, v in b.items() if not k.startswith("_")},
+        ],
+        "comparison": comparison,
+        "scoreboard": {a_sym: a_lead, b_sym: b_lead},
+        "asOf": a.get("_asOf"),
+        "source": a.get("_source") or _live_source(),
     }
 
 
@@ -6740,6 +6842,22 @@ _reg(SkillDef(
         {"name": "list_catalysts", "description": "Return upcoming events with dates and High/Medium/Low impact labels.", "expectedOutput": "A catalyst list."},
     ],
     build_company_analytics, "Company Analytics",
+))
+_reg(SkillDef(
+    "company-analytics-compare", "Company Compare", "company_analytics_compare",
+    "Head-to-head comparison of TWO companies side by side. Two columns, each showing that "
+    "company's Price Drivers and Catalyst Watch, plus a scoreboard that highlights which "
+    "company leads on Revenue Growth, Operating Margin, P/E, Market Cap, YTD and 1Y return. "
+    "Use when the user asks to 'compare X vs Y', 'X vs Y company analytics', 'X or Y — which is "
+    "better', or wants a side-by-side deep dive of two specific tickers. Pass both tickers in "
+    "the symbols array.",
+    [
+        {"name": "resolve_symbols", "description": "Map the request to two known tickers in order.", "expectedOutput": "Two valid tickers."},
+        {"name": "generate_price_drivers", "description": "Produce 3-5 price-driver bullets with tags for each company.", "expectedOutput": "Driver lists for both companies."},
+        {"name": "build_scoreboard", "description": "Compare the two companies metric-by-metric and pick the leader for each.", "expectedOutput": "A comparison list with a leader per metric."},
+        {"name": "list_catalysts", "description": "Return upcoming events for each company.", "expectedOutput": "Catalyst lists for both companies."},
+    ],
+    build_company_analytics_compare, "Company Compare",
 ))
 _reg(SkillDef(
     "data-universe", "Data Universe", "data_universe",

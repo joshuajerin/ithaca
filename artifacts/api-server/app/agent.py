@@ -520,6 +520,22 @@ def _tools() -> list:
             }, "required": ["symbol"]},
         }},
         {"type": "function", "function": {
+            "name": "add_company_analytics_compare",
+            "description": (
+                f"Add a side-by-side head-to-head comparison of TWO companies. Two columns, each with "
+                f"that company's Price Drivers and Catalyst Watch, plus a scoreboard highlighting which "
+                f"company leads on Revenue Growth, Operating Margin, P/E, Market Cap, YTD and 1Y return. {sizing} "
+                "Use when the user asks to 'compare X vs Y', 'X vs Y company analytics', 'X or Y — which is "
+                "better', or wants a side-by-side deep dive of two specific tickers. Prefer this over two "
+                "separate add_company_analytics panels when exactly two companies are being compared."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "symbols": {"type": "array", "items": {"type": "string"},
+                            "description": f"Exactly two tickers in compare order. Each one of: {syms}"},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbols"]},
+        }},
+        {"type": "function", "function": {
             "name": "add_data_universe",
             "description": (
                 f"Add a data-universe panel showing the investable universe: symbols with sector, "
@@ -709,6 +725,7 @@ _TOOL_TO_TYPE = {
     "add_earnings_calendar": "earnings_calendar",
     "add_ma_tracker": "ma_tracker",
     "add_company_analytics": "company_analytics",
+    "add_company_analytics_compare": "company_analytics_compare",
     "add_data_universe": "data_universe",
     "add_intraday_chart": "intraday_chart",
     "add_data_quality": "data_quality",
@@ -821,7 +838,10 @@ def _system_prompt() -> str:
         "signal into a strategy', 'size positions from <signal>', 'long-short book from <signal>'), use "
         "add_signal_portfolio (scheme=top_quantile for long-only, long_short for a dollar-neutral spread).\n"
         "- For company analytics requests ('why is X up/down', 'what drives X', 'analyze X vs competitors', "
-        "'company analytics for X', 'competition for X', 'price drivers for X'), use add_company_analytics.\n"
+        "'company analytics for X', 'competition for X', 'price drivers for X'), use add_company_analytics. "
+        "For a head-to-head deep dive of EXACTLY TWO named companies ('compare X vs Y', 'X vs Y company "
+        "analytics', 'X or Y — which is better'), use add_company_analytics_compare with both tickers in "
+        "the symbols array instead of two separate panels.\n"
         "- For data-layer requests: universe/coverage/'what's tracked'/'live vs mock' → add_data_universe; "
         "intraday/minute/hourly price action → add_intraday_chart; data quality/gaps/stale/freshness/'can I "
         "trust the data' → add_data_quality.\n"
@@ -2046,6 +2066,7 @@ _TYPE_LABELS = {
     "earnings_calendar": "an earnings calendar",
     "ma_tracker": "an M&A tracker",
     "company_analytics": "a company analytics panel",
+    "company_analytics_compare": "a company comparison",
     "data_universe": "a data universe overview",
     "intraday_chart": "an intraday chart",
     "data_quality": "a data quality report",
@@ -2106,6 +2127,26 @@ def _extract_symbols(q: str) -> List[str]:
             if len(short) > 3 and re.search(r"\b" + re.escape(short) + r"\b", low):
                 found.append(s)
     return found
+
+
+def _order_symbols_by_query(q: str, symbols: List[str]) -> List[str]:
+    """Order matched symbols by where they (or their company name) first appear in the query."""
+    up = q.upper()
+    low = q.lower()
+
+    def pos(s: str) -> int:
+        i = up.find(s)
+        if i >= 0:
+            return i
+        c = repo.get_company(s)
+        if c:
+            short = c["name"].split()[0].lower()
+            j = low.find(short)
+            if j >= 0:
+                return 1000 + j
+        return 10_000
+
+    return sorted(symbols, key=pos)
 
 
 def _extract_range(q: str) -> Optional[str]:
@@ -2583,6 +2624,16 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         if dash_syms or dash_secs:
             add("analyst_report", {"scope": "dashboard", "symbols": dash_syms, "sectors": dash_secs}, 12, 6)
             return panels, "Analyst report across your current dashboard: thesis, drivers, risks, catalysts and a clear call."
+
+    wants_compare = (
+        (wants_company_analytics or any(k in q for k in ["compare", " vs ", " vs. ", "versus", "head-to-head", "head to head", "side by side", "side-by-side", "which is better"]))
+        and (" vs" in q or "versus" in q or "compare" in q or "head-to-head" in q or "head to head" in q or "side by side" in q or "side-by-side" in q or "which is better" in q)
+    )
+    if wants_compare and len(symbols) >= 2:
+        ordered = _order_symbols_by_query(query, symbols)[:2]
+        add("company_analytics_compare", {"symbols": ordered}, 12, 6)
+        names = " vs ".join(data.get_company(s)["name"] for s in ordered)
+        return panels, f"Head-to-head: {names}. Price drivers, catalysts, and a metric scoreboard for each."
 
     if wants_company_analytics and symbols:
         sym = symbols[0]

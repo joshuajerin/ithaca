@@ -42,6 +42,7 @@ import { TranscriptPanel } from "./panels/TranscriptPanel";
 import { EarningsCalendarPanel } from "./panels/EarningsCalendarPanel";
 import { MACPanel } from "./panels/MACPanel";
 import { CompanyAnalyticsPanel } from "./panels/CompanyAnalyticsPanel";
+import { CompanyAnalyticsComparePanel } from "./panels/CompanyAnalyticsComparePanel";
 import { DataUniversePanel } from "./panels/DataUniversePanel";
 import { IntradayChartPanel } from "./panels/IntradayChartPanel";
 import { DataQualityPanel } from "./panels/DataQualityPanel";
@@ -226,6 +227,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "earnings_calendar": return <EarningsCalendarPanel data={panel.data as any} />;
       case "ma_tracker": return <MACPanel data={panel.data as any} />;
       case "company_analytics": return <CompanyAnalyticsPanel data={panel.data as any} />;
+      case "company_analytics_compare": return <CompanyAnalyticsComparePanel data={panel.data as any} />;
       case "data_universe": return <DataUniversePanel data={panel.data as any} />;
       case "intraday_chart": {
         const idData = panel.data as any;

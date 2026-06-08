@@ -35,6 +35,7 @@
 - [Company profiles (sub-industry + logos)](company-profiles.md) — subIndustry+logoUrl on every record; _apply_company_profiles must run AFTER bulk _load() or bulk names (incl AAPL) miss stamping; live Yahoo industry/website override curated.
 - [Signal → portfolio construction](signal-portfolio.md) — "build a portfolio from <signal>" → tradeable book; top_quantile (long-only) vs long_short (dollar-neutral); dispatch before scorecard/backtest and off the word "strategy".
 - [Scenario stress test panel](stress-test-panel.md) — stress_test scales each name's REAL fitted beta (SPY/^TNX-level-Δ/CL=F) by the scenario shock; distinct from risk_monitor replay; honest coverage.
+- [Company analytics head-to-head compare](company-analytics-compare.md) — `company_analytics_compare` panel: two columns of drivers+catalysts + per-metric leader scoreboard; query-order symbol ordering.
 - [Strategy lifecycle & paper book desk](strategy-lifecycle-desk.md) — registry+paperbook+lifecycle; deterministic intent handler before LLM; runtime CREATE TABLE not drizzle push; mark has no weight (use exposures); vite build needs PORT+BASE_PATH.
 - [Multi-ticker analyst compare](analyst-compare.md) — fan out build_analyst_report per symbol concurrently, isolate per-name failures; heuristic keyword traps ("view"⊂"overview").
 - [Macro dashboard overrides](macro-dashboard-overrides.md) — pin/remove macro tiles via refine; overrides persisted in panel data + on the pydantic model, merged latest-op-per-symbol.
