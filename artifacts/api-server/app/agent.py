@@ -325,6 +325,19 @@ def _tools() -> list:
             }, "required": ["symbols"]},
         }},
         {"type": "function", "function": {
+            "name": "add_risk_comparison",
+            "description": f"Add a side-by-side risk comparison of TWO portfolios using the multi-factor risk model: contrasts total volatility, the factor-vs-specific risk split, the diversification ratio, and the dominant factor tilts, and flags the factors where the two books diverge most. Use when the user asks to compare the risk of two portfolios, 'is A riskier / better diversified than B', or wants a side-by-side risk view. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbols_a": {"type": "array", "items": {"type": "string"}, "description": f"Portfolio A tickers. Valid: {syms}"},
+                "weights_a": {"type": "array", "items": {"type": "number"}, "description": "Optional weights for portfolio A (auto-normalized; equal-weight if omitted)."},
+                "name_a": {"type": "string", "description": "Optional display name for portfolio A."},
+                "symbols_b": {"type": "array", "items": {"type": "string"}, "description": f"Portfolio B tickers. Valid: {syms}"},
+                "weights_b": {"type": "array", "items": {"type": "number"}, "description": "Optional weights for portfolio B (auto-normalized; equal-weight if omitted)."},
+                "name_b": {"type": "string", "description": "Optional display name for portfolio B."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbols_a", "symbols_b"]},
+        }},
+        {"type": "function", "function": {
             "name": "add_factor_exposures",
             "description": f"Add a portfolio factor-tilt panel: weighted-average standardized exposures to Market, Size, Value, Momentum, Volatility, and Quality, with realized factor premia (annualized return + t-stat) and a per-holding exposure breakdown. Use for factor tilts, style exposures, or how a portfolio is positioned across factors. {sizing}",
             "parameters": {"type": "object", "properties": {
@@ -704,6 +717,7 @@ _TOOL_TO_TYPE = {
     "add_correlation_matrix": "correlation_matrix",
     "add_factor_analysis": "factor_analysis",
     "add_risk_model": "risk_model",
+    "add_risk_comparison": "risk_comparison",
     "add_factor_exposures": "factor_exposures",
     "add_performance_pnl": "performance_pnl",
     "add_brinson_attribution": "brinson_attribution",
@@ -811,7 +825,10 @@ def _system_prompt() -> str:
         "- For backtest / strategy / Sharpe / drawdown requests, use add_backtest. For Monte Carlo / "
         "simulation / forward projection / 'probability of loss' / scenario forecast requests, use add_monte_carlo.\n"
         "- For portfolio risk requests, pick the right panel: risk decomposition / factor vs specific risk / "
-        "MCTR / 'where is my risk coming from' / risk model → add_risk_model; factor tilts / style exposures / "
+        "MCTR / 'where is my risk coming from' / risk model → add_risk_model; COMPARING the risk of TWO "
+        "portfolios ('is A riskier / better diversified than B', 'compare risk of X vs Y side by side') → "
+        "add_risk_comparison (pass symbols_a and symbols_b, plus optional weights_a/weights_b and name_a/name_b); "
+        "factor tilts / style exposures / "
         "'how is my portfolio positioned across factors' → add_factor_exposures; simple VaR / tracking error → "
         "add_portfolio_risk. A risk model + factor exposures pair makes a strong portfolio-risk dashboard.\n"
         "- For portfolio construction / optimization ('build/optimize/rebalance a portfolio', 'optimal "
@@ -2045,6 +2062,7 @@ _TYPE_LABELS = {
     "correlation_matrix": "a correlation matrix",
     "factor_analysis": "a factor analysis",
     "risk_model": "a multi-factor risk model",
+    "risk_comparison": "a side-by-side risk comparison",
     "factor_exposures": "a factor exposure panel",
     "performance_pnl": "a P&L panel",
     "brinson_attribution": "a Brinson attribution",
@@ -2380,6 +2398,10 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         "replay 2008", "replay 2020", "if markets crash", "market crash",
     ])
     wants_factor_exposures = any(k in q for k in ["factor exposure", "factor tilt", "style exposure", "style tilt", "factor loading", "factor premia", "positioned across factors"])
+    wants_riskcompare = any(k in q for k in [
+        "compare risk", "risk comparison", "compare the risk", "side by side", "side-by-side",
+        "riskier than", "better diversified", "more diversified", "which is riskier",
+    ]) or (any(k in q for k in [" vs ", "versus", "against"]) and any(k in q for k in ["risk", "diversif", "volatility", "vol "]))
     wants_optimizer = any(k in q for k in [
         "optimize", "optimise", "optimal portfolio", "optimal weight", "construct a portfolio",
         "build a portfolio", "build me a portfolio", "rebalance", "max sharpe", "max-sharpe",
@@ -2792,6 +2814,31 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
             "risk_parity": "risk-parity", "hrp": "hierarchical risk parity",
         }[params["method"]]
         return panels, f"Constructed a {method_label} portfolio over {label}: optimal weights, expected return/vol/Sharpe, factor tilts and binding constraints from real data."
+
+    if wants_riskcompare:
+        # Split the mentioned tickers into two books around a vs/versus/against
+        # pivot when present; otherwise halve the list. Fall back to sensible
+        # contrasting defaults so the panel always renders something real.
+        ql = q
+        pivot = next((d for d in [" versus ", " vs ", " against "] if d in ql), None)
+        syms_a: List[str] = []
+        syms_b: List[str] = []
+        if pivot:
+            left, right = ql.split(pivot, 1)
+            syms_a = _extract_symbols(left)
+            syms_b = _extract_symbols(right)
+        if not syms_a or not syms_b:
+            if len(symbols) >= 2:
+                mid = (len(symbols) + 1) // 2
+                syms_a = symbols[:mid]
+                syms_b = symbols[mid:]
+            else:
+                syms_a = syms_a or ["NVDA", "MSFT", "GOOGL", "META", "AMZN"]
+                syms_b = syms_b or ["JPM", "XOM", "JNJ", "PG", "WMT"]
+        add("risk_comparison", {"symbols_a": syms_a, "symbols_b": syms_b}, 12, 6)
+        la = ", ".join(syms_a[:3]) + ("..." if len(syms_a) > 3 else "")
+        lb = ", ".join(syms_b[:3]) + ("..." if len(syms_b) > 3 else "")
+        return panels, f"Side-by-side risk comparison of {la} vs {lb}: total vol, factor vs specific risk, diversification ratio, and dominant factor tilts."
 
     if wants_riskmodel or wants_factor_exposures:
         port_syms = symbols if symbols else ["NVDA", "MSFT", "GOOGL", "META", "AMZN"]

@@ -2884,6 +2884,121 @@ def build_risk_model(params: dict) -> dict:
     }
 
 
+def build_risk_comparison(params: dict) -> dict:
+    """Compare the risk of two portfolios side by side.
+
+    Builds an independent multi-factor risk model for each book by reusing
+    ``build_risk_model`` (so the factor-vs-specific identities stay consistent
+    with the single-portfolio panel), then highlights the differences in total
+    volatility, the factor/specific risk split, the diversification ratio, and
+    the dominant factor tilts. Each side keeps its own honest coverage block.
+    """
+    DEFAULT_A = ["NVDA", "MSFT", "GOOGL", "META", "AMZN"]
+    DEFAULT_B = ["JPM", "XOM", "JNJ", "PG", "WMT"]
+
+    def _side(suffix: str, default_syms: list, default_name: str) -> dict:
+        sub: dict = {}
+        raw = params.get(f"symbols_{suffix}") or []
+        syms = [s for s in (str(x).upper() for x in raw) if repo.get_company(s)]
+        sub["symbols"] = syms if syms else default_syms
+        w = params.get(f"weights_{suffix}")
+        if w and len(w) == len(sub["symbols"]):
+            sub["weights"] = w
+        nm = params.get(f"name_{suffix}")
+        sub["portfolio_name"] = nm if nm else default_name
+        return build_risk_model(sub)
+
+    a = _side("a", DEFAULT_A, "Portfolio A")
+    b = _side("b", DEFAULT_B, "Portfolio B")
+
+    def _metric(label: str, key: str, unit: str, better: str) -> dict:
+        av, bv = a[key], b[key]
+        return {
+            "label": label,
+            "key": key,
+            "a": av,
+            "b": bv,
+            "diff": round(float(av) - float(bv), 2),
+            "unit": unit,
+            # which side is "better" on this metric: "a", "b", or "" (neutral/tie)
+            "better": (
+                "" if better == "none" or av == bv else
+                ("a" if ((av < bv) == (better == "lower")) else "b")
+            ),
+        }
+
+    metrics = [
+        _metric("Total Vol (ann.)", "totalVol", "%", "lower"),
+        _metric("Factor Vol", "factorVol", "%", "none"),
+        _metric("Specific Vol", "specificVol", "%", "lower"),
+        _metric("Factor Risk Share", "factorVarPct", "%", "none"),
+        _metric("Specific Risk Share", "specificVarPct", "%", "none"),
+        _metric("Diversification Ratio", "diversificationRatio", "x", "higher"),
+    ]
+
+    fa = {f["factor"]: f for f in a["factorContributions"]}
+    fb = {f["factor"]: f for f in b["factorContributions"]}
+    order = [f["factor"] for f in a["factorContributions"]]
+    for f in b["factorContributions"]:
+        if f["factor"] not in order:
+            order.append(f["factor"])
+    factors = []
+    for fn in order:
+        ea = fa.get(fn, {}).get("exposure")
+        eb = fb.get(fn, {}).get("exposure")
+        factors.append({
+            "factor": fn,
+            "exposureA": ea,
+            "exposureB": eb,
+            "exposureDiff": round(float(ea or 0.0) - float(eb or 0.0), 3),
+            "pctRiskA": fa.get(fn, {}).get("pctOfRisk"),
+            "pctRiskB": fb.get(fn, {}).get("pctOfRisk"),
+        })
+
+    def _tilts(rm: dict) -> list:
+        fs = [f for f in rm["factorContributions"] if f["factor"] != "Market"]
+        fs.sort(key=lambda f: abs(f["exposure"]), reverse=True)
+        return [{"factor": f["factor"], "exposure": f["exposure"]} for f in fs[:3]]
+
+    tilts_a = _tilts(a)
+    tilts_b = _tilts(b)
+
+    # Dominant tilt divergence: the factors where the two books differ most.
+    biggest = sorted(factors, key=lambda f: abs(f["exposureDiff"]), reverse=True)[:3]
+
+    riskier = a["portfolioName"] if a["totalVol"] > b["totalVol"] else b["portfolioName"]
+    less_risky = b["portfolioName"] if a["totalVol"] > b["totalVol"] else a["portfolioName"]
+    vol_gap = abs(round(a["totalVol"] - b["totalVol"], 1))
+    better_div = a["portfolioName"] if a["diversificationRatio"] >= b["diversificationRatio"] else b["portfolioName"]
+    parts = []
+    if vol_gap < 0.1:
+        parts.append(f"{a['portfolioName']} and {b['portfolioName']} carry near-identical total volatility ({a['totalVol']:.1f}% vs {b['totalVol']:.1f}%).")
+    else:
+        parts.append(f"{riskier} is riskier — {max(a['totalVol'], b['totalVol']):.1f}% vs {min(a['totalVol'], b['totalVol']):.1f}% annualized vol ({vol_gap:.1f} pts more than {less_risky}).")
+    parts.append(f"{better_div} is better diversified (DR {max(a['diversificationRatio'], b['diversificationRatio']):.2f} vs {min(a['diversificationRatio'], b['diversificationRatio']):.2f}).")
+    if biggest and abs(biggest[0]["exposureDiff"]) > 0.05:
+        bf = biggest[0]
+        leans = a["portfolioName"] if bf["exposureDiff"] > 0 else b["portfolioName"]
+        parts.append(f"Biggest factor divergence is {bf['factor']}, where {leans} tilts harder.")
+    summary = " ".join(parts)
+
+    src = "live" if "live" in (a.get("source"), b.get("source")) else (a.get("source") or b.get("source"))
+    as_of = max([x for x in (a.get("asOf"), b.get("asOf")) if x], default=None)
+
+    return {
+        "a": a,
+        "b": b,
+        "metrics": metrics,
+        "factors": factors,
+        "tiltsA": tilts_a,
+        "tiltsB": tilts_b,
+        "biggestDivergence": biggest,
+        "summary": summary,
+        "asOf": as_of,
+        "source": src,
+    }
+
+
 # --------------------------- risk monitor ---------------------------
 # Real historical crisis windows replayed onto the current book. Each is a
 # genuine market dislocation; the book's holdings' REAL returns over the window
@@ -6096,6 +6211,24 @@ _reg(SkillDef(
         {"name": "compute_mctr", "description": "Derive each holding's marginal contribution to total risk.", "expectedOutput": "Per-holding MCTR and percent of risk."},
     ],
     build_risk_model, "Risk Model",
+))
+_reg(SkillDef(
+    "risk-comparison", "Risk Comparison (A vs B)", "risk_comparison",
+    "Compares the risk of TWO portfolios side by side using the same Barra-style "
+    "multi-factor model as the risk model (reused per portfolio so the identities "
+    "stay consistent). Highlights the difference in total volatility, the factor-vs-"
+    "specific risk split, the diversification ratio, and the dominant factor tilts, "
+    "plus the factors where the two books diverge most. Each side keeps its own "
+    "honest coverage block. Use when the user asks to COMPARE the risk of two "
+    "portfolios, 'is portfolio A riskier / better diversified than B', or wants a "
+    "side-by-side risk view. Pass symbols_a/symbols_b (and optional weights_a/"
+    "weights_b, name_a/name_b).",
+    [
+        {"name": "resolve_portfolios", "description": "Map both requested portfolios (tickers + weights) to normalized books.", "expectedOutput": "Two weighted portfolios."},
+        {"name": "build_risk_models", "description": "Estimate a multi-factor risk model for each portfolio from real data.", "expectedOutput": "Two fitted risk decompositions with coverage."},
+        {"name": "compare_risk", "description": "Diff total/factor/specific vol, diversification ratio and factor tilts.", "expectedOutput": "A side-by-side comparison with the biggest divergences."},
+    ],
+    build_risk_comparison, "Risk Comparison",
 ))
 _reg(SkillDef(
     "risk-monitor", "Risk Management & Monitoring", "risk_monitor",

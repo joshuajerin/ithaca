@@ -65,6 +65,8 @@ def get_suggestions():
         "Deep dive on NVIDIA",
         "Explain what I'm seeing on this dashboard",
         "Compare NVDA, AMD and TSM",
+        "Compare the risk of NVDA, MSFT, GOOGL vs JPM, XOM, JNJ side by side",
+        "Is a tech portfolio riskier or better diversified than a defensive one?",
         "What's the difference between IV and HV?",
         "Screen the robotics & automation sector",
         "Show me the EV and automotive heatmap",

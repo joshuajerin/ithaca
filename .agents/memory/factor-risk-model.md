@@ -41,3 +41,12 @@ each with a coverage footer. The heuristic routes risk-decomposition language to
 over the estimation window from `model.factor_returns` (np.cumprod compounding) + a
 summary table (cum/ann/vol/Sharpe/t). Routing trap: "cumulative factor returns" must be
 checked BEFORE the attribution block because wants_pnl matches plain "cumulative return".
+
+**`risk_comparison`** (A-vs-B) is a thin wrapper: it calls `build_risk_model` once per
+portfolio so the factor/specific identities match the single-portfolio panel exactly,
+then diffs total/factor/specific vol, the variance split, diversification ratio and
+factor exposures. Routed *before* `risk_model` in the heuristic on compare/vs/"riskier
+than"/"better diversified" language; heuristic splits tickers around a vs/versus/against
+pivot (else halves the list). Note: `coverage.included` reflects the ~60-name estimation
+universe, not the portfolio's holding count — so both sides legitimately show the same
+"N modeled" number; do not mistake that for a bug.
