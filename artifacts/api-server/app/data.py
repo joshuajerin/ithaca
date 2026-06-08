@@ -1496,6 +1496,27 @@ MACRO_ASSETS: Dict[str, dict] = {
     "VIX":     {"name": "VIX",                 "group": "equities",    "price": 14.82,   "changePct": -3.21, "unit": "index"},
 }
 
+# Internal macro symbol -> the symbol Yahoo Finance expects for a live quote.
+# Only assets with a clean, free Yahoo series are mapped; the rest (US2Y,
+# US2Y10Y spread, TIPS10Y breakeven, IRON) have no clean free feed and keep the
+# curated mock value, per-tile, in build_macro_dashboard.
+MACRO_YAHOO: Dict[str, str] = {
+    "US10Y":  "^TNX",        # 10Y yield, already quoted in percent
+    "DXY":    "DX-Y.NYB",    # US Dollar Index
+    "EURUSD": "EURUSD=X",
+    "USDJPY": "JPY=X",
+    "USDCNH": "CNH=X",
+    "WTI":    "CL=F",        # WTI crude front-month future
+    "GOLD":   "GC=F",        # Gold front-month future
+    "COPPER": "HG=F",        # Copper front-month future
+    "SPX":    "^GSPC",       # S&P 500
+    "NDX":    "^NDX",        # Nasdaq 100
+    "EEM":    "EEM",         # iShares EM ETF
+    "HSCEI":  "^HSCE",       # Hang Seng China Enterprises
+    "CSI300": "000300.SS",   # CSI 300
+    "VIX":    "^VIX",
+}
+
 MACRO_THEMES: Dict[str, dict] = {
     "global": {
         "title": "Global Macro Dashboard",
@@ -1534,29 +1555,6 @@ MACRO_THEMES: Dict[str, dict] = {
         },
     },
 }
-
-# Live-source mapping for macro assets. Only symbols with a reliable, free,
-# key-less Yahoo quote are listed here; everything else (US2Y/2Y10Y spread/TIPS
-# breakeven/iron ore — no clean free intraday source) stays on the curated mock
-# values above and is reported as such via the freshness badge. The values map
-# the internal macro code to the symbol Yahoo's chart endpoint expects.
-MACRO_YAHOO: Dict[str, str] = {
-    "US10Y":  "^TNX",        # CBOE 10Y Treasury yield (quoted as a % level)
-    "DXY":    "DX-Y.NYB",    # US Dollar Index
-    "EURUSD": "EURUSD=X",
-    "USDJPY": "JPY=X",
-    "USDCNH": "CNH=X",
-    "WTI":    "CL=F",        # WTI crude front-month future
-    "GOLD":   "GC=F",        # Gold front-month future
-    "COPPER": "HG=F",        # Copper front-month future
-    "SPX":    "^GSPC",
-    "NDX":    "^NDX",
-    "EEM":    "EEM",
-    "HSCEI":  "^HSCE",
-    "CSI300": "000300.SS",
-    "VIX":    "^VIX",
-}
-
 
 def macro_yahoo_symbol(symbol: str) -> Optional[str]:
     """Yahoo chart symbol for a macro asset, or None if it has no live source."""

@@ -711,7 +711,7 @@ def _news_item(r: dict) -> dict:
     }
 
 
-def news_for(scope_type: str, scope: str, limit: int = 40) -> List[dict]:
+def news_for(scope_type: str, scope: str, limit: int = 100) -> List[dict]:
     if db.db_available():
         try:
             if scope_type == "topic":
@@ -832,16 +832,16 @@ def refresh_news_live(scope_type: str, scope: str) -> None:
     try:
         from .sources import news as n_src
         if scope_type == "topic":
-            items = n_src.fetch_topic_news(scope, limit=40, timeout=8.0)
+            items = n_src.fetch_topic_news(scope, limit=100, timeout=8.0)
         elif scope_type == "symbol":
             sym = scope.upper()
             company = get_company(sym)
             sid = company["sector"] if company else None
-            items = n_src.fetch_news([sym], sid, limit=40, timeout=8.0)
+            items = n_src.fetch_news([sym], sid, limit=100, timeout=8.0)
         else:
             sid = resolve_sector(scope) or scope
             syms = symbols_in_sector(sid)[:8]
-            items = n_src.fetch_news(syms, sid, limit=40, timeout=8.0) if syms else []
+            items = n_src.fetch_news(syms, sid, limit=100, timeout=8.0) if syms else []
         items = n_src.dedupe(items)
         if items:
             _upsert_news(items)

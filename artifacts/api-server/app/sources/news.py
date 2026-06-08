@@ -39,7 +39,7 @@ _SOURCE_GOOGLE = "google-news"
 def fetch_news(
     symbols: List[str],
     sector: Optional[str] = None,
-    limit: int = 20,
+    limit: int = 100,
     timeout: Optional[float] = None,
 ) -> List[Dict]:
     """Fetch and normalize Yahoo RSS news for one or more symbols. Raises on network error."""
@@ -59,7 +59,7 @@ def fetch_news(
 
 def fetch_topic_news(
     query: str,
-    limit: int = 30,
+    limit: int = 100,
     timeout: Optional[float] = None,
 ) -> List[Dict]:
     """Free-text/topic headline search via Google News RSS. Raises on network error."""
@@ -77,7 +77,7 @@ def fetch_topic_news(
     return items
 
 
-def fetch_market_news(limit: int = 30, timeout: Optional[float] = None) -> List[Dict]:
+def fetch_market_news(limit: int = 100, timeout: Optional[float] = None) -> List[Dict]:
     """Broad market/business headlines via Google News RSS. Raises on network error."""
     url = f"{_GOOGLE_BUSINESS}?hl=en-US&gl=US&ceid=US:en"
     feed = _get_feed(_SOURCE_GOOGLE, url, timeout=timeout)

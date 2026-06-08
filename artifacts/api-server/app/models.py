@@ -78,6 +78,7 @@ class PriceChartData(BaseModel):
     range: str
     ranges: List[str] = []
     points: List[PricePoint]
+    pending: Optional[bool] = False
 
 
 # --- news ---
@@ -121,6 +122,7 @@ class FundamentalsData(BaseModel):
     metrics: List[FundamentalMetric]
     country: Optional[str] = None
     exchange: Optional[str] = None
+    pending: Optional[bool] = False
 
 
 # --- screener ---
@@ -254,6 +256,7 @@ class OrderBookData(BaseModel):
     blockThreshold: Optional[float] = None
     sessionStart: Optional[str] = None
     sessionEnd: Optional[str] = None
+    pending: Optional[bool] = False
 
 
 # --- trade_flow ---
@@ -275,6 +278,7 @@ class TradeFlowData(BaseModel):
     totalVolume: float
     blockThreshold: float
     prints: List[FlowPrint]
+    pending: Optional[bool] = False
 
 
 # --- tca_report ---
@@ -392,6 +396,8 @@ class MacroDashboardData(BaseModel):
     groups: List[MacroGroup]
     overrides: List[MacroOverride] = []
     regime: Optional[MacroRegime] = None
+    asOf: Optional[str] = None
+    source: Optional[str] = None
 
 
 # --- yield_curve ---

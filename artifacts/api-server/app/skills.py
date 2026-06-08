@@ -130,13 +130,27 @@ def _iv_smile(moneyness: float, T_years: float, base_iv: float) -> float:
 
 
 # ----------------------------- builders -----------------------------
+def _pending_chart(symbol: str, rng: str) -> dict:
+    """Graceful 'fetching live data' envelope for a just-enqueued symbol.
+
+    The symbol has been queued for on-demand ingestion; until the worker lands
+    real prices we return an empty, clearly-flagged panel rather than erroring.
+    It fills in on the next query once ingestion completes."""
+    return {
+        "symbol": symbol, "name": symbol, "currency": "USD",
+        "last": 0.0, "change": 0.0, "changePct": 0.0,
+        "range": rng, "points": [], "pending": True,
+        "asOf": None, "source": "pending",
+    }
+
+
 def build_price_chart(params: dict) -> dict:
     symbol = (params.get("symbol") or "NVDA").upper()
     repo.note_symbol(symbol)  # request live data on demand for this symbol
     company = repo.get_company(symbol)
-    if not company:
-        raise ValueError(f"Unknown symbol: {symbol}")
     rng = (params.get("range") or "3M").upper()
+    if not company:
+        return _pending_chart(symbol, rng)
     if rng not in RANGE_DAYS:
         rng = "3M"
     # Pass the selected window straight to the data layer so it slices the stored
@@ -161,7 +175,7 @@ def build_price_chart(params: dict) -> dict:
     }
 
 
-NEWS_PANEL_LIMIT = 40
+NEWS_PANEL_LIMIT = 100
 
 
 def build_news(params: dict) -> dict:
@@ -313,7 +327,11 @@ def build_fundamentals(params: dict) -> dict:
     repo.note_symbol(symbol)  # request live data on demand for this symbol
     company = repo.get_company(symbol)
     if not company:
-        raise ValueError(f"Unknown symbol: {symbol}")
+        return {
+            "symbol": symbol, "name": symbol, "metrics": [],
+            "country": None, "exchange": None, "pending": True,
+            "asOf": None, "source": "pending",
+        }
     rets = repo.period_returns(symbol, windows=("1M", "YTD", "1Y"))["returns"]
 
     def _ret(window: str):
@@ -558,9 +576,14 @@ def build_order_book(params: dict) -> dict:
     top-level snapshot; absent, the latest (live) frame is used.
     """
     symbol = (params.get("symbol") or "NVDA").upper()
-    company = data.get_company(symbol)
+    repo.note_symbol(symbol)  # resolve any valid ticker on demand
+    company = repo.get_company(symbol)
     if not company:
-        raise ValueError(f"Unknown symbol: {symbol}")
+        return {
+            "symbol": symbol, "name": symbol, "lastPrice": 0.0, "spread": 0.0,
+            "bids": [], "asks": [], "tape": [], "pending": True,
+            "asOf": None, "source": "pending",
+        }
     last = company["price"]
     avg_vol = company.get("volume") or 1_000_000
     seed = data._seed(symbol + "obk")
@@ -804,9 +827,14 @@ def build_portfolio_risk(params: dict) -> dict:
 
 def build_trade_flow(params: dict) -> dict:
     symbol = (params.get("symbol") or "NVDA").upper()
-    company = data.get_company(symbol)
+    repo.note_symbol(symbol)  # resolve any valid ticker on demand
+    company = repo.get_company(symbol)
     if not company:
-        raise ValueError(f"Unknown symbol: {symbol}")
+        return {
+            "symbol": symbol, "name": symbol, "darkPoolPct": 0.0,
+            "buyImbalance": 0.0, "totalVolume": 0.0, "blockThreshold": 0.0,
+            "prints": [], "pending": True, "asOf": None, "source": "pending",
+        }
     last = company["price"]
     avg_vol = company["volume"]
     seed = data._seed(symbol + "flow")
@@ -1264,6 +1292,8 @@ def build_macro_dashboard(params: dict) -> dict:
     theme_raw = params.get("theme") or "global"
     theme_key = data.resolve_macro_theme(theme_raw)
     theme_def = data.MACRO_THEMES[theme_key]
+    # Live macro quotes from the dedicated worker feed; falls back to the curated
+    # mock per tile when an asset has no clean feed or hasn't been ingested yet.
     live = repo.macro_quotes()  # {sym: {price, changePct, sparkline, asOf}}
     as_ofs: List[str] = []
 

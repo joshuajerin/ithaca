@@ -32,12 +32,12 @@ PRICE_INTERVAL = 90
 FUNDAMENTALS_INTERVAL = 900
 NEWS_INTERVAL = 120
 SENTIMENT_INTERVAL = 600
+MACRO_INTERVAL = 120
 ONDEMAND_INTERVAL = 15
 # Daily mark cadence: re-check hourly. record_daily_snapshots is idempotent per
 # trading day (one row per strategy per day), so an hourly pass simply keeps the
 # day's NAV fresh and settles to the close once prices stop moving.
 SNAPSHOT_INTERVAL = 3600
-MACRO_INTERVAL = 120
 
 # A macro quote is only treated as "live" when its upstream timestamp is within
 # this many days. Some Yahoo macro symbols (illiquid futures, etc.) go stale or
@@ -158,6 +158,14 @@ def _ensure_macro_schema() -> None:
         )
         """
     )
+    # Reconcile a table left by an earlier macro schema (name/spark columns):
+    # CREATE TABLE IF NOT EXISTS is a no-op when the table already exists, so add
+    # the live-feed columns idempotently in case the table predates this shape.
+    for ddl in (
+        "ALTER TABLE macro_quotes ADD COLUMN IF NOT EXISTS sparkline JSONB",
+        "ALTER TABLE macro_quotes ADD COLUMN IF NOT EXISTS is_live BOOLEAN NOT NULL DEFAULT FALSE",
+    ):
+        db.execute(ddl)
 
 
 def _tracked_symbols() -> List[str]:
@@ -456,7 +464,7 @@ async def _ingest_news_for(symbols: List[str], sector: Optional[str]) -> None:
     if not symbols:
         return
     try:
-        items = await _net(n_src.fetch_news, symbols, sector, 40)
+        items = await _net(n_src.fetch_news, symbols, sector, 100)
         items = n_src.dedupe(items or [])
         if items:
             await asyncio.to_thread(_upsert_news, items)
@@ -470,7 +478,7 @@ async def _ingest_market_news() -> None:
     """Broad, key-less market/business headlines (Google News) so the feed has
     breadth beyond per-ticker stories. Best-effort."""
     try:
-        items = await _net(n_src.fetch_market_news, 40)
+        items = await _net(n_src.fetch_market_news, 100)
         items = n_src.dedupe(items or [])
         if items:
             await asyncio.to_thread(_upsert_news, items)

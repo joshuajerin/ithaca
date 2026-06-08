@@ -1,7 +1,7 @@
 import React, { useState, useRef } from "react";
 import type { Panel } from "@workspace/api-client-react";
 import { useRefinePanel } from "@workspace/api-client-react";
-import { Loader2, AlertTriangle, Settings2, Download, FileText, Table2 } from "lucide-react";
+import { Loader2, AlertTriangle, Settings2, Download, FileText, Table2, Satellite } from "lucide-react";
 import { EXPORTABLE_PANEL_TYPES, exportPanelCsv, exportPanelPdf } from "@/lib/panelExport";
 import { PriceChartPanel } from "./panels/PriceChartPanel";
 import { NewsPanel } from "./panels/NewsPanel";
@@ -195,6 +195,24 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted, onBui
         <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground gap-3 p-4 text-center">
           <AlertTriangle className="w-5 h-5" strokeWidth={1.25} />
           <span className="editorial-label text-[9px]">Data Acquisition Failed</span>
+        </div>
+      );
+    }
+
+    if ((panel.data as any)?.pending) {
+      const sym = (panel.data as any)?.symbol;
+      return (
+        <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground gap-3 p-4 text-center">
+          <span className="relative flex items-center justify-center">
+            <Satellite className="w-5 h-5 text-white/70" strokeWidth={1.25} />
+            <Loader2 className="w-8 h-8 absolute animate-spin text-white/20" strokeWidth={1} />
+          </span>
+          <span className="editorial-label text-[9px]">
+            Fetching live data{sym ? ` · ${sym}` : ""}
+          </span>
+          <span className="text-[10px] text-muted-foreground/70 max-w-[220px] leading-snug">
+            Live feed is warming up for this ticker — ask again in a moment and it will populate.
+          </span>
         </div>
       );
     }
