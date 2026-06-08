@@ -1,6 +1,5 @@
-import React, { useState } from "react";
+import React from "react";
 import type { CorrelationMatrixData } from "@workspace/api-client-react";
-import { ScrollArea } from "@/components/ui/scroll-area";
 
 function corrColor(v: number): string {
   const clamped = Math.max(-1, Math.min(1, v));
@@ -25,10 +24,11 @@ function textColor(v: number): string {
 
 interface Props {
   data: CorrelationMatrixData;
+  onRefine?: (params: Record<string, unknown>) => void;
 }
 
-export function CorrelationMatrixPanel({ data }: Props) {
-  const [window, setWindow] = useState<30 | 90>(data.window as 30 | 90);
+export function CorrelationMatrixPanel({ data, onRefine }: Props) {
+  const window = data.window as 30 | 90;
   const { symbols, matrix, betas } = data;
 
   return (
@@ -41,7 +41,9 @@ export function CorrelationMatrixPanel({ data }: Props) {
           {([30, 90] as const).map((w) => (
             <button
               key={w}
-              onClick={() => setWindow(w)}
+              onClick={() => {
+                if (w !== window) onRefine?.({ symbols, window: w });
+              }}
               className={`text-[9px] px-2 py-0.5 border uppercase tracking-widest transition-colors ${
                 window === w
                   ? "border-white text-white bg-white/10"

@@ -903,6 +903,7 @@ def build_backtest(params: dict) -> dict:
     return {
         "symbol": symbol,
         "strategy": result["strategy"],
+        "range": rng_key,
         "curve": result["curve"],
         "drawdown": result["drawdown"],
         "tradeLog": result["tradeLog"][:50],
@@ -2594,36 +2595,74 @@ def build_structured_product(params: dict) -> dict:
 
 
 def build_correlation_matrix(params: dict) -> dict:
+    import numpy as np
+
     symbols = [s.upper() for s in (params.get("symbols") or []) if data.get_company(s.upper())]
     if len(symbols) < 2:
         symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "META"]
-    
-    seed = data._seed("_".join(sorted(symbols)) + "corr")
 
-    def rnd():
-        nonlocal seed
-        seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
-        return seed / 0x7FFFFFFF
+    # The 30/90-day toggle picks the rolling window the correlations are measured
+    # over. We compute REAL pairwise correlations from each name's daily returns
+    # over the selected window; if any holding lacks enough history we fall back
+    # to a deterministic, window-aware estimate so the panel always renders.
+    window = int(params.get("window") or 30)
+    window = 90 if window >= 60 else 30
 
-    # Symmetric n x n matrix
-    matrix = []
-    for i, s1 in enumerate(symbols):
-        row = []
-        for j, s2 in enumerate(symbols):
-            if i == j:
-                val = 1.0
-            elif i > j:
-                val = matrix[j][i]
-            else:
-                # Base correlation 0.3-0.7
-                val = round(0.3 + rnd() * 0.4, 2)
-                # Boost if same sector
-                c1 = data.get_company(s1)
-                c2 = data.get_company(s2)
-                if c1 and c2 and c1["sector"] == c2["sector"]:
-                    val = min(0.99, val + 0.2)
-            row.append(val)
-        matrix.append(row)
+    rets: dict = {}
+    sources: List[str] = []
+    as_ofs: List[str] = []
+    for s in symbols:
+        meta = repo.price_series_meta(s, days=window + 10)
+        sources.append(meta.get("source", "mock"))
+        if meta.get("asOf"):
+            as_ofs.append(meta["asOf"])
+        closes = np.asarray([float(p["c"]) for p in meta["points"] if p.get("c")], dtype=float)
+        if closes.size >= 3:
+            r = closes[1:] / closes[:-1] - 1.0
+            rets[s] = r[-window:]
+
+    have_real = len(rets) == len(symbols) and min(
+        (rets[s].size for s in symbols), default=0
+    ) >= 5
+
+    if have_real:
+        min_len = min(rets[s].size for s in symbols)
+        m = np.vstack([rets[s][-min_len:] for s in symbols])
+        cm = np.corrcoef(m)
+        matrix = [
+            [1.0 if i == j else round(float(cm[i][j]), 2) for j in range(len(symbols))]
+            for i in range(len(symbols))
+        ]
+        source = "live" if sources and all(x == "live" for x in sources) else "mock"
+        as_of = max(as_ofs) if as_ofs else None
+    else:
+        # Deterministic fallback. Folding the window into the seed makes the
+        # 30D and 90D views genuinely different rather than identical.
+        seed = data._seed("_".join(sorted(symbols)) + f"corr{window}")
+
+        def rnd():
+            nonlocal seed
+            seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
+            return seed / 0x7FFFFFFF
+
+        matrix = []
+        for i, s1 in enumerate(symbols):
+            row = []
+            for j, s2 in enumerate(symbols):
+                if i == j:
+                    val = 1.0
+                elif i > j:
+                    val = matrix[j][i]
+                else:
+                    val = round(0.3 + rnd() * 0.4, 2)
+                    c1 = data.get_company(s1)
+                    c2 = data.get_company(s2)
+                    if c1 and c2 and c1["sector"] == c2["sector"]:
+                        val = min(0.99, val + 0.2)
+                row.append(val)
+            matrix.append(row)
+        source = "mock"
+        as_of = None
 
     betas = []
     for s in symbols:
@@ -2638,7 +2677,10 @@ def build_correlation_matrix(params: dict) -> dict:
     return {
         "symbols": symbols,
         "matrix": matrix,
-        "betas": betas
+        "window": window,
+        "betas": betas,
+        "source": source,
+        "asOf": as_of,
     }
 
 

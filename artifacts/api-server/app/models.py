@@ -726,6 +726,7 @@ class TradeLogEntry(BaseModel):
 class BacktestData(BaseModel):
     symbol: str
     strategy: str
+    range: Optional[str] = None
     curve: List[BacktestPoint]
     drawdown: List[DrawdownPoint]
     stats: BacktestStats
@@ -1349,7 +1350,7 @@ class Transcription(BaseModel):
 class RefineRequest(BaseModel):
     sessionId: str
     panelId: str
-    instruction: str
+    instruction: str = ""
     params: Optional[Dict[str, Any]] = None
 
 

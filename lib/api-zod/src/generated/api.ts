@@ -197,6 +197,7 @@ export const GetDefaultDashboardResponse = zod.object({
 }),zod.object({
   "symbol": zod.string(),
   "strategy": zod.string(),
+  "range": zod.string().optional().describe('Lookback window used for the backtest, e.g. 1M, 3M, 6M, 1Y.'),
   "curve": zod.array(zod.object({
   "t": zod.string(),
   "strategy": zod.number(),
@@ -572,6 +573,7 @@ export const OrchestrateResponse = zod.object({
 }),zod.object({
   "symbol": zod.string(),
   "strategy": zod.string(),
+  "range": zod.string().optional().describe('Lookback window used for the backtest, e.g. 1M, 3M, 6M, 1Y.'),
   "curve": zod.array(zod.object({
   "t": zod.string(),
   "strategy": zod.number(),
@@ -895,7 +897,9 @@ export const SaveDashboardBody = zod.object({
   "marketCap": zod.number(),
   "peRatio": zod.number().nullish(),
   "volume": zod.number(),
-  "sector": zod.string()
+  "sector": zod.string(),
+  "subIndustry": zod.string().nullish(),
+  "logoUrl": zod.string().nullish()
 }))
 }),zod.object({
   "title": zod.string(),
@@ -905,7 +909,9 @@ export const SaveDashboardBody = zod.object({
   "changePct": zod.number(),
   "ret1Y": zod.number().nullish(),
   "marketCap": zod.number(),
-  "sector": zod.string()
+  "sector": zod.string(),
+  "subIndustry": zod.string().nullish(),
+  "logoUrl": zod.string().nullish()
 }))
 }),zod.object({
   "scope": zod.string(),
@@ -953,6 +959,7 @@ export const SaveDashboardBody = zod.object({
 }),zod.object({
   "symbol": zod.string(),
   "strategy": zod.string(),
+  "range": zod.string().optional().describe('Lookback window used for the backtest, e.g. 1M, 3M, 6M, 1Y.'),
   "curve": zod.array(zod.object({
   "t": zod.string(),
   "strategy": zod.number(),
@@ -1265,7 +1272,9 @@ export const RestoreDashboardResponse = zod.object({
   "marketCap": zod.number(),
   "peRatio": zod.number().nullish(),
   "volume": zod.number(),
-  "sector": zod.string()
+  "sector": zod.string(),
+  "subIndustry": zod.string().nullish(),
+  "logoUrl": zod.string().nullish()
 }))
 }),zod.object({
   "title": zod.string(),
@@ -1275,7 +1284,9 @@ export const RestoreDashboardResponse = zod.object({
   "changePct": zod.number(),
   "ret1Y": zod.number().nullish(),
   "marketCap": zod.number(),
-  "sector": zod.string()
+  "sector": zod.string(),
+  "subIndustry": zod.string().nullish(),
+  "logoUrl": zod.string().nullish()
 }))
 }),zod.object({
   "scope": zod.string(),
@@ -1323,6 +1334,7 @@ export const RestoreDashboardResponse = zod.object({
 }),zod.object({
   "symbol": zod.string(),
   "strategy": zod.string(),
+  "range": zod.string().optional().describe('Lookback window used for the backtest, e.g. 1M, 3M, 6M, 1Y.'),
   "curve": zod.array(zod.object({
   "t": zod.string(),
   "strategy": zod.number(),
@@ -1547,7 +1559,9 @@ export const RestoreDashboardResponse = zod.object({
   "panelId": zod.string().nullish()
 }).describe('A spoken narration chunk, optionally tied to a panel to highlight while it is read.')).nullish().describe('Ordered spoken narration segments for voice mode; null\/omitted for text requests.'),
   "intent": zod.string().nullish().describe('\"question\" when the message was answered conversationally (panels unchanged) or \"build\" when the dashboard was composed\/modified.'),
-  "answer": zod.string().nullish().describe('Conversational answer text for a question intent; null\/omitted for a build.')
+  "answer": zod.string().nullish().describe('Conversational answer text for a question intent; null\/omitted for a build.'),
+  "degraded": zod.boolean().nullish().describe('True when the dashboard\/narration fell back to the keyword heuristic because the AI was slow or unavailable (rather than AI-composed).'),
+  "note": zod.string().nullish().describe('Short human-readable notice explaining a degraded\/fallback response (e.g. AI was slow); null\/omitted for normal AI responses.')
 })
 
 
@@ -1626,8 +1640,8 @@ export const NavigateResponse = zod.object({
 export const RefinePanelBody = zod.object({
   "sessionId": zod.string(),
   "panelId": zod.string(),
-  "instruction": zod.string(),
-  "params": zod.record(zod.string(), zod.unknown()).nullish().describe('Optional explicit skill parameters. When provided, they are applied directly (bypassing instruction parsing), enabling deterministic in-panel controls such as switching an intraday chart\'s resolution and window without re-issuing a command.')
+  "instruction": zod.string().optional(),
+  "params": zod.record(zod.string(), zod.unknown()).nullish().describe('Optional explicit skill parameters. When provided, they are applied directly (bypassing instruction parsing), enabling deterministic in-panel controls such as switching a backtest\'s strategy\/range, a correlation window, or swapping tickers without re-issuing a command.')
 })
 
 export const RefinePanelResponse = zod.object({
@@ -1762,6 +1776,7 @@ export const RefinePanelResponse = zod.object({
 }),zod.object({
   "symbol": zod.string(),
   "strategy": zod.string(),
+  "range": zod.string().optional().describe('Lookback window used for the backtest, e.g. 1M, 3M, 6M, 1Y.'),
   "curve": zod.array(zod.object({
   "t": zod.string(),
   "strategy": zod.number(),

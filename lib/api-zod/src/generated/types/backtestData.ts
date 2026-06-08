@@ -13,6 +13,8 @@ import type { TradeLogEntry } from './tradeLogEntry';
 export interface BacktestData {
   symbol: string;
   strategy: string;
+  /** Lookback window used for the backtest, e.g. 1M, 3M, 6M, 1Y. */
+  range?: string;
   curve: BacktestPoint[];
   drawdown: DrawdownPoint[];
   stats: BacktestStats;

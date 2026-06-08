@@ -3050,8 +3050,8 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
 def refine(
     session_id: str,
     panel_id: str,
-    instruction: str,
-    explicit_params: Optional[dict] = None,
+    instruction: str = "",
+    params: Optional[dict] = None,
 ) -> Optional[dict]:
     panel = state.get_panel(session_id, panel_id)
     if panel is None:
@@ -3060,30 +3060,31 @@ def refine(
     layout = panel["layout"]
     title = panel.get("title")
 
-    # Deterministic in-panel controls pass explicit skill params, which are
-    # applied directly so the panel re-fetches exactly what was selected
-    # (no LLM/heuristic parsing of a free-text instruction).
-    params = None
+    resolved = None
     keep_title = None
-    if explicit_params:
-        params = dict(explicit_params)
+    if params:
+        # Structured refine: interactive panel controls send explicit parameters
+        # so we rebuild deterministically without natural-language parsing. The
+        # quant panels merge control values over current data via
+        # _structured_refine_params; other panel types apply params directly.
+        resolved = _structured_refine_params(panel_type, panel, params)
     elif panel_type == "risk_monitor":
         # The risk monitor's custom shock builder submits a canonical instruction
         # that we parse deterministically and apply against the panel's CURRENT
         # book (which the panel data lets us reconstruct), so the shock never
         # resets the portfolio.
-        params = _risk_monitor_shock_params(panel, instruction)
-        if params is not None:
+        resolved = _risk_monitor_shock_params(panel, instruction)
+        if resolved is not None:
             keep_title = title  # a shock keeps the same book, so keep its title
-    if params is None and panel_type == "supply_chain":
+    if resolved is None and panel_type == "supply_chain":
         # Drill-down: the graph emits a canonical "recenter" instruction when a
         # supplier/customer node is clicked. Parse it deterministically so the
         # recompose never depends on the LLM, and let the title regenerate to the
         # new subject (keep_title stays None).
-        params = _supply_chain_recenter_params(instruction)
-    if params is None:
-        params = _refine_params(panel_type, panel, instruction)
-    updated = harness.run_skill(panel_type, params, layout, title=keep_title, panel_id=panel_id)
+        resolved = _supply_chain_recenter_params(instruction)
+    if resolved is None:
+        resolved = _refine_params(panel_type, panel, instruction)
+    updated = harness.run_skill(panel_type, resolved, layout, title=keep_title, panel_id=panel_id)
     state.update_panel(session_id, updated)
     return updated
 
@@ -3229,6 +3230,27 @@ def _supply_chain_recenter_params(instruction: str) -> Optional[dict]:
     if not m:
         return None
     return {"symbol": m.group(1).upper()}
+
+
+def _structured_refine_params(panel_type: str, panel: dict, params: dict) -> dict:
+    """Merge explicit control values over the panel's current parameters so a
+    partial update (e.g. only the time window) keeps the rest of the state."""
+    d = panel.get("data") or {}
+    out: dict = {}
+    if panel_type == "portfolio_risk":
+        out["symbols"] = [s.upper() for s in (params.get("symbols") or d.get("symbols") or [])]
+    elif panel_type == "correlation_matrix":
+        out["symbols"] = [s.upper() for s in (params.get("symbols") or d.get("symbols") or [])]
+        out["window"] = params.get("window") or d.get("window") or 30
+    elif panel_type == "backtest":
+        out["symbol"] = (params.get("symbol") or d.get("symbol") or "").upper() or None
+        out["strategy"] = params.get("strategy") or d.get("strategy")
+        out["range"] = params.get("range") or d.get("range")
+    elif panel_type == "factor_analysis":
+        out["symbol"] = (params.get("symbol") or d.get("symbol") or "").upper() or None
+    else:
+        out = dict(params)
+    return {k: v for k, v in out.items() if v is not None}
 
 
 def _refine_params(panel_type: str, panel: dict, instruction: str) -> dict:
@@ -3448,6 +3470,31 @@ def _refine_params_heuristic(panel_type: str, panel: dict, instruction: str) -> 
             return {"sector": sector}
         return {}
     d = panel.get("data") or {}
+    if panel_type == "portfolio_risk":
+        return {"symbols": syms or d.get("symbols") or []}
+    if panel_type == "factor_analysis":
+        return {"symbol": syms[0] if syms else d.get("symbol")}
+    if panel_type == "correlation_matrix":
+        out = {"symbols": syms if len(syms) >= 2 else d.get("symbols")}
+        ql = instruction.lower()
+        if "90" in ql:
+            out["window"] = 90
+        elif "30" in ql:
+            out["window"] = 30
+        elif d.get("window"):
+            out["window"] = d["window"]
+        return out
+    if panel_type == "backtest":
+        out = {"symbol": syms[0] if syms else d.get("symbol")}
+        ql = instruction.lower()
+        if any(k in ql for k in ["momentum", "mean", "revert", "revers", "buy", "hold", "crossover", "moving average", "trend"]):
+            out["strategy"] = engine.normalize_strategy(ql)
+        elif d.get("strategy"):
+            out["strategy"] = d["strategy"]
+        for r in ["1M", "3M", "6M", "1Y", "YTD"]:
+            if r.lower() in ql:
+                out["range"] = r
+        return out
     if panel_type in ("price_chart", "fundamentals", "supply_chain", "dcf_model", "earnings_transcript") and d.get("symbol"):
         return {"symbol": d["symbol"]}
     if panel_type in ("iv_surface", "vol_term_structure", "options_strategy", "structured_product") and d.get("symbol"):

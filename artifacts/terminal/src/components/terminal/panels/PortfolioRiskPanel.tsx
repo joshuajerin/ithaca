@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import type { PortfolioRiskData } from "@workspace/api-client-react";
 import {
   ResponsiveContainer,
@@ -11,10 +11,31 @@ import {
   Cell,
   ReferenceLine,
 } from "recharts";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { X } from "lucide-react";
 
-export function PortfolioRiskPanel({ data }: { data: PortfolioRiskData }) {
+interface Props {
+  data: PortfolioRiskData;
+  onRefine?: (params: Record<string, unknown>) => void;
+}
+
+export function PortfolioRiskPanel({ data, onRefine }: Props) {
   const { summary, varHistogram, factorExposures } = data;
+  const [draft, setDraft] = useState("");
+
+  const symbols = data.symbols;
+
+  const removeSymbol = (s: string) => {
+    if (symbols.length <= 1) return;
+    onRefine?.({ symbols: symbols.filter((x) => x !== s) });
+  };
+
+  const addSymbol = (e: React.FormEvent) => {
+    e.preventDefault();
+    const t = draft.trim().toUpperCase();
+    setDraft("");
+    if (!t || symbols.includes(t)) return;
+    onRefine?.({ symbols: [...symbols, t] });
+  };
 
   const var95Bin = -summary.var95;
   const maxCount = Math.max(...varHistogram.map((b) => b.count));
@@ -126,12 +147,37 @@ export function PortfolioRiskPanel({ data }: { data: PortfolioRiskData }) {
 
       <div className="shrink-0">
         <div className="text-[9px] text-muted-foreground uppercase tracking-widest mb-1">Holdings</div>
-        <div className="flex flex-wrap gap-1.5">
-          {data.symbols.map((s) => (
-            <span key={s} className="text-[10px] border border-border px-1.5 py-0.5 font-mono text-white/70">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {symbols.map((s) => (
+            <span
+              key={s}
+              className="group/chip flex items-center gap-1 text-[10px] border border-border px-1.5 py-0.5 font-mono text-white/70"
+            >
               {s}
+              {onRefine && symbols.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => removeSymbol(s)}
+                  className="text-muted-foreground hover:text-red-400 transition-colors"
+                  aria-label={`Remove ${s}`}
+                >
+                  <X className="w-2.5 h-2.5" strokeWidth={2} />
+                </button>
+              )}
             </span>
           ))}
+          {onRefine && (
+            <form onSubmit={addSymbol}>
+              <input
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="+ ticker"
+                aria-label="Add ticker"
+                spellCheck={false}
+                className="w-16 bg-transparent border border-dashed border-border px-1.5 py-0.5 text-[10px] font-mono uppercase text-white placeholder:text-muted-foreground focus:outline-none focus:border-white/60 transition-colors"
+              />
+            </form>
+          )}
         </div>
       </div>
     </div>

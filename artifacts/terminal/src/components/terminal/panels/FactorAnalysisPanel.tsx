@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import type { FactorAnalysisData } from "@workspace/api-client-react";
 import {
   ResponsiveContainer,
@@ -11,7 +11,6 @@ import {
   ReferenceLine,
   Legend,
 } from "recharts";
-import { ScrollArea } from "@/components/ui/scroll-area";
 
 const FACTOR_COLORS: Record<string, string> = {
   momentum: "#ffffff",
@@ -23,10 +22,20 @@ const FACTOR_COLORS: Record<string, string> = {
 
 interface Props {
   data: FactorAnalysisData;
+  onRefine?: (params: Record<string, unknown>) => void;
 }
 
-export function FactorAnalysisPanel({ data }: Props) {
+export function FactorAnalysisPanel({ data, onRefine }: Props) {
   const { monthlyAttribution, loadings } = data;
+  const [draft, setDraft] = useState("");
+
+  const submitSymbol = (e: React.FormEvent) => {
+    e.preventDefault();
+    const t = draft.trim().toUpperCase();
+    setDraft("");
+    if (!t || t === data.symbol.toUpperCase()) return;
+    onRefine?.({ symbol: t });
+  };
 
   const AttributionTooltip = ({ active, payload, label }: any) => {
     if (active && payload?.length) {
@@ -54,10 +63,22 @@ export function FactorAnalysisPanel({ data }: Props) {
 
   return (
     <div className="flex flex-col h-full gap-3">
-      <div className="shrink-0">
-        <div className="text-[9px] text-muted-foreground uppercase tracking-widest">
+      <div className="flex items-center justify-between gap-2 shrink-0">
+        <div className="text-[9px] text-muted-foreground uppercase tracking-widest truncate">
           {data.name} ({data.symbol}) · Factor Return Attribution
         </div>
+        {onRefine && (
+          <form onSubmit={submitSymbol} className="shrink-0">
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="swap ticker"
+              aria-label="Swap ticker"
+              spellCheck={false}
+              className="w-24 bg-transparent border border-dashed border-border px-1.5 py-0.5 text-[10px] font-mono uppercase text-white placeholder:text-muted-foreground focus:outline-none focus:border-white/60 transition-colors"
+            />
+          </form>
+        )}
       </div>
 
       <div className="flex gap-3 flex-1 min-h-0">

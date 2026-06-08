@@ -746,6 +746,9 @@ components:
           type: string
         strategy:
           type: string
+        range:
+          type: string
+          description: Lookback window used for the backtest, e.g. 1M, 3M, 6M, 1Y.
         curve:
           type: array
           items:
@@ -1371,7 +1374,7 @@ components:
           description: Recognized text from the audio (may be empty).
     RefineRequest:
       type: object
-      required: [sessionId, panelId, instruction]
+      required: [sessionId, panelId]
       properties:
         sessionId:
           type: string
@@ -1385,8 +1388,8 @@ components:
           description: >-
             Optional explicit skill parameters. When provided, they are applied
             directly (bypassing instruction parsing), enabling deterministic
-            in-panel controls such as switching an intraday chart's resolution
-            and window without re-issuing a command.
+            in-panel controls such as switching a backtest's strategy/range, a
+            correlation window, or swapping tickers without re-issuing a command.
     ScenarioRecomputeRequest:
       type: object
       required: [symbols, horizonDays, driftPct]

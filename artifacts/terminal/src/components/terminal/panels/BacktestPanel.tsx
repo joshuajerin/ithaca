@@ -12,8 +12,21 @@ import {
   Legend,
 } from "recharts";
 
-export function BacktestPanel({ data }: { data: BacktestData }) {
+const STRATEGIES: { value: string; label: string }[] = [
+  { value: "momentum", label: "Momentum" },
+  { value: "mean_reversion", label: "Mean Reversion" },
+  { value: "buy_and_hold", label: "Buy & Hold" },
+];
+const RANGES = ["1M", "3M", "6M", "1Y"] as const;
+
+interface Props {
+  data: BacktestData;
+  onRefine?: (params: Record<string, unknown>) => void;
+}
+
+export function BacktestPanel({ data, onRefine }: Props) {
   const { stats, curve, drawdown } = data;
+  const range = (data.range ?? "1Y").toUpperCase();
 
   const closedTrades = (data.tradeLog ?? []).filter(
     (t) => typeof t.pnl === "number" && t.pnl !== 0,
@@ -68,6 +81,41 @@ export function BacktestPanel({ data }: { data: BacktestData }) {
 
   return (
     <div className="flex flex-col h-full gap-3">
+      {onRefine && (
+        <div className="flex items-center justify-between gap-2 shrink-0 flex-wrap">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[9px] text-muted-foreground uppercase tracking-widest">Strategy</span>
+            <select
+              value={data.strategy}
+              onChange={(e) => onRefine({ symbol: data.symbol, strategy: e.target.value, range })}
+              className="text-[10px] bg-black border border-border px-1.5 py-0.5 font-mono text-white focus:outline-none focus:border-white/60 transition-colors"
+            >
+              {STRATEGIES.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex gap-1">
+            {RANGES.map((r) => (
+              <button
+                key={r}
+                onClick={() => {
+                  if (r !== range) onRefine({ symbol: data.symbol, strategy: data.strategy, range: r });
+                }}
+                className={`text-[9px] px-2 py-0.5 border uppercase tracking-widest transition-colors ${
+                  range === r
+                    ? "border-white text-white bg-white/10"
+                    : "border-border text-muted-foreground hover:border-white/40"
+                }`}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-5 gap-2 shrink-0">
         {statItems.map((item) => (
           <div key={item.label} className="border border-border p-2">

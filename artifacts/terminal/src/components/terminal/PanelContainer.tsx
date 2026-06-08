@@ -168,6 +168,17 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
     await submitRefine(instruction);
   };
 
+  const handleRefineParams = async (params: Record<string, unknown>) => {
+    try {
+      const result = await refineMutation.mutateAsync({
+        data: { sessionId, panelId: panel.id, params },
+      });
+      onRefined(result);
+    } catch (e) {
+      console.error("Failed to refine panel", e);
+    }
+  };
+
   const renderContent = () => {
     if (panel.status === "loading" || refineMutation.isPending) {
       return (
@@ -205,11 +216,11 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "bond_rv": return <BondRVPanel data={panel.data as any} />;
       case "cds_pricer": return <CDSPricerPanel data={panel.data as any} />;
       case "cashflow_duration": return <CashFlowPanel data={panel.data as any} />;
-      case "portfolio_risk": return <PortfolioRiskPanel data={panel.data as any} />;
-      case "backtest": return <BacktestPanel data={panel.data as any} />;
+      case "portfolio_risk": return <PortfolioRiskPanel data={panel.data as any} onRefine={handleRefineParams} />;
+      case "backtest": return <BacktestPanel data={panel.data as any} onRefine={handleRefineParams} />;
       case "monte_carlo": return <MonteCarloPanel data={panel.data as any} />;
-      case "correlation_matrix": return <CorrelationMatrixPanel data={panel.data as any} />;
-      case "factor_analysis": return <FactorAnalysisPanel data={panel.data as any} />;
+      case "correlation_matrix": return <CorrelationMatrixPanel data={panel.data as any} onRefine={handleRefineParams} />;
+      case "factor_analysis": return <FactorAnalysisPanel data={panel.data as any} onRefine={handleRefineParams} />;
       case "risk_model": return <RiskModelPanel data={panel.data as any} />;
       case "portfolio_optimizer": return <PortfolioOptimizerPanel data={panel.data as any} />;
       case "factor_exposures": return <FactorExposurePanel data={panel.data as any} />;

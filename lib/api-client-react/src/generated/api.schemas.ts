@@ -299,6 +299,8 @@ export interface TradeLogEntry {
 export interface BacktestData {
   symbol: string;
   strategy: string;
+  /** Lookback window used for the backtest, e.g. 1M, 3M, 6M, 1Y. */
+  range?: string;
   curve: BacktestPoint[];
   drawdown: DrawdownPoint[];
   stats: BacktestStats;
@@ -662,7 +664,7 @@ export interface Transcription {
 }
 
 /**
- * Optional explicit skill parameters. When provided, they are applied directly (bypassing instruction parsing), enabling deterministic in-panel controls such as switching an intraday chart's resolution and window without re-issuing a command.
+ * Optional explicit skill parameters. When provided, they are applied directly (bypassing instruction parsing), enabling deterministic in-panel controls such as switching a backtest's strategy/range, a correlation window, or swapping tickers without re-issuing a command.
  * @nullable
  */
 export type RefineRequestParams = { [key: string]: unknown } | null;
@@ -670,9 +672,9 @@ export type RefineRequestParams = { [key: string]: unknown } | null;
 export interface RefineRequest {
   sessionId: string;
   panelId: string;
-  instruction: string;
+  instruction?: string;
   /**
-     * Optional explicit skill parameters. When provided, they are applied directly (bypassing instruction parsing), enabling deterministic in-panel controls such as switching an intraday chart's resolution and window without re-issuing a command.
+     * Optional explicit skill parameters. When provided, they are applied directly (bypassing instruction parsing), enabling deterministic in-panel controls such as switching a backtest's strategy/range, a correlation window, or swapping tickers without re-issuing a command.
      * @nullable
      */
   params?: RefineRequestParams;
