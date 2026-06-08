@@ -1083,13 +1083,14 @@ def _handle_lifecycle(query: str, sid: str, voice: bool) -> Optional[dict]:
     return result
 
 
-def orchestrate(query: str, session_id: Optional[str], voice: bool = False) -> dict:
-    # Each new query is evaluated against the panels already on screen: panels
-    # that still serve the new request are KEPT, panels belonging to an
-    # abandoned subject are dropped, and new panels are added on top.
+def _orchestrate_prelude(query: str, session_id: Optional[str]):
+    """Resolve the session id and the panel set this query starts from.
+
+    Returns ``(reset, sid, base)``. A reset (or the ``"default"`` placeholder /
+    missing session) mints a fresh session so BOTH the panels and the prior
+    conversation context start clean.
+    """
     reset = _wants_reset(query)
-    # A reset (or the "default" placeholder) starts a brand-new session so that
-    # BOTH the panels and the prior conversation context start fresh.
     if reset or not session_id or session_id == "default":
         sid = uuid.uuid4().hex[:12]
         base: List[dict] = []
@@ -1098,31 +1099,26 @@ def orchestrate(query: str, session_id: Optional[str], voice: bool = False) -> d
         base = state.get_dashboard(sid)
     if reset:
         base = []
+    return reset, sid, base
 
-    # Lifecycle mutations (paper-trade / promote / demote / retire / create) are
-    # handled here, deterministically, before the panel-composition flow.
-    lifecycle = _handle_lifecycle(query, sid, voice)
-    if lifecycle is not None:
-        return lifecycle
 
-    # A message can either ask a question (answer it in chat, leave the dashboard
-    # untouched) or be a build/modify request (compose panels as before). Voice
-    # mode always builds — its narration flow is unchanged. A reset is an explicit
-    # build/clear action, never a question.
-    if not voice and not reset and _classify_intent(query, sid) == "question":
-        answer = _answer_question(query, sid, base)
-        state.append_history(sid, "user", query)
-        state.append_history(sid, "assistant", answer)
-        # Persist the (unchanged) panel set so the session keeps its dashboard.
-        state.set_dashboard(sid, base)
-        return {
-            "sessionId": sid,
-            "summary": "",
-            "answer": answer,
-            "intent": "question",
-            "panels": base,
-        }
+def _question_result(query: str, sid: str, answer: str, base: List[dict]) -> dict:
+    """Persist a question turn (panels unchanged) and shape the response dict."""
+    state.append_history(sid, "user", query)
+    state.append_history(sid, "assistant", answer)
+    # Persist the (unchanged) panel set so the session keeps its dashboard.
+    state.set_dashboard(sid, base)
+    return {
+        "sessionId": sid,
+        "summary": "",
+        "answer": answer,
+        "intent": "question",
+        "panels": base,
+    }
 
+
+def _orchestrate_build(query: str, sid: str, base: List[dict], voice: bool) -> dict:
+    """Compose / modify the dashboard for a build request and persist it."""
     # Decide which existing panels remain relevant to this prompt, then re-pack
     # the kept panels from the top so removed panels leave no holes in the grid.
     kept = _decide_kept_panels(query, sid, base) if base else []
@@ -1174,6 +1170,70 @@ def orchestrate(query: str, session_id: Optional[str], voice: bool = False) -> d
             result["narration"] = [{"text": _DEGRADED_NOTE, "panelId": None}] + result["narration"]
 
     return result
+
+
+def orchestrate(query: str, session_id: Optional[str], voice: bool = False) -> dict:
+    # Each new query is evaluated against the panels already on screen: panels
+    # that still serve the new request are KEPT, panels belonging to an
+    # abandoned subject are dropped, and new panels are added on top.
+    reset, sid, base = _orchestrate_prelude(query, session_id)
+
+    # Lifecycle mutations (paper-trade / promote / demote / retire / create) are
+    # handled here, deterministically, before the panel-composition flow.
+    lifecycle = _handle_lifecycle(query, sid, voice)
+    if lifecycle is not None:
+        return lifecycle
+
+    # A message can either ask a question (answer it in chat, leave the dashboard
+    # untouched) or be a build/modify request (compose panels as before). Voice
+    # mode always builds — its narration flow is unchanged. A reset is an explicit
+    # build/clear action, never a question.
+    if not voice and not reset and _classify_intent(query, sid) == "question":
+        answer = _answer_question(query, sid, base)
+        return _question_result(query, sid, answer, base)
+
+    return _orchestrate_build(query, sid, base, voice)
+
+
+def orchestrate_stream(query: str, session_id: Optional[str], voice: bool = False):
+    """Streaming variant of :func:`orchestrate`.
+
+    Yields event dicts:
+      - ``{"type": "delta", "text": ...}`` — incremental answer text (questions only)
+      - ``{"type": "done", "result": {...}}`` — the final ``DashboardSpec``-shaped dict
+
+    Only the conversational *question* path streams token-by-token; the build
+    path returns panels (not prose), so it is computed in one shot and emitted as
+    a single ``done`` event. If token streaming is unavailable the answer falls
+    back to a single ``delta`` carrying the whole blocking answer.
+    """
+    reset, sid, base = _orchestrate_prelude(query, session_id)
+
+    lifecycle = _handle_lifecycle(query, sid, voice)
+    if lifecycle is not None:
+        yield {"type": "done", "result": lifecycle}
+        return
+
+    if not voice and not reset and _classify_intent(query, sid) == "question":
+        parts: List[str] = []
+        if ai.ai_available():
+            try:
+                for delta in _answer_question_stream(query, sid, base):
+                    if delta:
+                        parts.append(delta)
+                        yield {"type": "delta", "text": delta}
+            except Exception:
+                parts = []  # fall through to the blocking fallback below
+        answer = "".join(parts).strip()
+        if not answer:
+            # Streaming unavailable or produced nothing — fall back to the
+            # blocking answer (model or honest message) and emit it at once.
+            answer = _answer_question(query, sid, base)
+            yield {"type": "delta", "text": answer}
+        yield {"type": "done", "result": _question_result(query, sid, answer, base)}
+        return
+
+    yield {"type": "done", "result": _orchestrate_build(query, sid, base, voice)}
 
 
 # --------------------- conversational question answering ---------------------
@@ -1577,7 +1637,9 @@ def _panels_context(panels: List[dict]) -> str:
     return "\n".join(f"- {b}" for b in blocks)
 
 
-def _answer_question_llm(query: str, sid: str, panels: List[dict]) -> str:
+def _answer_messages(query: str, sid: str, panels: List[dict]) -> List[dict]:
+    """Build the chat messages for a Console question (shared by the blocking
+    and streaming answer paths)."""
     sys = (
         "You are the analyst assistant inside an agentic market terminal. The user is asking a "
         "question in the side Console rather than requesting a new dashboard, so answer in chat — "
@@ -1596,7 +1658,7 @@ def _answer_question_llm(query: str, sid: str, panels: List[dict]) -> str:
         "and the user asks about the screen, say the dashboard is empty and invite them to ask for "
         "something to build."
     )
-    messages = [{"role": "system", "content": sys}]
+    messages: List[dict] = [{"role": "system", "content": sys}]
     for h in state.get_history(sid)[-6:]:
         messages.append({"role": h["role"], "content": h["content"]})
     if panels:
@@ -1605,8 +1667,20 @@ def _answer_question_llm(query: str, sid: str, panels: List[dict]) -> str:
     else:
         messages.append({"role": "system", "content": "There are no panels on screen right now."})
     messages.append({"role": "user", "content": query})
-    msg = ai.chat(messages)
+    return messages
+
+
+def _answer_question_llm(query: str, sid: str, panels: List[dict]) -> str:
+    msg = ai.chat(_answer_messages(query, sid, panels))
     return (msg.content or "").strip()
+
+
+def _answer_question_stream(query: str, sid: str, panels: List[dict]):
+    """Yield the answer text in incremental fragments as the model produces it.
+
+    Raises if the AI client/stream is unavailable so the caller can fall back to
+    the blocking :func:`_answer_question` path."""
+    yield from ai.chat_stream(_answer_messages(query, sid, panels))
 
 
 def _answer_fallback(panels: List[dict]) -> str:

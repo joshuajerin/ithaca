@@ -99,6 +99,36 @@ def _pace_instruction(speed: float) -> str:
     return "Speak at a natural, even pace."
 
 
+def chat_stream(messages: list, response_format: Optional[dict] = None):
+    """Stream a chat-completions call, yielding text content deltas as they arrive.
+
+    Yields plain string fragments (the incremental ``delta.content``). Raises if
+    the AI client is unavailable. The same bounded-timeout client is used, so a
+    stalled upstream still raises promptly and the caller can fall back to the
+    non-streaming path.
+    """
+    client = get_client()
+    if client is None:
+        raise RuntimeError("AI client unavailable")
+    kwargs: dict = {
+        "model": MODEL,
+        "messages": messages,
+        "max_completion_tokens": 8192,
+        "stream": True,
+    }
+    if response_format:
+        kwargs["response_format"] = response_format
+    stream = client.chat.completions.create(**kwargs)
+    for chunk in stream:
+        choices = getattr(chunk, "choices", None)
+        if not choices:
+            continue
+        delta = getattr(choices[0], "delta", None)
+        content = getattr(delta, "content", None) if delta is not None else None
+        if content:
+            yield content
+
+
 def speak(
     text: str,
     voice: Optional[str] = None,

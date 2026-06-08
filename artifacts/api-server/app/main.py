@@ -1,6 +1,7 @@
 """FastAPI application for the agentic terminal. Served under the /api prefix."""
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
 
@@ -166,6 +167,35 @@ def restore_dashboard(dashboard_id: str):
 def delete_saved_dashboard(dashboard_id: str):
     dashboard_store.delete_dashboard(dashboard_id)
     return {"dashboards": dashboard_store.list_dashboards()}
+
+
+@api.post("/orchestrate/stream")
+def orchestrate_stream(req: models.OrchestrationRequest):
+    """Stream a Console reply as Server-Sent Events.
+
+    A conversational *question* streams as ``{"type":"delta","text":...}`` events
+    so the answer renders word-by-word; the final ``{"type":"done","result":...}``
+    event carries the full DashboardSpec-shaped payload. A build request emits only
+    the ``done`` event (panels, not prose). The client falls back to the blocking
+    ``/orchestrate`` endpoint if anything goes wrong.
+    """
+    if not req.query or not req.query.strip():
+        raise HTTPException(status_code=400, detail="query is required")
+
+    def gen():
+        try:
+            for event in agent.orchestrate_stream(
+                req.query.strip(), req.sessionId, voice=bool(req.voice)
+            ):
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as exc:  # noqa: BLE001
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @api.post("/speak", response_model=models.SpeechAudio)

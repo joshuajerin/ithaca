@@ -86,6 +86,12 @@ export default function Terminal() {
   // even when panels did not change.
   const [reply, setReply] = useState<{ text: string; kind: 'answer' | 'summary'; nonce: number } | null>(null);
   const replyNonce = useRef(0);
+  // While a question answer is streaming in, this holds the text accumulated so
+  // far so the Console can render it word-by-word. Null when nothing is streaming.
+  const [streamingAnswer, setStreamingAnswer] = useState<string | null>(null);
+  // True while a typed command is in flight via the streaming endpoint (the
+  // useOrchestrate mutation isn't used for that path, so track it separately).
+  const [streamBusy, setStreamBusy] = useState(false);
 
   // Ref to the command input so keyboard shortcuts can focus it from anywhere.
   const commandInputRef = useRef<HTMLInputElement>(null);
@@ -228,16 +234,7 @@ export default function Terminal() {
         return;
       }
 
-      const result = await orchestrate.mutateAsync({
-        data: {
-          query: command,
-          sessionId: sent,
-        },
-      });
-      // A question answer leaves the panels untouched; a build recomposes them.
-      // Either way we adopt the returned spec so the session id stays in sync.
-      setActiveDashboard(result);
-      adoptResult(result, sent);
+      await streamCommand(command, sent);
     } catch (e) {
       console.error("Orchestration failed", e);
     }
@@ -254,6 +251,77 @@ export default function Terminal() {
     const query = `Price a long call on ${symbol} at the $${strike} strike for the ${expiry} expiry`;
     void handleCommand(query);
   };
+
+  // Run a plain Console command against the streaming endpoint. A question's
+  // answer renders word-by-word as deltas arrive; a build emits only the final
+  // result. Any failure falls back to the blocking /orchestrate path so the user
+  // still gets a complete answer.
+  const streamCommand = useCallback(
+    async (command: string, sent: string | undefined) => {
+      setStreamBusy(true);
+      setStreamingAnswer(null);
+      let acc = "";
+      let finalResult: DashboardSpec | null = null;
+      try {
+        const res = await fetch("/api/orchestrate/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: command, sessionId: sent }),
+        });
+        if (!res.ok || !res.body) throw new Error(`stream failed (${res.status})`);
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const chunks = buffer.split("\n\n");
+          buffer = chunks.pop() ?? "";
+          for (const chunk of chunks) {
+            const line = chunk.trim();
+            if (!line.startsWith("data:")) continue;
+            const payload = line.slice(5).trim();
+            if (!payload) continue;
+            let ev: any;
+            try {
+              ev = JSON.parse(payload);
+            } catch {
+              continue;
+            }
+            if (ev.type === "delta" && typeof ev.text === "string") {
+              acc += ev.text;
+              setStreamingAnswer(acc);
+            } else if (ev.type === "done" && ev.result) {
+              finalResult = ev.result as DashboardSpec;
+            } else if (ev.type === "error") {
+              throw new Error(ev.message || "stream error");
+            }
+          }
+        }
+
+        if (!finalResult) throw new Error("stream ended without a result");
+        // Adopt the final spec (keeps the session id in sync) and commit the
+        // reply into the persisted transcript, then clear the live streaming text.
+        setActiveDashboard(finalResult);
+        adoptResult(finalResult, sent);
+        setStreamingAnswer(null);
+      } catch (e) {
+        // Graceful fallback: render the answer all at once via the blocking path.
+        setStreamingAnswer(null);
+        const result = await orchestrate.mutateAsync({
+          data: { query: command, sessionId: sent },
+        });
+        setActiveDashboard(result);
+        adoptResult(result, sent);
+      } finally {
+        setStreamBusy(false);
+      }
+    },
+    [orchestrate, adoptResult],
+  );
 
   const handlePanelRefined = (updatedPanel: any) => {
     setActiveDashboard((prev) => {
@@ -686,8 +754,9 @@ export default function Terminal() {
               <ChatPanel
                 sessionId={convo.sessionId}
                 onCommand={handleCommand}
-                isProcessing={orchestrate.isPending}
+                isProcessing={orchestrate.isPending || streamBusy}
                 messages={convo.messages}
+                streamingAnswer={streamingAnswer}
                 inputRef={commandInputRef}
               />
             </div>

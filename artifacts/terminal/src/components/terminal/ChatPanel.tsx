@@ -14,6 +14,10 @@ interface ChatPanelProps {
   // in as a controlled prop. The operator's message is appended by the parent
   // when it dispatches the command.
   messages: ConsoleMessage[];
+  // Answer text accumulated so far while a question is streaming in. Non-null
+  // renders a live, growing assistant bubble; cleared once the reply is committed
+  // to the transcript by the parent.
+  streamingAnswer?: string | null;
   // Forwarded ref to the command input so power-user hotkeys (e.g. "/" or ⌘K)
   // can focus it from anywhere in the terminal.
   inputRef?: React.Ref<HTMLInputElement>;
@@ -22,7 +26,7 @@ interface ChatPanelProps {
   onClose?: () => void;
 }
 
-export function ChatPanel({ sessionId, onCommand, isProcessing, messages, inputRef, onClose }: ChatPanelProps) {
+export function ChatPanel({ sessionId, onCommand, isProcessing, messages, streamingAnswer, inputRef, onClose }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const [showSectors, setShowSectors] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -36,7 +40,7 @@ export function ChatPanel({ sessionId, onCommand, isProcessing, messages, inputR
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, isProcessing]);
+  }, [messages, isProcessing, streamingAnswer]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -234,8 +238,22 @@ export function ChatPanel({ sessionId, onCommand, isProcessing, messages, inputR
             )
           )}
 
+          {/* Live, word-by-word answer while a question streams in. */}
+          {streamingAnswer && (
+            <div className="flex flex-col gap-1.5 items-start">
+              <div className="editorial-label text-[8.5px] text-muted-foreground">Terminal · Answer</div>
+              <div className="px-3.5 py-2.5 max-w-[90%] font-serif text-base leading-snug border-l border-border text-gray-100">
+                {streamingAnswer}
+                <span className="inline-block w-1.5 h-4 ml-0.5 -mb-0.5 bg-white/70 animate-pulse" aria-hidden />
+              </div>
+            </div>
+          )}
+
           <AnimatePresence>
-            {isProcessing && (
+            {/* The "Processing" pulse only shows before any answer text has begun
+                streaming (and during a build). Once deltas arrive, the live
+                answer bubble above replaces it. */}
+            {isProcessing && !streamingAnswer && (
               <motion.div
                 key="processing"
                 initial={{ opacity: 0, y: 8 }}
