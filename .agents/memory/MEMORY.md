@@ -37,6 +37,7 @@
 - [Scenario stress test panel](stress-test-panel.md) — stress_test scales each name's REAL fitted beta (SPY/^TNX-level-Δ/CL=F) by the scenario shock; distinct from risk_monitor replay; honest coverage.
 - [Company analytics head-to-head compare](company-analytics-compare.md) — `company_analytics_compare` panel: two columns of drivers+catalysts + per-metric leader scoreboard; query-order symbol ordering.
 - [Data wall removal](data-wall-removal.md) — arbitrary Yahoo tickers via note_symbol+pending envelope; live macro in SEPARATE macro_quotes table (no equity-screener leak); news uncapped to 100.
+- [Terminal frontend test harness (vitest)](frontend-test-harness.md) — jsdom + custom Voice Mode browser-API mocks (drive SpeechRecognition/AudioContext/getUserMedia by hand); test files excluded from tsc.
 - [Strategy lifecycle & paper book desk](strategy-lifecycle-desk.md) — registry+paperbook+lifecycle; deterministic intent handler before LLM; runtime CREATE TABLE not drizzle push; mark has no weight (use exposures); vite build needs PORT+BASE_PATH.
 - [Multi-ticker analyst compare](analyst-compare.md) — fan out build_analyst_report per symbol concurrently, isolate per-name failures; heuristic keyword traps ("view"⊂"overview").
 - [Macro dashboard overrides](macro-dashboard-overrides.md) — pin/remove macro tiles via refine; overrides persisted in panel data + on the pydantic model, merged latest-op-per-symbol.

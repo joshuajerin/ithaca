@@ -24,6 +24,10 @@ args = "smoke"
 task = "workflow.run"
 args = "panel-runtime-test"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "voice-backend"
+
 [[workflows.workflow]]
 name = "smoke"
 author = "agent"
@@ -42,6 +46,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "pnpm --filter @workspace/terminal test"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "voice-backend"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python artifacts/api-server/tests/test_voice.py"
 
 [workflows.workflow.metadata]
 isValidation = true
