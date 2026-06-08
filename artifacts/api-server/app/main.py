@@ -316,6 +316,11 @@ def create_strategy(req: StrategyCreateRequest):
             sector=req.sector, capital=req.capital, promotion_criteria=req.promotionCriteria,
             notes=req.notes, paper=req.paper,
         )
+    except strategy.ComplianceBlock as cb:
+        # The strategy was created in research but the paper book it would have
+        # opened is refused by the pre-trade gate. Surface the reason, not a 500.
+        return {"ok": False, "blocked": True, "reason": cb.result.get("reason"),
+                "compliance": cb.result}
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"could not create strategy: {exc}")
     return view
@@ -328,10 +333,14 @@ def transition_strategy(strategy_id: str, req: StrategyTransitionRequest):
     if view is None:
         raise HTTPException(status_code=404, detail="strategy not found")
     stage = (req.stage or "").strip().lower()
-    if stage == "demote":
-        updated, ok, message = strategy.demote(view)
-    else:
-        updated, ok, message = strategy.transition(view, stage, force=req.force)
+    try:
+        if stage == "demote":
+            updated, ok, message = strategy.demote(view)
+        else:
+            updated, ok, message = strategy.transition(view, stage, force=req.force)
+    except strategy.ComplianceBlock as cb:
+        return {"ok": False, "blocked": True, "message": cb.result.get("reason"),
+                "compliance": cb.result, "strategy": view}
     return {"ok": ok, "message": message, "strategy": updated}
 
 
@@ -548,6 +557,98 @@ def delete_alert(rule_id: str, sessionId: str):
         raise HTTPException(status_code=400, detail="sessionId is required")
     state.remove_alert_rule(sid, rule_id)
     return _alerts_payload(sid)
+
+
+# --------------------------- pre-trade compliance ----------------------------
+class ComplianceSymbolInput(BaseModel):
+    symbol: str
+
+
+class ComplianceLimitsInput(BaseModel):
+    limits: dict
+
+
+class ComplianceKillSwitchInput(BaseModel):
+    on: bool
+    reason: str | None = None
+    strategyId: str | None = None
+
+
+def _compliance_payload(strategy: str | None = None) -> dict:
+    from . import skills
+    return skills.build_compliance({"strategy": strategy} if strategy else {})
+
+
+@api.get("/compliance")
+def get_compliance(strategy: str | None = None):
+    return _compliance_payload(strategy)
+
+
+@api.post("/compliance/restricted")
+def add_restricted(req: ComplianceSymbolInput):
+    from . import compliance_store
+    sym = (req.symbol or "").strip().upper()
+    if not sym:
+        raise HTTPException(status_code=400, detail="symbol is required")
+    compliance_store.add_restricted(sym)
+    return _compliance_payload()
+
+
+@api.post("/compliance/watch")
+def add_watch(req: ComplianceSymbolInput):
+    from . import compliance_store
+    sym = (req.symbol or "").strip().upper()
+    if not sym:
+        raise HTTPException(status_code=400, detail="symbol is required")
+    compliance_store.add_watch(sym)
+    return _compliance_payload()
+
+
+@api.post("/compliance/limits")
+def set_limits(req: ComplianceLimitsInput):
+    from . import compliance_store
+    compliance_store.set_limits(req.limits or {})
+    return _compliance_payload()
+
+
+@api.post("/compliance/kill-switch")
+def set_kill_switch(req: ComplianceKillSwitchInput):
+    from . import compliance_store
+    compliance_store.set_kill_switch(bool(req.on), reason=req.reason, strategy_id=req.strategyId)
+    return _compliance_payload()
+
+
+@api.post("/compliance/check")
+def check_compliance(req: ComplianceSymbolInput):
+    # ``symbol`` here is reused as the strategy name/id to pre-check.
+    sel = (req.symbol or "").strip()
+    if not sel:
+        raise HTTPException(status_code=400, detail="strategy is required")
+    return _compliance_payload(sel)
+
+
+@api.delete("/compliance/audit")
+def clear_compliance_audit():
+    from . import compliance_store
+    n = compliance_store.clear_audit()
+    return {"cleared": n}
+
+
+# NOTE: the parametrized "/compliance/{list}/{symbol}" DELETE routes are declared
+# AFTER every static "/compliance/..." route above so FastAPI does not match e.g.
+# "limits" as a {symbol}.
+@api.delete("/compliance/restricted/{symbol}")
+def remove_restricted(symbol: str):
+    from . import compliance_store
+    compliance_store.remove_restricted(symbol.upper())
+    return _compliance_payload()
+
+
+@api.delete("/compliance/watch/{symbol}")
+def remove_watch(symbol: str):
+    from . import compliance_store
+    compliance_store.remove_watch(symbol.upper())
+    return _compliance_payload()
 
 
 app.include_router(api)

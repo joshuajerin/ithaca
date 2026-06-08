@@ -10,7 +10,7 @@ points and for the live/mock fallback decision.
 """
 from __future__ import annotations
 
-from . import attribution, execution, optimize, paperbook, portfolio, riskmodel
+from . import attribution, compliance, execution, optimize, paperbook, portfolio, riskmodel
 from .attribution import (
     active_stats,
     align_benchmark_returns,

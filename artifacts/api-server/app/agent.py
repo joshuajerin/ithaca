@@ -160,6 +160,14 @@ def _tools() -> list:
             }, "required": []},
         }},
         {"type": "function", "function": {
+            "name": "add_compliance",
+            "description": f"Add the pre-trade risk & compliance panel: firm limits (max position, net exposure, leverage, concentration), the restricted + watch lists, the global/per-strategy kill switch, and the audit trail of gate decisions. Optionally pass a strategy name to pre-check whether that strategy's book would be allowed (answers 'is this trade allowed'). Use for restricted/watch list, risk limits, kill switch / halt trading, or the compliance audit log. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "strategy": {"type": "string", "description": "Optional strategy name to pre-check its prospective book."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": []},
+        }},
+        {"type": "function", "function": {
             "name": "add_dcf_model",
             "description": f"Add a DCF valuation model for one ticker with projected FCF, implied price range, and sensitivity grid. {sizing}",
             "parameters": {"type": "object", "properties": {
@@ -730,6 +738,7 @@ _TOOL_TO_TYPE = {
     "add_order_book": "order_book",
     "add_trade_flow": "trade_flow",
     "add_alerts": "alerts",
+    "add_compliance": "compliance",
     "add_tca_report": "tca_report",
     "add_macro_dashboard": "macro_dashboard",
     "add_yield_curve": "yield_curve",
@@ -837,6 +846,10 @@ def _system_prompt() -> str:
         "labels its source live/mock so you can tell when a feed is unavailable.\n"
         "- For alert requests ('alert me', 'notify me', 'set up alerts', 'watch for block trades/sweeps', "
         "'manage alert rules'), use add_alerts (optionally with the symbol to pre-fill).\n"
+        "- For pre-trade risk / compliance requests ('is this trade allowed', 'can I trade X', "
+        "'show/edit the restricted list', 'add X to the watch list', 'set risk limits', "
+        "'engage the kill switch', 'halt trading', 'compliance audit'), use add_compliance "
+        "(optionally with a strategy name to pre-check that strategy's book).\n"
         "- For microstructure/execution requests: order book → add_order_book; trade flow/unusual activity → add_trade_flow; "
         "TCA / execution simulation / slippage / market impact / VWAP-TWAP-POV / 'cost to trade into a portfolio' → add_tca_report "
         "(pass symbols+target_weights for a portfolio, or symbol+side+notional for one name).\n"
@@ -1023,6 +1036,7 @@ def _handle_lifecycle(query: str, sid: str, voice: bool) -> Optional[dict]:
     symbols = _extract_symbols(query)
     target: Optional[dict] = None
     msg = ""
+    block_result: Optional[dict] = None
 
     try:
         if action == "create":
@@ -1068,8 +1082,21 @@ def _handle_lifecycle(query: str, sid: str, voice: bool) -> Optional[dict]:
                         msg = (f"Rebalanced {target['name']} to its latest {label} targets — "
                                f"{info['trades']} trades, {info['turnoverPct']:.1f}% turnover, "
                                f"${info['costUsd']:,.0f} modeled cost.")
+                elif info.get("blocked"):
+                    block_result = info.get("compliance")
+                    msg = (f"Rebalance refused for {target['name']} by pre-trade compliance: "
+                           f"{info.get('reason')}. The book was left unchanged.")
                 else:
                     msg = f"Couldn't rebalance {target['name']}: {info.get('reason', 'no trades generated')}."
+    except strategy.ComplianceBlock as cb:
+        # A hard pre-trade violation refused the trade. Surface the specific
+        # reason and the compliance panel rather than silently dropping it.
+        block_result = cb.result
+        target = cb.view or target
+        nm = (target or {}).get("name") or "the strategy"
+        verb = {"paper": "Paper-trade", "promote": "Promotion", "create": "Trade"}.get(action, "Trade")
+        msg = (f"{verb} refused for {nm} by pre-trade compliance: "
+               f"{cb.result.get('reason')}.")
     except Exception:  # noqa: BLE001 — lifecycle must never 500 the orchestrate path
         return None
 
@@ -1079,10 +1106,21 @@ def _handle_lifecycle(query: str, sid: str, voice: bool) -> Optional[dict]:
     def add(panel_type, params, w, h, title=None):
         panels.append(harness.run_skill(panel_type, params, harness.pack_layout(w, h, cursor), title=title))
 
+    # A refused trade leads with the compliance panel (showing the specific
+    # breach + the rule that fired) so the trader sees exactly why it was gated.
+    if block_result is not None:
+        add("compliance", {"strategy": (target or {}).get("name")}, 12, 6,
+            title="Pre-Trade Compliance")
+    if target is None:
+        state.set_dashboard(sid, panels)
+        state.append_history(sid, "user", query)
+        state.append_history(sid, "assistant", msg)
+        return {"sessionId": sid, "summary": msg, "panels": panels, "intent": "build"}
+
     add("strategy_desk", {"strategy": target["name"]}, 12, 5)
     wmap = target.get("targetWeights") or {}
     # Link the desk into the Risk Management + Attribution pillars for the book.
-    if target.get("stage") in ("paper", "live") and wmap:
+    if block_result is None and target.get("stage") in ("paper", "live") and wmap:
         syms = list(wmap.keys())
         ws = [wmap[s] for s in syms]
         add("risk_monitor", {"symbols": syms, "weights": ws, "portfolio_name": target["name"]}, 12, 6)
@@ -2205,6 +2243,7 @@ _TYPE_LABELS = {
     "order_book": "an order book",
     "trade_flow": "a trade flow panel",
     "alerts": "a trade-flow alerts panel",
+    "compliance": "a pre-trade compliance panel",
     "tca_report": "a TCA report",
     "macro_dashboard": "a macro dashboard",
     "yield_curve": "a yield curve",
@@ -2607,6 +2646,13 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
     )
     wants_trade_flow = any(k in q for k in ["unusual", "block", "sweep", "dark pool", "flow", "activity"])
     wants_alerts = any(k in q for k in ["alert", "notify", "notification", "watch for", "set up alert", "alert rule"])
+    wants_compliance = any(k in q for k in [
+        "compliance", "restricted list", "restricted name", "restrict ", "watch list",
+        "watchlist", "risk limit", "position limit", "exposure limit", "leverage limit",
+        "concentration limit", "kill switch", "kill-switch", "halt trading", "halt all",
+        "pre-trade", "pretrade", "is this trade allowed", "trade allowed", "can i trade",
+        "allowed to trade", "compliance audit", "audit trail", "audit log",
+    ])
     wants_tca = any(k in q for k in ["tca", "transaction cost", "slippage", "vwap", "twap", "pov",
                                      "execution", "impl", "market impact", "participation rate",
                                      "execution cost", "cost to trade", "trade into"])
@@ -2769,6 +2815,22 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         add("price_chart", {"symbol": sym, "range": "1M"}, 6, 4)
         name = data.get_company(sym)["name"]
         return panels, f"{name} order book depth ladder and tape."
+
+    if wants_compliance:
+        strat_name = None
+        # A "can I trade / is this allowed / pre-check" phrasing resolves a
+        # strategy so the panel runs a read-only gate over its prospective book.
+        if any(k in q for k in ["allowed", "can i trade", "pre-trade", "pretrade",
+                                "pre-check", "precheck", "check"]):
+            tgt = _resolve_target_strategy(query, _signal_in_query(q))
+            if tgt:
+                strat_name = tgt.get("name")
+        add("compliance", {"strategy": strat_name} if strat_name else {}, 12, 6)
+        if strat_name:
+            return panels, (f"Pre-trade compliance check for {strat_name}: firm limits, "
+                            "restricted/watch lists and the kill switch.")
+        return panels, ("Pre-trade compliance: firm limits, the restricted and watch lists, "
+                        "the kill switch and the audit trail of gate decisions.")
 
     if wants_alerts:
         sym = symbols[0] if symbols else None

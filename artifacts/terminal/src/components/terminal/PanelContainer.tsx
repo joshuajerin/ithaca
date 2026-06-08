@@ -60,6 +60,7 @@ import { FactorAttributionPanel } from "./panels/FactorAttributionPanel";
 import { FactorPerformancePanel } from "./panels/FactorPerformancePanel";
 import { TearSheetPanel } from "./panels/TearSheetPanel";
 import { StrategyDeskPanel } from "./panels/StrategyDeskPanel";
+import { CompliancePanel } from "./panels/CompliancePanel";
 import { DynamicPanel } from "./panels/generated/DynamicPanel";
 
 interface PanelContainerProps {
@@ -292,6 +293,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted, onBui
       case "factor_performance": return <FactorPerformancePanel data={panel.data as any} />;
       case "tear_sheet": return <TearSheetPanel data={panel.data as any} />;
       case "strategy_desk": return <StrategyDeskPanel data={panel.data as any} />;
+      case "compliance": return <CompliancePanel data={panel.data as any} />;
       default: return <DynamicPanel type={panel.type} data={panel.data as any} />;
     }
   };

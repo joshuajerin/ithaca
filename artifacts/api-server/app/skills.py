@@ -953,6 +953,62 @@ def _resolve_entry_mode(params: dict) -> str:
     return "preset"
 
 
+def build_compliance(params: dict) -> dict:
+    """Pre-trade risk & compliance control panel.
+
+    Ships the current firm limits, restricted + watch lists, the kill switch
+    state, a strategy roster and the recent audit trail. When a strategy is
+    named it also runs a READ-ONLY pre-trade gate over that strategy's
+    prospective book — answering "is this trade allowed?" without applying or
+    auditing anything. All mutations happen live via the ``/api/compliance``
+    endpoints; this builder is dynamic-safe (works with empty params)."""
+    from . import compliance_store, strategy as strat, strategy_store
+    from .engine import compliance as comp
+
+    cfg = compliance_store.get_config()
+
+    roster = [
+        {"id": s.get("id"), "name": s.get("name"), "stage": s.get("stage")}
+        for s in strategy_store.list_strategies()
+    ]
+
+    check = None
+    sel = (params.get("strategy") or params.get("strategyId") or "").strip()
+    if sel:
+        view = strategy_store.get_strategy(sel)
+        if view:
+            res = strat.check_strategy(view)
+            check = {
+                "strategyId": view.get("id"),
+                "strategyName": view.get("name"),
+                "stage": view.get("stage"),
+                "ok": res["ok"],
+                "blocked": res["blocked"],
+                "reason": res.get("reason"),
+                "checks": res["checks"],
+                "metrics": res["metrics"],
+                "restricted": res["restricted"],
+                "watch": res["watch"],
+                "violations": res["violations"],
+                "warnings": res["warnings"],
+                "killSwitch": res["killSwitch"],
+                "killReason": res.get("killReason"),
+            }
+
+    return {
+        "limits": cfg["limits"],
+        "limitDefs": comp.LIMIT_DEFS,
+        "restricted": cfg["restricted"],
+        "watch": cfg["watch"],
+        "killSwitch": cfg["killSwitch"],
+        "killReason": cfg.get("killReason"),
+        "strategyKills": cfg.get("strategyKills") or {},
+        "strategies": roster,
+        "audit": compliance_store.list_audit(40),
+        "check": check,
+    }
+
+
 def build_backtest(params: dict) -> dict:
     symbol = (params.get("symbol") or "NVDA").upper()
     company = repo.get_company(symbol)
@@ -6306,6 +6362,22 @@ _reg(SkillDef(
         {"name": "prefill_symbol", "description": "Optionally pre-select a symbol for the rule form.", "expectedOutput": "A ticker or null."},
     ],
     build_alerts, "Trade Flow Alerts",
+))
+_reg(SkillDef(
+    "compliance", "Pre-Trade Compliance", "compliance",
+    "Opens the pre-trade risk & compliance desk: firm limits (max position, net "
+    "exposure, leverage, concentration), the restricted and watch lists, the "
+    "global + per-strategy kill switch, and the audit trail of gate decisions. "
+    "It can also pre-check whether a specific strategy's book would be allowed. "
+    "Use when the user asks 'is this trade allowed', 'can I trade X', to show or "
+    "edit the restricted/watch list, set risk limits, engage a kill switch / halt "
+    "trading, or review the compliance audit log.",
+    [
+        {"name": "load_config", "description": "Return the current limits, restricted + watch lists and kill-switch state.", "expectedOutput": "The compliance configuration."},
+        {"name": "list_audit", "description": "Return the recent pre-trade gate decisions.", "expectedOutput": "An audit trail."},
+        {"name": "precheck_strategy", "description": "Optionally run a read-only pre-trade gate over a named strategy's prospective book.", "expectedOutput": "A pass/fail gate result or null."},
+    ],
+    build_compliance, "Pre-Trade Compliance",
 ))
 _reg(SkillDef(
     "tca-report", "Execution Simulation & TCA", "tca_report",

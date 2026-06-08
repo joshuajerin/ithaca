@@ -50,3 +50,4 @@
 - [Terminal responsive layout](responsive-layout.md) — 3-tier breakpoints: mobile stack / tablet 6-col flow (drops AI x/y) / desktop 12-col placed; console is a drawer on non-desktop.
 - [Panel CSV/PDF export](panel-export.md) — client-side quant-panel export; MUST use html2canvas-pro (not html2canvas) under Tailwind v4 oklch; rebuild api-client-react dist on stale shared-type tsc errors.
 - [Trade-flow alert rules](trade-flow-alerts.md) — per-session rule/event store; static /alerts/events routes MUST precede /alerts/{rule_id}; event dedup by signature; passthrough panel.
+- [Pre-trade compliance gate](compliance-gate.md) — pure engine + GLOBAL config/audit store + ComplianceBlock wired into paper_trade/rebalance; passthrough panel; audit rows use decision/summary.

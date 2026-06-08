@@ -17,12 +17,119 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from . import engine, repo, strategy_store
+from . import compliance_store, engine, repo, strategy_store
 
 # Stages whose books are actively marked end-of-day and accrue a track record.
 ACTIVE_STAGES = ("paper", "live")
 
 log = logging.getLogger(__name__)
+
+
+class ComplianceBlock(Exception):
+    """Raised when a pre-trade gate refuses to apply a trade list / book.
+
+    Carries the full gate ``result`` so callers (HTTP routes, the agent) can
+    surface the specific violations and render the compliance panel instead of
+    a generic error.
+    """
+
+    def __init__(self, result: dict, action: str = "trade", view: Optional[dict] = None):
+        self.result = result or {}
+        self.action = action
+        self.view = view
+        reason = self.result.get("reason") or "Trade blocked by compliance"
+        super().__init__(reason)
+
+
+def _gate_weights(positions: List[dict], prices: Dict[str, float], nav: float) -> Dict[str, float]:
+    """Signed NAV-fraction weights for a resulting book, used by the gate."""
+    out: Dict[str, float] = {}
+    if nav <= 0:
+        return out
+    for p in positions or []:
+        s = (p.get("symbol") or "").upper()
+        if not s:
+            continue
+        px = prices.get(s) or float(p.get("entryPrice") or 0.0)
+        out[s] = (float(p.get("shares") or 0.0) * px) / nav
+    return out
+
+
+def prospective_weights(view: dict) -> Dict[str, float]:
+    """The resulting-book weights a trade would produce for ``view``.
+
+    Uses the live marked book when one exists (paper/live), otherwise the target
+    weights — i.e. what ``paper_trade`` would open. Drives the read-only
+    "is this trade allowed?" check.
+    """
+    positions = view.get("positions") or []
+    if positions:
+        syms = [(p.get("symbol") or "").upper() for p in positions]
+        prices = _price_map(syms)
+        cash = float(view.get("cash") or 0.0)
+        book_val = engine.paperbook.book_value(positions, cash, prices)
+        return _gate_weights(positions, prices, book_val)
+    wmap = view.get("targetWeights") or {}
+    if not wmap:
+        wmap, _picks, _excl, _label = derive_target_weights(view.get("signal"), None, None, None)
+    return {(s or "").upper(): float(w) for s, w in wmap.items()}
+
+
+def check_strategy(view: dict) -> dict:
+    """Read-only pre-trade gate for a strategy's prospective book (no audit)."""
+    return precheck(view, prospective_weights(view), "check",
+                    raise_on_block=False, audit=False)
+
+
+def precheck(view: dict, weights: Dict[str, float], action: str,
+             raise_on_block: bool = True, audit: bool = True) -> dict:
+    """Run the pre-trade gate over a resulting book, write an audit entry, and
+    (by default) raise ``ComplianceBlock`` on a hard violation.
+
+    The gate considers the persisted firm limits, restricted + watch lists and
+    both the global and per-strategy kill switches. Every call is audited —
+    allowed, warned or blocked — so there is a complete trail of decisions.
+    """
+    cfg = compliance_store.get_config()
+    sid = view.get("id")
+    killed, kreason = compliance_store.is_killed(sid)
+    result = engine.compliance.evaluate_gate(
+        weights=weights,
+        limits=cfg.get("limits"),
+        restricted=cfg.get("restricted"),
+        watch=cfg.get("watch"),
+        kill_switch=killed,
+        kill_reason=kreason,
+    )
+    if result["blocked"]:
+        decision = "blocked"
+        summary = result.get("reason") or "Trade blocked by compliance"
+    elif result["warnings"]:
+        decision = "warn"
+        summary = "; ".join(result["warnings"])
+    else:
+        decision = "allowed"
+        summary = "All pre-trade checks passed"
+    if audit:
+        compliance_store.append_audit(
+            action=action,
+            decision=decision,
+            summary=summary,
+            strategy_id=sid,
+            strategy_name=view.get("name"),
+            detail={
+                "checks": result["checks"],
+                "metrics": result["metrics"],
+                "restricted": result["restricted"],
+                "watch": result["watch"],
+                "violations": result["violations"],
+                "warnings": result["warnings"],
+            },
+        )
+    if result["blocked"] and raise_on_block:
+        raise ComplianceBlock(result, action=action, view=view)
+    return result
+
 
 DEFAULT_CAPITAL = 1_000_000.0
 DEFAULT_TOP_N = 8
@@ -237,6 +344,9 @@ def paper_trade(view: dict) -> dict:
         invested += o["shares"] * o["price"]
     cash = round(capital - invested, 2)
 
+    # Pre-trade gate: validate the resulting book before it is applied.
+    precheck(view, _gate_weights(positions, prices, capital), "paper_trade")
+
     view["positions"] = positions
     view["cash"] = cash
     view["inceptionDate"] = date.today().isoformat()
@@ -284,7 +394,16 @@ def rebalance(view: dict, cost_bps: float = DEFAULT_COST_BPS) -> Tuple[dict, dic
         if excluded:
             cons["excluded"] = excluded
         view["construction"] = cons
-        saved = paper_trade(view)
+        try:
+            saved = paper_trade(view)
+        except ComplianceBlock as cb:
+            return view, {
+                "applied": False,
+                "blocked": True,
+                "reason": cb.result.get("reason"),
+                "compliance": cb.result,
+                "at": date.today().isoformat(),
+            }
         capital = float(saved.get("capital") or DEFAULT_CAPITAL)
         invested = capital - float(saved.get("cash") or 0.0)
         cost = round(invested * (cost_bps / 10_000.0), 2)
@@ -332,6 +451,20 @@ def rebalance(view: dict, cost_bps: float = DEFAULT_COST_BPS) -> Tuple[dict, dic
     for s, p in pos_by_sym.items():
         px = prices.get(s) or float(p.get("entryPrice") or 0.0)
         new_positions.append({"symbol": s, "shares": round(float(p["shares"]), 4), "entryPrice": round(px, 4)})
+
+    # Pre-trade gate: validate the resulting book before any of it is applied.
+    # On a hard violation the existing book is left untouched and the caller is
+    # told the rebalance was refused (no exception — the desk stays as-is).
+    gate = precheck(view, _gate_weights(new_positions, prices, book_val),
+                    "rebalance", raise_on_block=False)
+    if gate["blocked"]:
+        return view, {
+            "applied": False,
+            "blocked": True,
+            "reason": gate.get("reason"),
+            "compliance": gate,
+            "at": date.today().isoformat(),
+        }
 
     # One-way turnover = 0.5 * sum(|target - current|); equals half the gross
     # traded notional over book value.
