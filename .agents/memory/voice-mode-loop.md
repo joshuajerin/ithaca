@@ -67,10 +67,17 @@ thinking + speaking, or the recognizer picks up the synthesized TTS and re-trigg
 stops recognition before "thinking"; `startListening` refuses to arm unless status is idle/error, so
 pressing the orb during thinking/speaking is a no-op.
 
-**Cross-browser:** Safari/Firefox lack the API. Conductor returns `supported`; VoicePanel renders an
-explicit "needs Chrome" message instead of failing silently. Recognition/synthesis errors set status
-"error" with a visible Retry. A single `network` error now surfaces as an error (hold to retry) rather
-than feeding a retry loop.
+**Cross-browser (server-side STT fallback):** Safari/Firefox lack Web Speech. When the native API is
+absent, `useSpeechRecognition` falls back to recording the hold with `MediaRecorder` and uploading the
+clip to the server `/transcribe` endpoint on graceful `.stop()` (abort discards without uploading) —
+exposing the SAME start/stop/abort/supported contract so the conductor turn loop is unchanged. The
+recorder branch picks a browser-supported mime (Firefox=webm/opus, Safari=mp4) and has NO live interim
+(it emits a one-shot "Transcribing…" while the upload is in flight). `/transcribe` mirrors `/speak`:
+JSON body `{audio: base64, mimeType}` → OpenAI `gpt-4o-mini-transcribe` (audio.transcriptions) →
+`{text}`. The conductor passes a `transcribe(blob)` arg (Terminal wires `useTranscribe`); when present,
+`supported` is true on Safari/Firefox so the "needs Chrome" card no longer shows there (only when there
+is neither Web Speech NOR MediaRecorder+transcribe). Recognition/synthesis errors set status "error"
+with a visible Retry; a single `network` error surfaces as error (hold to retry), not a retry loop.
 
 **Iframe blocks Web Speech (the big one):** Chrome's `SpeechRecognition` is blocked inside
 cross-origin iframes — and the Replit **preview pane is an iframe** — so it throws persistent

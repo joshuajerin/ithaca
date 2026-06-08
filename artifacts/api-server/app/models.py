@@ -1317,6 +1317,15 @@ class SpeechAudio(BaseModel):
     format: str
 
 
+class TranscribeRequest(BaseModel):
+    audio: str  # base64-encoded recorded audio clip
+    mimeType: Optional[str] = None  # e.g. "audio/webm" or "audio/mp4"
+
+
+class Transcription(BaseModel):
+    text: str
+
+
 class RefineRequest(BaseModel):
     sessionId: str
     panelId: str

@@ -34,6 +34,8 @@ import type {
   SpeakRequest,
   SpeechAudio,
   SuggestionList,
+  TranscribeRequest,
+  Transcription,
   Watchlist,
   WatchlistInput
 } from './api.schemas';
@@ -582,6 +584,78 @@ export const useSpeak = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getSpeakMutationOptions(options));
+    }
+
+export const getTranscribeUrl = () => {
+
+
+
+
+  return `/api/transcribe`
+}
+
+/**
+ * Converts a base64-encoded recorded audio clip into text, for browsers without the Web Speech API (Safari/Firefox).
+ * @summary Transcribe recorded mic audio
+ */
+export const transcribe = async (transcribeRequest: TranscribeRequest, options?: RequestInit): Promise<Transcription> => {
+
+  return customFetch<Transcription>(getTranscribeUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      transcribeRequest,)
+  }
+);}
+
+
+
+
+export const getTranscribeMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof transcribe>>, TError,{data: BodyType<TranscribeRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof transcribe>>, TError,{data: BodyType<TranscribeRequest>}, TContext> => {
+
+const mutationKey = ['transcribe'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof transcribe>>, {data: BodyType<TranscribeRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  transcribe(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type TranscribeMutationResult = NonNullable<Awaited<ReturnType<typeof transcribe>>>
+    export type TranscribeMutationBody = BodyType<TranscribeRequest>
+    export type TranscribeMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Transcribe recorded mic audio
+ */
+export const useTranscribe = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof transcribe>>, TError,{data: BodyType<TranscribeRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof transcribe>>,
+        TError,
+        {data: BodyType<TranscribeRequest>},
+        TContext
+      > => {
+      return useMutation(getTranscribeMutationOptions(options));
     }
 
 export const getNavigateUrl = () => {

@@ -28,6 +28,12 @@ interface UseVoiceConductorArgs {
   active: boolean;
   processQuery: (text: string) => Promise<NarrationSegment[]>;
   synthesize: (text: string) => Promise<{ audio: string; format: string }>;
+  /**
+   * Server-side speech-to-text. Used as the recognition path on browsers
+   * without the Web Speech API (Safari/Firefox): recorded mic audio is uploaded
+   * here and the returned text drives the turn.
+   */
+  transcribe?: (audio: Blob) => Promise<string>;
   onHighlight: (panelId: string | null) => void;
   /** Fired once a full turn (listen -> think -> speak) finishes successfully. */
   onComplete?: () => void;
@@ -78,7 +84,7 @@ function base64ToArrayBuffer(b64: string): ArrayBuffer {
 }
 
 export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConductor {
-  const { active, processQuery, synthesize, onHighlight, onComplete, prepareTour, moveCursorTo, endTour } = args;
+  const { active, processQuery, synthesize, transcribe, onHighlight, onComplete, prepareTour, moveCursorTo, endTour } = args;
 
   const [status, setStatus] = useState<VoiceStatus>("idle");
   const [userLevel, setUserLevel] = useState(0);
@@ -102,6 +108,7 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
 
   const processRef = useRef(processQuery);
   const synthRef = useRef(synthesize);
+  const transcribeRef = useRef(transcribe);
   const highlightRef = useRef(onHighlight);
   const completeRef = useRef(onComplete);
   const prepareTourRef = useRef(prepareTour);
@@ -110,6 +117,7 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
   useEffect(() => {
     processRef.current = processQuery;
     synthRef.current = synthesize;
+    transcribeRef.current = transcribe;
     highlightRef.current = onHighlight;
     completeRef.current = onComplete;
     prepareTourRef.current = prepareTour;
@@ -246,6 +254,8 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
 
   // --- Speech recognition ---
   const recognition = useSpeechRecognition({
+    // Server-side STT fallback for browsers without the Web Speech API.
+    transcribe: transcribe ? (blob: Blob) => transcribeRef.current!(blob) : undefined,
     onUtterance: (text) => {
       if (busyRef.current) return;
       void handleUtterance(text);
@@ -371,7 +381,7 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
 
     if (!recognitionRef.current.supported) {
       heldRef.current = false;
-      setError("Voice Mode needs the Web Speech API. Please use Google Chrome.");
+      setError("Voice Mode isn't supported in this browser.");
       setStatusSafe("error");
       return;
     }
@@ -505,7 +515,7 @@ export function useVoiceConductor(args: UseVoiceConductorArgs): UseVoiceConducto
       return;
     }
     if (!recognitionRef.current.supported) {
-      setError("Voice Mode needs the Web Speech API. Please use Google Chrome.");
+      setError("Voice Mode isn't supported in this browser.");
       setStatusSafe("error");
       return;
     }

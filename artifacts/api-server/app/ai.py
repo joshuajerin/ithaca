@@ -16,6 +16,10 @@ MODEL = "gpt-5.4"
 # produces natural spoken audio, which we use for narration.
 AUDIO_MODEL = "gpt-audio"
 DEFAULT_VOICE = "alloy"
+# Speech-to-text model (audio in, text out). Used by the /transcribe endpoint so
+# browsers without the Web Speech API (Safari/Firefox) can still drive Voice Mode
+# by uploading recorded mic audio for server-side recognition.
+TRANSCRIBE_MODEL = "gpt-4o-mini-transcribe"
 
 _BASE_URL = os.environ.get("AI_INTEGRATIONS_OPENAI_BASE_URL")
 _API_KEY = os.environ.get("AI_INTEGRATIONS_OPENAI_API_KEY")
@@ -25,6 +29,7 @@ _API_KEY = os.environ.get("AI_INTEGRATIONS_OPENAI_API_KEY")
 # fall back to its heuristic builder instead of hanging until a 502.
 CHAT_TIMEOUT = 30.0
 AUDIO_TIMEOUT = 45.0
+TRANSCRIBE_TIMEOUT = 30.0
 
 _client: Optional[Any] = None
 
@@ -98,3 +103,24 @@ def speak(text: str, voice: Optional[str] = None, fmt: str = "mp3") -> bytes:
     if not audio or not getattr(audio, "data", None):
         raise RuntimeError("no audio returned")
     return base64.b64decode(audio.data)
+
+
+def transcribe(audio_bytes: bytes, filename: str = "audio.webm") -> str:
+    """Transcribe recorded mic audio to text using the STT model.
+
+    `audio_bytes` is the raw recorded clip (webm/mp4/wav/etc.); `filename` carries
+    the extension the model uses to infer the container. Returns the recognized
+    text (possibly empty). Raises if the AI client is unavailable.
+    """
+    import io
+
+    client = get_client()
+    if client is None:
+        raise RuntimeError("AI client unavailable")
+    buffer = io.BytesIO(audio_bytes)
+    buffer.name = filename
+    resp = client.with_options(timeout=TRANSCRIBE_TIMEOUT).audio.transcriptions.create(
+        model=TRANSCRIBE_MODEL,
+        file=(filename, buffer),
+    )
+    return (getattr(resp, "text", None) or "").strip()

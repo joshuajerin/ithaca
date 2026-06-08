@@ -240,7 +240,7 @@ export function VoicePanel({
           {!supported ? (
             <div className="flex items-center gap-2 text-center text-[11px] text-muted-foreground max-w-[16rem]">
               <MonitorX className="w-4 h-4 shrink-0" strokeWidth={1.25} />
-              Voice Mode needs Google Chrome.
+              Voice Mode needs a browser with microphone support.
             </div>
           ) : status === "error" ? (
             <div className="flex flex-col items-center gap-2 max-w-[16rem] text-center">
@@ -282,14 +282,14 @@ export function VoicePanel({
     <div className="pointer-events-none fixed inset-x-0 bottom-6 z-30 flex justify-center px-4">
       <div className="pointer-events-auto flex flex-col items-center gap-3 rounded-2xl border border-border bg-black/70 backdrop-blur-md px-6 py-4 shadow-2xl max-w-md w-full sm:w-auto">
         {!supported ? (
-          /* Browser without the Web Speech API (Safari/Firefox) — make it explicit. */
+          /* Browser with neither the Web Speech API nor MediaRecorder mic capture. */
           <div className="flex flex-col items-center gap-3 text-center max-w-sm">
             <MonitorX className="w-8 h-8 text-muted-foreground" strokeWidth={1.25} />
-            <h2 className="font-serif text-xl tracking-tight">Voice Mode needs Chrome</h2>
+            <h2 className="font-serif text-xl tracking-tight">Voice Mode unavailable</h2>
             <p className="text-xs text-muted-foreground leading-relaxed">
-              Your browser doesn't support the Web Speech API used for live voice
-              recognition. Open the Agentic Terminal in Google Chrome to talk to it,
-              or keep using the typed command panel.
+              This browser can't access the microphone for voice recognition. Try a
+              recent version of Chrome, Safari, or Firefox over https, or keep using
+              the typed command panel.
             </p>
           </div>
         ) : (

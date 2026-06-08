@@ -619,6 +619,21 @@ export interface SpeechAudio {
   format: string;
 }
 
+export interface TranscribeRequest {
+  /** Base64-encoded recorded audio clip. */
+  audio: string;
+  /**
+     * MIME type of the recorded clip, e.g. audio/webm or audio/mp4.
+     * @nullable
+     */
+  mimeType?: string | null;
+}
+
+export interface Transcription {
+  /** Recognized text from the audio (may be empty). */
+  text: string;
+}
+
 /**
  * Optional explicit skill parameters. When provided, they are applied directly (bypassing instruction parsing), enabling deterministic in-panel controls such as switching an intraday chart's resolution and window without re-issuing a command.
  * @nullable

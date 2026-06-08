@@ -818,6 +818,20 @@ export const SpeakResponse = zod.object({
 
 
 /**
+ * Converts a base64-encoded recorded audio clip into text, for browsers without the Web Speech API (Safari/Firefox).
+ * @summary Transcribe recorded mic audio
+ */
+export const TranscribeBody = zod.object({
+  "audio": zod.string().describe('Base64-encoded recorded audio clip.'),
+  "mimeType": zod.string().nullish().describe('MIME type of the recorded clip, e.g. audio\/webm or audio\/mp4.')
+})
+
+export const TranscribeResponse = zod.object({
+  "text": zod.string().describe('Recognized text from the audio (may be empty).')
+})
+
+
+/**
  * Returns an ordered tour of the panels currently on a session's dashboard, each with a short caption, for the AI cursor to walk the user through.
  * @summary Plan an AI navigator tour
  */

@@ -84,6 +84,8 @@ export * from './spreadStats';
 export * from './subskill';
 export * from './suggestionList';
 export * from './tradeLogEntry';
+export * from './transcribeRequest';
+export * from './transcription';
 export * from './varBin';
 export * from './watchlist';
 export * from './watchlistInput';

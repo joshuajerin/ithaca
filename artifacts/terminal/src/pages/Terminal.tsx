@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   useOrchestrate,
   useSpeak,
+  useTranscribe,
   useNavigate,
 } from "@workspace/api-client-react";
 import type { DashboardSpec, NarrationSegment } from "@workspace/api-client-react";
@@ -106,6 +107,7 @@ export default function Terminal() {
 
   const orchestrate = useOrchestrate();
   const speak = useSpeak();
+  const transcribe = useTranscribe();
   const navigateTour = useNavigate();
   const { toast } = useToast();
   const isMobile = useIsMobile();
@@ -332,10 +334,30 @@ export default function Terminal() {
   );
   const endVoiceTour = useCallback(() => navigatorRef.current.stop(), []);
 
+  // Server-side STT for browsers without the Web Speech API (Safari/Firefox):
+  // base64-encode the recorded clip and send it to /transcribe.
+  const transcribeAudio = useCallback(
+    async (blob: Blob): Promise<string> => {
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      let binary = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+      }
+      const base64 = btoa(binary);
+      const res = await transcribe.mutateAsync({
+        data: { audio: base64, mimeType: blob.type || undefined },
+      });
+      return res.text ?? "";
+    },
+    [transcribe],
+  );
+
   const voice = useVoiceConductor({
     active: voiceMode,
     processQuery: processVoiceQuery,
     synthesize,
+    transcribe: transcribeAudio,
     onHighlight: setHighlightedPanelId,
     onComplete: useCallback(() => {
       toast({ title: "complete", duration: 2500 });

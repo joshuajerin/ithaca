@@ -134,6 +134,47 @@ def speak(req: models.SpeakRequest):
     return {"audio": base64.b64encode(audio).decode("ascii"), "format": "mp3"}
 
 
+def _filename_for_mime(mime: str | None) -> str:
+    m = (mime or "").split(";")[0].strip().lower()
+    ext = {
+        "audio/webm": "webm",
+        "audio/ogg": "ogg",
+        "audio/mp4": "mp4",
+        "audio/mpeg": "mp3",
+        "audio/mp3": "mp3",
+        "audio/wav": "wav",
+        "audio/x-wav": "wav",
+        "audio/aac": "aac",
+        "audio/m4a": "m4a",
+        "audio/x-m4a": "m4a",
+    }.get(m, "webm")
+    return f"audio.{ext}"
+
+
+@api.post("/transcribe", response_model=models.Transcription)
+def transcribe(req: models.TranscribeRequest):
+    import base64
+    import binascii
+
+    from . import ai
+
+    if not req.audio:
+        raise HTTPException(status_code=400, detail="audio is required")
+    try:
+        audio_bytes = base64.b64decode(req.audio)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail="audio must be base64-encoded")
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="audio is empty")
+    if not ai.ai_available():
+        raise HTTPException(status_code=503, detail="speech recognition unavailable")
+    try:
+        text = ai.transcribe(audio_bytes, filename=_filename_for_mime(req.mimeType))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"transcription failed: {exc}")
+    return {"text": text}
+
+
 @api.post("/navigate", response_model=models.NavigationTour)
 def navigate(req: models.NavigateRequest):
     if not req.sessionId or not req.sessionId.strip():

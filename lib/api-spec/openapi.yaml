@@ -118,6 +118,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SpeechAudio"
+  /transcribe:
+    post:
+      operationId: transcribe
+      tags: [terminal]
+      summary: Transcribe recorded mic audio
+      description: Converts a base64-encoded recorded audio clip into text, for browsers without the Web Speech API (Safari/Firefox).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TranscribeRequest"
+      responses:
+        "200":
+          description: Recognized text
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transcription"
   /navigate:
     post:
       operationId: navigate
@@ -1227,6 +1246,23 @@ components:
         format:
           type: string
           description: Audio container/codec, e.g. mp3.
+    TranscribeRequest:
+      type: object
+      required: [audio]
+      properties:
+        audio:
+          type: string
+          description: Base64-encoded recorded audio clip.
+        mimeType:
+          type: ["string", "null"]
+          description: MIME type of the recorded clip, e.g. audio/webm or audio/mp4.
+    Transcription:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          description: Recognized text from the audio (may be empty).
     RefineRequest:
       type: object
       required: [sessionId, panelId, instruction]
