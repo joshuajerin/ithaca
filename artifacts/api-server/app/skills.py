@@ -1025,12 +1025,28 @@ def build_backtest(params: dict) -> dict:
     start = params.get("start")
     end = params.get("end")
 
+    listing = repo.listing_info(symbol)
+    is_delisted = listing.get("status") == "delisted"
+
     # Peak / older-date / custom-range entries need history deeper than the cached
     # ~6mo DB window, so fetch a deep real series; preset windows use the normal
-    # range query. Both fall back to the curated mock so the panel always renders.
+    # range query. A delisted name's recent window is empty, so we backtest its
+    # real *trading* window ([listedAt or 20y back] .. delistedAt) from genuine
+    # closes — never imputed. All paths fall back to the curated mock so the panel
+    # always renders.
     if entry_mode in ("peak", "date", "range"):
         deep_start = start if entry_mode == "range" else (entry_date if entry_mode == "date" else None)
         meta = repo.deep_price_series(symbol, start=deep_start)
+    elif is_delisted:
+        from datetime import date as _date, timedelta as _td
+        end_d = listing.get("delistedAt") or _date.today().isoformat()
+        start_d = listing.get("listedAt") or (_date.today() - _td(days=365 * 20)).isoformat()
+        hc = repo.historical_closes([symbol], start_d, end_d)
+        pts = hc.get("series", {}).get(symbol) or []
+        if len(pts) >= 3:
+            meta = {"points": pts, "source": "live", "asOf": hc.get("asOf")}
+        else:
+            meta = repo.price_series_meta(symbol, days=days)
     else:
         meta = repo.price_series_meta(symbol, days=days)
     points = meta["points"]
@@ -1072,6 +1088,31 @@ def build_backtest(params: dict) -> dict:
         "label": _ENTRY_LABELS.get(spec["mode"], "Recent window"),
     }
 
+    price_pit_safe = meta.get("source") != "mock"
+    notes: List[str] = []
+    if price_pit_safe:
+        notes.append("Backtest runs on real as-traded OHLCV — point-in-time safe "
+                     "(no restated/adjusted-after-the-fact prices).")
+    else:
+        notes.append("No real history available; this curve uses a synthetic "
+                     "deterministic series — NOT point-in-time safe, treat as illustrative.")
+    if is_delisted:
+        dd = listing.get("delistedAt")
+        notes.append(
+            f"{symbol} is a delisted name"
+            + (f" (delisted {dd})" if dd else "")
+            + " — included so its outcome is not silently dropped (survivorship-bias-free).")
+    coverage = {
+        "symbol": symbol,
+        "status": listing.get("status"),
+        "listedAt": listing.get("listedAt"),
+        "delistedAt": listing.get("delistedAt"),
+        "priceBasis": "as-traded" if price_pit_safe else "synthetic",
+        "pointInTime": price_pit_safe,
+        "survivorshipSafe": True,
+        "notes": notes,
+    }
+
     return {
         "symbol": symbol,
         "strategy": result["strategy"],
@@ -1088,6 +1129,7 @@ def build_backtest(params: dict) -> dict:
         "drawdown": result["drawdown"],
         "tradeLog": result["tradeLog"][:50],
         "stats": result["stats"],
+        "coverage": coverage,
         "asOf": meta.get("asOf") or company.get("_asOf"),
         "source": meta.get("source", "mock"),
     }
@@ -4587,6 +4629,126 @@ _SIGNAL_UNIVERSE_CAP = 40
 _DEFAULT_SCORECARD_SIGNALS = ["momentum", "short_reversal", "low_volatility", "value", "quality"]
 
 
+def _signal_window(days: Optional[int] = None) -> tuple:
+    """Inclusive ISO [start, end] for the signal desk's evaluation window."""
+    from datetime import date as _date, timedelta as _td
+    d = days or _SIGNAL_DAYS
+    end = _date.today()
+    start = end - _td(days=d)
+    return start.isoformat(), end.isoformat()
+
+
+def _augment_signal_coverage(symbols, series: dict, companies: dict,
+                             ctx_by_symbol: dict, signal: str) -> dict:
+    """Add survivorship + point-in-time honesty to a cross-sectional signal.
+
+    1) Survivorship — merge in REAL historical closes for names that were trading
+       during the window but have since delisted (``repo.historical_closes``; no
+       mock fill). Delisted names lacking free historical coverage are reported,
+       never imputed.
+    2) Point-in-time — for fundamental signals, override each name's cross-sectional
+       value with as-reported figures knowable at the window start
+       (``repo.fundamentals_as_of``) instead of today's restated snapshot; where PIT
+       history is unavailable the current value is kept and the name is flagged.
+
+    Mutates ``series`` and ``ctx_by_symbol`` in place and returns a coverage block
+    describing exactly what is point-in-time safe vs best-effort current.
+    """
+    start, end = _signal_window()
+    is_fundamental = engine.SIGNAL_META.get(signal, {}).get("kind") == "fundamental"
+
+    hist = repo.historical_universe(start, end, symbols=list(symbols))
+    delisted_syms = [d["symbol"] for d in (hist.get("delisted") or [])]
+
+    survivorship_included: List[str] = []
+    survivorship_missing: List[str] = []
+    if delisted_syms:
+        dclose = repo.historical_closes(delisted_syms, start, end)
+        for sym, pts in (dclose.get("series") or {}).items():
+            series[sym] = pts
+            survivorship_included.append(sym)
+        survivorship_missing = list(dclose.get("missing") or [])
+
+    pit_applied: List[str] = []
+    pit_missing: List[str] = []
+    if is_fundamental:
+        for sym in list(series.keys()):
+            asof = repo.fundamentals_as_of(sym, start)
+            if not asof:
+                pit_missing.append(sym)
+                continue
+            fval = None
+            if signal == "value":
+                price_start = series[sym][0]["c"] if series.get(sym) else None
+                eps_ttm = asof.get("epsTtm")
+                if price_start and eps_ttm and price_start > 0 and eps_ttm > 0:
+                    fval = eps_ttm / price_start
+            elif signal == "quality":
+                nm = asof.get("netMargin")
+                if nm is not None and nm != 0.0:
+                    fval = float(nm)
+            if fval is not None:
+                ctx_by_symbol[sym] = {"fval": fval}
+                pit_applied.append(sym)
+            else:
+                pit_missing.append(sym)
+
+    pitcov = repo.pit_coverage(list(series.keys()))
+
+    # Survivorship is "safe" when nothing delisted during the window (no bias to
+    # correct) or we carry real data for every delisted name that did.
+    if not delisted_syms:
+        survivorship_safe = True
+    else:
+        survivorship_safe = len(survivorship_missing) == 0
+
+    notes: List[str] = []
+    if not delisted_syms:
+        notes.append("No constituents delisted during this window — survivorship "
+                     "bias is not material here.")
+    else:
+        if survivorship_included:
+            notes.append(
+                f"Included {len(survivorship_included)} delisted name(s) with real "
+                f"history ({', '.join(survivorship_included[:8])}) to avoid survivorship bias.")
+        if survivorship_missing:
+            notes.append(
+                f"{len(survivorship_missing)} delisted name(s) had no free historical "
+                f"coverage and were excluded, not imputed ({', '.join(survivorship_missing[:8])}).")
+
+    if is_fundamental:
+        point_in_time = bool(pit_applied) and not pit_missing
+        if pit_applied:
+            notes.append(f"Point-in-time fundamentals applied to {len(pit_applied)} "
+                         "name(s) (as-reported at window start).")
+        if pit_missing:
+            notes.append(f"{len(pit_missing)} name(s) lack point-in-time fundamentals; "
+                         "current (restated) figures used — best-effort, not PIT-safe.")
+    else:
+        point_in_time = True
+        notes.append("Price-based signal evaluated on as-traded historical closes "
+                     "(point-in-time safe).")
+
+    return {
+        "windowStart": start,
+        "windowEnd": end,
+        "kind": "fundamental" if is_fundamental else "price",
+        "survivorshipSafe": survivorship_safe,
+        "delistedInWindow": len(delisted_syms),
+        "delistedIncluded": survivorship_included,
+        "delistedExcluded": survivorship_missing,
+        "pointInTime": point_in_time,
+        "pitApplied": len(pit_applied),
+        "pitMissing": len(pit_missing) if is_fundamental else 0,
+        "pitCoverage": {
+            "covered": pitcov.get("covered"),
+            "total": pitcov.get("total"),
+            "periodRange": pitcov.get("periodRange"),
+        },
+        "notes": notes,
+    }
+
+
 def _resolve_signal_universe(params: dict) -> tuple:
     """Resolve (symbols, label) for the cross-section from explicit names, a
     sector, or a default liquid core. Capped so the bulk fetch stays cheap."""
@@ -4662,6 +4824,11 @@ def build_signal_research(params: dict) -> dict:
     companies = repo.companies_bulk(symbols) if meta.get("kind") == "fundamental" else {}
     ctx_by_symbol, pre_excluded = _signal_ctx(signal, companies)
 
+    # Survivorship + point-in-time coverage: merges real history for delisted
+    # names that traded in the window and applies as-reported fundamentals,
+    # labeling anything that is best-effort rather than PIT-safe.
+    coverage = _augment_signal_coverage(symbols, series, companies, ctx_by_symbol, signal)
+
     # Drop names the fundamental field is missing for before evaluation.
     excluded_syms = {e["symbol"] for e in pre_excluded}
     eval_series = {s: pts for s, pts in series.items() if s not in excluded_syms}
@@ -4700,6 +4867,7 @@ def build_signal_research(params: dict) -> dict:
         "quantileReturns": result["quantileReturns"],
         "spread": result["spread"],
         "spreadStats": result["spreadStats"],
+        "coverage": coverage,
         "asOf": bulk.get("asOf"),
         "source": bulk.get("source", "mock"),
     }
@@ -4738,9 +4906,14 @@ def build_signal_scorecard(params: dict) -> dict:
     companies = repo.companies_bulk(symbols) if need_fundamentals else {}
 
     rows = []
+    coverages = []
     for signal in signals:
         meta = engine.SIGNAL_META.get(signal, {})
         ctx_by_symbol, pre_excluded = _signal_ctx(signal, companies)
+        # Per-signal survivorship + point-in-time handling (price signals are PIT
+        # by construction; fundamental signals get as-reported overrides).
+        cov = _augment_signal_coverage(symbols, series, companies, ctx_by_symbol, signal)
+        coverages.append(cov)
         excluded_syms = {e["symbol"] for e in pre_excluded}
         eval_series = {s: pts for s, pts in series.items() if s not in excluded_syms}
         result = engine.evaluate_signal(
@@ -4763,12 +4936,33 @@ def build_signal_scorecard(params: dict) -> dict:
             "spreadReturn": result["spreadStats"]["totalReturn"],
             "spreadSharpe": result["spreadStats"]["sharpe"],
             "included": len(result["included"]),
+            "pointInTime": cov["pointInTime"],
             "spark": _downsample([p["value"] for p in result["spread"]]),
         })
 
     rows.sort(key=lambda r: r["icIR"], reverse=True)
     for i, r in enumerate(rows):
         r["rank"] = i + 1
+
+    # Aggregate coverage across the compared signals: survivorship facts are
+    # shared; point-in-time safety holds only if every signal was PIT-safe.
+    seen_notes: List[str] = []
+    for c in coverages:
+        for n in c.get("notes", []):
+            if n not in seen_notes:
+                seen_notes.append(n)
+    base = coverages[0] if coverages else {}
+    coverage = {
+        "windowStart": base.get("windowStart"),
+        "windowEnd": base.get("windowEnd"),
+        "survivorshipSafe": all(c["survivorshipSafe"] for c in coverages) if coverages else True,
+        "delistedInWindow": base.get("delistedInWindow", 0),
+        "delistedIncluded": base.get("delistedIncluded", []),
+        "delistedExcluded": base.get("delistedExcluded", []),
+        "pointInTime": all(c["pointInTime"] for c in coverages) if coverages else True,
+        "pitCoverage": base.get("pitCoverage"),
+        "notes": seen_notes,
+    }
 
     return {
         "universe": universe_label,
@@ -4777,6 +4971,7 @@ def build_signal_scorecard(params: dict) -> dict:
         "holding": _SIGNAL_HOLDING,
         "quantiles": _SIGNAL_QUANTILES,
         "rows": rows,
+        "coverage": coverage,
         "asOf": bulk.get("asOf"),
         "source": bulk.get("source", "mock"),
     }
@@ -4803,6 +4998,10 @@ def build_signal_portfolio(params: dict) -> dict:
     series = bulk["series"]
     companies = repo.companies_bulk(symbols) if meta.get("kind") == "fundamental" else {}
     ctx_by_symbol, pre_excluded = _signal_ctx(signal, companies)
+
+    # Survivorship + point-in-time coverage (same honesty contract as the
+    # research desk): real history for delisted names, as-reported fundamentals.
+    coverage = _augment_signal_coverage(symbols, series, companies, ctx_by_symbol, signal)
 
     excluded_syms = {e["symbol"] for e in pre_excluded}
     eval_series = {s: pts for s, pts in series.items() if s not in excluded_syms}
@@ -4851,6 +5050,7 @@ def build_signal_portfolio(params: dict) -> dict:
         "benchStats": result["benchStats"],
         "turnover": result["turnover"],
         "turnoverAnnual": result["turnoverAnnual"],
+        "coverage": coverage,
         "asOf": bulk.get("asOf"),
         "source": bulk.get("source", "mock"),
     }
@@ -5971,12 +6171,36 @@ def build_data_universe(params: dict) -> dict:
     else:
         title = "Data Universe — Coverage & Provenance"
 
+    # Point-in-time / survivorship summary: surface names that were trading over a
+    # broad lookback but have since delisted, and how much PIT fundamentals history
+    # we hold for the shown universe. Honest about gaps (never invents membership).
+    row_syms = [r.get("symbol") for r in ov["rows"] if r.get("symbol")]
+    from datetime import date as _date
+    hist = repo.historical_universe("2005-01-01", _date.today().isoformat(), sector=sector)
+    pitcov = repo.pit_coverage(row_syms)
+    pit = {
+        "lookbackStart": hist["windowStart"],
+        "lookbackEnd": hist["windowEnd"],
+        "delistedCount": hist["delistedCount"],
+        "delisted": hist["delisted"][:40],
+        "withListingDates": hist.get("withListingDates"),
+        "totalConsidered": hist.get("totalConsidered"),
+        "survivorshipSafe": hist["survivorshipSafe"],
+        "pitFundamentals": {
+            "covered": pitcov["covered"],
+            "total": pitcov["total"],
+            "periodRange": pitcov["periodRange"],
+        },
+        "notes": hist["notes"],
+    }
+
     return {
         "title": title,
         "summary": ov["summary"],
         "sectors": ov["sectors"],
         "rows": ov["rows"],
         "rowsShown": len(ov["rows"]),
+        "pit": pit,
         "asOf": ov.get("asOf"),
         "source": ov.get("source") or _live_source(),
     }
@@ -6178,11 +6402,39 @@ def build_data_quality(params: dict) -> dict:
     issues = sum(1 for s in series if s["status"] in ("warn", "stale"))
     mock = sum(1 for s in series if s["status"] == "mock")
     unavailable = sum(1 for s in series if s["status"] == "unavailable")
+
+    # Point-in-time vs best-effort-current breakdown for the audited names: which
+    # carry as-reported fundamentals history (look-ahead-safe) and which fall back
+    # to today's restated snapshot, plus listing status so delisted names are clear.
+    pitcov = repo.pit_coverage(syms)
+    pit_rows: List[dict] = []
+    for sym in syms:
+        li = repo.listing_info(sym)
+        pit_rows.append({
+            "symbol": sym,
+            "status": li.get("status"),
+            "listedAt": li.get("listedAt"),
+            "delistedAt": li.get("delistedAt"),
+            "pitFundamentals": bool(pitcov["perSymbol"].get(sym)),
+            "basis": "point-in-time" if pitcov["perSymbol"].get(sym) else "current (restated)",
+        })
+    pit = {
+        "covered": pitcov["covered"],
+        "total": pitcov["total"],
+        "periodRange": pitcov["periodRange"],
+        "rows": pit_rows,
+        "note": (
+            "Names marked 'current (restated)' lack point-in-time fundamentals; "
+            "their figures reflect today's restated filings, not what was knowable "
+            "historically — best-effort, not PIT-safe."
+        ),
+    }
     return {
         "title": title,
         "interval": interval,
         "intervalLabel": interval_label,
         "series": series,
+        "pit": pit,
         "summary": {
             "seriesCount": len(series),
             "okCount": ok,

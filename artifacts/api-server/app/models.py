@@ -754,6 +754,7 @@ class BacktestData(BaseModel):
     gainPct: Optional[float] = None
     multiple: Optional[float] = None
     entryNote: Optional[str] = None
+    coverage: Optional[dict] = None
 
 
 # --- correlation_matrix ---
@@ -983,6 +984,7 @@ class SignalResearchData(BaseModel):
     quantileReturns: List[QuantileReturn]
     spread: List[SpreadPoint]
     spreadStats: SpreadStats
+    coverage: Optional[dict] = None
 
 
 # --- signal_scorecard ---
@@ -1008,6 +1010,7 @@ class SignalScorecardData(BaseModel):
     holding: int
     quantiles: int
     rows: List[SignalScoreRow]
+    coverage: Optional[dict] = None
 
 
 # --- supply_chain ---

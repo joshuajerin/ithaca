@@ -1,5 +1,6 @@
 import React from "react";
 import type { SignalResearchData } from "@workspace/api-client-react";
+import { CoverageBadge, type DataCoverage } from "./CoverageBadge";
 import {
   ResponsiveContainer,
   LineChart,
@@ -72,6 +73,8 @@ export function SignalResearchPanel({ data }: Props) {
     return null;
   };
 
+  const coverage = (data as unknown as { coverage?: DataCoverage }).coverage;
+
   return (
     <div className="flex flex-col h-full gap-2">
       <div className="shrink-0">
@@ -80,6 +83,7 @@ export function SignalResearchPanel({ data }: Props) {
         </div>
         <div className="text-[9px] text-muted-foreground/70 mt-0.5">{description}</div>
       </div>
+      <CoverageBadge coverage={coverage} />
 
       {/* Headline stats */}
       <div className="grid grid-cols-4 gap-2 shrink-0 border-y border-border/40 py-2">

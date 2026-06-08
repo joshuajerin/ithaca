@@ -36,6 +36,20 @@ def _iso(dt) -> Optional[str]:
     return str(dt)
 
 
+def _iso_date(d) -> Optional[str]:
+    """Normalize a DB date (date/datetime/str) to a plain ISO ``YYYY-MM-DD``."""
+    if d is None:
+        return None
+    if isinstance(d, str):
+        return d[:10] or None
+    if hasattr(d, "isoformat"):
+        try:
+            return d.isoformat()[:10]
+        except Exception:  # noqa: BLE001
+            return str(d)[:10]
+    return str(d)[:10]
+
+
 # ----------------------------- companies -----------------------------
 def get_company(symbol: str) -> Optional[dict]:
     sym = (symbol or "").upper()
@@ -727,6 +741,333 @@ def price_closes_bulk(symbols: List[str], days: int = _RETURN_DAYS) -> dict:
         "live": live,
         "source": "live" if any(live.values()) else "mock",
         "asOf": max(as_of_stamps) if as_of_stamps else None,
+    }
+
+
+# ----------------------------- point-in-time / survivorship -----------------------------
+def listing_info(symbol: str) -> dict:
+    """Listing lifecycle for one symbol: status + listing/delisting dates.
+
+    Reads the `universe` registry (DB) and falls back to the curated catalog so
+    callers always get an honest status even before any live ingest. Returns
+    ``{symbol, name, sector, status, listedAt, delistedAt, source}`` where
+    ``status`` is ``active``/``delisted``/``unknown`` and dates may be null when
+    not yet known (best-effort from the free chart's first-trade date)."""
+    sym = (symbol or "").upper()
+    if sym and db.db_available():
+        try:
+            r = db.query_one(
+                "SELECT symbol, name, sector, status, listed_at, delisted_at "
+                "FROM universe WHERE symbol = %s",
+                (sym,),
+            )
+            if r:
+                return {
+                    "symbol": sym,
+                    "name": r.get("name"),
+                    "sector": r.get("sector"),
+                    "status": r.get("status") or "active",
+                    "listedAt": _iso_date(r.get("listed_at")),
+                    "delistedAt": _iso_date(r.get("delisted_at")),
+                    "source": "db",
+                }
+        except Exception as exc:  # noqa: BLE001
+            log.warning("listing_info DB error: %s", exc)
+    dl = data.get_delisted(sym)
+    if dl:
+        return {
+            "symbol": sym, "name": dl.get("name"), "sector": dl.get("sector"),
+            "status": "delisted", "listedAt": dl.get("listed"),
+            "delistedAt": dl.get("delisted"), "source": "curated",
+        }
+    company = data.get_company(sym)
+    if company:
+        return {
+            "symbol": sym, "name": company.get("name"),
+            "sector": company.get("sector"), "status": "active",
+            "listedAt": None, "delistedAt": None, "source": "curated",
+        }
+    return {
+        "symbol": sym, "name": None, "sector": None, "status": "unknown",
+        "listedAt": None, "delistedAt": None, "source": "unknown",
+    }
+
+
+def historical_universe(
+    start: str,
+    end: str,
+    sector: Optional[str] = None,
+    symbols: Optional[List[str]] = None,
+) -> dict:
+    """Resolve the universe that was *active during* the [start, end] window.
+
+    Survivorship-bias-free: includes names that were trading in the window but
+    have since been delisted (failed/acquired/taken-private), not just today's
+    survivors. A name belongs to the window when it was already listed by `end`
+    and had not yet delisted before `start`:
+        (listed_at IS NULL OR listed_at <= end) AND
+        (delisted_at IS NULL OR delisted_at >= start)
+
+    `symbols` (when given) constrains the *active* candidate set (e.g. a signal
+    desk's resolved survivors); delisted names in the window are always merged in
+    on top, optionally filtered by `sector`. Returns active/delisted breakdown,
+    a `survivorshipSafe` flag (true only when we actually carry names that left
+    the market in this window), how much of the universe has real listing dates,
+    and honest notes about the gaps. Never invents membership.
+    """
+    sid = resolve_sector(sector) if sector else None
+    active = [s.upper() for s in (symbols or []) if s]
+    delisted: List[dict] = []
+    with_dates = 0
+    total_considered = 0
+    notes: List[str] = []
+    source = "mock"
+
+    def _row_in_window(listed, delisted_d) -> bool:
+        if listed and listed > end:
+            return False
+        if delisted_d and delisted_d < start:
+            return False
+        return True
+
+    if db.db_available():
+        try:
+            # Active candidates from the registry when the caller didn't supply a set.
+            if not active:
+                where = "WHERE COALESCE(u.status, 'active') = 'active' AND f.price IS NOT NULL"
+                params: list = []
+                if sid:
+                    where += " AND u.sector = %s"
+                    params.append(sid)
+                arows = db.query(
+                    f"""
+                    SELECT f.symbol FROM fundamentals f
+                    LEFT JOIN universe u ON u.symbol = f.symbol
+                    {where}
+                    ORDER BY f.market_cap DESC NULLS LAST
+                    """,
+                    tuple(params),
+                )
+                active = [r["symbol"] for r in arows]
+            # Delisted names that were trading in the window.
+            dwhere = "WHERE COALESCE(status, 'active') = 'delisted'"
+            dparams: list = []
+            if sid:
+                dwhere += " AND sector = %s"
+                dparams.append(sid)
+            drows = db.query(
+                f"SELECT symbol, name, sector, listed_at, delisted_at FROM universe {dwhere}",
+                tuple(dparams),
+            )
+            for r in drows:
+                listed = _iso_date(r.get("listed_at"))
+                deld = _iso_date(r.get("delisted_at"))
+                if _row_in_window(listed, deld):
+                    delisted.append({
+                        "symbol": r["symbol"], "name": r.get("name"),
+                        "sector": r.get("sector"), "listedAt": listed,
+                        "delistedAt": deld,
+                    })
+            # How many universe rows carry a real listing date (PIT-awareness).
+            cov = db.query_one(
+                "SELECT COUNT(*) AS total, "
+                "COUNT(*) FILTER (WHERE listed_at IS NOT NULL) AS dated FROM universe"
+            )
+            if cov:
+                total_considered = int(cov.get("total") or 0)
+                with_dates = int(cov.get("dated") or 0)
+            source = "live"
+        except Exception as exc:  # noqa: BLE001
+            log.warning("historical_universe DB error: %s", exc)
+
+    # Fallback / merge: curated delisted set when DB is empty or sparse.
+    if not delisted:
+        for sym, meta in data.DELISTED.items():
+            if sid and meta.get("sector") != sid:
+                continue
+            if _row_in_window(meta.get("listed"), meta.get("delisted")):
+                delisted.append({
+                    "symbol": sym, "name": meta.get("name"),
+                    "sector": meta.get("sector"), "listedAt": meta.get("listed"),
+                    "delistedAt": meta.get("delisted"),
+                })
+    if not active:
+        cands = data.all_symbols()
+        active = [s for s in cands]
+
+    delisted_syms = [d["symbol"] for d in delisted]
+    survivorship_safe = len(delisted) > 0
+    if not survivorship_safe:
+        notes.append(
+            "No delisted names resolved for this window — results reflect "
+            "today's survivors only (survivorship bias not corrected)."
+        )
+    else:
+        notes.append(
+            f"{len(delisted)} delisted name(s) trading in this window are included "
+            "to reduce survivorship bias; names lacking free historical coverage "
+            "are reported, never imputed."
+        )
+    if total_considered and with_dates < total_considered:
+        notes.append(
+            f"Real listing dates known for {with_dates}/{total_considered} names; "
+            "the rest are treated as listed for the whole window (best-effort)."
+        )
+
+    return {
+        "windowStart": start,
+        "windowEnd": end,
+        "symbols": active + delisted_syms,
+        "active": active,
+        "delisted": delisted,
+        "activeCount": len(active),
+        "delistedCount": len(delisted),
+        "withListingDates": with_dates,
+        "totalConsidered": total_considered,
+        "survivorshipSafe": survivorship_safe,
+        "source": source,
+        "asOf": date.today().isoformat(),
+        "notes": notes,
+    }
+
+
+def historical_closes(symbols: List[str], start: str, end: str) -> dict:
+    """Real, date-bounded daily closes for many symbols — NO mock fill.
+
+    Unlike `price_closes_bulk`, names without genuine OHLCV in the window are
+    omitted and reported under `missing` rather than imputed with a deterministic
+    mock series. This is what makes survivorship handling honest: a delisted name
+    is only included when we actually have its real history. Returns
+    ``{series, covered, missing, asOf, source}``.
+    """
+    want = [(s or "").upper() for s in symbols if s]
+    series: Dict[str, List[dict]] = {}
+    as_of_stamps: List[str] = []
+    if want and db.db_available():
+        try:
+            rows = db.query(
+                """
+                SELECT symbol, d, c, updated_at FROM ohlcv
+                WHERE symbol = ANY(%s) AND c IS NOT NULL AND d >= %s AND d <= %s
+                ORDER BY symbol ASC, d ASC
+                """,
+                (want, start, end),
+            )
+            by_sym: Dict[str, List[dict]] = {}
+            for r in rows:
+                d = r["d"]
+                by_sym.setdefault(r["symbol"], []).append({
+                    "t": d.isoformat() if hasattr(d, "isoformat") else str(d),
+                    "c": _num(r.get("c")),
+                })
+                stamp = _iso(r.get("updated_at"))
+                if stamp:
+                    as_of_stamps.append(stamp)
+            for sym, pts in by_sym.items():
+                if len(pts) >= 2:
+                    series[sym] = pts
+        except Exception as exc:  # noqa: BLE001
+            log.warning("historical_closes DB error: %s", exc)
+    covered = sorted(series.keys())
+    missing = [s for s in want if s not in series]
+    return {
+        "series": series,
+        "covered": covered,
+        "missing": missing,
+        "asOf": max(as_of_stamps) if as_of_stamps else None,
+        "source": "live" if covered else "none",
+    }
+
+
+def fundamentals_as_of(symbol: str, as_of: str) -> Optional[dict]:
+    """As-reported fundamentals knowable at `as_of` (look-ahead-bias free).
+
+    Reads `fundamentals_pit` for the latest fiscal period whose public report
+    date is on/before `as_of`, plus the trailing four quarters for TTM EPS and
+    revenue. Returns ``{symbol, periodEnd, reportDate, netMargin, epsTtm,
+    revenueTtm, reportEstimated, quartersUsed, source}`` or ``None`` when no
+    point-in-time history is available (the caller must then flag the fallback,
+    not silently use today's restated snapshot)."""
+    sym = (symbol or "").upper()
+    if not sym or not as_of or not db.db_available():
+        return None
+    try:
+        rows = db.query(
+            """
+            SELECT period_end, report_date, revenue, net_income, net_margin,
+                   eps, report_estimated, source
+            FROM fundamentals_pit
+            WHERE symbol = %s AND report_date <= %s
+            ORDER BY period_end DESC
+            LIMIT 4
+            """,
+            (sym, as_of),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("fundamentals_as_of DB error: %s", exc)
+        return None
+    if not rows:
+        return None
+    latest = rows[0]
+    eps_vals = [_num(r.get("eps")) for r in rows if _num(r.get("eps")) is not None]
+    rev_vals = [_num(r.get("revenue")) for r in rows if _num(r.get("revenue")) is not None]
+    eps_ttm = round(sum(eps_vals), 4) if eps_vals else None
+    rev_ttm = round(sum(rev_vals), 2) if rev_vals else None
+    return {
+        "symbol": sym,
+        "periodEnd": _iso_date(latest.get("period_end")),
+        "reportDate": _iso_date(latest.get("report_date")),
+        "netMargin": _num(latest.get("net_margin")),
+        "epsTtm": eps_ttm,
+        "revenueTtm": rev_ttm,
+        "reportEstimated": bool(latest.get("report_estimated")),
+        "quartersUsed": len(rows),
+        "source": latest.get("source") or "pit",
+    }
+
+
+def pit_coverage(symbols: List[str]) -> dict:
+    """How much point-in-time fundamentals history we hold for `symbols`.
+
+    Returns ``{total, covered, perSymbol, periodRange, asOf}`` so the data-quality
+    view can show PIT-safe vs best-effort-current coverage honestly."""
+    want = [(s or "").upper() for s in symbols if s]
+    per: Dict[str, bool] = {s: False for s in want}
+    period_min: Optional[str] = None
+    period_max: Optional[str] = None
+    as_of: Optional[str] = None
+    if want and db.db_available():
+        try:
+            rows = db.query(
+                """
+                SELECT symbol, COUNT(*) AS n, MIN(period_end) AS pmin,
+                       MAX(period_end) AS pmax, MAX(updated_at) AS upd
+                FROM fundamentals_pit WHERE symbol = ANY(%s)
+                GROUP BY symbol
+                """,
+                (want,),
+            )
+            for r in rows:
+                if int(r.get("n") or 0) > 0:
+                    per[r["symbol"]] = True
+                pmin = _iso_date(r.get("pmin"))
+                pmax = _iso_date(r.get("pmax"))
+                if pmin and (period_min is None or pmin < period_min):
+                    period_min = pmin
+                if pmax and (period_max is None or pmax > period_max):
+                    period_max = pmax
+                stamp = _iso(r.get("upd"))
+                if stamp and (as_of is None or stamp > as_of):
+                    as_of = stamp
+        except Exception as exc:  # noqa: BLE001
+            log.warning("pit_coverage DB error: %s", exc)
+    covered = sum(1 for v in per.values() if v)
+    return {
+        "total": len(want),
+        "covered": covered,
+        "perSymbol": per,
+        "periodRange": {"min": period_min, "max": period_max},
+        "asOf": as_of,
     }
 
 

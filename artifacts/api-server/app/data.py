@@ -932,6 +932,53 @@ def resolve_sector(text: str) -> Optional[str]:
     return None
 
 
+# ----------------------------- delisted names (survivorship) -----------------------------
+# A curated set of names that were once liquid index members but have since been
+# delisted (failed, acquired, or taken private). Today's live universe is built
+# from `fundamentals` (current survivors only), so without this set a historical
+# backtest would silently exclude every name that left the market -- classic
+# survivorship bias. These rows are seeded into `universe` ONLY (status =
+# 'delisted', never into `fundamentals`) so they never leak into current
+# screeners/heatmaps, but a point-in-time window can resolve to them. Real OHLCV
+# over each name's listed..delisted window is ingested best-effort from the free
+# Yahoo chart endpoint (many delisted tickers still return history); where it
+# isn't available the data-quality view labels the gap rather than imputing it.
+DELISTED: Dict[str, dict] = {
+    "LEHMQ": {"name": "Lehman Brothers Holdings", "sector": "financials",
+              "exchange": "NYSE", "listed": "1994-02-02", "delisted": "2008-09-17"},
+    "BSC":   {"name": "Bear Stearns", "sector": "financials",
+              "exchange": "NYSE", "listed": "1985-10-29", "delisted": "2008-05-30"},
+    "WAMUQ": {"name": "Washington Mutual", "sector": "financials",
+              "exchange": "NYSE", "listed": "1983-03-11", "delisted": "2008-09-26"},
+    "ENRNQ": {"name": "Enron", "sector": "energy",
+              "exchange": "NYSE", "listed": "1985-07-17", "delisted": "2002-01-15"},
+    "SIVB":  {"name": "SVB Financial Group", "sector": "financials",
+              "exchange": "NASDAQ", "listed": "1988-03-04", "delisted": "2023-03-10"},
+    "FRCB":  {"name": "First Republic Bank", "sector": "financials",
+              "exchange": "NYSE", "listed": "2010-12-09", "delisted": "2023-05-01"},
+    "ATVI":  {"name": "Activision Blizzard", "sector": "comms",
+              "exchange": "NASDAQ", "listed": "1993-10-25", "delisted": "2023-10-13"},
+    "TWTR":  {"name": "Twitter", "sector": "comms",
+              "exchange": "NYSE", "listed": "2013-11-07", "delisted": "2022-10-28"},
+    "YHOO":  {"name": "Yahoo!", "sector": "ai_tech",
+              "exchange": "NASDAQ", "listed": "1996-04-12", "delisted": "2017-06-19"},
+    "XLNX":  {"name": "Xilinx", "sector": "semiconductors",
+              "exchange": "NASDAQ", "listed": "1990-06-12", "delisted": "2022-02-14"},
+    "CELG":  {"name": "Celgene", "sector": "biotech",
+              "exchange": "NASDAQ", "listed": "1987-07-28", "delisted": "2019-11-20"},
+    "MTLQQ": {"name": "Motors Liquidation (old GM)", "sector": "ev_auto",
+              "exchange": "NYSE", "listed": "1916-01-01", "delisted": "2009-06-01"},
+}
+
+
+def delisted_symbols() -> List[str]:
+    return list(DELISTED.keys())
+
+
+def get_delisted(symbol: str) -> Optional[dict]:
+    return DELISTED.get((symbol or "").upper())
+
+
 def _seed(symbol: str) -> int:
     return int(hashlib.md5(symbol.encode()).hexdigest(), 16) % (2 ** 31)
 

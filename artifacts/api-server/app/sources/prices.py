@@ -114,6 +114,18 @@ def fetch_price_history(symbol: str, range_: str = "6mo", interval: str = "1d") 
         # No live price: fall back to the close-to-close move from the series.
         change_pct = round((points[-1]["c"] - prev) / prev * 100, 2)
 
+    # `firstTradeDate` is the instrument's first trading day (epoch seconds),
+    # returned in chart meta regardless of the requested range. Lift it as a
+    # best-effort listing date so the universe registry becomes point-in-time
+    # aware (a historical window can exclude names not yet listed then).
+    listed_at = None
+    ftd = meta.get("firstTradeDate")
+    if ftd:
+        try:
+            listed_at = datetime.fromtimestamp(int(ftd), tz=timezone.utc).date().isoformat()
+        except (TypeError, ValueError, OSError):
+            listed_at = None
+
     return {
         "points": points,
         "quote": {
@@ -124,6 +136,7 @@ def fetch_price_history(symbol: str, range_: str = "6mo", interval: str = "1d") 
             "volume": meta.get("regularMarketVolume"),
             "week52High": meta.get("fiftyTwoWeekHigh"),
             "week52Low": meta.get("fiftyTwoWeekLow"),
+            "listedAt": listed_at,
             "asOf": _as_of(meta.get("regularMarketTime")),
         },
     }

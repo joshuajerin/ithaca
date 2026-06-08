@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import type { BacktestData } from "@workspace/api-client-react";
+import { CoverageBadge, type DataCoverage } from "./CoverageBadge";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -133,8 +134,11 @@ export function BacktestPanel({ data, onRefine }: Props) {
   const downsampledCurve = curve.filter((_, i) => i % Math.max(1, Math.floor(curve.length / 120)) === 0);
   const downsampledDD = drawdown.filter((_, i) => i % Math.max(1, Math.floor(drawdown.length / 120)) === 0);
 
+  const coverage = (data as unknown as { coverage?: DataCoverage }).coverage;
+
   return (
     <div className="flex flex-col h-full gap-3">
+      <CoverageBadge coverage={coverage} />
       {onRefine && (
         <div className="flex flex-col gap-2 shrink-0">
           <div className="flex items-center justify-between gap-2 flex-wrap">

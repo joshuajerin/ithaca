@@ -25,11 +25,29 @@ interface QualitySeries {
   issues: string[];
 }
 
+interface PitRow {
+  symbol: string;
+  status?: string | null;
+  listedAt?: string | null;
+  delistedAt?: string | null;
+  pitFundamentals: boolean;
+  basis: string;
+}
+
+interface PitBlock {
+  covered?: number | null;
+  total?: number | null;
+  periodRange?: { min?: string | null; max?: string | null } | null;
+  rows: PitRow[];
+  note?: string;
+}
+
 interface DataQualityData {
   title: string;
   interval?: string;
   intervalLabel?: string;
   series: QualitySeries[];
+  pit?: PitBlock;
   summary: {
     seriesCount: number;
     okCount: number;
@@ -83,6 +101,7 @@ function freshness(asOf?: string | null): string {
 
 export function DataQualityPanel({ data }: { data: DataQualityData }) {
   const s = data.summary;
+  const pit = data.pit;
   return (
     <div className="flex flex-col h-full w-full">
       <div className={`grid ${(s.unavailableCount ?? 0) > 0 ? "grid-cols-5" : "grid-cols-4"} gap-4 shrink-0 pb-4`}>
@@ -165,6 +184,46 @@ export function DataQualityPanel({ data }: { data: DataQualityData }) {
           </TableBody>
         </Table>
       </ScrollArea>
+
+      {pit && (
+        <div className="shrink-0 border-t border-border pt-3 mt-1">
+          <div className="flex items-center justify-between mb-2">
+            <span className="editorial-label text-[8px] text-muted-foreground">
+              Point-in-time fundamentals · as-reported vs current
+            </span>
+            <span className="editorial-label text-[8px] text-muted-foreground">
+              {pit.total ? `${pit.covered ?? 0}/${pit.total} covered` : "no PIT coverage"}
+              {pit.periodRange?.min ? ` · ${String(pit.periodRange.min).slice(0, 7)}→${String(pit.periodRange.max).slice(0, 7)}` : ""}
+            </span>
+          </div>
+          {pit.rows && pit.rows.length > 0 && (
+            <div className="flex flex-wrap gap-1 mb-1.5">
+              {pit.rows.slice(0, 24).map((r) => (
+                <span
+                  key={r.symbol}
+                  className={`text-[8px] font-mono px-1.5 py-0.5 border whitespace-nowrap ${
+                    r.pitFundamentals
+                      ? "border-emerald-500/30 text-emerald-400/80"
+                      : r.status === "delisted"
+                        ? "border-sky-500/30 text-sky-400/80"
+                        : "border-amber-500/30 text-amber-400/70"
+                  }`}
+                  title={`${r.symbol} · ${r.basis}${r.status === "delisted" && r.delistedAt ? ` · delisted ${r.delistedAt}` : ""}`}
+                >
+                  {r.symbol}
+                  <span className="text-muted-foreground/50"> {r.pitFundamentals ? "PIT" : "cur"}</span>
+                </span>
+              ))}
+              {pit.rows.length > 24 && (
+                <span className="text-[8px] text-muted-foreground/60 self-center">+{pit.rows.length - 24} more</span>
+              )}
+            </div>
+          )}
+          {pit.note && (
+            <div className="text-[8px] text-muted-foreground/70 italic leading-relaxed">{pit.note}</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

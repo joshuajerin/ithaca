@@ -1,5 +1,6 @@
 import React from "react";
 import type { SignalScorecardData, SignalScoreRow } from "@workspace/api-client-react";
+import { CoverageBadge, type DataCoverage } from "./CoverageBadge";
 
 interface Props {
   data: SignalScorecardData;
@@ -31,6 +32,7 @@ function Spark({ values, positive }: { values: number[]; positive: boolean }) {
 
 export function SignalScorecardPanel({ data }: Props) {
   const { universe, universeSize, holding, quantiles, rows } = data;
+  const coverage = (data as unknown as { coverage?: DataCoverage }).coverage;
 
   const fmtSigned = (v: number, digits = 2) => `${v > 0 ? "+" : ""}${v.toFixed(digits)}`;
 
@@ -44,6 +46,7 @@ export function SignalScorecardPanel({ data }: Props) {
           {universe} · {universeSize} names · {holding}d holding · {quantiles} quantiles
         </div>
       </div>
+      <CoverageBadge coverage={coverage} />
 
       <div className="flex-1 min-h-0 overflow-auto">
         <table className="text-[10px] font-mono w-full border-collapse">

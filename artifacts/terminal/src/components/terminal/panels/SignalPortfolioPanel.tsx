@@ -1,4 +1,5 @@
 import React from "react";
+import { CoverageBadge, type DataCoverage } from "./CoverageBadge";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -102,6 +103,7 @@ export function SignalPortfolioPanel({ data }: { data: SignalPortfolioData }) {
 
   const longs = holdings.filter((h) => h.side === "long");
   const shorts = holdings.filter((h) => h.side === "short");
+  const coverage = (data as unknown as { coverage?: DataCoverage }).coverage;
 
   const CurveTooltip = ({ active, payload, label }: any) => {
     if (active && payload?.length) {
@@ -135,6 +137,7 @@ export function SignalPortfolioPanel({ data }: { data: SignalPortfolioData }) {
           gross {gross.toFixed(2)}× · net {net.toFixed(2)}
         </div>
       </div>
+      <CoverageBadge coverage={coverage} />
 
       {/* Headline realized stats */}
       <div className="grid grid-cols-4 gap-2 shrink-0 border-y border-border/40 py-2">

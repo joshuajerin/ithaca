@@ -34,6 +34,10 @@ NEWS_INTERVAL = 120
 SENTIMENT_INTERVAL = 600
 MACRO_INTERVAL = 120
 ONDEMAND_INTERVAL = 15
+# Point-in-time backfill cadence: real OHLCV for delisted names + as-reported
+# quarterly fundamentals. This history barely changes, so a long sleep is fine —
+# it only needs to be present, not minute-fresh.
+PIT_INTERVAL = 6 * 3600
 # Daily mark cadence: re-check hourly. record_daily_snapshots is idempotent per
 # trading day (one row per strategy per day), so an hourly pass simply keeps the
 # day's NAV fresh and settles to the close once prices stop moving.
@@ -82,8 +86,35 @@ def _seed_universe() -> None:
         "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS ex_dividend_date DATE",
         "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS dividend_date DATE",
         "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS mcap_refreshed_at TIMESTAMPTZ",
+        # Point-in-time universe lifecycle: listing/delisting dates + status so a
+        # historical window can resolve to the names active then (incl. delisted).
+        "ALTER TABLE universe ADD COLUMN IF NOT EXISTS listed_at DATE",
+        "ALTER TABLE universe ADD COLUMN IF NOT EXISTS delisted_at DATE",
+        "ALTER TABLE universe ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'",
     ):
         db.execute(ddl)
+
+    # As-reported (point-in-time) fundamentals history, one row per fiscal period
+    # with the date it became public. Kept separate from the single-snapshot
+    # `fundamentals` table so a backtest can read the figures knowable at an as-of
+    # date instead of today's restated numbers.
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fundamentals_pit (
+            symbol TEXT NOT NULL,
+            period_end DATE NOT NULL,
+            report_date DATE NOT NULL,
+            revenue DOUBLE PRECISION,
+            net_income DOUBLE PRECISION,
+            net_margin DOUBLE PRECISION,
+            eps DOUBLE PRECISION,
+            report_estimated BOOLEAN NOT NULL DEFAULT FALSE,
+            source TEXT,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (symbol, period_end)
+        )
+        """
+    )
 
     # Dedicated macro quote table — kept separate from `fundamentals` so live
     # macro instruments never leak into equity screeners/heatmaps/all_symbols.
@@ -124,6 +155,30 @@ def _seed_universe() -> None:
               tracked = universe.tracked OR EXCLUDED.tracked
         """,
         uni_rows,
+    )
+
+    # Seed curated delisted names into `universe` ONLY (status='delisted', never
+    # tracked, never into `fundamentals`) so they stay out of current screeners
+    # but a point-in-time historical window can resolve to them. Listing/delisting
+    # dates come from the curated set; real OHLCV is fetched later by _pit_loop.
+    del_rows = [
+        (sym, d["name"], d["sector"], d.get("exchange"), d["listed"], d["delisted"])
+        for sym, d in data.DELISTED.items()
+    ]
+    db.execute_many(
+        """
+        INSERT INTO universe (symbol, name, sector, exchange, tracked, pending,
+                              status, listed_at, delisted_at)
+        VALUES (%s, %s, %s, %s, FALSE, FALSE, 'delisted', %s, %s)
+        ON CONFLICT (symbol) DO UPDATE
+          SET name = COALESCE(universe.name, EXCLUDED.name),
+              sector = COALESCE(universe.sector, EXCLUDED.sector),
+              exchange = COALESCE(universe.exchange, EXCLUDED.exchange),
+              status = 'delisted',
+              listed_at = COALESCE(universe.listed_at, EXCLUDED.listed_at),
+              delisted_at = COALESCE(universe.delisted_at, EXCLUDED.delisted_at)
+        """,
+        del_rows,
     )
 
     # Pre-seed deterministic mock fundamentals so breadth panels never read empty.
@@ -308,6 +363,53 @@ def _update_industry(symbol: str, industry: str) -> None:
     )
 
 
+def _update_listed_at(symbol: str, listed_at: str) -> None:
+    """Record a symbol's best-effort listing date (from the chart's
+    ``firstTradeDate``), only when not already set.
+
+    The ``IS NULL`` guard makes this idempotent and keeps a curated delisted
+    name's seeded listing date authoritative. It never touches ``delisted_at``
+    or ``status`` — active names stay active."""
+    db.execute(
+        "UPDATE universe SET listed_at = %s, updated_at = now() "
+        "WHERE symbol = %s AND listed_at IS NULL",
+        (listed_at, symbol),
+    )
+
+
+def _upsert_pit_fundamentals(rows: list) -> None:
+    """Persist as-reported quarterly fundamentals into ``fundamentals_pit``.
+
+    One row per (symbol, period_end); idempotent upsert so re-fetching refreshes
+    the same periods. These are deliberately kept out of the single-snapshot
+    ``fundamentals`` table so they never leak into current screeners."""
+    if not rows:
+        return
+    payload = [
+        (r["symbol"], r["periodEnd"], r["reportDate"], r.get("revenue"),
+         r.get("netIncome"), r.get("netMargin"), r.get("eps"),
+         bool(r.get("reportEstimated")), r.get("source"))
+        for r in rows
+    ]
+    db.execute_many(
+        """
+        INSERT INTO fundamentals_pit (symbol, period_end, report_date, revenue,
+            net_income, net_margin, eps, report_estimated, source, updated_at)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+        ON CONFLICT (symbol, period_end) DO UPDATE SET
+          report_date = EXCLUDED.report_date,
+          revenue = EXCLUDED.revenue,
+          net_income = EXCLUDED.net_income,
+          net_margin = EXCLUDED.net_margin,
+          eps = EXCLUDED.eps,
+          report_estimated = EXCLUDED.report_estimated,
+          source = EXCLUDED.source,
+          updated_at = now()
+        """,
+        payload,
+    )
+
+
 def _upsert_news(items: list) -> None:
     rows = [
         (it["id"], it["headline"], it.get("source"), it.get("summary"), it.get("url"),
@@ -358,8 +460,10 @@ async def _ingest_prices(symbol: str) -> None:
         res = await _net(p_src.fetch_price_history, ysym, "2y", "1d")
         if res.get("points"):
             await asyncio.to_thread(_upsert_ohlcv, symbol, res["points"])
-        if res.get("quote", {}).get("price") is not None:
-            quote = dict(res["quote"])
+        quote = dict(res.get("quote") or {})
+        if quote.get("listedAt"):
+            await asyncio.to_thread(_update_listed_at, symbol, quote["listedAt"])
+        if quote.get("price") is not None:
             quote["symbol"] = symbol
             await asyncio.to_thread(_upsert_quote, quote)
     except CircuitOpenError as exc:
@@ -622,6 +726,70 @@ async def _backfill_industry() -> None:
     log.info("industry backfill complete: %d/%d filled", sum(results), len(syms))
 
 
+async def _ingest_pit_fundamentals(symbol: str) -> None:
+    """Fetch and persist as-reported quarterly fundamentals for one symbol."""
+    ysym = data.yahoo_symbol(symbol)
+    try:
+        rows = await _net(f_src.fetch_fundamentals_history, ysym)
+        for r in rows:
+            r["symbol"] = symbol  # persist under internal base code
+        if rows:
+            await asyncio.to_thread(_upsert_pit_fundamentals, rows)
+            log.info("pit fundamentals ingested for %s (%d periods)", symbol, len(rows))
+    except CircuitOpenError as exc:
+        log.debug("pit fundamentals skipped for %s: %s", symbol, exc)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("pit fundamentals failed for %s: %s", symbol, exc)
+
+
+async def _ingest_delisted_history(symbol: str) -> None:
+    """Best-effort real OHLCV for a curated delisted name over its trading life.
+
+    Many delisted tickers still return genuine daily history from the free chart
+    endpoint. We fetch only the curated listed..delisted window and persist real
+    closes so a point-in-time backtest can include the name with honest data. If
+    the endpoint returns nothing, we persist nothing — the gap is surfaced by the
+    data-quality view, never imputed with a mock series."""
+    meta = data.get_delisted(symbol)
+    if not meta:
+        return
+    start, end = meta.get("listed"), meta.get("delisted")
+    if not start or not end:
+        return
+    try:
+        closes = await _net(p_src.fetch_daily_closes, symbol, start, end)
+        pts = [{"d": d, "c": c} for d, c in sorted((closes or {}).items())]
+        if pts:
+            await asyncio.to_thread(_upsert_ohlcv, symbol, pts)
+            log.info("delisted history ingested for %s (%d bars)", symbol, len(pts))
+        else:
+            log.info("delisted history unavailable for %s (no free coverage)", symbol)
+    except CircuitOpenError as exc:
+        log.debug("delisted history skipped for %s: %s", symbol, exc)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("delisted history failed for %s: %s", symbol, exc)
+
+
+async def _pit_loop():
+    """Slow, one-pass-then-idle loop that backfills point-in-time data:
+    real OHLCV for curated delisted names, then as-reported quarterly
+    fundamentals for the continuously-tracked core. Runs gently (serialized by
+    the network semaphore) and then sleeps long, since this history rarely
+    changes — it only needs to be present, not fresh-to-the-minute."""
+    first = True
+    while True:
+        try:
+            if first:
+                for sym in data.delisted_symbols():
+                    await _ingest_delisted_history(sym)
+                first = False
+            for sym in _tracked_symbols():
+                await _ingest_pit_fundamentals(sym)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("pit loop error: %s", exc)
+        await asyncio.sleep(PIT_INTERVAL)
+
+
 async def _ondemand_loop():
     while True:
         try:
@@ -669,6 +837,7 @@ async def start() -> None:
     _tasks.append(asyncio.create_task(_news_loop()))
     _tasks.append(asyncio.create_task(_sentiment_loop()))
     _tasks.append(asyncio.create_task(_breadth_market_cap_loop()))
+    _tasks.append(asyncio.create_task(_pit_loop()))
     _tasks.append(asyncio.create_task(_ondemand_loop()))
     _tasks.append(asyncio.create_task(_snapshot_loop()))
     log.info("data worker started (%d loops)", len(_tasks))

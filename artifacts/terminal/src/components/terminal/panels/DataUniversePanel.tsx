@@ -34,12 +34,37 @@ interface UniverseSummary {
   asOf?: string | null;
 }
 
+interface DelistedRow {
+  symbol: string;
+  name?: string | null;
+  sector?: string | null;
+  listedAt?: string | null;
+  delistedAt?: string | null;
+}
+
+interface PitSummary {
+  lookbackStart?: string;
+  lookbackEnd?: string;
+  delistedCount?: number;
+  delisted?: DelistedRow[];
+  withListingDates?: number | null;
+  totalConsidered?: number | null;
+  survivorshipSafe?: boolean;
+  pitFundamentals?: {
+    covered?: number | null;
+    total?: number | null;
+    periodRange?: { min?: string | null; max?: string | null } | null;
+  };
+  notes?: string[];
+}
+
 interface DataUniverseData {
   title: string;
   summary: UniverseSummary;
   sectors: SectorCoverage[];
   rows: UniverseRow[];
   rowsShown: number;
+  pit?: PitSummary;
   source: string;
 }
 
@@ -77,6 +102,9 @@ export function DataUniversePanel({ data }: { data: DataUniverseData }) {
   const livePct = s.totalSymbols ? Math.round((s.liveSymbols / s.totalSymbols) * 100) : 0;
   const topSectors = data.sectors.slice(0, 6);
   const maxCount = topSectors.reduce((m, x) => Math.max(m, x.count), 1);
+  const pit = data.pit;
+  const delisted = pit?.delisted ?? [];
+  const pitf = pit?.pitFundamentals;
 
   return (
     <div className="flex flex-col h-full w-full">
@@ -86,6 +114,63 @@ export function DataUniversePanel({ data }: { data: DataUniverseData }) {
         <Stat label="Tracked" value={s.trackedSymbols} />
         <Stat label="Sectors" value={s.sectorCount} />
       </div>
+
+      {pit && (
+        <div className="shrink-0 border-t border-border pt-3 pb-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="editorial-label text-[8px] text-muted-foreground">
+              Point-in-time &amp; survivorship
+            </span>
+            <span
+              className={`text-[8px] uppercase tracking-widest px-1.5 py-0.5 border ${
+                pit.survivorshipSafe
+                  ? "border-emerald-500/40 text-emerald-400/90"
+                  : "border-amber-500/40 text-amber-400/90"
+              }`}
+            >
+              {pit.survivorshipSafe ? "Survivorship-safe" : "Survivor-only"}
+            </span>
+          </div>
+          <div className="grid grid-cols-3 gap-4 mb-2">
+            <Stat label="Delisted in lookback" value={pit.delistedCount ?? 0} accent={(pit.delistedCount ?? 0) > 0} />
+            <Stat
+              label="Listing dates"
+              value={
+                pit.totalConsidered
+                  ? `${pit.withListingDates ?? 0}/${pit.totalConsidered}`
+                  : "—"
+              }
+            />
+            <Stat
+              label="PIT fundamentals"
+              value={pitf?.total ? `${pitf.covered ?? 0}/${pitf.total}` : "—"}
+              accent={(pitf?.covered ?? 0) > 0}
+            />
+          </div>
+          {delisted.length > 0 && (
+            <div className="flex flex-wrap gap-1 mb-1.5">
+              {delisted.slice(0, 18).map((d) => (
+                <span
+                  key={d.symbol}
+                  className="text-[8px] font-mono px-1.5 py-0.5 border border-sky-500/30 text-sky-400/80"
+                  title={`${d.name ?? d.symbol}${d.delistedAt ? ` · delisted ${d.delistedAt}` : ""}`}
+                >
+                  {d.symbol}
+                  {d.delistedAt ? <span className="text-muted-foreground/60"> {String(d.delistedAt).slice(0, 4)}</span> : null}
+                </span>
+              ))}
+              {delisted.length > 18 && (
+                <span className="text-[8px] text-muted-foreground/60 self-center">+{delisted.length - 18} more</span>
+              )}
+            </div>
+          )}
+          {pit.notes && pit.notes.length > 0 && (
+            <div className="text-[8px] text-muted-foreground/70 italic leading-relaxed">
+              {pit.notes[0]}
+            </div>
+          )}
+        </div>
+      )}
 
       {topSectors.length > 0 && (
         <div className="shrink-0 border-t border-border pt-3 pb-3 space-y-1.5">

@@ -4,7 +4,7 @@ schema and maps the company's sector to an internal sector id.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict, Optional
 
 import yfinance as yf
@@ -70,6 +70,79 @@ def fetch_fundamentals(symbol: str) -> Dict:
         "industry": info.get("industry") or None,
         "website": info.get("website") or None,
     }
+
+
+def fetch_fundamentals_history(symbol: str) -> list:
+    """Return as-reported quarterly fundamentals history for `symbol`.
+
+    Reads yfinance's quarterly income statement (free quote-summary data) and
+    normalizes each fiscal quarter into a point-in-time row. The income statement
+    is indexed by the *period end* (fiscal quarter close); the date a figure
+    actually became public (filing/earnings) isn't in this feed, so `reportDate`
+    is estimated as period end + a conservative 45-day reporting lag and flagged
+    via `reportEstimated=True`. Callers persist these so a backtest can read the
+    numbers knowable at a given as-of date instead of today's restated snapshot.
+
+    Returns a list of dicts (may be empty); raises on network/throttle failure so
+    the resilient guard can retry.
+    """
+    sym = symbol.upper()
+
+    def _pull():
+        t = yf.Ticker(sym)
+        df = getattr(t, "quarterly_income_stmt", None)
+        if df is None or getattr(df, "empty", True):
+            df = getattr(t, "quarterly_financials", None)
+        return df
+
+    df = _guard(_SOURCE, _pull)
+    if df is None or getattr(df, "empty", True):
+        return []
+
+    def _row(name):
+        try:
+            return df.loc[name]
+        except (KeyError, AttributeError):
+            return None
+
+    revenue_row = _row("Total Revenue")
+    net_income_row = _row("Net Income")
+    eps_row = _row("Diluted EPS")
+    if eps_row is None:
+        eps_row = _row("Basic EPS")
+
+    out: list = []
+    for col in df.columns:
+        period_end = _to_iso_date(col)
+        if not period_end:
+            continue
+        revenue = _f(revenue_row[col]) if revenue_row is not None else None
+        net_income = _f(net_income_row[col]) if net_income_row is not None else None
+        eps = _f(eps_row[col]) if eps_row is not None else None
+        net_margin = None
+        if revenue and net_income is not None and revenue != 0:
+            net_margin = round(net_income / revenue * 100, 2)  # fraction -> percent
+        # Estimate the public-report date as period end + 45d (typical filing lag).
+        try:
+            pe = date.fromisoformat(period_end)
+            report_date = (pe + timedelta(days=45)).isoformat()
+        except ValueError:
+            report_date = period_end
+        if revenue is None and net_income is None and eps is None:
+            continue
+        out.append({
+            "symbol": sym,
+            "periodEnd": period_end,
+            "reportDate": report_date,
+            "revenue": revenue,
+            "netIncome": net_income,
+            "netMargin": net_margin,
+            "eps": eps,
+            "reportEstimated": True,
+            "source": _SOURCE,
+        })
+    out.sort(key=lambda r: r["periodEnd"])
+    return out
 
 
 def fetch_calendar(symbol: str) -> Dict:
