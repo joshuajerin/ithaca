@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import agent, dashboard_store, dynamic_skills, feature_builder, harness, models, repo, skills, state, worker
+from . import agent, alerts, dashboard_store, dynamic_skills, feature_builder, harness, models, repo, skills, state, worker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -450,6 +450,74 @@ def add_watchlist(req: models.WatchlistInput):
 def remove_watchlist(symbol: str):
     state.remove_watchlist(symbol.upper())
     return _watchlist_payload()
+
+
+# ------------------------------ trade-flow alerts ----------------------------
+class AlertRuleInput(BaseModel):
+    sessionId: str
+    symbol: str
+    metric: str
+    threshold: float
+
+
+def _alerts_payload(session_id: str) -> dict:
+    return {
+        "rules": state.get_alert_rules(session_id),
+        "events": list(reversed(state.get_alert_events(session_id))),
+        "metrics": alerts.METRICS,
+    }
+
+
+@api.get("/alerts")
+def get_alerts(sessionId: str):
+    if not sessionId or not sessionId.strip():
+        raise HTTPException(status_code=400, detail="sessionId is required")
+    return _alerts_payload(sessionId.strip())
+
+
+@api.post("/alerts")
+def create_alert(req: AlertRuleInput):
+    sid = (req.sessionId or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="sessionId is required")
+    if not repo.get_company(req.symbol.upper()):
+        raise HTTPException(status_code=400, detail=f"Unknown symbol: {req.symbol}")
+    try:
+        rule = alerts.normalize_rule(req.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    state.add_alert_rule(sid, rule)
+    # Evaluate immediately against the current trade-flow panels so a matching
+    # rule fires right away rather than waiting for the next build.
+    alerts.evaluate_dashboard(sid, state.get_dashboard(sid))
+    return _alerts_payload(sid)
+
+
+# NOTE: the static "/alerts/events" routes MUST be declared before the
+# parametrized "/alerts/{rule_id}" route, otherwise FastAPI matches "events" as a
+# rule_id and the event GET/DELETE never run.
+@api.get("/alerts/events")
+def get_alert_events(sessionId: str):
+    if not sessionId or not sessionId.strip():
+        raise HTTPException(status_code=400, detail="sessionId is required")
+    return {"events": list(reversed(state.get_alert_events(sessionId.strip())))}
+
+
+@api.delete("/alerts/events")
+def clear_alert_events(sessionId: str):
+    if not sessionId or not sessionId.strip():
+        raise HTTPException(status_code=400, detail="sessionId is required")
+    state.clear_alert_events(sessionId.strip())
+    return {"events": []}
+
+
+@api.delete("/alerts/{rule_id}")
+def delete_alert(rule_id: str, sessionId: str):
+    sid = (sessionId or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="sessionId is required")
+    state.remove_alert_rule(sid, rule_id)
+    return _alerts_payload(sid)
 
 
 app.include_router(api)

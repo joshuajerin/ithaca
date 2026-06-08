@@ -13,6 +13,7 @@ import { SentimentPanel } from "./panels/SentimentPanel";
 import { ComparisonPanel } from "./panels/ComparisonPanel";
 import { OrderBookPanel } from "./panels/OrderBookPanel";
 import { TradeFlowPanel } from "./panels/TradeFlowPanel";
+import { AlertsPanel } from "./panels/AlertsPanel";
 import { TCAPanelReport } from "./panels/TCAPanelReport";
 import { MacroDashboardPanel } from "./panels/MacroDashboardPanel";
 import { YieldCurvePanel } from "./panels/YieldCurvePanel";
@@ -229,6 +230,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted, onBui
       case "comparison": return <ComparisonPanel data={panel.data as any} />;
       case "order_book": return <OrderBookPanel data={panel.data as any} />;
       case "trade_flow": return <TradeFlowPanel data={panel.data as any} />;
+      case "alerts": return <AlertsPanel data={panel.data as any} sessionId={sessionId} />;
       case "tca_report": return <TCAPanelReport data={panel.data as any} />;
       case "macro_dashboard": return <MacroDashboardPanel data={panel.data as any} />;
       case "yield_curve": return <YieldCurvePanel data={panel.data as any} />;

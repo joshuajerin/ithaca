@@ -47,3 +47,4 @@
 - [Generated-panel production runtime test](panel-runtime-test.md) — real vite build + post-build panel proves runtime fetch→sucrase→eval path; runs under vitest+jsdom; registry glob try/catch-guarded so it imports outside Vite.
 - [Terminal responsive layout](responsive-layout.md) — 3-tier breakpoints: mobile stack / tablet 6-col flow (drops AI x/y) / desktop 12-col placed; console is a drawer on non-desktop.
 - [Panel CSV/PDF export](panel-export.md) — client-side quant-panel export; MUST use html2canvas-pro (not html2canvas) under Tailwind v4 oklch; rebuild api-client-react dist on stale shared-type tsc errors.
+- [Trade-flow alert rules](trade-flow-alerts.md) — per-session rule/event store; static /alerts/events routes MUST precede /alerts/{rule_id}; event dedup by signature; passthrough panel.

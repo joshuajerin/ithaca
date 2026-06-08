@@ -11,6 +11,7 @@ import { Dashboard } from "@/components/terminal/Dashboard";
 import { ChatPanel } from "@/components/terminal/ChatPanel";
 import { VoicePanel } from "@/components/terminal/VoicePanel";
 import { NavigatorCursor } from "@/components/terminal/NavigatorCursor";
+import { AlertsNotifications } from "@/components/terminal/AlertsNotifications";
 import { useVoiceConductor } from "@/hooks/useVoiceConductor";
 import { useNavigator } from "@/hooks/useNavigator";
 import { useConsoleConversation } from "@/hooks/useConsoleConversation";
@@ -148,6 +149,12 @@ export default function Terminal() {
   const isMobile = useIsMobile();
   const breakpoint = useBreakpoint();
   const isDesktop = breakpoint === "desktop";
+
+  const handleAlertEvent = useCallback(
+    (ev: { message: string }) =>
+      toast({ title: "Trade Flow Alert", description: ev.message, duration: 6000 }),
+    [toast],
+  );
 
   // Keep a ref to the latest sessionId for the voice conductor callbacks. The
   // source of truth is the persisted conversation, so a reloaded page keeps
@@ -672,6 +679,10 @@ export default function Terminal() {
             style={{ width: chatOpen ? 400 : 0 }}
           >
             <div style={{ width: 400, minWidth: 400 }} className="flex flex-col h-full">
+              <AlertsNotifications
+                sessionId={activeDashboard?.sessionId}
+                onNew={handleAlertEvent}
+              />
               <ChatPanel
                 sessionId={convo.sessionId}
                 onCommand={handleCommand}

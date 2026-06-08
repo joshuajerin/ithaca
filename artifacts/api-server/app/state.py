@@ -11,6 +11,10 @@ _sessions: Dict[str, List[dict]] = {}
 _session_history: Dict[str, List[dict]] = {}
 # sessionId -> list of saved DCF model dicts ({name, symbol, assumptions, savedAt})
 _dcf_models: Dict[str, List[dict]] = {}
+# sessionId -> list of trade-flow alert rule dicts
+_alert_rules: Dict[str, List[dict]] = {}
+# sessionId -> list of fired alert event dicts (most recent last)
+_alert_events: Dict[str, List[dict]] = {}
 
 _watchlist: List[str] = ["NVDA", "XOM", "MSFT"]
 
@@ -123,3 +127,54 @@ def remove_watchlist(symbol: str) -> List[str]:
         if s in _watchlist:
             _watchlist.remove(s)
         return list(_watchlist)
+
+
+# --------------------------- trade-flow alert rules --------------------------
+def get_alert_rules(session_id: str) -> List[dict]:
+    with _lock:
+        return [dict(r) for r in _alert_rules.get(session_id, [])]
+
+
+def add_alert_rule(session_id: str, rule: dict) -> dict:
+    with _lock:
+        rules = _alert_rules.setdefault(session_id, [])
+        rules.append(rule)
+        return dict(rule)
+
+
+def remove_alert_rule(session_id: str, rule_id: str) -> List[dict]:
+    with _lock:
+        rules = _alert_rules.get(session_id, [])
+        _alert_rules[session_id] = [r for r in rules if r.get("id") != rule_id]
+        return [dict(r) for r in _alert_rules[session_id]]
+
+
+def get_alert_events(session_id: str) -> List[dict]:
+    with _lock:
+        return [dict(e) for e in _alert_events.get(session_id, [])]
+
+
+def add_alert_events(session_id: str, events: List[dict]) -> List[dict]:
+    """Append new events, skipping any whose signature already fired. Returns the
+    events that were actually added (the genuinely new ones)."""
+    if not events:
+        return []
+    with _lock:
+        existing = _alert_events.setdefault(session_id, [])
+        seen = {e.get("signature") for e in existing}
+        added: List[dict] = []
+        for ev in events:
+            if ev.get("signature") in seen:
+                continue
+            existing.append(ev)
+            seen.add(ev.get("signature"))
+            added.append(dict(ev))
+        # keep only the most recent 50 events per session
+        if len(existing) > 50:
+            del existing[: len(existing) - 50]
+        return added
+
+
+def clear_alert_events(session_id: str) -> None:
+    with _lock:
+        _alert_events[session_id] = []

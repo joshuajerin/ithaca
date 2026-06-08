@@ -899,6 +899,22 @@ def build_trade_flow(params: dict) -> dict:
     }
 
 
+def build_alerts(params: dict) -> dict:
+    """Static scaffolding for the trade-flow alerts panel.
+
+    The panel manages session-scoped rules live via the ``/api/alerts`` endpoints,
+    so the builder only ships the metric catalog and an optional symbol to
+    pre-fill the rule form. It must work with empty params (dynamic-safe)."""
+    from . import alerts as alerts_mod
+
+    raw = (params.get("symbol") or "").strip().upper()
+    symbol = raw if (raw and data.get_company(raw)) else None
+    return {
+        "symbol": symbol,
+        "metrics": alerts_mod.METRICS,
+    }
+
+
 def build_backtest(params: dict) -> dict:
     symbol = (params.get("symbol") or "NVDA").upper()
     company = repo.get_company(symbol)
@@ -6099,6 +6115,18 @@ _reg(SkillDef(
         {"name": "compute_imbalance", "description": "Derive buy/sell imbalance and dark pool percentage.", "expectedOutput": "Aggregate flow statistics."},
     ],
     build_trade_flow, "Trade Flow",
+))
+_reg(SkillDef(
+    "alerts", "Trade Flow Alerts", "alerts",
+    "Sets up alert rules that watch a symbol's trade flow and notify the trader when activity crosses "
+    "a threshold — a block print at or above a share count, a dark-pool percentage spike, or a buy "
+    "imbalance above a level. Use when the user asks to set up alerts, get notified, watch for block "
+    "trades or sweeps, or manage alert rules.",
+    [
+        {"name": "expose_metrics", "description": "List the alertable trade-flow metrics and their units.", "expectedOutput": "A metric catalog."},
+        {"name": "prefill_symbol", "description": "Optionally pre-select a symbol for the rule form.", "expectedOutput": "A ticker or null."},
+    ],
+    build_alerts, "Trade Flow Alerts",
 ))
 _reg(SkillDef(
     "tca-report", "Execution Simulation & TCA", "tca_report",

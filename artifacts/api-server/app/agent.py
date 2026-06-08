@@ -12,7 +12,7 @@ import re
 import uuid
 from typing import List, Optional, Tuple
 
-from . import ai, data, dynamic_skills, engine, harness, repo, skills, state, strategy, strategy_store
+from . import ai, alerts, data, dynamic_skills, engine, harness, repo, skills, state, strategy, strategy_store
 
 
 # A short, honest notice surfaced to the UI (and spoken in voice mode) when the
@@ -150,6 +150,14 @@ def _tools() -> list:
                 "symbol": {"type": "string", "description": f"Ticker. One of: {syms}"},
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }, "required": ["symbol"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_alerts",
+            "description": f"Add a trade-flow alerts panel where the user can configure alert rules (block print size, dark pool % spike, buy imbalance) per symbol and get notified when the trade flow crosses a threshold. Use when the user asks to set up alerts, get notified, watch for block trades or sweeps, or manage alert rules. Optionally pass a symbol to pre-fill the rule form. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Optional ticker to pre-fill. One of: {syms}"},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": []},
         }},
         {"type": "function", "function": {
             "name": "add_dcf_model",
@@ -704,6 +712,7 @@ _TOOL_TO_TYPE = {
     "add_comparison": "comparison",
     "add_order_book": "order_book",
     "add_trade_flow": "trade_flow",
+    "add_alerts": "alerts",
     "add_tca_report": "tca_report",
     "add_macro_dashboard": "macro_dashboard",
     "add_yield_curve": "yield_curve",
@@ -808,6 +817,8 @@ def _system_prompt() -> str:
         "Fixed-income panels use live data: US Treasury par yields come from the U.S. Treasury daily "
         "curve, and credit spreads (bond OAS, CDS proxies) from live ICE BofA OAS indices; each panel "
         "labels its source live/mock so you can tell when a feed is unavailable.\n"
+        "- For alert requests ('alert me', 'notify me', 'set up alerts', 'watch for block trades/sweeps', "
+        "'manage alert rules'), use add_alerts (optionally with the symbol to pre-fill).\n"
         "- For microstructure/execution requests: order book → add_order_book; trade flow/unusual activity → add_trade_flow; "
         "TCA / execution simulation / slippage / market impact / VWAP-TWAP-POV / 'cost to trade into a portfolio' → add_tca_report "
         "(pass symbols+target_weights for a portfolio, or symbol+side+notional for one name).\n"
@@ -1141,6 +1152,9 @@ def orchestrate(query: str, session_id: Optional[str], voice: bool = False) -> d
     state.set_dashboard(sid, combined)
     state.append_history(sid, "user", query)
     state.append_history(sid, "assistant", summary)
+
+    # Fire any configured trade-flow alerts against the panels just built.
+    alerts.evaluate_dashboard(sid, combined)
 
     result: dict = {"sessionId": sid, "summary": summary, "panels": combined, "intent": "build"}
 
@@ -2049,6 +2063,7 @@ _TYPE_LABELS = {
     "comparison": "a comparison",
     "order_book": "an order book",
     "trade_flow": "a trade flow panel",
+    "alerts": "a trade-flow alerts panel",
     "tca_report": "a TCA report",
     "macro_dashboard": "a macro dashboard",
     "yield_curve": "a yield curve",
@@ -2358,6 +2373,7 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         or bool(re.search(r"\b(bid|ask|l2)\b", q))
     )
     wants_trade_flow = any(k in q for k in ["unusual", "block", "sweep", "dark pool", "flow", "activity"])
+    wants_alerts = any(k in q for k in ["alert", "notify", "notification", "watch for", "set up alert", "alert rule"])
     wants_tca = any(k in q for k in ["tca", "transaction cost", "slippage", "vwap", "twap", "pov",
                                      "execution", "impl", "market impact", "participation rate",
                                      "execution cost", "cost to trade", "trade into"])
@@ -2488,6 +2504,15 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         add("price_chart", {"symbol": sym, "range": "1M"}, 6, 4)
         name = data.get_company(sym)["name"]
         return panels, f"{name} order book depth ladder and tape."
+
+    if wants_alerts:
+        sym = symbols[0] if symbols else None
+        add("alerts", {"symbol": sym} if sym else {}, 6, 5)
+        if sym:
+            add("trade_flow", {"symbol": sym}, 6, 5)
+            name = data.get_company(sym)["name"]
+            return panels, f"Trade-flow alerts for {name}: configure thresholds and watch the live flow."
+        return panels, "Trade-flow alerts: configure block-size, dark-pool and imbalance thresholds per symbol."
 
     if wants_trade_flow and symbols:
         sym = symbols[0]
@@ -3133,6 +3158,8 @@ def refine(
         resolved = _refine_params(panel_type, panel, instruction)
     updated = harness.run_skill(panel_type, resolved, layout, title=keep_title, panel_id=panel_id)
     state.update_panel(session_id, updated)
+    if panel_type == "trade_flow" and isinstance(updated.get("data"), dict):
+        alerts.evaluate_flow(session_id, updated["data"])
     return updated
 
 
