@@ -51,3 +51,4 @@
 - [Panel CSV/PDF export](panel-export.md) — client-side quant-panel export; MUST use html2canvas-pro (not html2canvas) under Tailwind v4 oklch; rebuild api-client-react dist on stale shared-type tsc errors.
 - [Trade-flow alert rules](trade-flow-alerts.md) — per-session rule/event store; static /alerts/events routes MUST precede /alerts/{rule_id}; event dedup by signature; passthrough panel.
 - [Pre-trade compliance gate](compliance-gate.md) — pure engine + GLOBAL config/audit store + ComplianceBlock wired into paper_trade/rebalance; passthrough panel; audit rows use decision/summary.
+- [Multi-strategy capital allocation](multistrat-allocation.md) — firm-level multi_strategy panel: sleeve aggregation, cross-strategy risk from REAL NAV snapshots (held-out if thin), allocation methods; route before optimizer+desk.

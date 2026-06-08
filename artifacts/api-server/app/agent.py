@@ -723,6 +723,28 @@ def _tools() -> list:
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }},
         }},
+        {"type": "function", "function": {
+            "name": "add_multi_strategy",
+            "description": (
+                "Add the MULTI-STRATEGY CAPITAL ALLOCATION & firm-level risk panel: treats every "
+                "paper/live strategy as a SLEEVE of one combined firm book and recommends how to split "
+                "capital across the sleeves. Shows the combined book (total NAV, P&L, netted exposures), "
+                "cross-strategy correlation from the sleeves' REAL daily NAV snapshots, firm-level risk "
+                "(combined vol, per-sleeve contribution to risk, concentration, diversification benefit) "
+                "and recommended vs current sleeve weights. "
+                f"{sizing} Use for 'allocate capital across my strategies', 'firm-level risk', 'how should "
+                "I split capital between my sleeves', 'risk budget across strategies', 'portfolio of "
+                "strategies'. This is the FIRM view over MANY strategies — use add_strategy_desk for a "
+                "single-strategy roster/paper book and add_portfolio_optimizer to optimize weights of "
+                "individual TICKERS. Recommendation only — it does not move capital."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "method": {"type": "string", "enum": ["equal_weight", "risk_parity", "target_risk"],
+                           "description": "Allocation method across sleeves (default risk_parity)."},
+                "target_vol": {"type": "number", "description": "Target annualized firm volatility for the target_risk method, e.g. 0.10 for 10%."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
     ]
 
 
@@ -785,6 +807,7 @@ _TOOL_TO_TYPE = {
     "add_risk_monitor": "risk_monitor",
     "add_stress_test": "stress_test",
     "add_strategy_desk": "strategy_desk",
+    "add_multi_strategy": "multi_strategy",
 }
 
 
@@ -936,6 +959,11 @@ def _system_prompt() -> str:
         "use add_strategy_desk (pass `strategy` to focus one). Lifecycle ACTIONS — create / paper-trade / "
         "promote / demote / retire a strategy — are handled before you are called, so do not try to "
         "perform them; just present the desk.\n"
+        "- For FIRM-LEVEL capital allocation across MANY strategies ('allocate capital across my strategies', "
+        "'firm-level risk', 'how should I split capital between my sleeves', 'risk budget across strategies'), "
+        "use add_multi_strategy — it treats each paper/live strategy as a sleeve, combines them into one firm "
+        "book and recommends sleeve weights (equal_weight / risk_parity / target_risk). This is distinct from "
+        "add_strategy_desk (single-strategy roster) and add_portfolio_optimizer (weights of individual tickers).\n"
         "- Decide each panel's width (3-12 grid columns) and height (2-6 row units). Make the "
         "primary panel larger; supporting panels narrower. A full-width hero is width 12.\n"
         "- Only use tickers and sectors that exist in the dataset.\n"
@@ -2290,6 +2318,7 @@ _TYPE_LABELS = {
     "stress_test": "a stress test",
     "risk_monitor": "a risk monitor",
     "strategy_desk": "the strategy desk",
+    "multi_strategy": "the multi-strategy allocation",
 }
 
 
@@ -2724,6 +2753,23 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
             "what it's worth", "what it is worth", "would it be worth",
         ]
     )
+    # Firm-level view OVER MANY strategies (sleeves): allocate capital across them
+    # and budget firm risk. Must be detected before wants_desk (it mentions
+    # "strategies") and before wants_optimizer (it catches "allocate capital").
+    _sleeve_words = any(k in q for k in ["sleeve", "sleeves"])
+    _firm_words = any(k in q for k in [
+        "firm-level", "firm level", "firm-wide", "firm wide", "firmwide", "multi-strategy",
+        "multi strategy", "multistrategy", "portfolio of strategies", "across strategies",
+        "across my strategies", "across all strategies", "between strategies", "between my strategies",
+        "risk budget across", "combined book", "combined nav",
+    ])
+    _alloc_across_strats = (
+        any(k in q for k in ["allocate", "allocation", "split capital", "split the capital",
+                             "divide capital", "capital across", "capital between", "risk budget",
+                             "risk-budget", "risk parity across", "risk-parity across"])
+        and any(k in q for k in ["strateg", "sleeve"])
+    )
+    wants_multistrat = _sleeve_words or _firm_words or _alloc_across_strats
     wants_backtest = wants_invest or any(k in q for k in ["backtest", "back test", "back-test", "momentum strategy", "strategy", "sharpe", "cagr", "drawdown"])
     wants_montecarlo = any(k in q for k in ["monte carlo", "montecarlo", "monte-carlo", "simulate", "simulation", "forward project", "project price", "scenario analysis", "probability of loss", "forecast price", "gbm", "geometric brownian", "bootstrap"])
     wants_correlation = any(k in q for k in ["correlation", "correlat", "hedge ratio", "co-movement", "diversif", "beta table"])
@@ -2804,6 +2850,18 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         else "inverse_correlation" if any(k in q for k in ["inverse correlation", "inverse-correlation", "risk weight", "risk-weight", "risk parity", "risk-parity", "decorrel", "diversif"])
         else "equal_weight"
     )
+
+    if wants_multistrat:
+        mp = {}
+        if "equal" in q and ("weight" in q or "split" in q):
+            mp["method"] = "equal_weight"
+        elif "risk parity" in q or "risk-parity" in q:
+            mp["method"] = "risk_parity"
+        elif "target" in q and ("risk" in q or "vol" in q):
+            mp["method"] = "target_risk"
+        add("multi_strategy", mp, 12, 6)
+        return panels, ("Firm-level multi-strategy allocation: every paper/live strategy as a sleeve of "
+                        "one combined book, with cross-strategy risk and recommended vs current capital weights.")
 
     if wants_desk:
         add("strategy_desk", {}, 12, 5)

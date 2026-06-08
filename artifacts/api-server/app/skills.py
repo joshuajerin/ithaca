@@ -6211,6 +6211,23 @@ def build_strategy_desk(params: dict) -> dict:
     return payload
 
 
+def build_multi_strategy(params: dict) -> dict:
+    """Firm-level multi-strategy capital allocation & risk budgeting.
+
+    Treats every paper/live strategy as a sleeve of one combined book, measures
+    how the sleeves' REAL daily NAV snapshots co-move, decomposes firm-level risk
+    and recommends how to split capital across sleeves (equal-weight, risk-parity
+    or a target volatility budget) vs the current split. Recommendation only — no
+    capital is moved. Sleeves with too little history are flagged, never faked."""
+    from . import multistrat
+
+    method = params.get("method") or params.get("allocation") or params.get("scheme")
+    target_vol = params.get("target_vol") or params.get("targetVol") or params.get("target_volatility")
+    payload = multistrat.firm_payload(method=method, target_vol=target_vol)
+    payload["title"] = "Multi-Strategy Allocation"
+    return payload
+
+
 # ----------------------------- registry -----------------------------
 class SkillDef:
     def __init__(self, id, name, panel_type, description, subskills, builder, default_title):
@@ -6243,6 +6260,24 @@ _reg(SkillDef(
         {"name": "assemble_desk", "description": "Build the roster plus a selected strategy detail.", "expectedOutput": "A desk payload."},
     ],
     build_strategy_desk, "Strategy Desk",
+))
+_reg(SkillDef(
+    "multi-strategy", "Multi-Strategy Allocation", "multi_strategy",
+    "Treats every paper/live strategy as a sleeve of one firm-level book and "
+    "recommends how to split capital across the sleeves. Shows the combined book "
+    "(total NAV, P&L, netted exposures), the cross-strategy correlation from the "
+    "sleeves' real daily NAV snapshots, firm-level risk (combined vol, per-sleeve "
+    "contribution to risk, concentration, diversification benefit) and recommended "
+    "vs current sleeve weights under a chosen method (equal-weight, risk-parity, "
+    "target risk budget). Use for 'allocate capital across my strategies', "
+    "'firm-level risk', 'how should I split capital between sleeves'. Recommendation "
+    "only — it does not move capital.",
+    [
+        {"name": "aggregate_sleeves", "description": "Combine every paper/live strategy into one firm book.", "expectedOutput": "Combined NAV, P&L and netted exposures."},
+        {"name": "cross_strategy_risk", "description": "Measure sleeve correlation and combined risk from real NAV snapshots.", "expectedOutput": "Correlation matrix and per-sleeve risk contribution."},
+        {"name": "allocate_capital", "description": "Recommend sleeve weights under the chosen allocation method.", "expectedOutput": "Recommended vs current sleeve weights."},
+    ],
+    build_multi_strategy, "Multi-Strategy Allocation",
 ))
 _reg(SkillDef(
     "price-chart", "Live Price Charts", "price_chart",
