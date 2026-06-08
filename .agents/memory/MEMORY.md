@@ -40,3 +40,4 @@
 - [Debounced recompute deps](debounced-recompute-deps.md) — panels: a debounced re-run effect must depend on primitives only (refs for symbols/callback), and reset must key off a stable signature, or churning `data` refs starve the timer / wipe edits.
 - [Running Python scripts interactively](python-subprocess-maxpath.md) — ad-hoc `python3 foo.py` dies with a MAX_PATH wrapper error; run via `env -i …/.pythonlibs/bin/python3.11`.
 - [Saved dashboard layouts](saved-dashboards.md) — name→save/restore; dashboard_store jsonb panels (full payload inline), dedup-by-name; restore mints fresh session; status enum ok|loading|error not "ready".
+- [Generated-panel production runtime test](panel-runtime-test.md) — real vite build + post-build panel proves runtime fetch→sucrase→eval path; runs under vitest+jsdom; registry glob try/catch-guarded so it imports outside Vite.

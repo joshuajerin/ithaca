@@ -41,6 +41,9 @@
     "@radix-ui/react-toggle-group": "^1.1.3",
     "@radix-ui/react-tooltip": "^1.2.0",
     "@replit/vite-plugin-cartographer": "catalog:",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@replit/vite-plugin-dev-banner": "catalog:",
     "@replit/vite-plugin-runtime-error-modal": "catalog:",
     "@tailwindcss/typography": "^0.5.15",
@@ -74,6 +77,8 @@
     "vaul": "^1.1.2",
     "vite": "catalog:",
     "vitest": "^4.1.8",
+    "jsdom": "^26.1.0",
+    "tsx": "catalog:",
     "wouter": "^3.3.5",
     "zod": "catalog:"
   },

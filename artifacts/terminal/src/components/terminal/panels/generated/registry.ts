@@ -17,10 +17,22 @@ import ReactDefault from "react";
 //
 // Either way, `DynamicPanel` falls back to the generic JSON renderer if a
 // component is missing or fails to load/compile, so a panel never blanks/crashes.
-const modules = import.meta.glob<{ default: React.ComponentType<{ data: any }> }>(
-  "./*.tsx",
-  { eager: true },
-);
+//
+// `import.meta.glob` is a Vite compile-time macro: in a real build/dev it is
+// replaced with a static object literal of the matched modules. Outside Vite
+// (e.g. the Node test runner that exercises the runtime compile path) the call
+// has no implementation and throws, so we guard it and fall back to an empty
+// static registry — which is exactly the state a production runtime is in for a
+// panel authored after the build.
+let modules: Record<string, { default: React.ComponentType<{ data: any }> }> = {};
+try {
+  modules = import.meta.glob<{ default: React.ComponentType<{ data: any }> }>(
+    "./*.tsx",
+    { eager: true },
+  );
+} catch {
+  modules = {};
+}
 
 export type GeneratedComponent = React.ComponentType<{ data: any }>;
 

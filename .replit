@@ -20,6 +20,10 @@ author = "agent"
 task = "workflow.run"
 args = "smoke"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "panel-runtime-test"
+
 [[workflows.workflow]]
 name = "smoke"
 author = "agent"
@@ -27,6 +31,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python artifacts/api-server/tests/test_smoke.py"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "panel-runtime-test"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/terminal test"
 
 [workflows.workflow.metadata]
 isValidation = true
