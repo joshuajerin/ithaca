@@ -13,4 +13,6 @@ export interface ScenarioRecomputeRequest {
   horizonDays: number;
   /** Incremental annualized drift to layer on the baseline (clamped -60 to 60). */
   driftPct: number;
+  /** Dollar amount invested; baseline/scenario terminal values are denominated in these dollars. */
+  amount?: number;
 }

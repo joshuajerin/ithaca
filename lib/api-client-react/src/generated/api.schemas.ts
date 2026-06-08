@@ -296,6 +296,17 @@ export interface TradeLogEntry {
   pnlPct?: number;
 }
 
+export interface BacktestEntry {
+  /** Entry mode actually used (peak, date, range, preset). */
+  mode?: string;
+  /** ISO date of the bar where the money went in. */
+  date?: string;
+  /** Close price at entry. */
+  price?: number;
+  /** Human-readable entry label. */
+  label?: string;
+}
+
 export interface BacktestData {
   symbol: string;
   strategy: string;
@@ -305,6 +316,21 @@ export interface BacktestData {
   drawdown: DrawdownPoint[];
   stats: BacktestStats;
   tradeLog?: TradeLogEntry[];
+  /** Dollar lump sum invested at entry; the equity curve is denominated in these dollars. */
+  investment?: number;
+  entry?: BacktestEntry;
+  /** Ending dollar value of the invested amount under the strategy. */
+  endValue?: number;
+  /** Ending dollar value of the same amount under buy-and-hold benchmark. */
+  benchmarkEndValue?: number;
+  /** Ending value minus invested amount, in dollars. */
+  gain?: number;
+  /** Total return over the held period, in percent. */
+  gainPct?: number;
+  /** Ending value divided by invested amount (e.g. 3.5 = 3.5x). */
+  multiple?: number;
+  /** Honest note when the requested entry could not be fully honored. */
+  entryNote?: string;
 }
 
 export interface MonteCarloFanPoint {
@@ -687,6 +713,8 @@ export interface ScenarioRecomputeRequest {
   horizonDays: number;
   /** Incremental annualized drift to layer on the baseline (clamped -60 to 60). */
   driftPct: number;
+  /** Dollar amount invested; baseline/scenario terminal values are denominated in these dollars. */
+  amount?: number;
 }
 
 /**

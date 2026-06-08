@@ -763,6 +763,44 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TradeLogEntry"
+        investment:
+          type: number
+          description: Dollar lump sum invested at entry; the equity curve is denominated in these dollars.
+        entry:
+          $ref: "#/components/schemas/BacktestEntry"
+        endValue:
+          type: number
+          description: Ending dollar value of the invested amount under the strategy.
+        benchmarkEndValue:
+          type: number
+          description: Ending dollar value of the same amount under buy-and-hold benchmark.
+        gain:
+          type: number
+          description: Ending value minus invested amount, in dollars.
+        gainPct:
+          type: number
+          description: Total return over the held period, in percent.
+        multiple:
+          type: number
+          description: Ending value divided by invested amount (e.g. 3.5 = 3.5x).
+        entryNote:
+          type: string
+          description: Honest note when the requested entry could not be fully honored.
+    BacktestEntry:
+      type: object
+      properties:
+        mode:
+          type: string
+          description: Entry mode actually used (peak, date, range, preset).
+        date:
+          type: string
+          description: ISO date of the bar where the money went in.
+        price:
+          type: number
+          description: Close price at entry.
+        label:
+          type: string
+          description: Human-readable entry label.
     MonteCarloFanPoint:
       type: object
       required: [step, p5, p25, p50, p75, p95]
@@ -1405,6 +1443,9 @@ components:
         driftPct:
           type: number
           description: Incremental annualized drift to layer on the baseline (clamped -60 to 60).
+        amount:
+          type: number
+          description: Dollar amount invested; baseline/scenario terminal values are denominated in these dollars.
     ScenarioRecomputeResult:
       type: object
       required: [symbols, horizonDays, driftPct]

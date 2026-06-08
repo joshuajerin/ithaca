@@ -227,7 +227,20 @@ export const GetDefaultDashboardResponse = zod.object({
   "toPos": zod.number(),
   "pnl": zod.number().optional().describe('Realized P&L on the portion closed by this trade, in points on the rebased capital base.'),
   "pnlPct": zod.number().optional().describe('Percent return on the closed leg of this trade.')
-})).optional()
+})).optional(),
+  "investment": zod.number().optional().describe('Dollar lump sum invested at entry; the equity curve is denominated in these dollars.'),
+  "entry": zod.object({
+  "mode": zod.string().optional().describe('Entry mode actually used (peak, date, range, preset).'),
+  "date": zod.string().optional().describe('ISO date of the bar where the money went in.'),
+  "price": zod.number().optional().describe('Close price at entry.'),
+  "label": zod.string().optional().describe('Human-readable entry label.')
+}).optional(),
+  "endValue": zod.number().optional().describe('Ending dollar value of the invested amount under the strategy.'),
+  "benchmarkEndValue": zod.number().optional().describe('Ending dollar value of the same amount under buy-and-hold benchmark.'),
+  "gain": zod.number().optional().describe('Ending value minus invested amount, in dollars.'),
+  "gainPct": zod.number().optional().describe('Total return over the held period, in percent.'),
+  "multiple": zod.number().optional().describe('Ending value divided by invested amount (e.g. 3.5 = 3.5x).'),
+  "entryNote": zod.string().optional().describe('Honest note when the requested entry could not be fully honored.')
 }),zod.object({
   "symbol": zod.string(),
   "method": zod.string(),
@@ -603,7 +616,20 @@ export const OrchestrateResponse = zod.object({
   "toPos": zod.number(),
   "pnl": zod.number().optional().describe('Realized P&L on the portion closed by this trade, in points on the rebased capital base.'),
   "pnlPct": zod.number().optional().describe('Percent return on the closed leg of this trade.')
-})).optional()
+})).optional(),
+  "investment": zod.number().optional().describe('Dollar lump sum invested at entry; the equity curve is denominated in these dollars.'),
+  "entry": zod.object({
+  "mode": zod.string().optional().describe('Entry mode actually used (peak, date, range, preset).'),
+  "date": zod.string().optional().describe('ISO date of the bar where the money went in.'),
+  "price": zod.number().optional().describe('Close price at entry.'),
+  "label": zod.string().optional().describe('Human-readable entry label.')
+}).optional(),
+  "endValue": zod.number().optional().describe('Ending dollar value of the invested amount under the strategy.'),
+  "benchmarkEndValue": zod.number().optional().describe('Ending dollar value of the same amount under buy-and-hold benchmark.'),
+  "gain": zod.number().optional().describe('Ending value minus invested amount, in dollars.'),
+  "gainPct": zod.number().optional().describe('Total return over the held period, in percent.'),
+  "multiple": zod.number().optional().describe('Ending value divided by invested amount (e.g. 3.5 = 3.5x).'),
+  "entryNote": zod.string().optional().describe('Honest note when the requested entry could not be fully honored.')
 }),zod.object({
   "symbol": zod.string(),
   "method": zod.string(),
@@ -989,7 +1015,20 @@ export const SaveDashboardBody = zod.object({
   "toPos": zod.number(),
   "pnl": zod.number().optional().describe('Realized P&L on the portion closed by this trade, in points on the rebased capital base.'),
   "pnlPct": zod.number().optional().describe('Percent return on the closed leg of this trade.')
-})).optional()
+})).optional(),
+  "investment": zod.number().optional().describe('Dollar lump sum invested at entry; the equity curve is denominated in these dollars.'),
+  "entry": zod.object({
+  "mode": zod.string().optional().describe('Entry mode actually used (peak, date, range, preset).'),
+  "date": zod.string().optional().describe('ISO date of the bar where the money went in.'),
+  "price": zod.number().optional().describe('Close price at entry.'),
+  "label": zod.string().optional().describe('Human-readable entry label.')
+}).optional(),
+  "endValue": zod.number().optional().describe('Ending dollar value of the invested amount under the strategy.'),
+  "benchmarkEndValue": zod.number().optional().describe('Ending dollar value of the same amount under buy-and-hold benchmark.'),
+  "gain": zod.number().optional().describe('Ending value minus invested amount, in dollars.'),
+  "gainPct": zod.number().optional().describe('Total return over the held period, in percent.'),
+  "multiple": zod.number().optional().describe('Ending value divided by invested amount (e.g. 3.5 = 3.5x).'),
+  "entryNote": zod.string().optional().describe('Honest note when the requested entry could not be fully honored.')
 }),zod.object({
   "symbol": zod.string(),
   "method": zod.string(),
@@ -1364,7 +1403,20 @@ export const RestoreDashboardResponse = zod.object({
   "toPos": zod.number(),
   "pnl": zod.number().optional().describe('Realized P&L on the portion closed by this trade, in points on the rebased capital base.'),
   "pnlPct": zod.number().optional().describe('Percent return on the closed leg of this trade.')
-})).optional()
+})).optional(),
+  "investment": zod.number().optional().describe('Dollar lump sum invested at entry; the equity curve is denominated in these dollars.'),
+  "entry": zod.object({
+  "mode": zod.string().optional().describe('Entry mode actually used (peak, date, range, preset).'),
+  "date": zod.string().optional().describe('ISO date of the bar where the money went in.'),
+  "price": zod.number().optional().describe('Close price at entry.'),
+  "label": zod.string().optional().describe('Human-readable entry label.')
+}).optional(),
+  "endValue": zod.number().optional().describe('Ending dollar value of the invested amount under the strategy.'),
+  "benchmarkEndValue": zod.number().optional().describe('Ending dollar value of the same amount under buy-and-hold benchmark.'),
+  "gain": zod.number().optional().describe('Ending value minus invested amount, in dollars.'),
+  "gainPct": zod.number().optional().describe('Total return over the held period, in percent.'),
+  "multiple": zod.number().optional().describe('Ending value divided by invested amount (e.g. 3.5 = 3.5x).'),
+  "entryNote": zod.string().optional().describe('Honest note when the requested entry could not be fully honored.')
 }),zod.object({
   "symbol": zod.string(),
   "method": zod.string(),
@@ -1806,7 +1858,20 @@ export const RefinePanelResponse = zod.object({
   "toPos": zod.number(),
   "pnl": zod.number().optional().describe('Realized P&L on the portion closed by this trade, in points on the rebased capital base.'),
   "pnlPct": zod.number().optional().describe('Percent return on the closed leg of this trade.')
-})).optional()
+})).optional(),
+  "investment": zod.number().optional().describe('Dollar lump sum invested at entry; the equity curve is denominated in these dollars.'),
+  "entry": zod.object({
+  "mode": zod.string().optional().describe('Entry mode actually used (peak, date, range, preset).'),
+  "date": zod.string().optional().describe('ISO date of the bar where the money went in.'),
+  "price": zod.number().optional().describe('Close price at entry.'),
+  "label": zod.string().optional().describe('Human-readable entry label.')
+}).optional(),
+  "endValue": zod.number().optional().describe('Ending dollar value of the invested amount under the strategy.'),
+  "benchmarkEndValue": zod.number().optional().describe('Ending dollar value of the same amount under buy-and-hold benchmark.'),
+  "gain": zod.number().optional().describe('Ending value minus invested amount, in dollars.'),
+  "gainPct": zod.number().optional().describe('Total return over the held period, in percent.'),
+  "multiple": zod.number().optional().describe('Ending value divided by invested amount (e.g. 3.5 = 3.5x).'),
+  "entryNote": zod.string().optional().describe('Honest note when the requested entry could not be fully honored.')
 }),zod.object({
   "symbol": zod.string(),
   "method": zod.string(),
@@ -2005,7 +2070,8 @@ export const RefinePanelResponse = zod.object({
 export const RecomputeScenarioBody = zod.object({
   "symbols": zod.array(zod.string()).describe('The scenario\'s underlying symbols to project against (real price history).'),
   "horizonDays": zod.number().describe('Projection horizon in trading days (clamped 21-1260).'),
-  "driftPct": zod.number().describe('Incremental annualized drift to layer on the baseline (clamped -60 to 60).')
+  "driftPct": zod.number().describe('Incremental annualized drift to layer on the baseline (clamped -60 to 60).'),
+  "amount": zod.number().optional().describe('Dollar amount invested; baseline\/scenario terminal values are denominated in these dollars.')
 })
 
 export const RecomputeScenarioResponse = zod.object({

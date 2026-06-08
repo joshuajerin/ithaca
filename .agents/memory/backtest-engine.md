@@ -36,3 +36,32 @@ OHLCV, so `days` is effectively capped there.
   positive loss fractions; CVaR ≥ VaR always.
 - Tests: `tests/test_engine.py`, standalone-runnable (`python tests/test_engine.py`)
   since pytest is NOT installed in api-server.
+
+## Engine package re-exports (gotcha)
+Skills call engine functions as `engine.<fn>` (the `app.engine` package namespace),
+NOT `engine.backtest.<fn>`. A new function added to a submodule (e.g.
+`backtest.resolve_entry`) MUST be re-exported from `engine/__init__.py` (both the
+`from .backtest import ...` line AND `__all__`) or skills raise at runtime
+"module 'app.engine' has no attribute '<fn>'" — and the panel comes back
+status=error with that note (engine tests still pass, since they import the
+submodule directly).
+
+## Dollar / real-money investing (entry resolution)
+`resolve_entry(points, mode, date, start, end)` picks entry/end indices: peak =
+argmax close, date = first bar ≥ date, range = start..end, preset = full. Run
+`run_backtest(sliced, strategy, rebase=amount)` so the equity curve is in dollars
+(rebase=amount, not 100). build_backtest emits investment/entry/endValue/
+benchmarkEndValue/gain/gainPct/multiple/entryNote. Peak/old-date entries need
+`repo.deep_price_series` (deep Yahoo history) since the worker DB only holds ~6mo.
+
+## "Invest $X, what's it worth now" defaults to buy_and_hold (critical UX)
+**Why:** momentum (the default strategy) often sits in cash after a peak, so the
+panel returns the principal unchanged (gain $0) — nonsense for "invest $1M in NVDA
+at its peak, what's it worth now". A plain invest/buy-and-hold dollar question with
+no named strategy must force `buy_and_hold`.
+**How to apply:** orchestrate is **LLM-first, heuristic-only-as-fallback** (see
+`_orchestrate_build`), so the default must be enforced in BOTH paths: the LLM
+tool-call handler post-processes `add_backtest` via `_coerce_invest_backtest`
+(backfills parsed amount/entry + forces buy_and_hold on invest phrasing w/o explicit
+strategy), and `_orchestrate_heuristic` does the same. Detecting intent in only the
+heuristic is a no-op whenever the AI is available.

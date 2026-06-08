@@ -915,6 +915,44 @@ def build_alerts(params: dict) -> dict:
     }
 
 
+# Default lump sum invested when the user doesn't name a dollar figure, so the
+# panel is always denominated in real dollars rather than an abstract 100 base.
+DEFAULT_INVESTMENT = 10_000.0
+
+_ENTRY_LABELS = {
+    "peak": "All-time peak",
+    "date": "Specific date",
+    "range": "Custom range",
+    "preset": "Recent window",
+}
+
+
+def _resolve_amount(params: dict) -> float:
+    """Positive lump-sum dollar amount to invest (defaults to DEFAULT_INVESTMENT)."""
+    raw = params.get("amount")
+    if raw is None:
+        raw = params.get("investment")
+    try:
+        amt = float(raw) if raw is not None else DEFAULT_INVESTMENT
+    except (TypeError, ValueError):
+        amt = DEFAULT_INVESTMENT
+    if not (amt > 0):
+        amt = DEFAULT_INVESTMENT
+    return amt
+
+
+def _resolve_entry_mode(params: dict) -> str:
+    """Infer the entry mode (peak/date/range/preset) from the supplied params."""
+    mode = (params.get("entry") or "").lower().strip()
+    if mode in ("peak", "date", "range", "preset"):
+        return mode
+    if params.get("date"):
+        return "date"
+    if params.get("start") or params.get("end"):
+        return "range"
+    return "preset"
+
+
 def build_backtest(params: dict) -> dict:
     symbol = (params.get("symbol") or "NVDA").upper()
     company = repo.get_company(symbol)
@@ -925,30 +963,72 @@ def build_backtest(params: dict) -> dict:
     rng_key = (params.get("range") or "1Y").upper()
     days = RANGE_DAYS.get(rng_key, 250)
 
-    # Pull real OHLCV history (falls back to the curated mock series when the DB
-    # has insufficient history, so the panel always renders).
-    meta = repo.price_series_meta(symbol, days=days)
+    amount = _resolve_amount(params)
+    entry_mode = _resolve_entry_mode(params)
+    entry_date = params.get("date")
+    start = params.get("start")
+    end = params.get("end")
+
+    # Peak / older-date / custom-range entries need history deeper than the cached
+    # ~6mo DB window, so fetch a deep real series; preset windows use the normal
+    # range query. Both fall back to the curated mock so the panel always renders.
+    if entry_mode in ("peak", "date", "range"):
+        deep_start = start if entry_mode == "range" else (entry_date if entry_mode == "date" else None)
+        meta = repo.deep_price_series(symbol, start=deep_start)
+    else:
+        meta = repo.price_series_meta(symbol, days=days)
     points = meta["points"]
+
     strat_params = {
         k: params[k]
         for k in ("fast", "slow", "lookback", "threshold")
         if params.get(k) is not None
     }
 
+    def _run(pts):
+        spec = engine.resolve_entry(pts, mode=entry_mode, date=entry_date, start=start, end=end)
+        sliced = pts[spec["entryIdx"]: spec["endIdx"] + 1]
+        res = engine.run_backtest(sliced, strategy, strat_params, rebase=amount)
+        return res, sliced, spec
+
     try:
-        result = engine.run_backtest(points, strategy, strat_params)
+        result, sliced, spec = _run(points)
     except ValueError:
         # Last-resort fallback: synthesize a deterministic series so the panel
         # still has something to show when history is genuinely missing.
-        points = data.price_series(symbol, days=max(days, 60))
+        points = data.price_series(symbol, days=max(days, 400))
         meta = {"points": points, "source": "mock", "asOf": None}
-        result = engine.run_backtest(points, strategy, strat_params)
+        result, sliced, spec = _run(points)
+
+    curve = result["curve"]
+    entry_close = float(sliced[0]["c"]) if sliced else amount
+    entry_date_used = str(sliced[0]["t"]) if sliced else None
+    end_value = float(curve[-1]["strategy"]) if curve else amount
+    bench_end_value = float(curve[-1]["benchmark"]) if curve else amount
+    gain = end_value - amount
+    gain_pct = (end_value / amount - 1.0) * 100.0 if amount else 0.0
+    multiple = end_value / amount if amount else 1.0
+
+    entry = {
+        "mode": spec["mode"],
+        "date": entry_date_used,
+        "price": round(entry_close, 2),
+        "label": _ENTRY_LABELS.get(spec["mode"], "Recent window"),
+    }
 
     return {
         "symbol": symbol,
         "strategy": result["strategy"],
         "range": rng_key,
-        "curve": result["curve"],
+        "investment": round(amount, 2),
+        "entry": entry,
+        "endValue": round(end_value, 2),
+        "benchmarkEndValue": round(bench_end_value, 2),
+        "gain": round(gain, 2),
+        "gainPct": round(gain_pct, 2),
+        "multiple": round(multiple, 4),
+        "entryNote": spec.get("note"),
+        "curve": curve,
         "drawdown": result["drawdown"],
         "tradeLog": result["tradeLog"][:50],
         "stats": result["stats"],
@@ -7580,13 +7660,16 @@ def _scenario_projection(
     weights: Optional[List[float]],
     horizon: int,
     drift_pct: float,
+    start_value: float = 100.0,
 ):
     """Build a baseline-vs-scenario projection from REAL price history.
 
     Fetches each symbol's recent closes, converts to daily returns, blends them
-    into a basket, and runs the Monte Carlo scenario projection. Returns
-    ``(projection, source, as_of, used_symbols)`` where ``projection`` is ``None``
-    when there is not enough real history for any requested symbol.
+    into a basket, and runs the Monte Carlo scenario projection. ``start_value``
+    denominates the projection in dollars when the user invested a lump sum
+    (defaults to the abstract 100 base). Returns ``(projection, source, as_of,
+    used_symbols)`` where ``projection`` is ``None`` when there is not enough
+    real history for any requested symbol.
     """
     series: List[List[float]] = []
     used_symbols: List[str] = []
@@ -7611,27 +7694,34 @@ def _scenario_projection(
             basket = engine.combine_returns(series, weights)
             projection = engine.project_scenario(
                 basket.tolist(), drift_pct, horizon=horizon, method="bootstrap",
+                start_value=start_value,
             )
         except Exception:
             projection = None
     return projection, source, as_of, used_symbols
 
 
-def recompute_scenario(symbols: List[str], horizon_days: int, drift_pct: float) -> dict:
+def recompute_scenario(
+    symbols: List[str], horizon_days: int, drift_pct: float, amount: Optional[float] = None
+) -> dict:
     """Re-run only the grounded projection for an already-parsed scenario.
 
     Lets the user nudge the assumptions (horizon, per-assumption impact, overall
-    drift) and instantly re-project against the SAME real price history without
-    re-parsing the natural-language what-if through the LLM. Pure numpy, no AI
-    call, so it returns fast. Raises ValueError when inputs are unusable.
+    drift, invested dollar amount) and instantly re-project against the SAME real
+    price history without re-parsing the natural-language what-if through the LLM.
+    Pure numpy, no AI call, so it returns fast. Raises ValueError when inputs are
+    unusable.
     """
     syms = [str(s).upper().strip() for s in (symbols or []) if str(s).strip()][:6]
     if not syms:
         raise ValueError("at least one symbol is required to recompute a scenario")
     horizon = max(21, min(1260, int(horizon_days or 252)))
     drift = max(-60.0, min(60.0, float(drift_pct)))
+    start_value = _resolve_amount({"amount": amount}) if amount is not None else 100.0
 
-    projection, source, as_of, used_symbols = _scenario_projection(syms, None, horizon, drift)
+    projection, source, as_of, used_symbols = _scenario_projection(
+        syms, None, horizon, drift, start_value=start_value,
+    )
     if projection is None:
         raise ValueError("not enough real price history to recompute this scenario")
 
@@ -7642,6 +7732,7 @@ def recompute_scenario(symbols: List[str], horizon_days: int, drift_pct: float) 
         "symbols": used_symbols or syms,
         "horizonDays": horizon,
         "driftPct": round(drift, 1),
+        "investment": round(start_value, 2) if amount is not None else None,
     }
 
 
@@ -7691,9 +7782,12 @@ def build_scenario(params: dict) -> dict:
     horizon = int(parsed.get("horizonDays", 252) or 252)
     drift_pct = float(parsed.get("driftPct", 0.0))
 
+    has_amount = params.get("amount") is not None
+    start_value = _resolve_amount(params) if has_amount else 100.0
+
     # 2) Build a baseline return series from REAL price history and project.
     projection, source, as_of, used_symbols = _scenario_projection(
-        symbols, weights, horizon, drift_pct,
+        symbols, weights, horizon, drift_pct, start_value=start_value,
     )
 
     if projection is None:
@@ -7722,6 +7816,7 @@ def build_scenario(params: dict) -> dict:
         ),
         "caveats": caveats[:5],
         "projection": projection,
+        "investment": round(start_value, 2) if has_amount else None,
         "asOf": as_of,
         "source": source if projection else _live_source(),
     }

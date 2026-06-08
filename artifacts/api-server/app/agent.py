@@ -286,11 +286,16 @@ def _tools() -> list:
         }},
         {"type": "function", "function": {
             "name": "add_backtest",
-            "description": f"Add a strategy backtest (equity curve vs benchmark, drawdown chart, Sharpe/CAGR stats) for one ticker. {sizing}",
+            "description": f"Add a strategy backtest for one ticker, denominated in real dollars: invested amount, entry point (date+price), ending value, gain in $ and as a multiple, plus equity curve, drawdown and Sharpe/CAGR stats. Use when the user asks things like 'invest $1M in NVDA at its peak and show what it's worth now'. {sizing}",
             "parameters": {"type": "object", "properties": {
                 "symbol": {"type": "string", "description": f"Ticker. One of: {syms}"},
-                "strategy": {"type": "string", "description": "Strategy name, e.g. 'momentum', 'mean_reversion', 'buy_and_hold'."},
+                "strategy": {"type": "string", "description": "Strategy name, e.g. 'momentum', 'mean_reversion', 'buy_and_hold'. When the user simply asks what a lump sum would be worth (e.g. 'invest $1M in NVDA at its peak, what's it worth now') without naming a systematic strategy, use 'buy_and_hold' so the panel reflects the asset's actual dollar trajectory. Only use 'momentum'/'mean_reversion' when the user explicitly asks for that strategy."},
                 "range": {"type": "string", "enum": ["1M", "3M", "6M", "1Y", "YTD"]},
+                "amount": {"type": "number", "description": "Dollar lump sum to invest, e.g. 1000000 for $1M. Defaults to 10000."},
+                "entry": {"type": "string", "enum": ["peak", "date", "range", "preset"], "description": "Where the money goes in: 'peak' = highest close in available history; 'date' = a specific date (use the 'date' field); 'range' = a custom window (use 'start'/'end'); 'preset' = the recent range window. Defaults to 'preset'."},
+                "date": {"type": "string", "description": "ISO date (YYYY-MM-DD) for entry='date'."},
+                "start": {"type": "string", "description": "ISO start date for entry='range'."},
+                "end": {"type": "string", "description": "ISO end date for entry='range'."},
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }, "required": ["symbol"]},
         }},
@@ -630,6 +635,7 @@ def _tools() -> list:
                 "prompt": {"type": "string", "description": "The user's full natural-language what-if statement."},
                 "symbol": {"type": "string", "description": f"Primary ticker if the what-if targets one name ({syms})."},
                 "sector": {"type": "string", "description": f"Sector if the what-if targets a sector ({secs})."},
+                "amount": {"type": "number", "description": "Dollar amount invested, e.g. 1000000 for $1M. When given, baseline vs scenario terminal outcomes are shown in dollars."},
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }, "required": ["prompt"]},
         }},
@@ -2118,6 +2124,8 @@ def _orchestrate_llm(query: str, sid: str, existing: List[dict], cursor: dict):
         except json.JSONDecodeError:
             args = {}
         _apply_dashboard_scope(name, args, dash_syms, dash_secs)
+        if name == "add_backtest":
+            _coerce_invest_backtest(query, args)
         layout = harness.pack_layout(args.get("width"), args.get("height"), cursor)
         panels.append(harness.run_skill(panel_type, args, layout))
     summary = (msg.content or "").strip()
@@ -2395,6 +2403,97 @@ def _news_topic(query: str) -> str:
     return " ".join(repo.news_keywords(query))
 
 
+_MONEY_RE = re.compile(
+    r"\$?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*(k|thousand|m|mm|mn|million|b|bn|billion)?",
+    re.IGNORECASE,
+)
+_MONEY_MULT = {
+    "k": 1e3, "thousand": 1e3,
+    "m": 1e6, "mm": 1e6, "mn": 1e6, "million": 1e6,
+    "b": 1e9, "bn": 1e9, "billion": 1e9,
+}
+_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+
+
+def _parse_invest_entry(query: str) -> dict:
+    """Pull a dollar amount + entry spec out of a free-text invest/backtest prompt.
+
+    Returns a dict with any of {amount, entry, date, start, end} that were found.
+    Handles "$1M", "1 million", "500k"; "at its peak" / "all-time high"; an ISO
+    date ("on 2023-01-03"); and a date range ("from 2022-01-01 to 2023-01-01").
+    Money is only taken when paired with a $ sign or a magnitude word so plain
+    counts (e.g. "50 day momentum") aren't misread as dollars.
+    """
+    out: dict = {}
+    q = query or ""
+    ql = q.lower()
+
+    # Dollar amount — require a $ or a magnitude suffix to avoid false positives.
+    best: Optional[float] = None
+    for m in _MONEY_RE.finditer(q):
+        num_s, suffix = m.group(1), (m.group(2) or "").lower()
+        has_dollar = m.group(0).lstrip().startswith("$")
+        if not suffix and not has_dollar:
+            continue
+        try:
+            val = float(num_s.replace(",", ""))
+        except ValueError:
+            continue
+        val *= _MONEY_MULT.get(suffix, 1.0)
+        if val > 0 and (best is None or val > best):
+            best = val
+    if best is not None:
+        out["amount"] = best
+
+    # Entry: explicit date range > single date > peak.
+    dates = _DATE_RE.findall(q)
+    if ("from" in ql or "between" in ql) and len(dates) >= 2:
+        out["entry"] = "range"
+        out["start"], out["end"] = dates[0], dates[1]
+    elif dates:
+        out["entry"] = "date"
+        out["date"] = dates[0]
+    elif any(k in ql for k in ("at its peak", "at peak", "all-time high", "all time high",
+                                "record high", "the peak", "its high", "the top")):
+        out["entry"] = "peak"
+
+    return out
+
+
+def _coerce_invest_backtest(query: str, args: dict) -> None:
+    """Normalise an LLM ``add_backtest`` call for plain invest-style questions.
+
+    The LLM tends to default to ``momentum`` even when the user just asks how much
+    a lump sum would be worth ("invest $1M in NVDA at its peak, what's it worth
+    now?"). That sits in cash and returns the principal unchanged. When the prompt
+    is clearly a buy-and-hold dollar question and names no systematic strategy, we
+    backfill the parsed amount/entry and force ``buy_and_hold`` so the panel shows
+    the asset's real dollar trajectory. We never override an explicitly requested
+    strategy.
+    """
+    ql = (query or "").lower()
+    parsed = _parse_invest_entry(query)
+    # Backfill amount/entry the model may have dropped.
+    for k in ("amount", "entry", "date", "start", "end"):
+        if k in parsed and not args.get(k):
+            args[k] = parsed[k]
+    has_amount = bool(args.get("amount") or parsed.get("amount"))
+    explicit_strategy = any(
+        kw in ql for kw in ("momentum", "trend", "mean reversion", "mean-reversion",
+                            "reversion", "buy and hold", "buy-and-hold")
+    )
+    invest_phrasing = any(
+        k in ql for k in (
+            "invest", "worth now", "worth today", "worth right now",
+            "if i bought", "if i had bought", "if i'd bought", "had i bought",
+            "put $", "bought $", "what's it worth", "what is it worth",
+            "what it's worth", "what it is worth", "would it be worth",
+        )
+    )
+    if has_amount and invest_phrasing and not explicit_strategy:
+        args["strategy"] = "buy_and_hold"
+
+
 def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
                            dash_syms: Optional[List[str]] = None,
                            dash_secs: Optional[List[str]] = None):
@@ -2506,7 +2605,20 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         "paper book", "paper-book", "strategy registry", "strategy roster", "live book",
         "strategy book", "the book",
     ])
-    wants_backtest = any(k in q for k in ["backtest", "back test", "back-test", "momentum strategy", "strategy", "sharpe", "cagr", "drawdown"])
+    _invest_parsed = _parse_invest_entry(query)
+    # A plain "invest $X in <ticker> ... what's it worth now" is a buy-and-hold
+    # dollar question, not a systematic-strategy backtest. Detect it explicitly so
+    # it is handled deterministically (and denominated in dollars) rather than
+    # falling through to the LLM, which tends to pick momentum and sit in cash.
+    wants_invest = bool(_invest_parsed.get("amount")) and any(
+        k in q for k in [
+            "invest", "worth now", "worth today", "worth right now",
+            "if i bought", "if i had bought", "if i'd bought", "had i bought",
+            "put $", "bought $", "what's it worth", "what is it worth",
+            "what it's worth", "what it is worth", "would it be worth",
+        ]
+    )
+    wants_backtest = wants_invest or any(k in q for k in ["backtest", "back test", "back-test", "momentum strategy", "strategy", "sharpe", "cagr", "drawdown"])
     wants_montecarlo = any(k in q for k in ["monte carlo", "montecarlo", "monte-carlo", "simulate", "simulation", "forward project", "project price", "scenario analysis", "probability of loss", "forecast price", "gbm", "geometric brownian", "bootstrap"])
     wants_correlation = any(k in q for k in ["correlation", "correlat", "hedge ratio", "co-movement", "diversif", "beta table"])
     wants_tearsheet = any(k in q for k in ["tear sheet", "tearsheet", "tear-sheet", "performance review", "performance breakdown", "full performance"])
@@ -2718,6 +2830,9 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
             sc_params["sector"] = sector
         elif dash_syms:
             sc_params["symbols"] = dash_syms
+        _sc_money = _parse_invest_entry(query).get("amount")
+        if _sc_money:
+            sc_params["amount"] = _sc_money
         add("scenario", sc_params, 12, 6)
         label = (
             data.get_company(sym)["name"] if sym
@@ -2985,13 +3100,35 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
     if wants_backtest and symbols:
         sym = symbols[0]
         strategy = "momentum"
+        explicit_strategy = False
         if "mean" in q or "reversion" in q:
             strategy = "mean_reversion"
+            explicit_strategy = True
         elif "buy" in q and "hold" in q:
             strategy = "buy_and_hold"
-        add("backtest", {"symbol": sym, "strategy": strategy}, 12, 6)
+            explicit_strategy = True
+        elif "momentum" in q or "trend" in q:
+            explicit_strategy = True
+        bt_params = {"symbol": sym, "strategy": strategy}
+        bt_params.update(_parse_invest_entry(query))
+        # "Invest $X ... what's it worth now" with no named strategy means
+        # buy-and-hold: the user wants the asset's actual dollar trajectory, not a
+        # systematic strategy that may sit in cash.
+        if bt_params.get("amount") and not explicit_strategy:
+            strategy = "buy_and_hold"
+            bt_params["strategy"] = strategy
+        add("backtest", bt_params, 12, 6)
         name = data.get_company(sym)["name"]
-        summary = f"Backtest of {strategy.replace('_', ' ')} strategy on {name}: equity curve, drawdown, and performance stats."
+        amt = bt_params.get("amount")
+        if amt:
+            entry_lbl = {
+                "peak": "its all-time peak", "date": f"on {bt_params.get('date')}",
+                "range": f"from {bt_params.get('start')}",
+            }.get(bt_params.get("entry"), "the recent window")
+            summary = (f"Invested ${amt:,.0f} in {name} at {entry_lbl}: entry point, "
+                       "ending value, total gain in dollars, and the equity curve in dollars.")
+        else:
+            summary = f"Backtest of {strategy.replace('_', ' ')} strategy on {name}: equity curve, drawdown, and performance stats."
         return panels, summary
 
     if wants_correlation and (len(symbols) >= 2 or sector):
@@ -3394,6 +3531,18 @@ def _structured_refine_params(panel_type: str, panel: dict, params: dict) -> dic
         out["symbol"] = (params.get("symbol") or d.get("symbol") or "").upper() or None
         out["strategy"] = params.get("strategy") or d.get("strategy")
         out["range"] = params.get("range") or d.get("range")
+        cur_entry = d.get("entry") or {}
+        # Amount: explicit param wins, else keep the panel's current investment.
+        amt = params.get("amount")
+        if amt is None:
+            amt = d.get("investment")
+        out["amount"] = amt
+        # Entry mode/date/range: explicit params win, else fall back to the
+        # panel's current entry so changing only the amount keeps the entry put.
+        out["entry"] = params.get("entry") or cur_entry.get("mode")
+        out["date"] = params.get("date") or (cur_entry.get("date") if (params.get("entry") or cur_entry.get("mode")) == "date" else None)
+        out["start"] = params.get("start")
+        out["end"] = params.get("end")
     elif panel_type == "factor_analysis":
         out["symbol"] = (params.get("symbol") or d.get("symbol") or "").upper() or None
     else:

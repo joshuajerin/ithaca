@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { BacktestEntry } from './backtestEntry';
 import type { BacktestPoint } from './backtestPoint';
 import type { BacktestStats } from './backtestStats';
 import type { DrawdownPoint } from './drawdownPoint';
@@ -19,4 +20,19 @@ export interface BacktestData {
   drawdown: DrawdownPoint[];
   stats: BacktestStats;
   tradeLog?: TradeLogEntry[];
+  /** Dollar lump sum invested at entry; the equity curve is denominated in these dollars. */
+  investment?: number;
+  entry?: BacktestEntry;
+  /** Ending dollar value of the invested amount under the strategy. */
+  endValue?: number;
+  /** Ending dollar value of the same amount under buy-and-hold benchmark. */
+  benchmarkEndValue?: number;
+  /** Ending value minus invested amount, in dollars. */
+  gain?: number;
+  /** Total return over the held period, in percent. */
+  gainPct?: number;
+  /** Ending value divided by invested amount (e.g. 3.5 = 3.5x). */
+  multiple?: number;
+  /** Honest note when the requested entry could not be fully honored. */
+  entryNote?: string;
 }

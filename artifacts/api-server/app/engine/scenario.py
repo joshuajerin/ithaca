@@ -110,6 +110,8 @@ def project_scenario(
         "baseline": {
             "expectedReturnPct": base_end_ret,
             "endValue": bs["expectedTerminal"],
+            "p5Value": round(float(bs["p5Terminal"]), 2),
+            "p95Value": round(float(bs["p95Terminal"]), 2),
             "p5Pct": round((bs["p5Terminal"] / start_value - 1.0) * 100.0, 2),
             "p95Pct": round((bs["p95Terminal"] / start_value - 1.0) * 100.0, 2),
             "probLossPct": bs["probLoss"],
@@ -117,6 +119,8 @@ def project_scenario(
         "scenario": {
             "expectedReturnPct": scen_end_ret,
             "endValue": round(scen_end_value, 2),
+            "p5Value": round(float(bs["p5Terminal"]) * end_factor, 2),
+            "p95Value": round(float(bs["p95Terminal"]) * end_factor, 2),
             "p5Pct": round((bs["p5Terminal"] * end_factor / start_value - 1.0) * 100.0, 2),
             "p95Pct": round((bs["p95Terminal"] * end_factor / start_value - 1.0) * 100.0, 2),
             "deltaPct": round(scen_end_ret - base_end_ret, 2),

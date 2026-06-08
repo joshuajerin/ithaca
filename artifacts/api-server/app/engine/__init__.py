@@ -21,7 +21,7 @@ from .attribution import (
     pnl_summary,
     return_stats,
 )
-from .backtest import run_backtest
+from .backtest import resolve_entry, run_backtest
 from .execution import (
     aggregate_tca,
     daily_vol_from_closes,
@@ -81,6 +81,7 @@ __all__ = [
     "factor_attribution",
     "pnl_summary",
     "return_stats",
+    "resolve_entry",
     "run_backtest",
     "monte_carlo",
     "performance_stats",

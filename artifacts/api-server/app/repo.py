@@ -472,6 +472,77 @@ def price_series_meta(symbol: str, days: int = 90, rng: Optional[str] = None) ->
     return {"points": data.price_series(sym, days=days), "source": "mock", "asOf": None}
 
 
+# Yahoo range tokens we step through when we need history deeper than the DB holds
+# (the ingest worker only stores ~6mo of daily OHLCV). Ordered shortest->longest so
+# we can pick the smallest token that spans the requested start date.
+_DEEP_RANGE_TOKENS = ["1y", "2y", "5y", "10y", "max"]
+
+
+def _deep_range_token(start: Optional[str]) -> str:
+    """Pick a Yahoo range token covering `start` (ISO) back from today.
+
+    With no start (e.g. an all-time-peak entry) we fetch the maximum available
+    history so the peak search isn't truncated by a short window.
+    """
+    if not start:
+        return "max"
+    try:
+        d0 = date.fromisoformat(start)
+    except (TypeError, ValueError):
+        return "max"
+    years = (date.today() - d0).days / 365.25
+    if years <= 1:
+        return "1y"
+    if years <= 2:
+        return "2y"
+    if years <= 5:
+        return "5y"
+    if years <= 10:
+        return "10y"
+    return "max"
+
+
+def deep_price_series(symbol: str, start: Optional[str] = None) -> dict:
+    """Real daily closes reaching deeper than the cached ~6mo DB window.
+
+    Used by the backtest's peak / old-date / custom-range entries, where the
+    user wants to "invest at the all-time peak" or on a date years back that the
+    ingest worker never stored. Fetches genuine daily bars from the live price
+    source (routed through the resilient client + circuit breaker); on any
+    failure falls back to the deepest series the DB/mock can provide so the panel
+    still renders. Returns ``{"points": [...], "source": "live"|"mock", "asOf"}``
+    with engine-shaped points (``t``/``o``/``h``/``l``/``c``/``v``).
+    """
+    sym = (symbol or "").upper()
+    try:
+        from .sources import prices
+
+        token = _deep_range_token(start)
+        res = prices.fetch_price_history(sym, range_=token, interval="1d")
+        raw = res.get("points") or []
+        points = [
+            {
+                "t": p["d"],
+                "o": _num(p.get("o")),
+                "h": _num(p.get("h")),
+                "l": _num(p.get("l")),
+                "c": _num(p.get("c")),
+                "v": _num(p.get("v")),
+            }
+            for p in raw
+            if p.get("d") and p.get("c") is not None
+        ]
+        if len(points) >= 2:
+            as_of = (res.get("quote") or {}).get("asOf")
+            return {"points": points, "source": "live", "asOf": as_of}
+    except Exception as exc:  # noqa: BLE001 — fall back to cached/mock history
+        log.warning("deep_price_series fetch error for %s: %s", sym, exc)
+
+    # Fallback: deepest the DB/mock can give us. ~2600 trading days ≈ 10y so the
+    # peak/date search isn't artificially clipped.
+    return price_series_meta(sym, days=2600)
+
+
 # ----------------------------- period returns -----------------------------
 # We fetch enough calendar history to anchor a 1Y / YTD window. Live series are
 # trading days (this many rows comfortably spans a year); mock series are

@@ -731,6 +731,13 @@ class TradeLogEntry(BaseModel):
     pnlPct: Optional[float] = None
 
 
+class BacktestEntry(BaseModel):
+    mode: Optional[str] = None
+    date: Optional[str] = None
+    price: Optional[float] = None
+    label: Optional[str] = None
+
+
 class BacktestData(BaseModel):
     symbol: str
     strategy: str
@@ -739,6 +746,14 @@ class BacktestData(BaseModel):
     drawdown: List[DrawdownPoint]
     stats: BacktestStats
     tradeLog: Optional[List[TradeLogEntry]] = None
+    investment: Optional[float] = None
+    entry: Optional[BacktestEntry] = None
+    endValue: Optional[float] = None
+    benchmarkEndValue: Optional[float] = None
+    gain: Optional[float] = None
+    gainPct: Optional[float] = None
+    multiple: Optional[float] = None
+    entryNote: Optional[str] = None
 
 
 # --- correlation_matrix ---
@@ -1368,6 +1383,7 @@ class ScenarioRecomputeRequest(BaseModel):
     symbols: List[str]
     horizonDays: int
     driftPct: float
+    amount: Optional[float] = None
 
 
 class ScenarioRecomputeResult(BaseModel):

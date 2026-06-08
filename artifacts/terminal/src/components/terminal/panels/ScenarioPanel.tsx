@@ -32,6 +32,8 @@ interface PathPoint {
 interface Leg {
   expectedReturnPct: number;
   endValue: number;
+  p5Value?: number;
+  p95Value?: number;
   p5Pct?: number;
   p95Pct?: number;
   deltaPct?: number;
@@ -58,11 +60,23 @@ interface ScenarioData {
   reasoning: string;
   caveats: string[];
   projection?: Projection | null;
+  investment?: number | null;
 }
 
 function pct(n?: number): string {
   if (n === null || n === undefined) return "—";
   return `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
+}
+
+function usd(v?: number | null, compact = false): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return "—";
+  const abs = Math.abs(v);
+  return v.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    notation: compact && abs >= 10000 ? "compact" : "standard",
+    maximumFractionDigits: abs >= 1000 || compact ? 0 : 2,
+  });
 }
 
 const RECOMPUTE_TIMEOUT_MS = 12000;
@@ -81,8 +95,15 @@ export function ScenarioPanel({ data }: { data: ScenarioData }) {
   const [dirty, setDirty] = useState(false);
   const [recomputing, setRecomputing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // Dollar amount invested. When set, baseline/scenario outcomes are shown in
+  // dollars. `amountInput` is the editable text field; committed on Enter/blur.
+  const [amount, setAmount] = useState<number | null>(data.investment ?? null);
+  const [amountInput, setAmountInput] = useState<string>(
+    data.investment ? String(Math.round(data.investment)) : "",
+  );
 
   const canTune = Boolean(data.projection) && (data.symbols?.length ?? 0) > 0;
+  const hasMoney = (amount ?? 0) > 0;
 
   // A stable signature of the *parsed* scenario. We only reset local edits when
   // a genuinely new scenario arrives (the agent re-parsed a prompt) — not on
@@ -95,6 +116,8 @@ export function ScenarioPanel({ data }: { data: ScenarioData }) {
     setHorizon(data.horizonDays);
     setDrift(data.driftPct);
     setImpacts((data.assumptions || []).map((a) => a.impactPct ?? 0));
+    setAmount(data.investment ?? null);
+    setAmountInput(data.investment ? String(Math.round(data.investment)) : "");
     setDirty(false);
     setNotice(null);
     setRecomputing(false);
@@ -105,11 +128,11 @@ export function ScenarioPanel({ data }: { data: ScenarioData }) {
   // Otherwise its identity would change whenever the parent passes a new `data`
   // object, retriggering (and continually rescheduling) the debounce effect —
   // which can starve the timer so the recompute never actually fires.
-  const liveRef = useRef({ symbols: data.symbols, canTune });
-  liveRef.current = { symbols: data.symbols, canTune };
+  const liveRef = useRef({ symbols: data.symbols, canTune, amount });
+  liveRef.current = { symbols: data.symbols, canTune, amount };
 
   const runRecompute = useCallback(async (nextHorizon: number, nextDrift: number) => {
-    const { symbols, canTune: tunable } = liveRef.current;
+    const { symbols, canTune: tunable, amount: amt } = liveRef.current;
     if (!tunable) return;
     setRecomputing(true);
     setNotice(null);
@@ -117,7 +140,12 @@ export function ScenarioPanel({ data }: { data: ScenarioData }) {
     const timer = setTimeout(() => controller.abort(), RECOMPUTE_TIMEOUT_MS);
     try {
       const res = await recomputeScenario(
-        { symbols, horizonDays: nextHorizon, driftPct: nextDrift },
+        {
+          symbols,
+          horizonDays: nextHorizon,
+          driftPct: nextDrift,
+          ...((amt ?? 0) > 0 ? { amount: amt as number } : {}),
+        },
         { signal: controller.signal },
       );
       if (res?.projection) {
@@ -135,15 +163,32 @@ export function ScenarioPanel({ data }: { data: ScenarioData }) {
     }
   }, []);
 
-  // Debounced re-run whenever the user changes horizon or net drift. Depend on
-  // primitives only (not `data`/`runRecompute`) so unrelated re-renders don't
-  // reset the timer.
+  // Debounced re-run whenever the user changes horizon, net drift, or the
+  // invested dollar amount. Depend on primitives only (not `data`/`runRecompute`)
+  // so unrelated re-renders don't reset the timer.
   useEffect(() => {
     if (!dirty || !canTune) return;
     const t = setTimeout(() => void runRecompute(horizon, drift), DEBOUNCE_MS);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [horizon, drift, dirty]);
+  }, [horizon, drift, amount, dirty]);
+
+  const commitAmount = () => {
+    const parsed = Number(amountInput.replace(/[^0-9.]/g, ""));
+    if (Number.isFinite(parsed) && parsed > 0) {
+      if (parsed !== amount) {
+        setDirty(true);
+        setAmount(parsed);
+      }
+    } else {
+      // Empty / invalid clears the dollar denomination back to the index base.
+      if (amount !== null) {
+        setDirty(true);
+        setAmount(null);
+      }
+      setAmountInput("");
+    }
+  };
 
   const onHorizon = (v: number) => {
     setDirty(true);
@@ -220,15 +265,51 @@ export function ScenarioPanel({ data }: { data: ScenarioData }) {
           </div>
         </section>
 
+        {/* ── Invested amount: denominate outcomes in dollars ── */}
+        {canTune && (
+          <section className="border-b border-border pb-3 flex items-center gap-2">
+            <span className="editorial-label text-[8px] text-muted-foreground tracking-widest uppercase">Invest</span>
+            <div className="flex items-center border border-border focus-within:border-white/60 transition-colors">
+              <span className="text-[10px] text-muted-foreground pl-1.5">$</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={amountInput}
+                onChange={(e) => setAmountInput(e.target.value)}
+                onBlur={commitAmount}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                }}
+                className="w-28 text-[10px] bg-black px-1 py-0.5 font-mono text-white focus:outline-none"
+                placeholder="e.g. 1,000,000"
+              />
+            </div>
+            <span className="editorial-label text-[7.5px] text-muted-foreground tracking-widest uppercase">
+              {hasMoney ? "shown in dollars" : "leave blank for %"}
+            </span>
+          </section>
+        )}
+
         {/* ── Outcome: baseline vs scenario ── */}
         {proj && (
           <section className="grid grid-cols-2 gap-3 border-b border-border pb-4">
             <div className="border border-border p-3">
               <div className="editorial-label text-[7.5px] text-muted-foreground tracking-widest uppercase mb-1">Baseline</div>
-              <div className="font-serif text-xl text-gray-300 nums-tabular">{pct(proj.baseline.expectedReturnPct)}</div>
-              <div className="editorial-label text-[7.5px] text-muted-foreground mt-1 nums-tabular">
-                p5 {pct(proj.baseline.p5Pct)} · p95 {pct(proj.baseline.p95Pct)}
-              </div>
+              {hasMoney ? (
+                <>
+                  <div className="font-serif text-xl text-gray-300 nums-tabular">{usd(proj.baseline.endValue)}</div>
+                  <div className="editorial-label text-[7.5px] text-muted-foreground mt-1 nums-tabular">
+                    {pct(proj.baseline.expectedReturnPct)} · p5 {usd(proj.baseline.p5Value, true)} · p95 {usd(proj.baseline.p95Value, true)}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="font-serif text-xl text-gray-300 nums-tabular">{pct(proj.baseline.expectedReturnPct)}</div>
+                  <div className="editorial-label text-[7.5px] text-muted-foreground mt-1 nums-tabular">
+                    p5 {pct(proj.baseline.p5Pct)} · p95 {pct(proj.baseline.p95Pct)}
+                  </div>
+                </>
+              )}
             </div>
             <div className={`border p-3 ${scenUp ? "border-white/50 bg-white/[0.04]" : "border-muted-foreground/40 bg-muted/10"}`}>
               <div className="editorial-label text-[7.5px] text-muted-foreground tracking-widest uppercase mb-1">
@@ -236,10 +317,21 @@ export function ScenarioPanel({ data }: { data: ScenarioData }) {
                   <span className="text-white">({pct(proj.scenario.deltaPct)} vs base)</span>
                 )}
               </div>
-              <div className="font-serif text-xl text-white nums-tabular">{pct(proj.scenario.expectedReturnPct)}</div>
-              <div className="editorial-label text-[7.5px] text-muted-foreground mt-1 nums-tabular">
-                p5 {pct(proj.scenario.p5Pct)} · p95 {pct(proj.scenario.p95Pct)}
-              </div>
+              {hasMoney ? (
+                <>
+                  <div className="font-serif text-xl text-white nums-tabular">{usd(proj.scenario.endValue)}</div>
+                  <div className="editorial-label text-[7.5px] text-muted-foreground mt-1 nums-tabular">
+                    {pct(proj.scenario.expectedReturnPct)} · p5 {usd(proj.scenario.p5Value, true)} · p95 {usd(proj.scenario.p95Value, true)}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="font-serif text-xl text-white nums-tabular">{pct(proj.scenario.expectedReturnPct)}</div>
+                  <div className="editorial-label text-[7.5px] text-muted-foreground mt-1 nums-tabular">
+                    p5 {pct(proj.scenario.p5Pct)} · p95 {pct(proj.scenario.p95Pct)}
+                  </div>
+                </>
+              )}
             </div>
           </section>
         )}

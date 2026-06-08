@@ -33,6 +33,90 @@ def _extract(points: List[dict]) -> tuple[List[str], np.ndarray]:
     return dates, np.asarray(closes, dtype=float)
 
 
+def resolve_entry(
+    points: List[dict],
+    mode: str = "preset",
+    date: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> Dict:
+    """Resolve where (and over what window) the money goes in, on a points list.
+
+    Returns ``{entryIdx, endIdx, mode, note}`` where the usable backtest slice is
+    ``points[entryIdx:endIdx + 1]``. Pure: no I/O. The caller owns fetching enough
+    history; this just picks indices and reports an honest note when the requested
+    entry can't be fully honored (e.g. a date earlier than any available bar).
+
+    Modes:
+    - ``peak``  : enter at the highest close in the available history.
+    - ``date``  : enter on the first bar on/after ``date`` (clamped to range).
+    - ``range`` : enter at the first bar on/after ``start`` and stop at the last
+                  bar on/before ``end`` (either side optional).
+    - ``preset``: use the whole supplied series (the existing range behavior).
+    """
+    dates = [str(p.get("t")) for p in (points or [])]
+    n = len(dates)
+    if n == 0:
+        return {"entryIdx": 0, "endIdx": -1, "mode": mode, "note": None}
+
+    mode = (mode or "preset").lower()
+    end_idx = n - 1
+    note: Optional[str] = None
+
+    def _first_on_or_after(target: str) -> Optional[int]:
+        for i, d in enumerate(dates):
+            if d >= target:
+                return i
+        return None
+
+    def _last_on_or_before(target: str) -> Optional[int]:
+        found = None
+        for i, d in enumerate(dates):
+            if d <= target:
+                found = i
+        return found
+
+    if mode == "peak":
+        _, closes = _extract(points)
+        entry_idx = int(np.argmax(closes)) if closes.size else 0
+        if entry_idx >= n - 1:
+            # Peak is the most recent bar -> step back so there is something to show.
+            entry_idx = max(0, n - 2)
+            note = "Highest close is the latest bar; showing from just before it."
+    elif mode == "date":
+        if not date:
+            entry_idx = 0
+        else:
+            idx = _first_on_or_after(date)
+            if idx is None:
+                entry_idx = n - 1
+                note = f"No bars on/after {date}; using the latest available bar."
+            else:
+                entry_idx = idx
+                if dates[idx] != date and idx == 0 and dates[0] > date:
+                    note = f"History starts {dates[0]}; entered at the earliest available bar."
+                elif dates[idx] != date:
+                    note = f"No bar on {date}; entered on the next trading day {dates[idx]}."
+    elif mode == "range":
+        s_idx = _first_on_or_after(start) if start else 0
+        e_idx = _last_on_or_before(end) if end else n - 1
+        if s_idx is None:
+            s_idx = n - 1
+            note = f"No bars on/after {start}; using the latest available bar."
+        elif start and dates[s_idx] != start and dates[0] > start:
+            note = f"History starts {dates[0]}; range entered at the earliest available bar."
+        if e_idx is None or e_idx < s_idx:
+            e_idx = n - 1
+        entry_idx = s_idx
+        end_idx = e_idx
+    else:
+        entry_idx = 0
+
+    entry_idx = max(0, min(entry_idx, n - 1))
+    end_idx = max(entry_idx, min(end_idx, n - 1))
+    return {"entryIdx": entry_idx, "endIdx": end_idx, "mode": mode, "note": note}
+
+
 def run_backtest(
     points: List[dict],
     strategy: str = "momentum",
