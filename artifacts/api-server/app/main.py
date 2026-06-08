@@ -178,7 +178,7 @@ def speak(req: models.SpeakRequest):
     if not ai.ai_available():
         raise HTTPException(status_code=503, detail="speech synthesis unavailable")
     try:
-        audio = ai.speak(text, voice=req.voice)
+        audio = ai.speak(text, voice=req.voice, speed=req.speed)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"speech synthesis failed: {exc}")
     return {"audio": base64.b64encode(audio).decode("ascii"), "format": "mp3"}

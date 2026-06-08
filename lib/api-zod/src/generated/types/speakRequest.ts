@@ -13,4 +13,9 @@ export interface SpeakRequest {
      * @nullable
      */
   voice?: string | null;
+  /**
+     * Optional speaking-rate multiplier (1.0 = normal pace). Clamped server-side to a sane range.
+     * @nullable
+     */
+  speed?: number | null;
 }

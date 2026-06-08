@@ -1576,7 +1576,8 @@ export const DeleteSavedDashboardResponse = zod.object({
  */
 export const SpeakBody = zod.object({
   "text": zod.string(),
-  "voice": zod.string().nullish().describe('Optional named voice for synthesis.')
+  "voice": zod.string().nullish().describe('Optional named voice for synthesis.'),
+  "speed": zod.number().nullish().describe('Optional speaking-rate multiplier (1.0 = normal pace). Clamped server-side to a sane range.')
 })
 
 export const SpeakResponse = zod.object({

@@ -1329,6 +1329,7 @@ class NavigateRequest(BaseModel):
 class SpeakRequest(BaseModel):
     text: str
     voice: Optional[str] = None
+    speed: Optional[float] = None
 
 
 class SpeechAudio(BaseModel):

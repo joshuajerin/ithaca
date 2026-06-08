@@ -92,6 +92,13 @@ just reads the `embedded` prop.
 actually be installed (`pnpm install`) — a missing install surfaces as a Vite "Failed to resolve
 import 'sucrase'" that blanks the whole terminal, easy to mistake for a Voice Mode bug.
 
+**Voice + speed settings:** users pick a gpt-audio voice and a speaking-speed multiplier in a
+VoicePanel popover; prefs persist to localStorage and flow through `/speak` (SpeakRequest gains
+`voice`/`speed`). **Gotcha:** the gpt-audio *chat-completions* `audio` param only takes
+`voice`+`format` — there is NO native speed knob, so speed is steered via a pacing sentence appended
+to the narrator system prompt and clamped server-side (0.5–1.5). The frontend `VOICE_OPTIONS` list
+must stay in sync with `AVAILABLE_VOICES` in `app/ai.py`.
+
 **Layout:** Voice Mode is a **floating overlay**, NOT a takeover. The dashboard/dotwave stays
 full-screen; VoicePanel is a compact `fixed` bottom-center card. **Why:** user rejected the orb
 filling the screen — "full screen should just be the terminal, orb should be somewhere." On phones

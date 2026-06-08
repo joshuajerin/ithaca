@@ -1,7 +1,14 @@
-import React, { useEffect, useRef } from "react";
-import { Mic, Loader2, Volume2, AlertTriangle, RefreshCw, MonitorX, ExternalLink } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { Mic, Loader2, Volume2, AlertTriangle, RefreshCw, MonitorX, ExternalLink, Settings2 } from "lucide-react";
 import type { VoiceStatus, TranscriptEntry } from "@/hooks/useVoiceConductor";
 import { openStandaloneTab } from "@/lib/embed";
+import {
+  VOICE_OPTIONS,
+  MIN_SPEED,
+  MAX_SPEED,
+  SPEED_STEP,
+  type VoiceSettings,
+} from "@/lib/voiceSettings";
 import { VoiceOrb } from "./VoiceOrb";
 
 interface VoicePanelProps {
@@ -17,6 +24,10 @@ interface VoicePanelProps {
   transcript: TranscriptEntry[];
   /** Compact, bottom-docked control for phone-sized screens. */
   compact?: boolean;
+  /** Current voice + speaking-speed preferences. */
+  settings: VoiceSettings;
+  /** Persist a changed voice/speed selection. */
+  onSettingsChange: (next: VoiceSettings) => void;
   onRetry: () => void;
   /** Called on press/hold-start. */
   onStartListening: () => void;
@@ -85,6 +96,89 @@ function TranscriptLog({
   );
 }
 
+/** Voice + speaking-speed picker shown in a small popover above the orb. */
+function VoiceSettingsControl({
+  settings,
+  onSettingsChange,
+  compact,
+}: {
+  settings: VoiceSettings;
+  onSettingsChange: (next: VoiceSettings) => void;
+  compact?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-label="Voice settings"
+        className={`flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] transition-colors ${
+          open ? "text-white" : "text-muted-foreground hover:text-white"
+        }`}
+      >
+        <Settings2 className="w-3.5 h-3.5" strokeWidth={1.5} />
+        {!compact && <span>Voice &amp; speed</span>}
+      </button>
+
+      {open && (
+        <div
+          className={`absolute z-40 ${
+            compact ? "left-1/2 -translate-x-1/2" : "right-0"
+          } bottom-full mb-3 w-64 rounded-xl border border-border bg-black/90 backdrop-blur-md p-4 shadow-2xl text-left`}
+        >
+          <div className="flex flex-col gap-1.5">
+            <label className="editorial-label text-[9px] text-muted-foreground" htmlFor="voice-select">
+              Voice
+            </label>
+            <select
+              id="voice-select"
+              value={settings.voice}
+              onChange={(e) => onSettingsChange({ ...settings, voice: e.target.value })}
+              className="w-full bg-black border border-border text-white text-xs px-2 py-1.5 focus:outline-none focus:border-white transition-colors"
+            >
+              {VOICE_OPTIONS.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.label} — {v.hint}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1.5 mt-4">
+            <div className="flex items-center justify-between">
+              <label className="editorial-label text-[9px] text-muted-foreground" htmlFor="speed-range">
+                Speaking speed
+              </label>
+              <span className="font-serif text-xs nums-tabular text-white">
+                {settings.speed.toFixed(1)}×
+              </span>
+            </div>
+            <input
+              id="speed-range"
+              type="range"
+              min={MIN_SPEED}
+              max={MAX_SPEED}
+              step={SPEED_STEP}
+              value={settings.speed}
+              onChange={(e) =>
+                onSettingsChange({ ...settings, speed: parseFloat(e.target.value) })
+              }
+              className="w-full accent-white cursor-pointer"
+            />
+            <div className="flex justify-between text-[9px] uppercase tracking-[0.15em] text-muted-foreground">
+              <span>Slower</span>
+              <span>Faster</span>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const STATUS_COPY: Record<VoiceStatus, string> = {
   idle: "Hold to talk",
   listening: "Listening…",
@@ -122,6 +216,8 @@ export function VoicePanel({
   embedded,
   transcript,
   compact = false,
+  settings,
+  onSettingsChange,
   onRetry,
   onStartListening,
   onStopListening,
@@ -271,6 +367,7 @@ export function VoicePanel({
                 <StatusIcon status={status} />
                 <span>{status === "listening" ? "Listening…" : status === "idle" ? "Hold to talk" : STATUS_COPY[status]}</span>
               </div>
+              <VoiceSettingsControl settings={settings} onSettingsChange={onSettingsChange} compact />
             </>
           )}
         </div>
@@ -337,6 +434,7 @@ export function VoicePanel({
                   {status === "thinking" && "Interpreting your request… hold the orb or Space to jump in."}
                   {status === "speaking" && "Walking you through it — hold the orb or Space to interrupt."}
                 </p>
+                <VoiceSettingsControl settings={settings} onSettingsChange={onSettingsChange} />
               </div>
             )}
           </>

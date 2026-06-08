@@ -1339,6 +1339,9 @@ components:
         voice:
           type: ["string", "null"]
           description: Optional named voice for synthesis.
+        speed:
+          type: ["number", "null"]
+          description: Optional speaking-rate multiplier (1.0 = normal pace). Clamped server-side to a sane range.
     SpeechAudio:
       type: object
       required: [audio, format]

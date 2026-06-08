@@ -19,6 +19,11 @@ import { SavedDashboardsModal } from "@/components/terminal/SavedDashboardsModal
 import { DotWaveCanvas } from "@/components/terminal/DotWaveCanvas";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile, useBreakpoint } from "@/hooks/use-mobile";
+import {
+  loadVoiceSettings,
+  saveVoiceSettings,
+  type VoiceSettings,
+} from "@/lib/voiceSettings";
 import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles, Compass, CalendarClock, Command, X, LayoutGrid } from "lucide-react";
 import {
   formatEarningsCountdown,
@@ -64,6 +69,17 @@ export default function Terminal() {
   const [mobileConsoleOpen, setMobileConsoleOpen] = useState(false);
   const [showFeatureModal, setShowFeatureModal] = useState(false);
   const [showDashboardsModal, setShowDashboardsModal] = useState(false);
+  // Voice synthesis preferences (which voice + speaking speed), persisted to
+  // localStorage so the choice survives reloads.
+  const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>(() => loadVoiceSettings());
+  const voiceSettingsRef = useRef(voiceSettings);
+  useEffect(() => {
+    voiceSettingsRef.current = voiceSettings;
+  }, [voiceSettings]);
+  const updateVoiceSettings = useCallback((next: VoiceSettings) => {
+    setVoiceSettings(next);
+    saveVoiceSettings(next);
+  }, []);
   // The latest assistant reply to surface in the Console, carried with an
   // incrementing nonce so every reply renders — including a question's answer
   // even when panels did not change.
@@ -306,7 +322,8 @@ export default function Terminal() {
 
   const synthesize = useCallback(
     async (text: string) => {
-      const res = await speak.mutateAsync({ data: { text } });
+      const { voice, speed } = voiceSettingsRef.current;
+      const res = await speak.mutateAsync({ data: { text, voice, speed } });
       return { audio: res.audio, format: res.format };
     },
     [speak],
@@ -616,6 +633,8 @@ export default function Terminal() {
               embedded={voice.embedded}
               transcript={voice.transcript}
               compact={isMobile}
+              settings={voiceSettings}
+              onSettingsChange={updateVoiceSettings}
               onRetry={voice.retry}
               onStartListening={voice.startListening}
               onStopListening={voice.stopListening}

@@ -74,8 +74,42 @@ def chat(messages: list, tools: Optional[list] = None, tool_choice: Optional[Any
     return resp.choices[0].message
 
 
-def speak(text: str, voice: Optional[str] = None, fmt: str = "mp3") -> bytes:
+# gpt-audio voices exposed in the UI. Keep this list in sync with the frontend
+# voice picker (artifacts/terminal/src/lib/voiceSettings.ts).
+AVAILABLE_VOICES = ("alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse")
+
+# Speaking-rate bounds. The gpt-audio chat-completions endpoint has no native
+# speed knob, so we steer pacing through the narrator instruction and clamp the
+# requested multiplier to a range that stays intelligible.
+MIN_SPEED = 0.5
+MAX_SPEED = 1.5
+DEFAULT_SPEED = 1.0
+
+
+def _pace_instruction(speed: float) -> str:
+    """Translate a speaking-rate multiplier into a pacing directive for the narrator."""
+    if speed <= 0.7:
+        return "Speak slowly and deliberately, leaving clear pauses between sentences."
+    if speed <= 0.9:
+        return "Speak at a relaxed, slightly slower-than-normal pace."
+    if speed >= 1.3:
+        return "Speak briskly and energetically, at a noticeably faster pace, without rushing words together."
+    if speed >= 1.1:
+        return "Speak at a brisk, slightly faster-than-normal pace."
+    return "Speak at a natural, even pace."
+
+
+def speak(
+    text: str,
+    voice: Optional[str] = None,
+    speed: Optional[float] = None,
+    fmt: str = "mp3",
+) -> bytes:
     """Synthesize spoken audio for the given text using the gpt-audio model.
+
+    ``voice`` selects one of the gpt-audio voices (falls back to a default when
+    unknown). ``speed`` is a speaking-rate multiplier (1.0 = normal) steered via
+    the narrator instruction since the endpoint has no native speed parameter.
 
     Returns raw audio bytes (mp3 by default). Raises if the AI client is
     unavailable or the model returns no audio.
@@ -83,17 +117,22 @@ def speak(text: str, voice: Optional[str] = None, fmt: str = "mp3") -> bytes:
     client = get_client()
     if client is None:
         raise RuntimeError("AI client unavailable")
+
+    chosen_voice = voice if voice in AVAILABLE_VOICES else DEFAULT_VOICE
+    rate = DEFAULT_SPEED if speed is None else max(MIN_SPEED, min(MAX_SPEED, speed))
+
     resp = client.with_options(timeout=AUDIO_TIMEOUT).chat.completions.create(
         model=AUDIO_MODEL,
         modalities=["text", "audio"],
-        audio={"voice": voice or DEFAULT_VOICE, "format": fmt},
+        audio={"voice": chosen_voice, "format": fmt},
         messages=[
             {
                 "role": "system",
                 "content": (
                     "You are a text-to-speech narrator. Read the user's text aloud "
                     "verbatim in a calm, natural, professional voice. Do not add, "
-                    "remove, or comment on anything."
+                    "remove, or comment on anything. "
+                    + _pace_instruction(rate)
                 ),
             },
             {"role": "user", "content": text},
