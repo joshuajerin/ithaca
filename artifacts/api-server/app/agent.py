@@ -2940,6 +2940,12 @@ def refine(
         params = _risk_monitor_shock_params(panel, instruction)
         if params is not None:
             keep_title = title  # a shock keeps the same book, so keep its title
+    if params is None and panel_type == "supply_chain":
+        # Drill-down: the graph emits a canonical "recenter" instruction when a
+        # supplier/customer node is clicked. Parse it deterministically so the
+        # recompose never depends on the LLM, and let the title regenerate to the
+        # new subject (keep_title stays None).
+        params = _supply_chain_recenter_params(instruction)
     if params is None:
         params = _refine_params(panel_type, panel, instruction)
     updated = harness.run_skill(panel_type, params, layout, title=keep_title, panel_id=panel_id)
@@ -3071,6 +3077,23 @@ def _refine_risk_monitor(panel: dict, instruction: str) -> Optional[dict]:
     if base.get("asset_shocks"):
         params["asset_shocks"] = base["asset_shocks"]
     return params
+
+
+# Canonical drill-down instruction emitted by the supply-chain graph when a
+# node with a known symbol is clicked, e.g. "Recenter supply chain on TSM".
+_SC_RECENTER_RE = re.compile(r"recenter\s+supply\s+chain\s+on\s+([A-Za-z0-9.]+)", re.I)
+
+
+def _supply_chain_recenter_params(instruction: str) -> Optional[dict]:
+    """Build refine params that recompose the supply chain on a new subject.
+
+    Returns None when the instruction isn't a canonical recenter command, so the
+    caller falls back to the normal LLM/heuristic refine path.
+    """
+    m = _SC_RECENTER_RE.search(instruction or "")
+    if not m:
+        return None
+    return {"symbol": m.group(1).upper()}
 
 
 def _refine_params(panel_type: str, panel: dict, instruction: str) -> dict:

@@ -36,3 +36,17 @@ and pass through untouched.)
 
 **How to apply:** when extending any built-in panel's data shape, check `harness.DATA_MODELS` for
 that panel_type; if a model exists, extend it or the field gets stripped before reaching the frontend.
+
+## Drill-down recenter (click a node)
+The supply-chain graph supports drilling into a node's own chain (NVDA → TSM → ASML).
+`refine()` in `agent.py` has deterministic canonical-instruction shortcuts that bypass the
+LLM entirely — same pattern as `risk_monitor`'s custom shock. The graph emits
+`"Recenter supply chain on <SYM>"`, parsed by `_supply_chain_recenter_params` (regex), so a
+node click never depends on AI latency/reliability. `keep_title` stays None so
+`harness._derive_title` regenerates `{SYM} · Supply Chain`. Frontend trail/breadcrumb state
+lives in `SupplyChainPanel` (survives because refine reuses the same panel id); the trail
+truncates when navigating back to an existing crumb, appends on new drill-in.
+
+**Why deterministic:** clicks must be instant + reliable; the LLM refine path is for free-text.
+**How to apply:** to add another click-driven recompose, add a canonical-instruction shortcut
+in `refine()` before the `_refine_params` fallback, not a new endpoint.

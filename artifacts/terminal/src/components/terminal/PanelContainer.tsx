@@ -186,7 +186,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "options_strategy": return <OptionsStrategyPanel data={panel.data as any} />;
       case "vol_term_structure": return <VolTermStructurePanel data={panel.data as any} />;
       case "structured_product": return <StructuredProductPanel data={panel.data as any} />;
-      case "supply_chain": return <SupplyChainPanel data={panel.data as any} />;
+      case "supply_chain": return <SupplyChainPanel data={panel.data as any} onRecenter={(symbol) => submitRefine(`Recenter supply chain on ${symbol}`)} />;
       case "dcf_model": return <DCFPanel data={panel.data as any} sessionId={sessionId} />;
       case "earnings_transcript": return <TranscriptPanel data={panel.data as any} />;
       case "earnings_calendar": return <EarningsCalendarPanel data={panel.data as any} />;

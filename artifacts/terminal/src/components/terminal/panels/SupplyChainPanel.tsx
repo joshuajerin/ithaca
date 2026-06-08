@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 type RiskLevel = "Low" | "Medium" | "High" | "Critical";
@@ -129,7 +130,7 @@ const ROLE_TEXT: Record<string, string> = {
   customer: "text-emerald-400",
 };
 
-function SupplyChainSVG({ nodes, edges, subjectId }: { nodes: SCNode[]; edges: SCEdge[]; subjectId: string }) {
+function SupplyChainSVG({ nodes, edges, subjectId, onNodeClick }: { nodes: SCNode[]; edges: SCEdge[]; subjectId: string; onNodeClick?: (symbol: string) => void }) {
   const [hovered, setHovered] = useState<string | null>(null);
   const W = 560, H = 280;
   const cx = W / 2, cy = H / 2;
@@ -190,12 +191,14 @@ function SupplyChainSVG({ nodes, edges, subjectId }: { nodes: SCNode[]; edges: S
         const isLeft = pos.x < cx;
         const labelX = n.role === "subject" ? pos.x : (isLeft ? pos.x - r - 5 : pos.x + r + 5);
         const anchor = n.role === "subject" ? "middle" : (isLeft ? "end" : "start");
+        const canDrill = !!(onNodeClick && n.role !== "subject" && n.symbol);
         return (
           <g
             key={n.id}
             onMouseEnter={() => setHovered(n.id)}
             onMouseLeave={() => setHovered(null)}
-            style={{ cursor: "pointer" }}
+            onClick={canDrill ? () => onNodeClick!(n.symbol!) : undefined}
+            style={{ cursor: canDrill ? "pointer" : "default" }}
           >
             {isHighRisk && (
               <circle
@@ -235,7 +238,7 @@ function SupplyChainSVG({ nodes, edges, subjectId }: { nodes: SCNode[]; edges: S
                 fill="#888"
                 fillOpacity={0.9}
               >
-                {n.exposure}% exposure{n.riskScore ? ` · ${n.riskScore} risk` : ""}
+                {n.exposure}% exposure{n.riskScore ? ` · ${n.riskScore} risk` : ""}{canDrill ? " · click to drill in" : ""}
               </text>
             )}
           </g>
@@ -247,13 +250,69 @@ function SupplyChainSVG({ nodes, edges, subjectId }: { nodes: SCNode[]; edges: S
   );
 }
 
-export function SupplyChainPanel({ data }: { data: SupplyChainData }) {
+export function SupplyChainPanel({ data, onRecenter }: { data: SupplyChainData; onRecenter?: (symbol: string) => void }) {
   const [tab, setTab] = useState<"graph" | "table">("graph");
   const suppliers = data.table.filter(r => r.role === "supplier").sort((a, b) => b.exposure - a.exposure);
   const customers = data.table.filter(r => r.role === "customer").sort((a, b) => b.exposure - a.exposure);
 
+  // Drill-down trail of visited subjects. Recentering reuses the same panel id,
+  // so this state survives data changes. Navigating back to an earlier subject
+  // truncates the trail; drilling into a new one appends.
+  const [trail, setTrail] = useState<{ symbol: string; name: string }[]>(
+    () => [{ symbol: data.symbol, name: data.name }]
+  );
+  useEffect(() => {
+    setTrail(prev => {
+      const idx = prev.findIndex(t => t.symbol === data.symbol);
+      if (idx >= 0) return prev.slice(0, idx + 1);
+      return [...prev, { symbol: data.symbol, name: data.name }];
+    });
+  }, [data.symbol, data.name]);
+
+  const canDrill = !!onRecenter;
+  const drill = (symbol?: string | null) => {
+    if (onRecenter && symbol && symbol.toUpperCase() !== data.symbol.toUpperCase()) {
+      onRecenter(symbol.toUpperCase());
+    }
+  };
+  const goBack = () => {
+    if (trail.length > 1) drill(trail[trail.length - 2].symbol);
+  };
+
   return (
     <div className="flex flex-col h-full">
+      {canDrill && trail.length > 1 && (
+        <div className="flex items-center gap-1 mb-2 shrink-0 text-[9px]">
+          <button
+            onClick={goBack}
+            className="flex items-center gap-0.5 text-muted-foreground hover:text-white transition-colors uppercase tracking-widest"
+          >
+            <ChevronLeft className="w-3 h-3" strokeWidth={1.5} /> Back
+          </button>
+          <span className="text-border mx-1">|</span>
+          <div className="flex items-center gap-0.5 overflow-hidden">
+            {trail.map((t, i) => {
+              const isLast = i === trail.length - 1;
+              return (
+                <React.Fragment key={t.symbol}>
+                  {i > 0 && <ChevronRight className="w-2.5 h-2.5 text-muted-foreground/60 shrink-0" strokeWidth={1.5} />}
+                  {isLast ? (
+                    <span className="text-white font-bold uppercase shrink-0">{t.symbol}</span>
+                  ) : (
+                    <button
+                      onClick={() => drill(t.symbol)}
+                      className="text-muted-foreground hover:text-white transition-colors uppercase shrink-0"
+                    >
+                      {t.symbol}
+                    </button>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="flex items-baseline justify-between mb-3 shrink-0">
         <div>
           <span className="text-xs font-bold uppercase">{data.symbol}</span>
@@ -340,31 +399,45 @@ export function SupplyChainPanel({ data }: { data: SupplyChainData }) {
           <div className="mt-2 grid grid-cols-2 gap-2 text-[9px] shrink-0">
             <div>
               <div className="text-blue-400 uppercase tracking-wider mb-1 font-bold">Top Suppliers</div>
-              {suppliers.slice(0, 3).map((r, i) => (
-                <div key={i} className="flex items-center justify-between text-muted-foreground hover:text-white transition-colors py-0.5">
-                  <span className="truncate max-w-[90px]">{r.name}</span>
-                  <span className="flex items-center gap-1 ml-1">
-                    {r.riskScore && r.riskScore !== "Low" && (
-                      <span className={`text-[7px] leading-none uppercase font-bold px-1 py-0.5 rounded border ${RISK_BADGE[r.riskScore]}`}>{r.riskScore[0]}</span>
-                    )}
-                    <span className="text-blue-400 font-mono">{r.exposure}%</span>
-                  </span>
-                </div>
-              ))}
+              {suppliers.slice(0, 3).map((r, i) => {
+                const clickable = canDrill && !!r.symbol;
+                return (
+                  <div
+                    key={i}
+                    onClick={clickable ? () => drill(r.symbol) : undefined}
+                    className={`flex items-center justify-between text-muted-foreground hover:text-white transition-colors py-0.5 ${clickable ? "cursor-pointer" : ""}`}
+                  >
+                    <span className={`truncate max-w-[90px] ${clickable ? "underline decoration-dotted decoration-blue-400/40 underline-offset-2" : ""}`}>{r.name}</span>
+                    <span className="flex items-center gap-1 ml-1">
+                      {r.riskScore && r.riskScore !== "Low" && (
+                        <span className={`text-[7px] leading-none uppercase font-bold px-1 py-0.5 rounded border ${RISK_BADGE[r.riskScore]}`}>{r.riskScore[0]}</span>
+                      )}
+                      <span className="text-blue-400 font-mono">{r.exposure}%</span>
+                    </span>
+                  </div>
+                );
+              })}
             </div>
             <div>
               <div className="text-emerald-400 uppercase tracking-wider mb-1 font-bold">Top Customers</div>
-              {customers.slice(0, 3).map((r, i) => (
-                <div key={i} className="flex items-center justify-between text-muted-foreground hover:text-white transition-colors py-0.5">
-                  <span className="truncate max-w-[90px]">{r.name}</span>
-                  <span className="flex items-center gap-1 ml-1">
-                    {r.riskScore && r.riskScore !== "Low" && (
-                      <span className={`text-[7px] leading-none uppercase font-bold px-1 py-0.5 rounded border ${RISK_BADGE[r.riskScore]}`}>{r.riskScore[0]}</span>
-                    )}
-                    <span className="text-emerald-400 font-mono">{r.exposure}%</span>
-                  </span>
-                </div>
-              ))}
+              {customers.slice(0, 3).map((r, i) => {
+                const clickable = canDrill && !!r.symbol;
+                return (
+                  <div
+                    key={i}
+                    onClick={clickable ? () => drill(r.symbol) : undefined}
+                    className={`flex items-center justify-between text-muted-foreground hover:text-white transition-colors py-0.5 ${clickable ? "cursor-pointer" : ""}`}
+                  >
+                    <span className={`truncate max-w-[90px] ${clickable ? "underline decoration-dotted decoration-emerald-400/40 underline-offset-2" : ""}`}>{r.name}</span>
+                    <span className="flex items-center gap-1 ml-1">
+                      {r.riskScore && r.riskScore !== "Low" && (
+                        <span className={`text-[7px] leading-none uppercase font-bold px-1 py-0.5 rounded border ${RISK_BADGE[r.riskScore]}`}>{r.riskScore[0]}</span>
+                      )}
+                      <span className="text-emerald-400 font-mono">{r.exposure}%</span>
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -383,10 +456,16 @@ export function SupplyChainPanel({ data }: { data: SupplyChainData }) {
             <tbody>
               {[...data.table]
                 .sort((a, b) => (b.riskValue ?? 0) - (a.riskValue ?? 0))
-                .map((row, i) => (
-                <tr key={i} className="border-b border-border/30 hover:bg-white/5 transition-colors">
+                .map((row, i) => {
+                const clickable = canDrill && !!row.symbol;
+                return (
+                <tr
+                  key={i}
+                  onClick={clickable ? () => drill(row.symbol) : undefined}
+                  className={`border-b border-border/30 hover:bg-white/5 transition-colors ${clickable ? "cursor-pointer" : ""}`}
+                >
                   <td className="py-1.5 pr-2">
-                    <span className="font-bold">{row.name}</span>
+                    <span className={`font-bold ${clickable ? "underline decoration-dotted decoration-white/30 underline-offset-2" : ""}`}>{row.name}</span>
                     {row.symbol && <span className="text-muted-foreground ml-1">{row.symbol}</span>}
                   </td>
                   <td className={`py-1.5 pr-2 text-[10px] uppercase font-bold ${ROLE_TEXT[row.role] || "text-muted-foreground"}`}>
@@ -415,7 +494,8 @@ export function SupplyChainPanel({ data }: { data: SupplyChainData }) {
                     {row.exposure}%
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </ScrollArea>
