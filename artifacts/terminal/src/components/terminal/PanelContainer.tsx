@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import type { Panel } from "@workspace/api-client-react";
 import { useRefinePanel } from "@workspace/api-client-react";
-import { Loader2, AlertTriangle, Settings2 } from "lucide-react";
+import { Loader2, AlertTriangle, Settings2, Download, FileText, Table2 } from "lucide-react";
+import { EXPORTABLE_PANEL_TYPES, exportPanelCsv, exportPanelPdf } from "@/lib/panelExport";
 import { PriceChartPanel } from "./panels/PriceChartPanel";
 import { NewsPanel } from "./panels/NewsPanel";
 import { AnalysisPanel } from "./panels/AnalysisPanel";
@@ -80,9 +81,40 @@ function formatAsOf(asOf?: string | null): string {
 export function PanelContainer({ panel, sessionId, onRefined, highlighted }: PanelContainerProps) {
   const [isRefining, setIsRefining] = useState(false);
   const [refineText, setRefineText] = useState("");
-  
+  const [exportOpen, setExportOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  const canExport =
+    EXPORTABLE_PANEL_TYPES.has(panel.type) &&
+    panel.status !== "loading" &&
+    panel.status !== "error" &&
+    !!panel.data;
+
   const refineMutation = useRefinePanel();
   const paramRefineMutation = useRefinePanel();
+
+  const handleExportCsv = () => {
+    setExportOpen(false);
+    try {
+      exportPanelCsv(panel.type, panel.title, panel.data);
+    } catch (e) {
+      console.error("Failed to export CSV", e);
+    }
+  };
+
+  const handleExportPdf = async () => {
+    setExportOpen(false);
+    if (!panelRef.current) return;
+    setIsExporting(true);
+    try {
+      await exportPanelPdf(panelRef.current, panel.title);
+    } catch (e) {
+      console.error("Failed to export PDF", e);
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   const handleParamRefine = async (
     params: Record<string, unknown>,
@@ -228,6 +260,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
 
   return (
     <div
+      ref={panelRef}
       className={`bg-black border flex flex-col overflow-hidden relative group h-full transition-[box-shadow,border-color] duration-300 ${
         highlighted
           ? "border-white shadow-[0_0_0_1px_rgba(255,255,255,0.8),0_0_36px_rgba(255,255,255,0.45)] z-10"
@@ -250,6 +283,43 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
               />
               {panel.source === "live" ? formatAsOf(panel.asOf) : panel.source}
             </span>
+          )}
+          {canExport && (
+            <div className="relative">
+              <button
+                onClick={() => setExportOpen((v) => !v)}
+                disabled={isExporting}
+                title="Export panel"
+                className="text-muted-foreground hover:text-white transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-50"
+              >
+                {isExporting ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={1.5} />
+                ) : (
+                  <Download className="w-3.5 h-3.5" strokeWidth={1.5} />
+                )}
+              </button>
+              {exportOpen && (
+                <>
+                  <div className="fixed inset-0 z-20" onClick={() => setExportOpen(false)} />
+                  <div className="absolute right-0 top-5 z-30 bg-black border border-border min-w-[136px] shadow-lg">
+                    <button
+                      onClick={handleExportCsv}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-white hover:bg-white/5 transition-colors"
+                    >
+                      <Table2 className="w-3 h-3" strokeWidth={1.5} />
+                      Export CSV
+                    </button>
+                    <button
+                      onClick={handleExportPdf}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-white hover:bg-white/5 transition-colors border-t border-border"
+                    >
+                      <FileText className="w-3 h-3" strokeWidth={1.5} />
+                      Export PDF
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           )}
           <button 
             onClick={() => setIsRefining(!isRefining)}

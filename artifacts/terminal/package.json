@@ -83,6 +83,8 @@
     "zod": "catalog:"
   },
   "dependencies": {
+    "html2canvas-pro": "^2.0.4",
+    "jspdf": "^4.2.1",
     "sucrase": "^3.35.1"
   }
 }
