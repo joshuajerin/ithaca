@@ -36,3 +36,8 @@ that is honest, not a bug. `factor_analysis` folds Market+Volatility+specific in
 **Panels**: `risk_model` (decomposition + MCTR) and `factor_exposures` (tilts + premia),
 each with a coverage footer. The heuristic routes risk-decomposition language to
 `risk_model` and tilt/style language to `factor_exposures`; plain VaR still → `portfolio_risk`.
+
+`factor_performance` (passthrough panel) charts the CUMULATIVE return of each factor
+over the estimation window from `model.factor_returns` (np.cumprod compounding) + a
+summary table (cum/ann/vol/Sharpe/t). Routing trap: "cumulative factor returns" must be
+checked BEFORE the attribution block because wants_pnl matches plain "cumulative return".

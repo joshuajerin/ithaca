@@ -378,6 +378,16 @@ def _tools() -> list:
             }, "required": ["symbols"]},
         }},
         {"type": "function", "function": {
+            "name": "add_factor_performance",
+            "description": f"Add a factor performance panel: charts the CUMULATIVE return of each systematic factor (Market, Size, Value, Momentum, Volatility, Quality) over the model's estimation window from the real multi-factor risk model's daily factor returns, plus a summary of each factor's total/annualized return, annualized vol, Sharpe and t-stat. Use for 'how have factors performed over time', 'which factors are paying off / being rewarded', factor performance, or factor returns over time. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Optional portfolio tickers to seed the estimation universe. Valid: {syms}"},
+                "weights": {"type": "array", "items": {"type": "number"}, "description": "Optional portfolio weights aligned with symbols (auto-normalized; equal-weight if omitted)."},
+                "portfolio_name": {"type": "string", "description": "Optional display name for the portfolio."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
+        {"type": "function", "function": {
             "name": "add_tear_sheet",
             "description": f"Add a performance tear-sheet panel that combines P&L vs a benchmark of the USER'S choosing (any real ETF — broad like SPY/QQQ or a sector ETF like XLK — OR a custom basket of constituent tickers; default SPY), the drawdown track, Brinson sector attribution and factor attribution into one report-style view for a book over a window. Use for a tear sheet, a full performance review, or 'give me a complete performance breakdown of my portfolio'. Best at full width. {sizing}",
             "parameters": {"type": "object", "properties": {
@@ -660,6 +670,7 @@ _TOOL_TO_TYPE = {
     "add_performance_pnl": "performance_pnl",
     "add_brinson_attribution": "brinson_attribution",
     "add_factor_attribution": "factor_attribution",
+    "add_factor_performance": "factor_performance",
     "add_tear_sheet": "tear_sheet",
     "add_portfolio_optimizer": "portfolio_optimizer",
     "add_signal_research": "signal_research",
@@ -773,6 +784,8 @@ def _system_prompt() -> str:
         "returns + Sharpe / drawdowns for a book → add_performance_pnl; performance attribution / allocation vs "
         "selection / Brinson / 'where did my out/under-performance come from' → add_brinson_attribution; factor "
         "attribution / which factors drove my return / per-factor contribution to return → add_factor_attribution; "
+        "how factors have PERFORMED over time / which factors are paying off or being rewarded / cumulative factor "
+        "returns / style premia over time → add_factor_performance; "
         "a full 'tear sheet' / complete performance review combining P&L, drawdowns, Brinson and factor "
         "attribution → add_tear_sheet (full width). These take symbols (+ optional weights, range). P&L and "
         "tear sheet also take a real benchmark ETF (default SPY; pass benchmark=QQQ/IWM/DIA/VTI/VOO if the user "
@@ -1985,6 +1998,7 @@ _TYPE_LABELS = {
     "performance_pnl": "a P&L panel",
     "brinson_attribution": "a Brinson attribution",
     "factor_attribution": "a factor attribution",
+    "factor_performance": "a factor performance panel",
     "tear_sheet": "a performance tear sheet",
     "portfolio_optimizer": "a portfolio optimizer",
     "signal_research": "an alpha signal research panel",
@@ -2305,6 +2319,13 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
     wants_tearsheet = any(k in q for k in ["tear sheet", "tearsheet", "tear-sheet", "performance review", "performance breakdown", "full performance"])
     wants_brinson = any(k in q for k in ["brinson", "allocation effect", "selection effect", "allocation vs selection", "performance attribution", "attribution analysis"])
     wants_factor_attr = any(k in q for k in ["factor attribution", "factor contribution", "factors drove", "return from factors", "factor return attribution"])
+    wants_factor_perf = any(k in q for k in [
+        "factor performance", "factors performed", "factor returns over time", "factors over time",
+        "factors are paying off", "factors paying off", "which factors pay", "factors paid off",
+        "factors being rewarded", "factors rewarded", "cumulative factor", "factor pnl",
+        "style premia over time", "factor premia over time", "how have factors", "factor premium over time",
+        "have factors paid off", "style premium",
+    ])
     wants_pnl = any(k in q for k in ["p&l", "pnl", "p and l", "performance vs", "vs benchmark", "book performance", "portfolio performance", "performance of my portfolio", "how has my portfolio", "realized return", "return attribution", "cumulative return"])
     wants_factor = any(k in q for k in ["factor analysis", "factor", "attribution", "alpha", "loading", "momentum factor", "value factor"])
     def _signals_in_query() -> list:
@@ -2750,6 +2771,12 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
             params["sector"] = sector
         add("signal_research", params, 12, 6)
         return panels, f"Alpha signal research for {sig.replace('_', ' ')}: rank IC, IC decay, turnover and the long-short quantile spread from real data."
+
+    if wants_factor_perf:
+        port_syms = symbols if symbols else ["NVDA", "MSFT", "GOOGL", "META", "AMZN"]
+        params = {"symbols": port_syms} if symbols else {}
+        add("factor_performance", params, 12, 6)
+        return panels, "Factor performance over the estimation window: the cumulative return of each style factor (Market, Size, Value, Momentum, Volatility, Quality) so you can see which premia are actually being rewarded."
 
     if wants_tearsheet or wants_brinson or wants_factor_attr or wants_pnl:
         # A custom benchmark basket ("vs a basket of A, B, C") takes precedence

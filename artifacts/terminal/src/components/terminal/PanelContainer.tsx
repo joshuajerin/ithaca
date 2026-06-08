@@ -51,6 +51,7 @@ import { RiskMonitorPanel } from "./panels/RiskMonitorPanel";
 import { PerformancePnlPanel } from "./panels/PerformancePnlPanel";
 import { BrinsonPanel } from "./panels/BrinsonPanel";
 import { FactorAttributionPanel } from "./panels/FactorAttributionPanel";
+import { FactorPerformancePanel } from "./panels/FactorPerformancePanel";
 import { TearSheetPanel } from "./panels/TearSheetPanel";
 import { StrategyDeskPanel } from "./panels/StrategyDeskPanel";
 import { DynamicPanel } from "./panels/generated/DynamicPanel";
@@ -216,6 +217,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "performance_pnl": return <PerformancePnlPanel data={panel.data as any} />;
       case "brinson_attribution": return <BrinsonPanel data={panel.data as any} />;
       case "factor_attribution": return <FactorAttributionPanel data={panel.data as any} />;
+      case "factor_performance": return <FactorPerformancePanel data={panel.data as any} />;
       case "tear_sheet": return <TearSheetPanel data={panel.data as any} />;
       case "strategy_desk": return <StrategyDeskPanel data={panel.data as any} />;
       default: return <DynamicPanel type={panel.type} data={panel.data as any} />;

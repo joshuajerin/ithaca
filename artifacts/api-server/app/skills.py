@@ -3932,6 +3932,64 @@ def build_factor_attribution(params: dict) -> dict:
     }
 
 
+def build_factor_performance(params: dict) -> dict:
+    """Cumulative return of each systematic factor (Market, Size, Value,
+    Momentum, Volatility, Quality) over the estimation window, from the real
+    multi-factor risk model's daily factor returns.
+
+    Shows which style premia were actually rewarded over the available history:
+    a cumulative-return line per factor plus a summary of each factor's total
+    and annualized return, annualized volatility, Sharpe and t-stat. Real factor
+    returns only, with the same honest coverage block as the other risk panels.
+    """
+    import numpy as np
+
+    name, syms, ws = _resolve_portfolio(params)
+    res = factor_model.build(syms)
+    model = res.model
+    names = model.factor_names
+    F = model.factor_returns  # (T, K) real daily factor returns
+    dates = res.dates         # length T, aligned to factor-return rows
+
+    # Cumulative compounded return per factor over the window (percent).
+    cum = np.cumprod(1.0 + F, axis=0) - 1.0 if F.shape[0] else F
+
+    series = []
+    for t, d in enumerate(dates):
+        row = {"date": d}
+        for k, fn in enumerate(names):
+            row[fn] = round(float(cum[t, k]) * 100.0, 2)
+        series.append(row)
+
+    # Per-factor summary: total cumulative, annualized return/vol, Sharpe, t-stat.
+    ann_vol = F.std(axis=0, ddof=1) * np.sqrt(factor_model.riskmodel.TRADING_DAYS)
+    factors = []
+    for k, fn in enumerate(names):
+        total = float(cum[-1, k]) * 100.0 if cum.shape[0] else 0.0
+        ann = float(res.factor_ann_returns[fn]) * 100.0
+        vol = float(ann_vol[k]) * 100.0
+        sharpe = float(res.factor_ann_returns[fn] / ann_vol[k]) if ann_vol[k] > 0 else 0.0
+        factors.append({
+            "factor": fn,
+            "cumReturn": round(total, 2),
+            "annReturn": round(ann, 2),
+            "annVol": round(vol, 2),
+            "sharpe": round(sharpe, 2),
+            "tStat": round(float(res.factor_tstats[fn]), 2),
+        })
+
+    return {
+        "portfolioName": name,
+        "factorNames": list(names),
+        "series": series,
+        "factors": factors,
+        "windowDays": int(res.coverage.days),
+        "coverage": _coverage_payload(res, []),
+        "asOf": res.coverage.as_of,
+        "source": res.coverage.source,
+    }
+
+
 def build_tear_sheet(params: dict) -> dict:
     """One report-style view combining P&L vs a real benchmark, drawdowns,
     Brinson sector attribution and factor attribution for a book over a window.
@@ -7187,6 +7245,22 @@ _reg(SkillDef(
         {"name": "decompose", "description": "Attribute realized return to each factor and a specific term.", "expectedOutput": "Per-factor contributions plus a specific return."},
     ],
     build_factor_attribution, "Factor Attribution",
+))
+_reg(SkillDef(
+    "factor-performance", "Factor Performance Over Time", "factor_performance",
+    "Charts the cumulative return of each systematic factor (Market, Size, Value, "
+    "Momentum, Volatility, Quality) over the model's estimation window, from the "
+    "real multi-factor risk model's daily factor returns, plus a summary of each "
+    "factor's total/annualized return, annualized volatility, Sharpe and t-stat. "
+    "Use when the user asks how factors have performed over time, which factors are "
+    "paying off / being rewarded, factor performance, factor returns over time, or "
+    "how the style premia have paid off.",
+    [
+        {"name": "estimate_model", "description": "Estimate daily factor returns from real cross-sectional data.", "expectedOutput": "A factor-return panel with coverage."},
+        {"name": "cumulate_returns", "description": "Compound each factor's daily return into a cumulative curve over the window.", "expectedOutput": "A per-factor cumulative-return series."},
+        {"name": "summarize_premia", "description": "Summarize each factor's total/annualized return, vol, Sharpe and t-stat.", "expectedOutput": "A factor performance summary table."},
+    ],
+    build_factor_performance, "Factor Performance",
 ))
 _reg(SkillDef(
     "tear-sheet", "Performance Tear Sheet", "tear_sheet",
