@@ -236,6 +236,18 @@ export default function Terminal() {
     }
   };
 
+  // Clicking a cell in the IV surface heatmap builds the matching option —
+  // closing the loop from analysis to trade construction. We route through the
+  // same orchestration flow as a typed command, so the new Options Strategy
+  // panel appends to the current session.
+  const handleBuildOption = ({ symbol, strike, expiry }: { symbol: string; strike: number; expiry: string; iv: number }) => {
+    // Phrased to route to the options_strategy skill — deliberately avoiding the
+    // verb "build" + "strategy", which the backend's deterministic lifecycle
+    // handler intercepts as a "create a trading strategy" command.
+    const query = `Price a long call on ${symbol} at the $${strike} strike for the ${expiry} expiry`;
+    void handleCommand(query);
+  };
+
   const handlePanelRefined = (updatedPanel: any) => {
     setActiveDashboard((prev) => {
       if (!prev) return prev;
@@ -581,6 +593,7 @@ export default function Terminal() {
                   onPanelRefined={handlePanelRefined}
                   onPanelResized={handlePanelResized}
                   highlightedPanelId={highlightedPanelId}
+                  onBuildOption={handleBuildOption}
                 />
               </motion.div>
             ) : (

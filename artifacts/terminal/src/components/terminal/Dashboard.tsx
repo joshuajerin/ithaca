@@ -10,6 +10,7 @@ interface DashboardProps {
   onPanelRefined: (updatedPanel: any) => void;
   onPanelResized?: (panelId: string, size: { w: number; h: number }) => void;
   highlightedPanelId?: string | null;
+  onBuildOption?: (sel: { symbol: string; strike: number; expiry: string; iv: number }) => void;
 }
 
 // Grid metrics — must mirror the CSS below. gap-6 = 1.5rem = 24px,
@@ -68,6 +69,7 @@ export function Dashboard({
   onPanelRefined,
   onPanelResized,
   highlightedPanelId,
+  onBuildOption,
 }: DashboardProps) {
   const columns = useResponsiveColumns();
   const breakpoint = useBreakpoint();
@@ -284,6 +286,7 @@ const PANEL_MOTION = {
                 sessionId={dashboard.sessionId}
                 onRefined={onPanelRefined}
                 highlighted={highlightedPanelId === panel.id}
+                onBuildOption={onBuildOption}
               />
 
               {resizable && (

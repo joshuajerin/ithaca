@@ -75,3 +75,10 @@ with a paper book marked to REAL prices. Layers:
   (background worker); strategy routes + skill registry are import-time so they
   still work. A blocked transition returns 200 with `ok:false` (not an
   HTTPException); only unknown id is a 404.
+- **Lifecycle "create" regex hijacks programmatic queries**: `_lifecycle_action`
+  matches `(create|register|set up|build|spin up|make) ... strateg`, so ANY
+  orchestration query containing verb+"strateg" (e.g. "build a long call options
+  strategy") is intercepted and creates a research strategy instead of the
+  intended panel. When constructing queries in code (e.g. IV-surface cell click →
+  options panel), phrase to dodge it: "Price a long call on NVDA at the $X strike
+  for the Y expiry" routes to options_strategy via the `wants_options` heuristic.

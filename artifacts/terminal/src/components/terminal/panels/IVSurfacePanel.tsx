@@ -13,6 +13,7 @@ import {
 
 interface IVSurfacePanelProps {
   data: any;
+  onCellSelect?: (sel: { symbol: string; strike: number; expiry: string; iv: number }) => void;
 }
 
 function ivColor(iv: number, minIv: number, maxIv: number): string {
@@ -33,7 +34,8 @@ function ivColor(iv: number, minIv: number, maxIv: number): string {
   }
 }
 
-export function IVSurfacePanel({ data }: IVSurfacePanelProps) {
+export function IVSurfacePanel({ data, onCellSelect }: IVSurfacePanelProps) {
+  const interactive = typeof onCellSelect === "function";
   const ivValues = data.surface.map((c: any) => c.iv);
   const minIv = Math.min(...ivValues);
   const maxIv = Math.max(...ivValues);
@@ -99,9 +101,34 @@ export function IVSurfacePanel({ data }: IVSurfacePanelProps) {
                     return (
                       <td
                         key={exp}
-                        className="text-center py-0.5 px-0.5 font-mono cursor-default"
+                        role={interactive ? "button" : undefined}
+                        tabIndex={interactive ? 0 : undefined}
+                        onClick={
+                          interactive
+                            ? () => onCellSelect!({ symbol: data.symbol, strike, expiry: exp, iv })
+                            : undefined
+                        }
+                        onKeyDown={
+                          interactive
+                            ? (e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  onCellSelect!({ symbol: data.symbol, strike, expiry: exp, iv });
+                                }
+                              }
+                            : undefined
+                        }
+                        className={`text-center py-0.5 px-0.5 font-mono outline-offset-[-2px] transition-[outline] ${
+                          interactive
+                            ? "cursor-pointer hover:outline hover:outline-2 hover:outline-white focus:outline focus:outline-2 focus:outline-white"
+                            : "cursor-default"
+                        }`}
                         style={{ backgroundColor: bg, color: iv > (minIv + maxIv) / 2 ? "#000" : "#fff" }}
-                        title={`${exp} / $${strike} → IV ${iv.toFixed(1)}%`}
+                        title={
+                          interactive
+                            ? `${exp} / $${strike} → IV ${iv.toFixed(1)}% · click to build this option`
+                            : `${exp} / $${strike} → IV ${iv.toFixed(1)}%`
+                        }
                       >
                         {iv.toFixed(1)}
                       </td>

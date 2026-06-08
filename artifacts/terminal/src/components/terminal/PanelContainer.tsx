@@ -64,6 +64,7 @@ interface PanelContainerProps {
   sessionId: string;
   onRefined: (updatedPanel: Panel) => void;
   highlighted?: boolean;
+  onBuildOption?: (sel: { symbol: string; strike: number; expiry: string; iv: number }) => void;
 }
 
 function formatAsOf(asOf?: string | null): string {
@@ -79,7 +80,7 @@ function formatAsOf(asOf?: string | null): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-export function PanelContainer({ panel, sessionId, onRefined, highlighted }: PanelContainerProps) {
+export function PanelContainer({ panel, sessionId, onRefined, highlighted, onBuildOption }: PanelContainerProps) {
   const [isRefining, setIsRefining] = useState(false);
   const [refineText, setRefineText] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
@@ -227,7 +228,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted }: Pan
       case "signal_research": return <SignalResearchPanel data={panel.data as any} />;
       case "signal_scorecard": return <SignalScorecardPanel data={panel.data as any} />;
       case "signal_portfolio": return <SignalPortfolioPanel data={panel.data as any} />;
-      case "iv_surface": return <IVSurfacePanel data={panel.data as any} />;
+      case "iv_surface": return <IVSurfacePanel data={panel.data as any} onCellSelect={onBuildOption} />;
       case "options_chain": return <OptionsChainPanel data={panel.data as any} />;
       case "options_strategy": return <OptionsStrategyPanel data={panel.data as any} />;
       case "vol_term_structure": return <VolTermStructurePanel data={panel.data as any} />;
