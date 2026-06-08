@@ -30,7 +30,7 @@ from .attribution import (
     pnl_summary,
     return_stats,
 )
-from .backtest import resolve_entry, run_backtest
+from .backtest import resolve_entry, run_backtest, run_walk_forward
 from .execution import (
     aggregate_tca,
     daily_vol_from_closes,
@@ -69,7 +69,13 @@ from .stats import (
     sortino,
     var_historical,
 )
-from .strategies import STRATEGIES, available_strategies, normalize_strategy
+from .strategies import (
+    STRATEGIES,
+    available_strategies,
+    normalize_strategy,
+    param_grid,
+    param_label,
+)
 from .signals import (
     COMBINE_METHODS,
     SIGNAL_META,
@@ -95,6 +101,7 @@ __all__ = [
     "return_stats",
     "resolve_entry",
     "run_backtest",
+    "run_walk_forward",
     "monte_carlo",
     "performance_stats",
     "cagr",

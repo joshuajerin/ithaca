@@ -127,3 +127,34 @@ def normalize_strategy(name: str) -> str:
 
 def available_strategies() -> List[str]:
     return list(STRATEGIES.keys())
+
+
+def param_grid(strategy: str) -> List[dict]:
+    """The configuration grid a researcher would realistically sweep for each
+    strategy. These are the "trials" the multiple-testing / overfitting
+    diagnostics correct for. ``buy_and_hold`` has no free parameters, so it
+    returns a single empty configuration (no selection bias is possible)."""
+    key = normalize_strategy(strategy)
+    if key == "momentum":
+        return [{"lookback": lb} for lb in (20, 40, 60, 90, 120, 150, 200, 252)]
+    if key == "mean_reversion":
+        return [
+            {"lookback": lb, "threshold": th}
+            for lb in (10, 15, 20, 30, 40)
+            for th in (0.5, 1.0, 1.5, 2.0)
+        ]
+    if key == "ma_crossover":
+        return [
+            {"fast": f, "slow": s}
+            for f in (5, 10, 20, 50)
+            for s in (20, 50, 100, 200)
+            if s > f
+        ]
+    return [{}]
+
+
+def param_label(params: dict) -> str:
+    """Compact human label for a parameter configuration."""
+    if not params:
+        return "(no parameters)"
+    return ", ".join(f"{k}={v}" for k, v in params.items())

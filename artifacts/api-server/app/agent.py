@@ -308,6 +308,16 @@ def _tools() -> list:
             }, "required": ["symbol"]},
         }},
         {"type": "function", "function": {
+            "name": "add_walk_forward",
+            "description": f"Add a research-integrity validation of a strategy: anchored walk-forward backtest (in-sample vs out-of-sample equity), deflated Sharpe ratio, probability of backtest overfitting (PBO/CSCV), a multiple-testing Sharpe haircut, and a plain-language overfitting verdict — all from real price history. Use for 'is this overfit / robust / data-mined', out-of-sample / walk-forward validation, deflated Sharpe, or PBO. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Ticker. One of: {syms}"},
+                "strategy": {"type": "string", "description": "Strategy name, e.g. 'momentum', 'mean_reversion', 'ma_crossover', 'buy_and_hold'."},
+                "splits": {"type": "integer", "description": "Number of anchored walk-forward folds (2-8, default 5)."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
+        {"type": "function", "function": {
             "name": "add_monte_carlo",
             "description": f"Add a Monte Carlo forward simulation for one ticker (percentile fan p5-p95, sample paths, expected/median terminal value, probability of loss, terminal VaR/CVaR) fitted to real historical returns. {sizing}",
             "parameters": {"type": "object", "properties": {
@@ -782,6 +792,7 @@ _TOOL_TO_TYPE = {
     "add_cashflow_duration": "cashflow_duration",
     "add_portfolio_risk": "portfolio_risk",
     "add_backtest": "backtest",
+    "add_walk_forward": "walk_forward",
     "add_monte_carlo": "monte_carlo",
     "add_correlation_matrix": "correlation_matrix",
     "add_factor_analysis": "factor_analysis",
@@ -900,7 +911,10 @@ def _system_prompt() -> str:
         "- For the earnings calendar / upcoming earnings / earnings dates / 'who reports next' / "
         "'when does X report', use add_earnings_calendar.\n"
         "- For M&A / deal flow / mergers / acquisitions / arb spread requests, use add_ma_tracker.\n"
-        "- For backtest / strategy / Sharpe / drawdown requests, use add_backtest. For Monte Carlo / "
+        "- For backtest / strategy / Sharpe / drawdown requests, use add_backtest. For research-integrity "
+        "checks — 'is this strategy overfit / robust / data-mined', out-of-sample or walk-forward validation, "
+        "deflated Sharpe, PBO / probability of backtest overfitting, multiple-testing haircut — use "
+        "add_walk_forward (a separate mode from add_backtest). For Monte Carlo / "
         "simulation / forward projection / 'probability of loss' / scenario forecast requests, use add_monte_carlo.\n"
         "- For portfolio risk requests, pick the right panel: risk decomposition / factor vs specific risk / "
         "MCTR / 'where is my risk coming from' / risk model → add_risk_model; COMPARING the risk of TWO "
@@ -1775,8 +1789,55 @@ def _ser_shorting_desk(data: dict) -> str:
     return "; ".join(p for p in parts if p)
 
 
+def _ser_walk_forward(data: dict) -> str:
+    parts: List[str] = []
+    head = []
+    if data.get("symbol"):
+        head.append(f"symbol={data['symbol']}")
+    if data.get("strategy"):
+        head.append(f"strategy={data['strategy']}")
+    if data.get("paramGridSize") is not None:
+        head.append(f"{data['paramGridSize']} configs tried")
+    if head:
+        parts.append(", ".join(head))
+    verdict = data.get("verdict") or {}
+    if verdict.get("summary"):
+        parts.append(f"verdict: {verdict['summary']}")
+    is_st = data.get("isStats") or {}
+    oos_st = data.get("oosStats") or {}
+    if is_st or oos_st:
+        parts.append(
+            f"in-sample Sharpe {_ser_scalar(is_st.get('sharpe'))} vs "
+            f"out-of-sample {_ser_scalar(oos_st.get('sharpe'))} "
+            f"({_ser_scalar(data.get('degradationPct'))}% degradation)"
+        )
+    dsr = data.get("deflatedSharpe") or {}
+    if dsr:
+        parts.append(
+            f"observed Sharpe {_ser_scalar(dsr.get('observed'))}, "
+            f"haircut to {_ser_scalar(dsr.get('haircutSharpe'))} "
+            f"({_ser_scalar(dsr.get('haircutPct'))}% cut), "
+            f"deflated-Sharpe confidence {_ser_scalar(dsr.get('dsr'))}%"
+        )
+    pbo = data.get("pbo")
+    if pbo:
+        parts.append(f"PBO {_ser_scalar(pbo.get('pbo'))}% over {pbo.get('nCombos')} CSCV splits")
+    folds = data.get("folds") or []
+    if folds:
+        rows = ", ".join(
+            f"fold {f.get('fold')}: IS {_ser_scalar(f.get('isSharpe'))} → OOS {_ser_scalar(f.get('oosSharpe'))} ({f.get('paramLabel')})"
+            for f in folds[:6]
+        )
+        parts.append(f"folds: {rows}")
+    cov = data.get("coverage") or {}
+    if cov and not cov.get("usable") and cov.get("note"):
+        parts.append(f"coverage: {cov['note']}")
+    return "; ".join(p for p in parts if p)
+
+
 _PANEL_SERIALIZERS = {
     "backtest": _ser_backtest,
+    "walk_forward": _ser_walk_forward,
     "signal_portfolio": _ser_signal_portfolio,
     "combined_alpha": _ser_combined_alpha,
     "shorting_desk": _ser_shorting_desk,
@@ -2342,6 +2403,7 @@ _TYPE_LABELS = {
     "cashflow_duration": "cash flow & duration",
     "portfolio_risk": "a portfolio risk breakdown",
     "backtest": "a backtest",
+    "walk_forward": "a walk-forward validation",
     "monte_carlo": "a Monte Carlo simulation",
     "correlation_matrix": "a correlation matrix",
     "factor_analysis": "a factor analysis",
@@ -2842,6 +2904,14 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
     ]) or (
         any(k in q for k in ["margin", "leverage"]) and any(k in q for k in ["short", "book", "borrow"])
     )
+    wants_walkforward = any(k in q for k in [
+        "overfit", "over-fit", "over fit", "walk forward", "walk-forward", "walkforward",
+        "out of sample", "out-of-sample", "oos", "in-sample", "in sample",
+        "deflated sharpe", "pbo", "probability of backtest overfitting",
+        "backtest overfitting", "multiple testing", "multiple-testing", "data mined",
+        "data-mined", "data mining", "research integrity", "is this robust",
+        "is it robust", "robustness check", "cross-validation", "cross validation",
+    ])
     wants_backtest = wants_invest or any(k in q for k in ["backtest", "back test", "back-test", "momentum strategy", "strategy", "sharpe", "cagr", "drawdown"])
     wants_montecarlo = any(k in q for k in ["monte carlo", "montecarlo", "monte-carlo", "simulate", "simulation", "forward project", "project price", "scenario analysis", "probability of loss", "forecast price", "gbm", "geometric brownian", "bootstrap"])
     wants_correlation = any(k in q for k in ["correlation", "correlat", "hedge ratio", "co-movement", "diversif", "beta table"])
@@ -3396,18 +3466,31 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         return panels, (f"Built a {scheme_label} portfolio from the {sig.replace('_', ' ')} signal: "
                         f"position weights, realized equity vs an equal-weight benchmark, Sharpe, drawdown and turnover.")
 
+    def _strategy_from_query() -> str:
+        if "mean" in q or "reversion" in q:
+            return "mean_reversion"
+        if ("buy" in q and "hold" in q) or "buy-and-hold" in q:
+            return "buy_and_hold"
+        if "crossover" in q or "moving average" in q or "ma cross" in q:
+            return "ma_crossover"
+        return "momentum"
+
+    if wants_walkforward:
+        sym = symbols[0] if symbols else "NVDA"
+        strategy = _strategy_from_query()
+        add("walk_forward", {"symbol": sym, "strategy": strategy}, 12, 6)
+        name = data.get_company(sym)["name"]
+        summary = (
+            f"Walk-forward validation of the {strategy.replace('_', ' ')} strategy on {name}: "
+            "in-sample vs out-of-sample equity, deflated Sharpe, PBO, a multiple-testing "
+            "haircut, and a plain-language overfitting verdict — all from real history."
+        )
+        return panels, summary
+
     if wants_backtest and symbols:
         sym = symbols[0]
-        strategy = "momentum"
-        explicit_strategy = False
-        if "mean" in q or "reversion" in q:
-            strategy = "mean_reversion"
-            explicit_strategy = True
-        elif "buy" in q and "hold" in q:
-            strategy = "buy_and_hold"
-            explicit_strategy = True
-        elif "momentum" in q or "trend" in q:
-            explicit_strategy = True
+        strategy = _strategy_from_query()
+        explicit_strategy = strategy != "momentum" or "momentum" in q or "trend" in q
         bt_params = {"symbol": sym, "strategy": strategy}
         bt_params.update(_parse_invest_entry(query))
         # "Invest $X ... what's it worth now" with no named strategy means
@@ -3860,6 +3943,10 @@ def _structured_refine_params(panel_type: str, panel: dict, params: dict) -> dic
         out["date"] = params.get("date") or (cur_entry.get("date") if (params.get("entry") or cur_entry.get("mode")) == "date" else None)
         out["start"] = params.get("start")
         out["end"] = params.get("end")
+    elif panel_type == "walk_forward":
+        out["symbol"] = (params.get("symbol") or d.get("symbol") or "").upper() or None
+        out["strategy"] = params.get("strategy") or d.get("strategy")
+        out["splits"] = params.get("splits") or d.get("nSplits")
     elif panel_type == "factor_analysis":
         out["symbol"] = (params.get("symbol") or d.get("symbol") or "").upper() or None
     else:

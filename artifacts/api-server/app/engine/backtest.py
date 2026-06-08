@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from . import stats
+from . import strategies as _strategies
 from .strategies import STRATEGIES, normalize_strategy
 
 
@@ -241,3 +242,302 @@ def run_backtest(
         "barCount": n,
         "dailyReturns": strat_rets.tolist(),
     }
+
+
+# ----------------------------- walk-forward validation -----------------------------
+# A separate research-integrity mode (NOT a replacement for run_backtest). It
+# answers "would this strategy have worked out-of-sample, or is the backtest
+# overfit?" by (1) sweeping a realistic parameter grid, (2) re-selecting the
+# best parameters on each anchored in-sample window and grading them on the
+# next, untouched out-of-sample block, and (3) running the deflated Sharpe,
+# multiple-testing haircut and PBO (CSCV) diagnostics over the full sweep.
+
+# Minimum bars an out-of-sample block needs to produce a meaningful Sharpe.
+_MIN_BLOCK_BARS = 15
+# Minimum bars the first (training-only) block needs to fit a parameter set.
+_MIN_TRAIN_BARS = 30
+
+
+def _strategy_daily_returns(
+    closes: np.ndarray,
+    rets: np.ndarray,
+    fn,
+    params: dict,
+    cost_rate: float,
+) -> np.ndarray:
+    """Full-series strategy daily returns for one parameter set (no lookahead)."""
+    target = np.clip(np.asarray(fn(closes, params), dtype=float), -1.0, 1.0)
+    held = np.zeros_like(closes)
+    held[1:] = target[:-1]
+    pos_change = np.zeros_like(closes)
+    pos_change[1:] = np.abs(held[1:] - held[:-1])
+    return held * rets - pos_change * cost_rate
+
+
+def _stitched_curve(dates: List[str], rets: np.ndarray, rebase: float) -> List[dict]:
+    """Equity curve (strategy vs buy-and-hold benchmark) for a return slice."""
+    # `rets` here are strategy returns; the benchmark column is filled by the
+    # caller, so this helper only renders the strategy equity.
+    equity = rebase * np.cumprod(1.0 + rets)
+    return [
+        {"t": dates[i], "strategy": round(float(equity[i]), 2)}
+        for i in range(len(dates))
+    ]
+
+
+def run_walk_forward(
+    points: List[dict],
+    strategy: str = "momentum",
+    param_grid: Optional[List[dict]] = None,
+    n_splits: int = 5,
+    cost_bps: float = 5.0,
+    rebase: float = 100.0,
+    pbo_splits: int = 10,
+) -> Dict:
+    """Anchored walk-forward validation + overfitting diagnostics.
+
+    Always returns a dict with a ``coverage`` block; when there is not enough
+    real history to form at least two out-of-sample folds it sets
+    ``coverage.usable = False`` and explains why rather than fabricating folds.
+    Raises ValueError only when the series is too short to compute anything
+    (< 3 bars), matching run_backtest so callers can fall back identically.
+    """
+    strat_key = normalize_strategy(strategy)
+    fn = STRATEGIES[strat_key]
+    grid = param_grid if param_grid is not None else _strategies.param_grid(strat_key)
+    if not grid:
+        grid = [{}]
+
+    dates, closes = _extract(points)
+    n = closes.size
+    if n < 3:
+        raise ValueError("insufficient price history for walk-forward validation")
+
+    rets = np.zeros(n, dtype=float)
+    rets[1:] = closes[1:] / closes[:-1] - 1.0
+    cost_rate = max(0.0, float(cost_bps)) / 10000.0
+
+    # Full-series strategy returns for every configuration in the grid. These
+    # feed both the per-fold parameter selection and the overfitting matrix.
+    grid_rets = [
+        _strategy_daily_returns(closes, rets, fn, p, cost_rate) for p in grid
+    ]
+
+    # --- how many anchored folds can the real history honestly support? ---
+    requested = max(2, int(n_splits))
+    blocks = min(requested, max(0, n // _MIN_BLOCK_BARS - 1))
+    usable = blocks >= 2 and n >= (_MIN_TRAIN_BARS + 2 * _MIN_BLOCK_BARS)
+
+    # Full-sample best configuration: the "optimised backtest" a researcher
+    # would show off. Selected by per-observation Sharpe over the whole series.
+    full_sr = np.array([stats.sharpe_per_obs(r[1:]) for r in grid_rets])
+    best_full = int(np.argmax(full_sr)) if full_sr.size else 0
+    best_full_rets = grid_rets[best_full]
+    is_equity = rebase * np.cumprod(1.0 + best_full_rets)
+    bench_equity = rebase * np.cumprod(1.0 + rets)
+    is_curve = [
+        {
+            "t": dates[i],
+            "strategy": round(float(is_equity[i]), 2),
+            "benchmark": round(float(bench_equity[i]), 2),
+        }
+        for i in range(n)
+    ]
+    is_stats = stats.performance_stats(is_equity, best_full_rets)
+
+    # --- overfitting diagnostics over the whole sweep ---
+    n_trials = len(grid)
+    sr_variance = float(np.var(full_sr, ddof=0)) if full_sr.size > 1 else 0.0
+    sr_hat = float(full_sr[best_full]) if full_sr.size else 0.0
+    skew = stats.skewness(best_full_rets[1:])
+    kurt = stats.kurtosis(best_full_rets[1:])
+    dsr = stats.deflated_sharpe(sr_hat, n - 1, n_trials, sr_variance, skew, kurt)
+    haircut = stats.multiple_testing_haircut(sr_hat, n - 1, n_trials, sr_variance)
+
+    pbo = None
+    if n_trials >= 2:
+        matrix = np.column_stack([r[1:] for r in grid_rets])
+        pbo = stats.pbo_cscv(matrix, n_splits=pbo_splits)
+
+    # --- anchored walk-forward folds ---
+    folds: List[dict] = []
+    oos_rets_parts: List[np.ndarray] = []
+    oos_dates: List[str] = []
+    oos_bench_parts: List[np.ndarray] = []
+    if usable:
+        blk = n // (blocks + 1)
+        for k in range(1, blocks + 1):
+            is_end = k * blk
+            oos_start = is_end
+            oos_end = (k + 1) * blk if k < blocks else n
+            if oos_end - oos_start < 2:
+                continue
+            # Re-select the best configuration on this anchored in-sample window.
+            is_sr = np.array([
+                stats.sharpe_per_obs(grid_rets[j][1:is_end]) for j in range(n_trials)
+            ])
+            choice = int(np.argmax(is_sr)) if is_sr.size else 0
+            chosen_rets = grid_rets[choice]
+            oos_slice = chosen_rets[oos_start:oos_end]
+            oos_rets_parts.append(oos_slice)
+            oos_dates.extend(dates[oos_start:oos_end])
+            oos_bench_parts.append(rets[oos_start:oos_end])
+            folds.append({
+                "fold": k,
+                "isStart": dates[0],
+                "isEnd": dates[is_end - 1],
+                "oosStart": dates[oos_start],
+                "oosEnd": dates[oos_end - 1],
+                "isBars": int(is_end),
+                "oosBars": int(oos_end - oos_start),
+                "param": grid[choice],
+                "paramLabel": _strategies.param_label(grid[choice]),
+                "isSharpe": round(stats.sharpe(grid_rets[choice][1:is_end]), 2),
+                "oosSharpe": round(stats.sharpe(oos_slice), 2),
+            })
+
+    # --- stitched out-of-sample track record ---
+    oos_curve: List[dict] = []
+    oos_stats: Dict[str, float] = {}
+    degradation_pct = 0.0
+    if oos_rets_parts:
+        oos_rets = np.concatenate(oos_rets_parts)
+        oos_bench = np.concatenate(oos_bench_parts)
+        oos_equity = rebase * np.cumprod(1.0 + oos_rets)
+        oos_bench_eq = rebase * np.cumprod(1.0 + oos_bench)
+        oos_curve = [
+            {
+                "t": oos_dates[i],
+                "strategy": round(float(oos_equity[i]), 2),
+                "benchmark": round(float(oos_bench_eq[i]), 2),
+            }
+            for i in range(len(oos_dates))
+        ]
+        oos_stats = stats.performance_stats(oos_equity, oos_rets)
+        is_sh = is_stats.get("sharpe", 0.0)
+        oos_sh = oos_stats.get("sharpe", 0.0)
+        if abs(is_sh) > 1e-9:
+            degradation_pct = round((is_sh - oos_sh) / abs(is_sh) * 100.0, 1)
+
+    verdict = _overfitting_verdict(
+        usable=usable,
+        is_stats=is_stats,
+        oos_stats=oos_stats,
+        degradation_pct=degradation_pct,
+        pbo=pbo,
+        dsr=dsr,
+        n_trials=n_trials,
+    )
+
+    coverage = {
+        "usable": bool(usable and bool(folds)),
+        "bars": int(n),
+        "folds": len(folds),
+        "neededBars": int(_MIN_TRAIN_BARS + 2 * _MIN_BLOCK_BARS),
+        "note": (
+            ""
+            if (usable and folds)
+            else (
+                f"Only {n} bars of real history available — need at least "
+                f"{_MIN_TRAIN_BARS + 2 * _MIN_BLOCK_BARS} to form two honest "
+                "out-of-sample folds. Showing the full-sample fit and "
+                "diagnostics only; out-of-sample validation is not reported."
+            )
+        ),
+    }
+
+    return {
+        "strategy": strat_key,
+        "barCount": int(n),
+        "nSplits": len(folds),
+        "paramGridSize": n_trials,
+        "isCurve": is_curve,
+        "oosCurve": oos_curve,
+        "isStats": is_stats,
+        "oosStats": oos_stats,
+        "degradationPct": degradation_pct,
+        "folds": folds,
+        "deflatedSharpe": {
+            "observed": haircut["observed"],
+            "benchmark": haircut["benchmark"],
+            "haircutSharpe": haircut["haircutSharpe"],
+            "haircutPct": haircut["haircutPct"],
+            "dsr": round(dsr["dsr"] * 100.0, 1),
+            "sr0PerObs": round(dsr["sr0"], 4),
+            "nTrials": n_trials,
+            "skew": round(skew, 3),
+            "kurtosis": round(kurt, 3),
+        },
+        "pbo": (
+            {
+                "pbo": round(pbo["pbo"] * 100.0, 1),
+                "nTrials": pbo["nTrials"],
+                "nSplits": pbo["nSplits"],
+                "nCombos": pbo["nCombos"],
+                "medianLogit": pbo["medianLogit"],
+            }
+            if pbo
+            else None
+        ),
+        "verdict": verdict,
+        "coverage": coverage,
+        "bestFullParam": _strategies.param_label(grid[best_full]),
+    }
+
+
+def _overfitting_verdict(
+    usable: bool,
+    is_stats: Dict[str, float],
+    oos_stats: Dict[str, float],
+    degradation_pct: float,
+    pbo: Optional[dict],
+    dsr: dict,
+    n_trials: int,
+) -> Dict[str, str]:
+    """Plain-language verdict combining the OOS degradation, PBO and DSR."""
+    is_sh = is_stats.get("sharpe", 0.0)
+    pbo_val = (pbo["pbo"] * 100.0) if pbo else None
+    dsr_val = dsr.get("dsr", 0.0) * 100.0
+
+    if not usable or not oos_stats:
+        return {
+            "label": "inconclusive",
+            "summary": (
+                "Not enough out-of-sample history to judge overfitting. The "
+                "in-sample fit and statistical diagnostics are shown, but a "
+                "walk-forward verdict needs more real price data."
+            ),
+        }
+
+    oos_sh = oos_stats.get("sharpe", 0.0)
+    bits: List[str] = []
+    bits.append(
+        f"In-sample Sharpe {is_sh:.2f} vs out-of-sample {oos_sh:.2f} "
+        f"({degradation_pct:.0f}% degradation)."
+    )
+    if pbo_val is not None:
+        bits.append(f"PBO {pbo_val:.0f}% across {n_trials} configurations.")
+    bits.append(f"Deflated Sharpe confidence {dsr_val:.0f}%.")
+
+    if is_sh > 0 and oos_sh <= 0:
+        label = "severe_overfitting"
+        head = (
+            "Severe overfitting: the strategy makes money in-sample but loses "
+            "it out-of-sample."
+        )
+    elif (degradation_pct >= 50.0) or (pbo_val is not None and pbo_val >= 50.0):
+        label = "likely_overfit"
+        head = "Likely overfit: out-of-sample performance breaks down badly."
+    elif (degradation_pct >= 25.0) or (pbo_val is not None and pbo_val >= 30.0) or (dsr_val < 90.0):
+        label = "some_overfitting"
+        head = (
+            "Some overfitting: out-of-sample results are weaker and the edge is "
+            "not statistically convincing after the multiple-testing haircut."
+        )
+    else:
+        label = "robust"
+        head = (
+            "Robust: the edge largely survives out-of-sample and the "
+            "multiple-testing diagnostics."
+        )
+    return {"label": label, "summary": head + " " + " ".join(bits)}

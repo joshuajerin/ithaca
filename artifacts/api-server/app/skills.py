@@ -1135,6 +1135,42 @@ def build_backtest(params: dict) -> dict:
     }
 
 
+def build_walk_forward(params: dict) -> dict:
+    """Research-integrity validation panel: anchored walk-forward, deflated
+    Sharpe, multiple-testing haircut, PBO (CSCV) and a plain-language
+    overfitting verdict — all from REAL price history, flagging segments with
+    too little data honestly. This is a SEPARATE mode from build_backtest."""
+    symbol = (params.get("symbol") or "NVDA").upper()
+    company = repo.get_company(symbol)
+    if not company:
+        symbol = "NVDA"
+        company = repo.get_company(symbol)
+    strategy = engine.normalize_strategy(params.get("strategy") or "momentum")
+    try:
+        n_splits = int(params.get("splits") or 5)
+    except (TypeError, ValueError):
+        n_splits = 5
+    n_splits = max(2, min(8, n_splits))
+
+    # Pull as much real OHLCV history as the DB holds (walk-forward wants every
+    # bar it can get); fall back to the curated mock series only if the DB is
+    # genuinely empty for this name.
+    meta = repo.price_series_meta(symbol, days=750)
+    points = meta["points"]
+    try:
+        result = engine.run_walk_forward(points, strategy, n_splits=n_splits)
+    except ValueError:
+        points = data.price_series(symbol, days=400)
+        meta = {"points": points, "source": "mock", "asOf": None}
+        result = engine.run_walk_forward(points, strategy, n_splits=n_splits)
+
+    result["symbol"] = symbol
+    result["name"] = company.get("name", symbol)
+    result["asOf"] = meta.get("asOf") or company.get("_asOf")
+    result["source"] = meta.get("source", "mock")
+    return result
+
+
 def build_monte_carlo(params: dict) -> dict:
     import numpy as np
 
@@ -6768,6 +6804,23 @@ _reg(SkillDef(
         {"name": "compute_stats", "description": "Derive Sharpe, Sortino, CAGR, max DD, and win rate.", "expectedOutput": "Performance statistics."},
     ],
     build_backtest, "Backtest",
+))
+_reg(SkillDef(
+    "walk-forward", "Walk-Forward Validation", "walk_forward",
+    "Research-integrity check on a strategy: anchored walk-forward backtest "
+    "(re-fits parameters on each in-sample window, grades them on the untouched "
+    "out-of-sample block), deflated Sharpe ratio, probability of backtest "
+    "overfitting (PBO via CSCV), a multiple-testing Sharpe haircut, and a "
+    "plain-language overfitting verdict. Everything is computed from REAL price "
+    "history; thin segments are flagged honestly. Use when the user asks whether "
+    "a strategy is overfit / robust / data-mined, for out-of-sample or "
+    "walk-forward validation, deflated Sharpe, or PBO.",
+    [
+        {"name": "resolve_symbol", "description": "Map the ticker to validate.", "expectedOutput": "A valid ticker."},
+        {"name": "walk_forward", "description": "Re-optimize in-sample, grade out-of-sample across anchored folds.", "expectedOutput": "Per-fold IS/OOS performance and a stitched OOS track."},
+        {"name": "overfitting_stats", "description": "Compute deflated Sharpe, multiple-testing haircut, and PBO.", "expectedOutput": "Overfitting diagnostics and a verdict."},
+    ],
+    build_walk_forward, "Walk-Forward Validation",
 ))
 _reg(SkillDef(
     "monte-carlo", "Monte Carlo Simulator", "monte_carlo",

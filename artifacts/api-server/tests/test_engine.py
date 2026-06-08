@@ -806,6 +806,149 @@ def test_build_signal_scorecard_degrades_on_bad_coverage():
             restore()
 
 
+# --------------------------- overfitting statistics ---------------------------
+def test_expected_max_sharpe_increases_with_trials():
+    # The expected maximum of N independent zero-skill Sharpes grows with N.
+    e1 = stats.expected_max_sharpe(1, 0.5)
+    e10 = stats.expected_max_sharpe(10, 0.5)
+    e100 = stats.expected_max_sharpe(100, 0.5)
+    assert e1 < e10 < e100
+    # A single trial (or zero cross-sectional variance) has no selection bias.
+    assert abs(stats.expected_max_sharpe(1, 0.5)) < 1e-9
+    assert abs(stats.expected_max_sharpe(50, 0.0)) < 1e-9
+
+
+def test_multiple_testing_haircut_never_exceeds_observed():
+    # Searching more configs can only shrink (never inflate) the honest Sharpe,
+    # and a single trial leaves it untouched. sr_hat is per-observation.
+    sr = 0.12
+    full = stats.multiple_testing_haircut(sr, n_obs=252, n_trials=1, sr_variance=0.5)
+    many = stats.multiple_testing_haircut(sr, n_obs=252, n_trials=50, sr_variance=0.5)
+    # With one trial the benchmark is zero, so nothing is hairut off.
+    assert math.isclose(full["haircutSharpe"], full["observed"], rel_tol=1e-6)
+    assert many["haircutSharpe"] <= many["observed"]
+    assert many["haircutSharpe"] <= full["haircutSharpe"]
+    assert 0.0 <= many["haircutPct"] <= 100.0
+
+
+def test_deflated_sharpe_in_unit_range_and_monotone_in_trials():
+    # sr_hat is the per-observation Sharpe of the selected config.
+    sr = 0.1
+    few = stats.deflated_sharpe(sr, n_obs=504, n_trials=1, sr_variance=0.5)
+    many = stats.deflated_sharpe(sr, n_obs=504, n_trials=200, sr_variance=0.5)
+    for d in (few, many):
+        assert 0.0 <= d["dsr"] <= 1.0
+    # More trials competing for the same Sharpe => lower confidence it is real.
+    assert many["dsr"] <= few["dsr"]
+
+
+def test_pbo_cscv_flags_obvious_overfitting():
+    # Build a matrix where each column is pure noise: the in-sample winner is
+    # essentially random, so PBO (prob. the IS-best underperforms OOS) is high.
+    rng = np.random.default_rng(11)
+    mat = rng.normal(0.0, 0.01, (400, 12))
+    res = stats.pbo_cscv(mat, n_splits=6)
+    assert res is not None
+    assert 0.0 <= res["pbo"] <= 1.0
+    assert res["pbo"] >= 0.30  # noise should not reliably persist OOS
+    # Too few configs to rank => no PBO.
+    assert stats.pbo_cscv(rng.normal(0, 0.01, (400, 1)), n_splits=6) is None
+
+
+def test_skew_kurtosis_on_normal_sample():
+    rng = np.random.default_rng(2)
+    x = rng.normal(0, 1, 20000)
+    assert abs(stats.skewness(x)) < 0.1
+    # Pearson kurtosis of a normal sample is ~3.0 (not excess).
+    assert abs(stats.kurtosis(x) - 3.0) < 0.2
+
+
+# --------------------------- param grids ---------------------------
+def test_param_grid_and_labels():
+    for strat in ("momentum", "mean_reversion", "ma_crossover", "buy_and_hold"):
+        grid = strategies.param_grid(strat)
+        assert isinstance(grid, list) and len(grid) >= 1
+        for params in grid:
+            label = strategies.param_label(params)
+            assert isinstance(label, str)
+    # Buy and hold has no tunable knobs -> a single empty config.
+    assert strategies.param_grid("buy_and_hold") == [{}]
+    # ma_crossover must only emit valid fast<slow pairs.
+    for p in strategies.param_grid("ma_crossover"):
+        assert p["fast"] < p["slow"]
+    # Momentum sweeps multiple lookbacks.
+    assert len(strategies.param_grid("momentum")) >= 4
+
+
+# --------------------------- walk-forward ---------------------------
+def _wf_series(n=600, seed=7):
+    rng = np.random.default_rng(seed)
+    closes = [100.0]
+    for _ in range(n):
+        closes.append(closes[-1] * (1 + rng.normal(0.0004, 0.015)))
+    return _points(closes)
+
+
+def test_walk_forward_shape_and_invariants():
+    res = backtest.run_walk_forward(_wf_series(), "momentum", n_splits=5)
+    for key in (
+        "strategy", "barCount", "nSplits", "paramGridSize", "isCurve", "oosCurve",
+        "isStats", "oosStats", "degradationPct", "folds", "deflatedSharpe",
+        "pbo", "verdict", "coverage", "bestFullParam",
+    ):
+        assert key in res, f"missing key {key}"
+    assert res["coverage"]["usable"] is True
+    assert len(res["folds"]) == res["nSplits"] == 5
+    assert res["verdict"]["label"] in {
+        "robust", "some_decay", "likely_overfit", "severe_overfitting", "inconclusive",
+    }
+    assert res["verdict"]["summary"]
+    # Equity curves are rebased to 100 and contain no NaN/Inf.
+    for curve in (res["isCurve"], res["oosCurve"]):
+        assert curve and math.isclose(curve[0]["strategy"], 100.0, rel_tol=1e-6)
+    assert _all_finite(res)
+
+
+def test_walk_forward_folds_have_no_lookahead():
+    # Each fold's out-of-sample window must begin strictly after its in-sample
+    # window ends — parameters are chosen on the past and graded on the future.
+    res = backtest.run_walk_forward(_wf_series(), "ma_crossover", n_splits=4)
+    for f in res["folds"]:
+        assert f["isEnd"] <= f["oosStart"]
+        assert f["isBars"] > 0 and f["oosBars"] > 0
+        assert isinstance(f["paramLabel"], str)
+
+
+def test_walk_forward_flags_insufficient_history_honestly():
+    # Far too few bars to form trustworthy folds: must NOT fabricate a verdict.
+    res = backtest.run_walk_forward(_wf_series(n=40), "momentum", n_splits=5)
+    assert res["coverage"]["usable"] is False
+    assert res["coverage"]["note"]
+    assert res["verdict"]["label"] == "inconclusive"
+    assert _all_finite(res)
+
+
+def test_walk_forward_buy_and_hold_has_no_param_search():
+    # Buy & hold cannot be data-mined: a single config means no PBO and no
+    # multiple-testing penalty.
+    res = backtest.run_walk_forward(_wf_series(), "buy_and_hold", n_splits=5)
+    assert res["paramGridSize"] == 1
+    assert res["pbo"] is None
+    assert res["deflatedSharpe"]["nTrials"] == 1
+
+
+def test_build_walk_forward_panel_grounded_and_finite():
+    from app import skills
+
+    res = skills.build_walk_forward({"symbol": "NVDA", "strategy": "momentum", "splits": 4})
+    assert res["symbol"] == "NVDA"
+    assert res["source"] in {"live", "mock"}
+    assert res["verdict"]["label"] in {
+        "robust", "some_decay", "likely_overfit", "severe_overfitting", "inconclusive",
+    }
+    assert _all_finite(res)
+
+
 def _run_all():
     funcs = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

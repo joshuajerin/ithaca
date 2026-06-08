@@ -53,3 +53,4 @@
 - [Pre-trade compliance gate](compliance-gate.md) — pure engine + GLOBAL config/audit store + ComplianceBlock wired into paper_trade/rebalance; passthrough panel; audit rows use decision/summary.
 - [Multi-strategy capital allocation](multistrat-allocation.md) — firm-level multi_strategy panel: sleeve aggregation, cross-strategy risk from REAL NAV snapshots (held-out if thin), allocation methods; route before optimizer+desk.
 - [PIT & survivorship-bias-free data](pit-survivorship-data.md) — honesty contract: historical_closes is real-only (report missing, never impute), fundamentals_as_of or None; builders emit coverage/pit blocks; CoverageBadge panels.
+- [Walk-forward research integrity](walk-forward-research-integrity.md) — overfitting guardrails (walk-forward/DSR/PBO/MT-haircut) as SEPARATE walk_forward passthrough panel; route before wants_backtest; honest coverage→inconclusive.
