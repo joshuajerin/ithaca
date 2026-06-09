@@ -32,6 +32,7 @@ export interface AuthFirm {
 export interface AuthIdentity {
   user: AuthUser;
   firm: AuthFirm;
+  permissions: string[];
 }
 
 export interface LogoutResult {

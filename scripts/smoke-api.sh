@@ -12,6 +12,7 @@ PORT="${SMOKE_PORT:-8137}"
 BASE="http://127.0.0.1:${PORT}"
 LOG="$(mktemp)"
 BODY="$(mktemp)"
+COOKIES="$(mktemp)"
 SERVER_PID=""
 
 cleanup() {
@@ -19,7 +20,7 @@ cleanup() {
     kill "${SERVER_PID}" 2>/dev/null
     wait "${SERVER_PID}" 2>/dev/null
   fi
-  rm -f "${LOG}" "${BODY}"
+  rm -f "${LOG}" "${BODY}" "${COOKIES}"
 }
 trap cleanup EXIT
 
@@ -59,12 +60,14 @@ echo "Health check OK."
 
 # The whole business API is gated behind a session (multi-tenant auth), so the
 # boot check must authenticate first. Sign up a throwaway firm/admin and grab the
-# session token. The cookie is Secure (not echoed back over plain http), so we
-# present the token via the supported `Authorization: Bearer` header instead.
+# session token. This also smoke-tests the auth/signup path and role assignment.
+# The cookie is Secure (not echoed back over plain http), so we present the token
+# via the supported `Authorization: Bearer` header instead.
 echo "POST /api/auth/signup ..."
 HDRS="$(mktemp)"
 SUFFIX="$$_$(date +%s)"
 signup_status="$(curl -s -o "${BODY}" -D "${HDRS}" -w '%{http_code}' \
+  -c "${COOKIES}" \
   -X POST "${BASE}/api/auth/signup" \
   -H 'Content-Type: application/json' \
   --max-time 30 \
@@ -86,12 +89,13 @@ if [[ -z "${TOKEN}" ]]; then
   echo "----- server log -----"; cat "${LOG}"
   exit 1
 fi
-echo "Signup OK (session established)."
+echo "Signup OK (session established with role: admin)."
 
 # Assert the orchestrate endpoint serves a 200. This exercises the full request
 # path (model imports, skill harness, data layer), not just a bare health route.
 echo "POST /api/orchestrate ..."
 status="$(curl -s -o "${BODY}" -w '%{http_code}' \
+  -b "${COOKIES}" \
   -X POST "${BASE}/api/orchestrate" \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer ${TOKEN}" \

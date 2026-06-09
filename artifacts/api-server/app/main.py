@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import agent, alerts, auth, auth_store, dashboard_store, dynamic_skills, feature_builder, firm_settings, harness, models, repo, security, skills, state, tenant, worker
+from . import agent, alerts, auth, auth_store, dashboard_store, dynamic_skills, feature_builder, firm_settings, harness, models, permissions, repo, security, skills, state, tenant, worker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -99,6 +99,10 @@ def require_role(*roles: str):
     returns the resolved identity, letting privileged handlers gate by role. The
     role check is server-side and authoritative — the frontend hiding a control
     is convenience only.
+
+    Prefer :func:`require_permission` for action-level gating routed through the
+    authoritative permission matrix; ``require_role`` remains for coarse checks
+    (e.g. the firm-admin-only settings/kill-switch surface).
     """
     allowed = frozenset(roles)
 
@@ -127,6 +131,30 @@ def require_codegen_enabled(
             detail="AI feature building is disabled for your firm.",
         )
     return identity
+
+
+def require_permission(action: str):
+    """Build a dependency that asserts the caller's role may perform ``action``.
+
+    Authorization is authoritative on the server: every sensitive/mutating route
+    declares the action it represents, and this dependency rejects any caller
+    whose role is below that action's minimum (per ``permissions.ACTIONS``) with
+    a clear 403 — even if the request is hand-crafted to bypass the UI.
+
+    It re-uses ``require_identity`` (FastAPI caches it within the request, so the
+    session is resolved only once) and returns the verified identity so handlers
+    can still depend on it.
+    """
+
+    def _dep(identity: auth.Identity = Depends(require_identity)) -> auth.Identity:
+        if not permissions.can(identity.role, action):
+            raise HTTPException(
+                status_code=403,
+                detail=permissions.denial_message(identity.role, action),
+            )
+        return identity
+
+    return _dep
 
 
 # Public router — no authentication required (health check + the auth flow
@@ -194,6 +222,7 @@ def auth_signup(req: models.SignupRequest, response: Response):
     return {
         "user": {"id": user["id"], "name": user["name"], "email": user["email"], "role": user["role"]},
         "firm": {"id": firm["id"], "name": firm["name"]},
+        "permissions": permissions.allowed_actions(user["role"]),
     }
 
 
@@ -216,6 +245,7 @@ def auth_login(req: models.LoginRequest, response: Response):
     return {
         "user": {"id": user["id"], "name": user["name"], "email": user["email"], "role": user["role"]},
         "firm": {"id": firm["id"], "name": firm["name"]} if firm else {"id": user["firmId"], "name": ""},
+        "permissions": permissions.allowed_actions(user["role"]),
     }
 
 
@@ -325,7 +355,11 @@ def list_saved_dashboards():
     return {"dashboards": dashboard_store.list_dashboards()}
 
 
-@api.post("/dashboards", response_model=models.SavedDashboardMeta)
+@api.post(
+    "/dashboards",
+    response_model=models.SavedDashboardMeta,
+    dependencies=[Depends(require_permission("dashboard.save"))],
+)
 def save_dashboard(req: models.SaveDashboardRequest):
     name = (req.name or "").strip()
     if not name:
@@ -364,7 +398,11 @@ def restore_dashboard(dashboard_id: str):
     }
 
 
-@api.delete("/dashboards/{dashboard_id}", response_model=models.SavedDashboardList)
+@api.delete(
+    "/dashboards/{dashboard_id}",
+    response_model=models.SavedDashboardList,
+    dependencies=[Depends(require_permission("dashboard.delete"))],
+)
 def delete_saved_dashboard(dashboard_id: str):
     dashboard_store.delete_dashboard(dashboard_id)
     return {"dashboards": dashboard_store.list_dashboards()}
@@ -528,7 +566,7 @@ def list_strategies():
     return strategy.desk_payload()
 
 
-@api.post("/strategies")
+@api.post("/strategies", dependencies=[Depends(require_permission("strategy.manage"))])
 def create_strategy(req: StrategyCreateRequest):
     from . import strategy
     try:
@@ -547,7 +585,10 @@ def create_strategy(req: StrategyCreateRequest):
     return view
 
 
-@api.post("/strategies/{strategy_id}/transition")
+@api.post(
+    "/strategies/{strategy_id}/transition",
+    dependencies=[Depends(require_permission("strategy.manage"))],
+)
 def transition_strategy(strategy_id: str, req: StrategyTransitionRequest):
     from . import strategy, strategy_store
     view = strategy_store.get_strategy(strategy_id)
@@ -565,7 +606,10 @@ def transition_strategy(strategy_id: str, req: StrategyTransitionRequest):
     return {"ok": ok, "message": message, "strategy": updated}
 
 
-@api.post("/strategies/{strategy_id}/rebalance")
+@api.post(
+    "/strategies/{strategy_id}/rebalance",
+    dependencies=[Depends(require_permission("strategy.trade"))],
+)
 def rebalance_strategy(strategy_id: str, req: StrategyRebalanceRequest | None = None):
     from . import strategy, strategy_store
     view = strategy_store.get_strategy(strategy_id)
@@ -595,7 +639,7 @@ def list_templates():
     return {"templates": templates.list_all()}
 
 
-@api.post("/templates/clone")
+@api.post("/templates/clone", dependencies=[Depends(require_permission("template.use"))])
 def clone_template(req: TemplateConfig):
     """Clone a configured template into the paper-trading desk."""
     from . import strategy, templates
@@ -612,7 +656,7 @@ def clone_template(req: TemplateConfig):
     return {"ok": True, "strategy": view}
 
 
-@api.post("/templates")
+@api.post("/templates", dependencies=[Depends(require_permission("template.use"))])
 def save_template(req: TemplateConfig):
     """Save a user-configured template as a reusable preset."""
     from . import templates
@@ -624,7 +668,10 @@ def save_template(req: TemplateConfig):
     return {"ok": True, "template": saved, "templates": templates.list_all()}
 
 
-@api.delete("/templates/{template_id}")
+@api.delete(
+    "/templates/{template_id}",
+    dependencies=[Depends(require_permission("template.use"))],
+)
 def delete_template(template_id: str):
     from . import templates, template_store
     if not template_id.startswith("user-"):
@@ -671,7 +718,10 @@ def list_features():
     return {"features": feature_builder.list_features()}
 
 
-@api.delete("/features/{panel_type}")
+@api.delete(
+    "/features/{panel_type}",
+    dependencies=[Depends(require_permission("feature.build"))],
+)
 def delete_feature(
     panel_type: str,
     _identity: auth.Identity = Depends(require_role("admin")),
@@ -679,7 +729,9 @@ def delete_feature(
     """Remove a generated feature: unregister it and delete its source files.
 
     Restricted to firm admins — generated features are shared in-process, so
-    removing one affects every user; only an admin may do it.
+    removing one affects every user; only an admin may do it. The
+    ``feature.build`` permission (admin-only in the matrix) is also enforced so
+    the action is routed through the single authoritative permission matrix.
     """
     removed = feature_builder.remove_feature(panel_type)
     if not removed:
@@ -718,12 +770,17 @@ class FeatureRequestInput(BaseModel):
 
 
 # The single highest-risk surface: an admin describes a feature and the AI
-# authors + executes new code. Gated by admin role + the per-firm kill-switch,
-# rate-limited at the edge (the builder also enforces its own concurrency/rate
-# limits and validates every generation before execution).
+# authors + executes new code. Gated by the admin-only ``feature.build``
+# permission (authoritative matrix) plus the per-firm code-execution kill-switch
+# (require_codegen_enabled), and rate-limited at the edge (the builder also
+# enforces its own concurrency/rate limits and validates every generation before
+# execution).
 @api.post(
     "/feature-request",
-    dependencies=[Depends(security.rate_limit("feature-request", 10, 60))],
+    dependencies=[
+        Depends(require_permission("feature.build")),
+        Depends(security.rate_limit("feature-request", 10, 60)),
+    ],
 )
 def feature_request(
     req: FeatureRequestInput,
@@ -757,7 +814,7 @@ def list_dcf_models(sessionId: str, symbol: str | None = None):
     return {"models": state.list_dcf_models(sessionId.strip(), symbol)}
 
 
-@api.post("/dcf-models")
+@api.post("/dcf-models", dependencies=[Depends(require_permission("dcf.save"))])
 def save_dcf_model(req: DCFModelInput):
     name = (req.name or "").strip()
     if not name:
@@ -774,7 +831,7 @@ def save_dcf_model(req: DCFModelInput):
     return {"models": models}
 
 
-@api.delete("/dcf-models")
+@api.delete("/dcf-models", dependencies=[Depends(require_permission("dcf.save"))])
 def delete_dcf_model(sessionId: str, name: str, symbol: str):
     if not sessionId or not sessionId.strip():
         raise HTTPException(status_code=400, detail="sessionId is required")
@@ -802,7 +859,11 @@ def get_watchlist():
     return _watchlist_payload()
 
 
-@api.post("/watchlist", response_model=models.Watchlist)
+@api.post(
+    "/watchlist",
+    response_model=models.Watchlist,
+    dependencies=[Depends(require_permission("watchlist.edit"))],
+)
 def add_watchlist(req: models.WatchlistInput):
     sym = req.symbol.upper()
     if not repo.get_company(sym):
@@ -811,7 +872,11 @@ def add_watchlist(req: models.WatchlistInput):
     return _watchlist_payload()
 
 
-@api.delete("/watchlist/{symbol}", response_model=models.Watchlist)
+@api.delete(
+    "/watchlist/{symbol}",
+    response_model=models.Watchlist,
+    dependencies=[Depends(require_permission("watchlist.edit"))],
+)
 def remove_watchlist(symbol: str):
     state.remove_watchlist(symbol.upper())
     return _watchlist_payload()
@@ -840,7 +905,7 @@ def get_alerts(sessionId: str):
     return _alerts_payload(sessionId.strip())
 
 
-@api.post("/alerts")
+@api.post("/alerts", dependencies=[Depends(require_permission("alert.manage"))])
 def create_alert(req: AlertRuleInput):
     sid = (req.sessionId or "").strip()
     if not sid:
@@ -868,7 +933,7 @@ def get_alert_events(sessionId: str):
     return {"events": list(reversed(state.get_alert_events(sessionId.strip())))}
 
 
-@api.delete("/alerts/events")
+@api.delete("/alerts/events", dependencies=[Depends(require_permission("alert.manage"))])
 def clear_alert_events(sessionId: str):
     if not sessionId or not sessionId.strip():
         raise HTTPException(status_code=400, detail="sessionId is required")
@@ -876,7 +941,7 @@ def clear_alert_events(sessionId: str):
     return {"events": []}
 
 
-@api.delete("/alerts/{rule_id}")
+@api.delete("/alerts/{rule_id}", dependencies=[Depends(require_permission("alert.manage"))])
 def delete_alert(rule_id: str, sessionId: str):
     sid = (sessionId or "").strip()
     if not sid:
@@ -910,7 +975,7 @@ def get_compliance(strategy: str | None = None):
     return _compliance_payload(strategy)
 
 
-@api.post("/compliance/restricted")
+@api.post("/compliance/restricted", dependencies=[Depends(require_permission("compliance.config"))])
 def add_restricted(req: ComplianceSymbolInput):
     from . import compliance_store
     sym = (req.symbol or "").strip().upper()
@@ -920,7 +985,7 @@ def add_restricted(req: ComplianceSymbolInput):
     return _compliance_payload()
 
 
-@api.post("/compliance/watch")
+@api.post("/compliance/watch", dependencies=[Depends(require_permission("compliance.config"))])
 def add_watch(req: ComplianceSymbolInput):
     from . import compliance_store
     sym = (req.symbol or "").strip().upper()
@@ -930,14 +995,14 @@ def add_watch(req: ComplianceSymbolInput):
     return _compliance_payload()
 
 
-@api.post("/compliance/limits")
+@api.post("/compliance/limits", dependencies=[Depends(require_permission("compliance.config"))])
 def set_limits(req: ComplianceLimitsInput):
     from . import compliance_store
     compliance_store.set_limits(req.limits or {})
     return _compliance_payload()
 
 
-@api.post("/compliance/kill-switch")
+@api.post("/compliance/kill-switch", dependencies=[Depends(require_permission("compliance.config"))])
 def set_kill_switch(req: ComplianceKillSwitchInput):
     from . import compliance_store
     compliance_store.set_kill_switch(bool(req.on), reason=req.reason, strategy_id=req.strategyId)
@@ -953,7 +1018,7 @@ def check_compliance(req: ComplianceSymbolInput):
     return _compliance_payload(sel)
 
 
-@api.delete("/compliance/audit")
+@api.delete("/compliance/audit", dependencies=[Depends(require_permission("compliance.config"))])
 def clear_compliance_audit():
     from . import compliance_store
     n = compliance_store.clear_audit()
@@ -963,14 +1028,14 @@ def clear_compliance_audit():
 # NOTE: the parametrized "/compliance/{list}/{symbol}" DELETE routes are declared
 # AFTER every static "/compliance/..." route above so FastAPI does not match e.g.
 # "limits" as a {symbol}.
-@api.delete("/compliance/restricted/{symbol}")
+@api.delete("/compliance/restricted/{symbol}", dependencies=[Depends(require_permission("compliance.config"))])
 def remove_restricted(symbol: str):
     from . import compliance_store
     compliance_store.remove_restricted(symbol.upper())
     return _compliance_payload()
 
 
-@api.delete("/compliance/watch/{symbol}")
+@api.delete("/compliance/watch/{symbol}", dependencies=[Depends(require_permission("compliance.config"))])
 def remove_watch(symbol: str):
     from . import compliance_store
     compliance_store.remove_watch(symbol.upper())

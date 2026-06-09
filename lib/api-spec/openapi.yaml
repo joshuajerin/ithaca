@@ -437,9 +437,14 @@ components:
           $ref: "#/components/schemas/AuthUser"
         firm:
           $ref: "#/components/schemas/AuthFirm"
+        permissions:
+          type: array
+          items:
+            type: string
       required:
         - user
         - firm
+        - permissions
     LogoutResult:
       type: object
       properties:

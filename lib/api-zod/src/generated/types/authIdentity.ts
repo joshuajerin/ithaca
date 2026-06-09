@@ -11,4 +11,5 @@ import type { AuthUser } from './authUser';
 export interface AuthIdentity {
   user: AuthUser;
   firm: AuthFirm;
+  permissions: string[];
 }

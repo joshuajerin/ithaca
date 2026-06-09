@@ -107,7 +107,7 @@ export default function Terminal() {
   // to) is persisted in localStorage so it survives a page reload. Reusing the
   // stored session id keeps follow-up questions in context with the same
   // backend session.
-  const { identity, logout } = useAuth();
+  const { identity, logout, can } = useAuth();
   const convo = useConsoleConversation(identity?.user.id);
 
   // Surface an assistant reply in the UI with a fresh nonce.
@@ -590,14 +590,18 @@ export default function Terminal() {
             )}
             <button
               onClick={() => setShowDashboardsModal(true)}
-              className="flex items-center gap-2 px-3 py-2 editorial-label text-[9px] border border-border bg-black text-white hover:border-white transition-colors group/btn"
+              disabled={!can("dashboard.save")}
+              title={can("dashboard.save") ? undefined : "Saving dashboards requires the analyst role or higher"}
+              className="flex items-center gap-2 px-3 py-2 editorial-label text-[9px] border border-border bg-black text-white hover:border-white transition-colors group/btn disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-border"
             >
               <LayoutGrid className="w-3.5 h-3.5 text-muted-foreground group-hover/btn:text-white transition-colors" strokeWidth={1.5} />
               Dashboards
             </button>
             <button
               onClick={() => setShowFeatureModal(true)}
-              className="flex items-center gap-2 px-2.5 sm:px-3 py-2 editorial-label text-[9px] border border-border bg-black text-white hover:border-white transition-colors group/btn"
+              disabled={!can("feature.build")}
+              title={can("feature.build") ? undefined : "Building features requires the admin role"}
+              className="flex items-center gap-2 px-2.5 sm:px-3 py-2 editorial-label text-[9px] border border-border bg-black text-white hover:border-white transition-colors group/btn disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-border"
             >
               <Sparkles className="w-3.5 h-3.5 text-muted-foreground group-hover/btn:text-white transition-colors" strokeWidth={1.5} />
               <span className="hidden sm:inline">Build Feature</span>

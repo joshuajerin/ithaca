@@ -38,7 +38,8 @@ export const SignupResponse = zod.object({
   "firm": zod.object({
   "id": zod.string(),
   "name": zod.string()
-})
+}),
+  "permissions": zod.array(zod.string())
 })
 
 
@@ -61,7 +62,8 @@ export const LoginResponse = zod.object({
   "firm": zod.object({
   "id": zod.string(),
   "name": zod.string()
-})
+}),
+  "permissions": zod.array(zod.string())
 })
 
 
@@ -88,7 +90,8 @@ export const GetCurrentUserResponse = zod.object({
   "firm": zod.object({
   "id": zod.string(),
   "name": zod.string()
-})
+}),
+  "permissions": zod.array(zod.string())
 })
 
 

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { BellRing, Plus, Trash2, AlertTriangle } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 
 interface Metric {
   id: string;
@@ -49,6 +50,8 @@ function defaultThreshold(metric: string): string {
 }
 
 export function AlertsPanel({ data, sessionId }: AlertsPanelProps) {
+  const { can } = useAuth();
+  const canManage = can("alert.manage");
   const metrics = data?.metrics?.length ? data.metrics : FALLBACK_METRICS;
 
   const [rules, setRules] = useState<Rule[]>([]);
@@ -182,8 +185,9 @@ export function AlertsPanel({ data, sessionId }: AlertsPanelProps) {
         )}
         <button
           type="submit"
-          disabled={busy}
-          className="flex items-center justify-center gap-2 border border-border bg-white text-black py-1.5 editorial-label text-[9px] hover:bg-gray-200 disabled:opacity-40 transition-colors"
+          disabled={busy || !canManage}
+          title={canManage ? undefined : "Managing alerts requires the analyst role or higher"}
+          className="flex items-center justify-center gap-2 border border-border bg-white text-black py-1.5 editorial-label text-[9px] hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           <Plus className="w-3 h-3" strokeWidth={2} />
           Add Alert Rule
@@ -222,13 +226,15 @@ export function AlertsPanel({ data, sessionId }: AlertsPanelProps) {
                     {unitFor(r.metric) === "%" ? "%" : ""}
                   </span>
                 </div>
-                <button
-                  onClick={() => handleDelete(r.id)}
-                  className="text-muted-foreground hover:text-red-400 transition-colors shrink-0 opacity-0 group-hover/rule:opacity-100"
-                  aria-label="Delete rule"
-                >
-                  <Trash2 className="w-3.5 h-3.5" strokeWidth={1.5} />
-                </button>
+                {canManage && (
+                  <button
+                    onClick={() => handleDelete(r.id)}
+                    className="text-muted-foreground hover:text-red-400 transition-colors shrink-0 opacity-0 group-hover/rule:opacity-100"
+                    aria-label="Delete rule"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" strokeWidth={1.5} />
+                  </button>
+                )}
               </li>
             ))}
           </ul>

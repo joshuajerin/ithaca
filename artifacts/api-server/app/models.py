@@ -1730,6 +1730,7 @@ class AuthFirm(BaseModel):
 class AuthIdentity(BaseModel):
     user: AuthUser
     firm: AuthFirm
+    permissions: List[str]
 
 
 class LogoutResult(BaseModel):

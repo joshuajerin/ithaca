@@ -26,6 +26,10 @@ interface AuthContextValue {
   login: (req: LoginRequest) => Promise<void>;
   signup: (req: SignupRequest) => Promise<void>;
   logout: () => Promise<void>;
+  // True when the current user's role is allowed to perform `action`. This is a
+  // UI convenience only — the server enforces the same matrix authoritatively
+  // (it returns 403 regardless of what the UI shows).
+  can: (action: string) => boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -80,8 +84,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const can = useCallback(
+    (action: string) => !!identity?.permissions?.includes(action),
+    [identity],
+  );
+
   return (
-    <AuthContext.Provider value={{ status, identity, login, signup, logout }}>
+    <AuthContext.Provider value={{ status, identity, login, signup, logout, can }}>
       {children}
     </AuthContext.Provider>
   );

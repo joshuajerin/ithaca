@@ -86,7 +86,13 @@ class Identity:
     firm_name: str
 
     def to_payload(self) -> dict:
-        """Shape returned to the frontend for the current user."""
+        """Shape returned to the frontend for the current user.
+
+        Includes the exact set of actions this user's role may perform so the UI
+        can gate affordances against the same matrix the server enforces.
+        """
+        from . import permissions
+
         return {
             "user": {
                 "id": self.user_id,
@@ -95,4 +101,5 @@ class Identity:
                 "role": self.role,
             },
             "firm": {"id": self.firm_id, "name": self.firm_name},
+            "permissions": permissions.allowed_actions(self.role),
         }
