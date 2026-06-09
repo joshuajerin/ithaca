@@ -28,3 +28,19 @@ no-op so the level-meter loop stays inert.
 `useVoiceConductor.test.ts`. Remember push-to-talk never auto re-arms, so a full
 turn leaves exactly one recognition instance — asserting the instance count is
 how the test proves no echo/self-trigger re-listen happened.
+
+**recharts panels need a `ResizeObserver` polyfill under jsdom.** Any test that
+renders a panel using recharts `ResponsiveContainer` throws
+`ReferenceError: ResizeObserver is not defined` (jsdom has none). Stub it with a
+no-op `class { observe(){} unobserve(){} disconnect(){} }` before render.
+
+**Live full-stack integration tests** (e.g. the intraday-chart in-panel controls
+test) can boot the real FastAPI app from vitest with `spawn("python", ["-m",
+"uvicorn", "app.main:app", "--app-dir", <api-server>, ...])` + `TERMINAL_SKIP_WORKER=1`,
+poll `/api/healthz`, then drive the real `<PanelContainer>` via `setBaseUrl`
+(from `@workspace/api-client-react`). Because orchestrate routing is LLM-driven,
+RETRY orchestrate until the target panel type appears. **Why it can't run in the
+agent bash tool:** live yfinance/refine trips the agent shell's MAX_PATH syscall
+wrapper — these tests only pass under the `panel-runtime-test`/`smoke`/`voice-backend`
+validation env (same env those make live calls in). Verify via the validation run,
+not the bash tool.
