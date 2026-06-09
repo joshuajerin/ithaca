@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { CalendarClock, Sunrise, Moon, AlertTriangle } from "lucide-react";
+import { CalendarClock, Sunrise, Moon, HelpCircle, AlertTriangle } from "lucide-react";
 
 export interface EarningsRow {
   symbol: string;
@@ -9,7 +9,7 @@ export interface EarningsRow {
   sectorName: string;
   reportDate: string;
   reportDateTime: string;
-  timing: "bmo" | "amc";
+  timing: "bmo" | "amc" | "unknown";
   timingLabel: string;
   epsEstimate: number | null;
   quarter: string;
@@ -17,6 +17,11 @@ export interface EarningsRow {
   hoursUntil: number;
   imminent: boolean;
   marketCap?: number | null;
+}
+
+interface UncoveredName {
+  symbol: string;
+  name: string;
 }
 
 interface EarningsCalendarData {
@@ -29,6 +34,8 @@ interface EarningsCalendarData {
   count: number;
   watchlistSize: number;
   scope: string;
+  uncovered?: UncoveredName[];
+  uncoveredCount?: number;
   asOf?: string;
   source?: string;
 }
@@ -137,7 +144,11 @@ export function EarningsCalendarPanel({ data }: { data: EarningsCalendarData }) 
       <ScrollArea className="flex-1 min-h-0">
         <div className="flex flex-col">
           {rows.length === 0 && (
-            <div className="text-xs text-muted-foreground px-2 py-4">No scheduled reports in this window.</div>
+            <div className="text-xs text-muted-foreground px-2 py-4">
+              {data.source === "unavailable"
+                ? "No scheduled earnings dates available from the live feed yet."
+                : "No scheduled reports in this window."}
+            </div>
           )}
           {rows.map(r => (
             <div
@@ -162,9 +173,13 @@ export function EarningsCalendarPanel({ data }: { data: EarningsCalendarData }) 
                   <span className="flex items-center gap-1 text-[9px] text-sky-300 border border-sky-400/30 bg-sky-400/5 px-1 py-0.5 uppercase">
                     <Sunrise className="w-2.5 h-2.5" strokeWidth={1.8} /> BMO
                   </span>
-                ) : (
+                ) : r.timing === "amc" ? (
                   <span className="flex items-center gap-1 text-[9px] text-indigo-300 border border-indigo-400/30 bg-indigo-400/5 px-1 py-0.5 uppercase">
                     <Moon className="w-2.5 h-2.5" strokeWidth={1.8} /> AMC
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1 text-[9px] text-muted-foreground border border-border bg-white/3 px-1 py-0.5 uppercase">
+                    <HelpCircle className="w-2.5 h-2.5" strokeWidth={1.8} /> TBA
                   </span>
                 )}
               </div>
@@ -176,6 +191,19 @@ export function EarningsCalendarPanel({ data }: { data: EarningsCalendarData }) 
           ))}
         </div>
       </ScrollArea>
+
+      {(data.uncoveredCount ?? 0) > 0 && (
+        <div className="shrink-0 mt-1.5 flex items-start gap-1.5 text-[9px] text-muted-foreground border-t border-border/40 pt-1.5">
+          <HelpCircle className="w-2.5 h-2.5 shrink-0 mt-0.5" strokeWidth={1.8} />
+          <span className="leading-tight">
+            No scheduled date from the live feed for{" "}
+            <span className="text-gray-300">
+              {(data.uncovered ?? []).slice(0, 8).map(u => u.symbol).join(", ")}
+              {(data.uncoveredCount ?? 0) > 8 ? ` +${(data.uncoveredCount ?? 0) - 8} more` : ""}
+            </span>
+          </span>
+        </div>
+      )}
 
       <div className="shrink-0 pt-1.5 text-[9px] text-muted-foreground flex items-center justify-between">
         <span>{data.watchlistSize} names tracked</span>

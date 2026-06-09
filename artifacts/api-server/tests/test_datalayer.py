@@ -28,7 +28,9 @@ if _API_SERVER_DIR not in sys.path:
 
 import feedparser  # noqa: E402
 
-from app import data, db, repo  # noqa: E402
+from datetime import timedelta  # noqa: E402
+
+from app import data, db, repo, skills  # noqa: E402
 from app.sources import fundamentals, news, prices, sectors, sentiment  # noqa: E402
 
 
@@ -334,6 +336,87 @@ def test_as_of_and_source_of_helpers():
     assert repo.as_of(mock) is None
     assert repo.source_of(mock, live) == "live"
     assert repo.source_of(mock, mock) == "mock"
+
+
+# ============================================================================
+# Earnings calendar builder — real dates, honest coverage, source semantics
+# ============================================================================
+@contextlib.contextmanager
+def _fake_calendar_snapshots(snapshots):
+    """Drive ``build_earnings_calendar`` from controlled company snapshots.
+
+    Patches symbol resolution and the bulk repository read so the builder runs
+    with no DB, exercising the real date/coverage/source logic in
+    ``data.earnings_calendar`` + ``build_earnings_calendar``.
+    """
+    bulk = {s.upper(): dict(snap, symbol=s.upper()) for s, snap in snapshots.items()}
+    orig_get = data.get_company
+    orig_bulk = repo.companies_bulk
+    data.get_company = lambda s: {"symbol": str(s).upper()}
+    repo.companies_bulk = lambda syms: {s: bulk[s] for s in syms if s in bulk}
+    try:
+        yield
+    finally:
+        data.get_company = orig_get
+        repo.companies_bulk = orig_bulk
+
+
+def test_earnings_calendar_live_with_rows_and_eps():
+    soon = (date.today() + timedelta(days=5)).isoformat()
+    with _fake_calendar_snapshots({
+        "AMD": {"earningsDate": soon, "earningsEpsEstimate": 1.605,
+                "_asOf": "2026-06-09T00:00:00+00:00", "_source": "live"},
+    }):
+        res = skills.build_earnings_calendar({"symbols": ["AMD"]})
+    assert res["source"] == "live"
+    assert res["asOf"] == "2026-06-09T00:00:00+00:00"
+    assert res["count"] == 1
+    assert res["rows"][0]["epsEstimate"] == 1.6  # rounded, not fabricated
+    assert res["rows"][0]["timing"] == "unknown"  # free feed is date-only
+    assert res["uncoveredCount"] == 0
+
+
+def test_earnings_calendar_live_when_real_date_outside_horizon():
+    """Regression: real dates beyond the window must still report source=live.
+
+    The fetch succeeded — the panel just has no rows in this window — so it must
+    NOT render the "feed unavailable" empty state.
+    """
+    far = (date.today() + timedelta(days=100)).isoformat()
+    with _fake_calendar_snapshots({
+        "NVDA": {"earningsDate": far, "earningsEpsEstimate": None,
+                 "_asOf": "2026-06-09T00:00:00+00:00", "_source": "live"},
+    }):
+        res = skills.build_earnings_calendar({"symbols": ["NVDA"], "days": 7})
+    assert res["source"] == "live"  # not "unavailable"
+    assert res["asOf"] == "2026-06-09T00:00:00+00:00"
+    assert res["count"] == 0          # nothing inside the 7-day window
+    assert res["uncoveredCount"] == 0  # a known future date is still covered
+
+
+def test_earnings_calendar_unavailable_when_no_real_dates():
+    with _fake_calendar_snapshots({
+        "MSFT": {"earningsDate": None, "earningsEpsEstimate": None,
+                 "_asOf": None, "_source": "mock"},
+    }):
+        res = skills.build_earnings_calendar({"symbols": ["MSFT"]})
+    assert res["source"] == "unavailable"
+    assert res["asOf"] is None
+    assert res["count"] == 0
+    assert res["uncoveredCount"] == 1  # flagged honestly, not fabricated
+
+
+def test_earnings_calendar_stale_date_is_uncovered_but_source_live():
+    """A past-only date is honestly uncovered, yet the feed clearly worked."""
+    past = (date.today() - timedelta(days=30)).isoformat()
+    with _fake_calendar_snapshots({
+        "INTC": {"earningsDate": past, "earningsEpsEstimate": 0.4,
+                 "_asOf": "2026-06-09T00:00:00+00:00", "_source": "live"},
+    }):
+        res = skills.build_earnings_calendar({"symbols": ["INTC"]})
+    assert res["source"] == "live"
+    assert res["count"] == 0
+    assert res["uncoveredCount"] == 1
 
 
 # ============================================================================

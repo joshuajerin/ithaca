@@ -12,7 +12,7 @@ import hashlib
 import math
 import re
 from datetime import date, datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 SECTORS = {
     "semiconductors": "Semiconductors",
@@ -2218,44 +2218,20 @@ def news_for(scope_type: str, scope: str, limit: int = 40) -> List[dict]:
 
 
 # ----------------------------- earnings calendar -----------------------------
-# Companies report quarterly. Each name's report day is derived deterministically
-# from its symbol seed so the schedule is stable across restarts, while always
-# rolling forward relative to today (no stale, hand-written dates). Timing
-# (before/after market) and the consensus EPS estimate are likewise deterministic
-# but fabricated-yet-plausible, consistent with the rest of this mock dataset.
-_EARNINGS_EPOCH = date(2000, 1, 3)  # a Monday, fixes the cycle phase
-_EARNINGS_CYCLE = 91  # ~ one fiscal quarter in days
-
-
-def _earnings_report_date(symbol: str, today: date) -> date:
-    """Next scheduled report date on or after ``today`` for ``symbol``."""
-    offset = _seed(symbol) % _EARNINGS_CYCLE
-    cycle_pos = (today - _EARNINGS_EPOCH).days % _EARNINGS_CYCLE
-    delta = (offset - cycle_pos) % _EARNINGS_CYCLE
-    report = today + timedelta(days=delta)
-    # Earnings land on business days — nudge a weekend date to the next Monday.
-    wd = report.weekday()
-    if wd == 5:
-        report += timedelta(days=2)
-    elif wd == 6:
-        report += timedelta(days=1)
-    return report
-
-
-def _earnings_timing(symbol: str) -> str:
-    return "bmo" if (_seed(symbol) // 7) % 2 == 0 else "amc"
-
-
-def _earnings_eps_estimate(company: dict) -> Optional[float]:
-    eps = company.get("eps")
-    if eps is None:
-        return None
-    factor = 0.90 + ((_seed(company["symbol"]) // 13) % 21) / 100.0  # 0.90..1.10
-    return round((eps / 4.0) * factor, 2)
+# Report dates and consensus EPS estimates come from the live yfinance calendar
+# feed (stored on the fundamentals table, surfaced as ``earningsDate`` /
+# ``earningsEpsEstimate`` on the company snapshot). Nothing here is synthesized:
+# a company with no live scheduled date is reported as uncovered rather than
+# given a fabricated date. The free feed supplies only a calendar date, not the
+# before/after-market session, so timing is left "unknown" instead of guessed.
 
 
 def _fiscal_quarter(report: date) -> str:
-    """Plausible label for the just-reported fiscal quarter (~1 month prior)."""
+    """Best-effort label for the just-reported fiscal quarter (~1 month prior).
+
+    A display approximation only (real fiscal calendars vary by company); the
+    report date and EPS estimate themselves are never approximated.
+    """
     q_idx = (report.month - 2) // 3
     year = report.year
     if q_idx < 0:
@@ -2264,44 +2240,69 @@ def _fiscal_quarter(report: date) -> str:
     return f"Q{q_idx + 1} FY{year}"
 
 
-def earnings_calendar(symbols: List[str], horizon_days: int = 30,
-                      today: Optional[date] = None) -> List[dict]:
-    """Build dated, sorted earnings rows for the given symbols within a horizon.
+def _parse_earnings_date(value) -> Optional[date]:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except (TypeError, ValueError):
+        return None
 
-    Each row carries the report date/time, before/after-market timing, the
-    consensus EPS estimate, the fiscal quarter, a live countdown (``hoursUntil``)
-    and an ``imminent`` flag (reporting within the next 24 hours).
+
+def earnings_calendar(companies: List[dict], horizon_days: int = 30,
+                      today: Optional[date] = None
+                      ) -> Tuple[List[dict], List[dict]]:
+    """Build dated, sorted earnings rows from REAL scheduled report dates.
+
+    ``companies`` are live company snapshots (from the repository) carrying
+    ``earningsDate`` and ``earningsEpsEstimate`` when the feed has them. Returns
+    ``(rows, uncovered)`` where ``rows`` are the names with a real upcoming date
+    inside ``horizon_days`` and ``uncovered`` flags every requested name that has
+    no available scheduled date (honest coverage — never fabricated).
+
+    Each row carries the report date, the consensus EPS estimate (or ``None``),
+    the fiscal-quarter label, a live countdown (``hoursUntil``) and an
+    ``imminent`` flag (reporting today or tomorrow). The free feed is date-only,
+    so ``timing`` is ``"unknown"`` and ``reportDateTime`` anchors to the date.
     """
     today = today or date.today()
     now = datetime.now()
     rows: List[dict] = []
-    for sym in symbols:
-        c = COMPANIES.get(sym.upper())
+    uncovered: List[dict] = []
+    for c in companies:
         if not c:
             continue
-        report = _earnings_report_date(c["symbol"], today)
+        sym = (c.get("symbol") or "").upper()
+        if not sym:
+            continue
+        report = _parse_earnings_date(c.get("earningsDate"))
+        # No date, or only a stale (past) one → there is no known upcoming
+        # report. Flag it honestly instead of inventing a future date.
+        if report is None or report < today:
+            uncovered.append({"symbol": sym, "name": c.get("name") or sym})
+            continue
         days_until = (report - today).days
         if days_until > horizon_days:
-            continue
-        timing = _earnings_timing(c["symbol"])
-        hour, minute = (8, 0) if timing == "bmo" else (16, 15)
-        report_dt = datetime(report.year, report.month, report.day, hour, minute)
+            continue  # known but beyond the requested window (still covered)
+        sid = c.get("sector") or "ai_tech"
+        report_dt = datetime(report.year, report.month, report.day)
         hours_until = round((report_dt - now).total_seconds() / 3600.0, 1)
+        eps_est = c.get("earningsEpsEstimate")
         rows.append({
-            "symbol": c["symbol"],
-            "name": c["name"],
-            "sector": c["sector"],
-            "sectorName": SECTORS.get(c["sector"], c["sector"]),
+            "symbol": sym,
+            "name": c.get("name") or sym,
+            "sector": sid,
+            "sectorName": SECTORS.get(sid, sid),
             "reportDate": report.isoformat(),
             "reportDateTime": report_dt.isoformat(),
-            "timing": timing,
-            "timingLabel": "Before Market Open" if timing == "bmo" else "After Market Close",
-            "epsEstimate": _earnings_eps_estimate(c),
+            "timing": "unknown",
+            "timingLabel": "Session not disclosed",
+            "epsEstimate": round(eps_est, 2) if eps_est is not None else None,
             "quarter": _fiscal_quarter(report),
             "daysUntil": days_until,
             "hoursUntil": hours_until,
-            "imminent": 0 <= hours_until <= 24,
+            "imminent": 0 <= days_until <= 1,
             "marketCap": c.get("marketCap"),
         })
-    rows.sort(key=lambda r: r["reportDateTime"])
-    return rows
+    rows.sort(key=lambda r: r["reportDate"])
+    return rows, uncovered

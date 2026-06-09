@@ -6487,7 +6487,27 @@ def build_earnings_calendar(params: dict) -> dict:
     if not syms:
         raise ValueError("No tracked symbols to build an earnings calendar for.")
 
-    rows = data.earnings_calendar(syms, horizon_days=horizon)
+    # Pull live company snapshots (real earningsDate + consensus EPS estimate)
+    # from the repository; nothing is synthesized.
+    bulk = repo.companies_bulk(syms)
+    companies = [bulk[s] for s in syms if s in bulk]
+
+    rows, uncovered = data.earnings_calendar(companies, horizon_days=horizon)
+
+    # Live availability reflects whether the calendar feed actually supplied real
+    # dates for the requested names — NOT whether any of those dates happen to
+    # fall inside the current horizon window. A name with a real date that's just
+    # beyond the window still proves the feed worked, so the source stays "live".
+    # (A stale/past-only date still counts as fetched data; it lands in uncovered
+    # but does not make the whole panel report a fetch failure.)
+    dated = [c for c in companies if c.get("earningsDate")]
+    as_ofs = [c.get("_asOf") for c in dated if c.get("_asOf")]
+    if dated:
+        source = "live"
+        as_of = max(as_ofs) if as_ofs else date.today().isoformat()
+    else:
+        source = "unavailable"
+        as_of = None
 
     # Keep the panel readable while always preserving the soonest (imminent) names,
     # which sit at the front after the date sort.
@@ -6507,8 +6527,10 @@ def build_earnings_calendar(params: dict) -> dict:
         "count": len(rows),
         "watchlistSize": len(syms),
         "scope": scope_label,
-        "asOf": date.today().isoformat(),
-        "source": "Synthetic earnings schedule",
+        "uncovered": uncovered,
+        "uncoveredCount": len(uncovered),
+        "asOf": as_of,
+        "source": source,
     }
 
 

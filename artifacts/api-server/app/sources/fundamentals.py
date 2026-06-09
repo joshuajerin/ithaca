@@ -150,10 +150,12 @@ def fetch_calendar(symbol: str) -> Dict:
     free calendar feed.
 
     Keys (any may be None): ``earningsDate``, ``exDividendDate``,
-    ``dividendDate`` — each an ISO date string for the soonest upcoming event.
-    Falls back to the ``info`` earnings timestamp when the calendar lacks an
-    earnings date. Raises on network/parse failure so the worker can log and
-    skip this symbol.
+    ``dividendDate`` — each an ISO date string for the soonest upcoming event —
+    plus ``earningsEpsEstimate``, the consensus per-share estimate Yahoo carries
+    alongside the next earnings date (the calendar's "Earnings Average").
+    Falls back to the ``info`` earnings timestamp / forward EPS when the calendar
+    lacks them. Raises on network/parse failure so the worker can log and skip
+    this symbol.
     """
     sym = symbol.upper()
     ticker = yf.Ticker(sym)
@@ -164,21 +166,26 @@ def fetch_calendar(symbol: str) -> Dict:
     earnings = _soonest_date(cal.get("Earnings Date"))
     ex_div = _soonest_date(cal.get("Ex-Dividend Date"))
     div = _soonest_date(cal.get("Dividend Date"))
+    eps_estimate = _f(cal.get("Earnings Average"))
 
-    if earnings is None:
+    if earnings is None or eps_estimate is None:
         info = ticker.info or {}
-        ts = info.get("earningsTimestampStart") or info.get("earningsTimestamp")
-        if ts:
-            try:
-                earnings = datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
-            except (TypeError, ValueError, OSError):
-                earnings = None
+        if earnings is None:
+            ts = info.get("earningsTimestampStart") or info.get("earningsTimestamp")
+            if ts:
+                try:
+                    earnings = datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
+                except (TypeError, ValueError, OSError):
+                    earnings = None
+        if eps_estimate is None:
+            eps_estimate = _f(info.get("epsCurrentYear") or info.get("forwardEps"))
 
     return {
         "symbol": sym,
         "earningsDate": earnings,
         "exDividendDate": ex_div,
         "dividendDate": div,
+        "earningsEpsEstimate": eps_estimate,
     }
 
 

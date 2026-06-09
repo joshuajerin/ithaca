@@ -67,6 +67,7 @@ def get_company(symbol: str) -> Optional[dict]:
                        f.dividend_yield, f.beta,
                        f.week52_high, f.week52_low, f.description, f.is_live,
                        f.earnings_date, f.ex_dividend_date, f.dividend_date,
+                       f.earnings_eps_estimate,
                        f.updated_at
                 FROM fundamentals f
                 LEFT JOIN universe u ON u.symbol = f.symbol
@@ -123,6 +124,7 @@ def _company_from_row(row: dict) -> dict:
         "earningsDate": _iso(row.get("earnings_date")),
         "exDividendDate": _iso(row.get("ex_dividend_date")),
         "dividendDate": _iso(row.get("dividend_date")),
+        "earningsEpsEstimate": _num(row.get("earnings_eps_estimate")) if row.get("earnings_eps_estimate") is not None else None,
         "_asOf": _iso(row.get("updated_at")),
         "_source": "live" if row.get("is_live") else "mock",
     }
@@ -155,6 +157,7 @@ def companies_bulk(symbols: List[str]) -> Dict[str, dict]:
                        f.dividend_yield, f.beta,
                        f.week52_high, f.week52_low, f.description, f.is_live,
                        f.earnings_date, f.ex_dividend_date, f.dividend_date,
+                       f.earnings_eps_estimate,
                        f.updated_at
                 FROM fundamentals f
                 LEFT JOIN universe u ON u.symbol = f.symbol

@@ -88,6 +88,7 @@ def _seed_universe() -> None:
         "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS earnings_date DATE",
         "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS ex_dividend_date DATE",
         "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS dividend_date DATE",
+        "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS earnings_eps_estimate DOUBLE PRECISION",
         "ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS mcap_refreshed_at TIMESTAMPTZ",
         # Point-in-time universe lifecycle: listing/delisting dates + status so a
         # historical window can resolve to the names active then (incl. delisted).
@@ -322,16 +323,17 @@ def _upsert_calendar(c: dict) -> None:
     db.execute(
         """
         INSERT INTO fundamentals (symbol, earnings_date, ex_dividend_date,
-                                  dividend_date, updated_at)
-        VALUES (%s, %s, %s, %s, now())
+                                  dividend_date, earnings_eps_estimate, updated_at)
+        VALUES (%s, %s, %s, %s, %s, now())
         ON CONFLICT (symbol) DO UPDATE SET
           earnings_date = COALESCE(EXCLUDED.earnings_date, fundamentals.earnings_date),
           ex_dividend_date = COALESCE(EXCLUDED.ex_dividend_date, fundamentals.ex_dividend_date),
           dividend_date = COALESCE(EXCLUDED.dividend_date, fundamentals.dividend_date),
+          earnings_eps_estimate = COALESCE(EXCLUDED.earnings_eps_estimate, fundamentals.earnings_eps_estimate),
           updated_at = now()
         """,
         (c.get("symbol"), c.get("earningsDate"), c.get("exDividendDate"),
-         c.get("dividendDate")),
+         c.get("dividendDate"), c.get("earningsEpsEstimate")),
     )
 
 
