@@ -1404,6 +1404,139 @@ def refresh_news_live(scope_type: str, scope: str) -> None:
         log.warning("query-time news fetch failed (%s/%s): %s", scope_type, scope, exc)
 
 
+# ----------------------------- congress trades -----------------------------
+def _congress_row(r: dict) -> dict:
+    txn = _iso_date(r.get("transaction_date"))
+    disc = _iso_date(r.get("disclosure_date"))
+    lag = None
+    if txn and disc:
+        try:
+            from datetime import date as _date
+            d = (_date.fromisoformat(disc) - _date.fromisoformat(txn)).days
+            lag = d if d >= 0 else None
+        except ValueError:
+            lag = None
+    return {
+        "id": r["id"],
+        "member": r.get("member"),
+        "chamber": r.get("chamber"),
+        "party": r.get("party") or "Unknown",
+        "partyCode": r.get("party_code"),
+        "ticker": r.get("ticker"),
+        "type": r.get("txn_type") or "other",
+        "rawType": r.get("raw_type"),
+        "amountRange": r.get("amount_range"),
+        "amountLow": _num(r.get("amount_low"), None) if r.get("amount_low") is not None else None,
+        "amountHigh": _num(r.get("amount_high"), None) if r.get("amount_high") is not None else None,
+        "transactionDate": txn,
+        "disclosureDate": disc,
+        "lagDays": lag,
+        "sourceUrl": r.get("source_url"),
+        "description": r.get("description"),
+        "_asOf": _iso(r.get("fetched_at")),
+        "_source": "live",
+    }
+
+
+def congress_trades(ticker: Optional[str] = None, chamber: Optional[str] = None,
+                    party: Optional[str] = None, limit: int = 60) -> List[dict]:
+    """Most-recent disclosed congressional trades, optionally filtered by ticker /
+    chamber / party. Falls back to the curated mock set if the DB is unavailable
+    or empty so the panel never renders blank."""
+    if db.db_available():
+        try:
+            where: List[str] = []
+            args: List = []
+            if ticker:
+                where.append("ticker = %s")
+                args.append(ticker.upper())
+            if chamber:
+                where.append("LOWER(chamber) = %s")
+                args.append(chamber.strip().lower())
+            if party:
+                where.append("(LOWER(party) = %s OR party_code = %s)")
+                args.extend([party.strip().lower(), party.strip().upper()])
+            clause = (" WHERE " + " AND ".join(where)) if where else ""
+            args.append(limit)
+            rows = db.query(
+                "SELECT * FROM congress_trades" + clause +
+                " ORDER BY disclosure_date DESC NULLS LAST,"
+                " transaction_date DESC NULLS LAST, fetched_at DESC LIMIT %s",
+                tuple(args),
+            )
+            if rows:
+                return [_congress_row(r) for r in rows]
+        except Exception as exc:  # noqa: BLE001
+            log.warning("congress_trades DB error (%s/%s/%s): %s", ticker, chamber, party, exc)
+    return data.congress_trades(ticker=ticker, chamber=chamber, party=party, limit=limit)
+
+
+def upsert_congress_trades(items: List[dict]) -> None:
+    """Idempotent upsert of normalized congress trades keyed by stable id."""
+    if not items:
+        return
+    rows = [
+        (it["id"], it.get("member"), it.get("chamber"), it.get("party"),
+         it.get("partyCode"), it.get("ticker"), it.get("type"), it.get("rawType"),
+         it.get("amountRange"), it.get("amountLow"), it.get("amountHigh"),
+         it.get("transactionDate"), it.get("disclosureDate"),
+         it.get("sourceUrl"), it.get("description"))
+        for it in items
+    ]
+    db.execute_many(
+        """
+        INSERT INTO congress_trades
+            (id, member, chamber, party, party_code, ticker, txn_type, raw_type,
+             amount_range, amount_low, amount_high, transaction_date,
+             disclosure_date, source_url, description, fetched_at)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+        ON CONFLICT (id) DO UPDATE SET
+          member = EXCLUDED.member, chamber = EXCLUDED.chamber,
+          party = EXCLUDED.party, party_code = EXCLUDED.party_code,
+          ticker = EXCLUDED.ticker, txn_type = EXCLUDED.txn_type,
+          raw_type = EXCLUDED.raw_type, amount_range = EXCLUDED.amount_range,
+          amount_low = EXCLUDED.amount_low, amount_high = EXCLUDED.amount_high,
+          transaction_date = EXCLUDED.transaction_date,
+          disclosure_date = EXCLUDED.disclosure_date,
+          source_url = COALESCE(EXCLUDED.source_url, congress_trades.source_url),
+          description = COALESCE(EXCLUDED.description, congress_trades.description),
+          fetched_at = now()
+        """,
+        rows,
+    )
+
+
+def _congress_stale(max_age_seconds: float = 3600.0) -> bool:
+    """True if the stored congress feed is missing or older than ``max_age_seconds``."""
+    try:
+        row = db.query_one("SELECT MAX(fetched_at) AS m FROM congress_trades")
+    except Exception:  # noqa: BLE001 — table may not exist yet
+        return False
+    m = row.get("m") if row else None
+    if not m:
+        return True
+    if isinstance(m, datetime):
+        if m.tzinfo is None:
+            m = m.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - m).total_seconds() > max_age_seconds
+    return True
+
+
+def refresh_congress_live() -> None:
+    """Best-effort, bounded query-time refresh of the congress feed so the panel
+    is fresh on the first request even before the worker loop runs. Skips the
+    fetch when the stored data is still fresh. Never raises."""
+    if not db.db_available() or not _congress_stale():
+        return
+    try:
+        from .sources import congress as c_src
+        items = c_src.dedupe(c_src.fetch_congress_trades(limit=1000, timeout=10.0))
+        if items:
+            upsert_congress_trades(items)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("query-time congress fetch failed: %s", exc)
+
+
 # ----------------------------- sentiment -----------------------------
 def get_sentiment(scope_type: str, scope: str) -> Optional[dict]:
     if not db.db_available():

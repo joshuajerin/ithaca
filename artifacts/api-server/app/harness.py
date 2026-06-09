@@ -47,6 +47,7 @@ DATA_MODELS = {
     "signal_research": models.SignalResearchData,
     "signal_scorecard": models.SignalScorecardData,
     "analyst_ratings": models.AnalystRatingsData,
+    "congress_trades": models.CongressTradesData,
 }
 
 

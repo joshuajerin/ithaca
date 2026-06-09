@@ -273,6 +273,27 @@ def _tools() -> list:
             }, "required": ["symbol"]},
         }},
         {"type": "function", "function": {
+            "name": "add_congress_trades",
+            "description": (
+                "Add a feed of recent public U.S. congressional trading disclosures "
+                "(STOCK Act: House Periodic Transaction Reports + Senate Financial "
+                "Disclosures). Each row has the member, chamber (House/Senate), party, "
+                "ticker, buy/sell, the disclosed dollar amount range, the transaction "
+                "date and the (later) disclosure date, with the reporting lag shown; "
+                "notable activity (large trades, tickers bought by several members) is "
+                "highlighted. Use for 'congress trades', 'congressional trading', 'what "
+                "is congress buying', 'senator/representative stock trades', 'politician "
+                "trades'. Pass ticker to filter to one name (e.g. 'congress trades in "
+                f"NVDA'). {sizing}"
+            ),
+            "parameters": {"type": "object", "properties": {
+                "ticker": {"type": "string", "description": f"Optional ticker to filter to ({syms})."},
+                "chamber": {"type": "string", "enum": ["House", "Senate"], "description": "Optional chamber filter."},
+                "party": {"type": "string", "enum": ["Democrat", "Republican", "Independent"], "description": "Optional party filter."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
+        {"type": "function", "function": {
             "name": "add_macro_dashboard",
             "description": (
                 f"Add a macro/cross-asset dashboard panel. {sizing} "
@@ -1009,6 +1030,7 @@ _TOOL_TO_TYPE = {
     "add_etf_holdings": "etf_holdings",
     "add_etf_exposure": "etf_exposure",
     "add_insider_activity": "insider_activity",
+    "add_congress_trades": "congress_trades",
     "add_ma_tracker": "ma_tracker",
     "add_company_analytics": "company_analytics",
     "add_company_analytics_compare": "company_analytics_compare",
@@ -1123,6 +1145,9 @@ def _system_prompt() -> str:
         "a stock's ETF exposure — use add_etf_exposure.\n"
         "- For insider activity / insider trading / insider buying-selling / Form 4 / 'what are "
         "executives/officers/directors buying or selling' requests, use add_insider_activity with the symbol.\n"
+        "- For congressional / congress / senator / representative / politician stock trades, "
+        "'what is congress buying', or STOCK Act disclosures, use add_congress_trades "
+        "(pass ticker to filter, e.g. 'congress trades in NVDA').\n"
         "- For M&A / deal flow / mergers / acquisitions / arb spread requests, use add_ma_tracker.\n"
         "- For backtest / strategy / Sharpe / drawdown requests, use add_backtest. For research-integrity "
         "checks — 'is this strategy overfit / robust / data-mined', out-of-sample or walk-forward validation, "
@@ -2880,6 +2905,7 @@ _TYPE_LABELS = {
     "earnings_transcript": "an earnings transcript",
     "earnings_calendar": "an earnings calendar",
     "insider_activity": "insider activity",
+    "congress_trades": "a congressional trades feed",
     "ma_tracker": "an M&A tracker",
     "company_analytics": "a company analytics panel",
     "company_analytics_compare": "a company comparison",
@@ -3464,6 +3490,16 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         and any(k in q for k in ["strateg", "sleeve"])
     )
     wants_multistrat = _sleeve_words or _firm_words or _alloc_across_strats
+    wants_congress = any(k in q for k in [
+        "congress trade", "congress trading", "congressional trade", "congressional trading",
+        "congress buy", "congress buying", "congress sell", "congress selling",
+        "congress is buying", "congress is trading", "what is congress", "what's congress",
+        "senator trade", "senator trading", "senate trade", "senate trading",
+        "representative trade", "representative trading", "house trade", "house trading",
+        "politician trade", "politician trading", "politician stock", "lawmaker trade",
+        "lawmaker trading", "stock act", "capitol trades", "pelosi trade", "pelosi buy",
+        "congress stock", "congressional disclosure",
+    ]) or ("congress" in q and any(k in q for k in ["buy", "buying", "sell", "selling", "trade", "trades", "trading", "stock", "stocks", "holding", "holdings", "disclos"]))
     wants_shorting = any(k in q for k in [
         "borrow cost", "borrow fee", "cost to short", "cost of shorting", "cost of being short",
         "shorting cost", "short cost", "carry cost", "carrying cost", "hard to borrow",
@@ -3563,6 +3599,28 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         else "inverse_correlation" if any(k in q for k in ["inverse correlation", "inverse-correlation", "risk weight", "risk-weight", "risk parity", "risk-parity", "decorrel", "diversif"])
         else "equal_weight"
     )
+
+    if wants_congress:
+        cp: dict = {}
+        if symbols:
+            cp["ticker"] = symbols[0]
+        if "senate" in q or "senator" in q:
+            cp["chamber"] = "Senate"
+        elif any(k in q for k in ["house ", "representative", "congressman", "congresswoman"]):
+            cp["chamber"] = "House"
+        if "democrat" in q or "democratic" in q:
+            cp["party"] = "Democrat"
+        elif "republican" in q:
+            cp["party"] = "Republican"
+        add("congress_trades", cp, 12, 6)
+        if cp.get("ticker"):
+            name = data.get_company(cp["ticker"])
+            label = name["name"] if name else cp["ticker"]
+            return panels, (f"Congressional trades in {label}: each disclosed buy/sell with the "
+                            "member, chamber, party, amount range and the reporting lag.")
+        return panels, ("Congressional trades feed: recent public STOCK Act disclosures with "
+                        "member, chamber, party, amount range and reporting lag, plus flagged "
+                        "large and clustered activity.")
 
     if wants_multistrat:
         mp = {}

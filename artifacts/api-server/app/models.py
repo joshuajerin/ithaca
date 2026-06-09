@@ -44,6 +44,7 @@ class PanelType(str, Enum):
     signal_research = "signal_research"
     signal_scorecard = "signal_scorecard"
     analyst_ratings = "analyst_ratings"
+    congress_trades = "congress_trades"
 
 
 class PanelStatus(str, Enum):
@@ -97,6 +98,54 @@ class NewsItem(BaseModel):
 class NewsData(BaseModel):
     scope: str
     items: List[NewsItem]
+
+
+# --- congress_trades ---
+class CongressTrade(BaseModel):
+    id: str
+    member: str
+    chamber: Optional[str] = None
+    party: Optional[str] = None
+    partyCode: Optional[str] = None
+    ticker: Optional[str] = None
+    type: str
+    rawType: Optional[str] = None
+    amountRange: Optional[str] = None
+    amountLow: Optional[float] = None
+    amountHigh: Optional[float] = None
+    transactionDate: Optional[str] = None
+    disclosureDate: Optional[str] = None
+    lagDays: Optional[int] = None
+    sourceUrl: Optional[str] = None
+    description: Optional[str] = None
+
+
+class CongressHighlight(BaseModel):
+    kind: str
+    label: str
+    detail: str
+    ticker: Optional[str] = None
+    members: List[str] = []
+
+
+class CongressStats(BaseModel):
+    total: int
+    buys: int
+    sells: int
+    exchanges: int
+    avgLagDays: Optional[float] = None
+    maxLagDays: Optional[int] = None
+    uniqueMembers: int
+
+
+class CongressTradesData(BaseModel):
+    scope: str
+    ticker: Optional[str] = None
+    trades: List[CongressTrade]
+    highlights: List[CongressHighlight] = []
+    stats: CongressStats
+    lagNote: str
+    disclaimer: str
 
 
 # --- analysis ---

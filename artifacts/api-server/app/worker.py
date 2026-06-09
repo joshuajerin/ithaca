@@ -20,6 +20,7 @@ import os
 from typing import List, Optional
 
 from . import data, db, orderbook_store, repo, strategy
+from .sources import congress as c_src
 from .sources import edgar as e_src
 from .sources import fundamentals as f_src
 from .sources import holdings as h_src
@@ -35,6 +36,10 @@ log = logging.getLogger("terminal.worker")
 PRICE_INTERVAL = 90
 FUNDAMENTALS_INTERVAL = 900
 NEWS_INTERVAL = 120
+# Congress disclosures have a multi-week reporting lag and the upstream feed only
+# changes a few times a day, so a gentle cadence keeps the panel current without
+# hammering the source.
+CONGRESS_INTERVAL = 6 * 3600
 SENTIMENT_INTERVAL = 600
 MACRO_INTERVAL = 120
 ONDEMAND_INTERVAL = 15
@@ -217,6 +222,33 @@ def _seed_universe() -> None:
         "CREATE INDEX IF NOT EXISTS insider_symbol_date_idx "
         "ON insider_transactions (symbol, transaction_date)"
     )
+
+    # Public U.S. congressional trading disclosures (STOCK Act). Kept in its own
+    # table; one row per normalized disclosure keyed by a stable content id.
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS congress_trades (
+            id TEXT PRIMARY KEY,
+            member TEXT NOT NULL,
+            chamber TEXT,
+            party TEXT,
+            party_code TEXT,
+            ticker TEXT,
+            txn_type TEXT,
+            raw_type TEXT,
+            amount_range TEXT,
+            amount_low DOUBLE PRECISION,
+            amount_high DOUBLE PRECISION,
+            transaction_date DATE,
+            disclosure_date DATE,
+            source_url TEXT,
+            description TEXT,
+            fetched_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        """
+    )
+    db.execute("CREATE INDEX IF NOT EXISTS congress_trades_ticker_idx ON congress_trades (ticker)")
+    db.execute("CREATE INDEX IF NOT EXISTS congress_trades_disc_idx ON congress_trades (disclosure_date DESC)")
 
     # Dedicated macro quote table — kept separate from `fundamentals` so live
     # macro instruments never leak into equity screeners/heatmaps/all_symbols.
@@ -801,6 +833,21 @@ async def _ingest_market_news() -> None:
         log.warning("market news ingest failed: %s", exc)
 
 
+async def _ingest_congress_trades() -> None:
+    """Pull the most recent disclosed congressional trades and upsert them.
+    Best-effort: a slow/throttled source leaves the stored feed in place."""
+    try:
+        items = await _net(c_src.fetch_congress_trades, 1000)
+        items = c_src.dedupe(items or [])
+        if items:
+            await asyncio.to_thread(repo.upsert_congress_trades, items)
+            log.info("congress trades cycle complete (%d disclosures)", len(items))
+    except CircuitOpenError as exc:
+        log.debug("congress ingest skipped: %s", exc)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("congress trades ingest failed: %s", exc)
+
+
 # ----------------------------- loops -----------------------------
 async def _price_loop():
     while True:
@@ -825,6 +872,12 @@ async def _fundamentals_loop():
         except Exception as exc:  # noqa: BLE001
             log.warning("fundamentals loop error: %s", exc)
         await asyncio.sleep(FUNDAMENTALS_INTERVAL)
+
+
+async def _congress_loop():
+    while True:
+        await _ingest_congress_trades()
+        await asyncio.sleep(CONGRESS_INTERVAL)
 
 
 async def _news_loop():
@@ -1230,6 +1283,7 @@ async def start() -> None:
     _tasks.append(asyncio.create_task(_price_loop()))
     _tasks.append(asyncio.create_task(_fundamentals_loop()))
     _tasks.append(asyncio.create_task(_news_loop()))
+    _tasks.append(asyncio.create_task(_congress_loop()))
     _tasks.append(asyncio.create_task(_sentiment_loop()))
     _tasks.append(asyncio.create_task(_breadth_market_cap_loop()))
     _tasks.append(asyncio.create_task(_pit_loop()))

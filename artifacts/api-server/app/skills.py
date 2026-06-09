@@ -249,6 +249,121 @@ def build_news(params: dict) -> dict:
     return {"scope": label, "items": items, "asOf": as_of, "source": _live_source()}
 
 
+CONGRESS_PANEL_LIMIT = 60
+# A single disclosed transaction whose upper amount bound clears this is flagged
+# as a notably large trade.
+_CONGRESS_LARGE_THRESHOLD = 100_000.0
+# A ticker bought by at least this many distinct members in the shown window is
+# flagged as clustered buying.
+_CONGRESS_CLUSTER_MIN = 2
+
+
+def _congress_highlights(trades: list) -> list:
+    """Surface notable activity: clustered buying (several members in one name)
+    and individually large buys/sells. Clusters first, then largest trades."""
+    from collections import defaultdict
+
+    clusters: list = []
+    by_ticker: dict = defaultdict(set)
+    for t in trades:
+        if t.get("type") == "buy" and t.get("ticker"):
+            by_ticker[t["ticker"]].add(t.get("member"))
+    for tk, members in by_ticker.items():
+        members = {m for m in members if m}
+        if len(members) >= _CONGRESS_CLUSTER_MIN:
+            clusters.append({
+                "kind": "cluster_buy",
+                "label": f"Cluster buy · {tk}",
+                "detail": f"{len(members)} members bought {tk} in this window",
+                "ticker": tk,
+                "members": sorted(members),
+            })
+    clusters.sort(key=lambda h: len(h["members"]), reverse=True)
+
+    larges: list = []
+    for t in trades:
+        hi = t.get("amountHigh")
+        if hi and hi >= _CONGRESS_LARGE_THRESHOLD and t.get("type") in ("buy", "sell"):
+            larges.append((hi, {
+                "kind": "large_buy" if t["type"] == "buy" else "large_sale",
+                "label": f"Large {t['type']} · {t.get('member')}"
+                         + (f" · {t['ticker']}" if t.get("ticker") else ""),
+                "detail": f"{t.get('amountRange') or 'amount n/a'} "
+                          f"({t.get('chamber') or '—'}, {t.get('party') or '—'})",
+                "ticker": t.get("ticker"),
+                "members": [t.get("member")] if t.get("member") else [],
+            }))
+    larges.sort(key=lambda p: p[0], reverse=True)
+    return (clusters + [h for _, h in larges])[:8]
+
+
+def build_congress_trades(params: dict) -> dict:
+    """Feed of recent public U.S. congressional trading disclosures (STOCK Act),
+    optionally filtered to one ticker / chamber / party, with notable-activity
+    highlights and an honest read on the reporting lag."""
+    ticker = (params.get("ticker") or params.get("symbol") or "").strip().upper() or None
+    chamber = (params.get("chamber") or "").strip() or None
+    party = (params.get("party") or "").strip() or None
+    try:
+        limit = int(params.get("limit") or CONGRESS_PANEL_LIMIT)
+    except (TypeError, ValueError):
+        limit = CONGRESS_PANEL_LIMIT
+    limit = max(5, min(limit, 200))
+
+    # Best-effort, bounded query-time refresh so the feed is current even on the
+    # first request; falls back to stored/mock data if the source is slow.
+    repo.refresh_congress_live()
+    trades = repo.congress_trades(ticker=ticker, chamber=chamber, party=party, limit=limit)
+
+    buys = sum(1 for t in trades if t.get("type") == "buy")
+    sells = sum(1 for t in trades if t.get("type") == "sell")
+    exch = sum(1 for t in trades if t.get("type") == "exchange")
+    lags = [t["lagDays"] for t in trades if isinstance(t.get("lagDays"), int)]
+    avg_lag = round(sum(lags) / len(lags), 1) if lags else None
+    max_lag = max(lags) if lags else None
+    members = {t.get("member") for t in trades if t.get("member")}
+
+    if ticker:
+        scope = ticker
+    elif chamber and party:
+        scope = f"{chamber} · {party}"
+    elif chamber:
+        scope = chamber
+    elif party:
+        scope = party
+    else:
+        scope = "Recent activity"
+
+    lag_bits = ["Members must disclose trades within ~45 days under the STOCK Act, "
+                "so this reflects activity from days-to-weeks ago, not real time."]
+    if avg_lag is not None:
+        lag_bits.append(f"Average reporting lag here is {avg_lag:.0f} days"
+                        + (f" (longest {max_lag})." if max_lag is not None else "."))
+    lag_note = " ".join(lag_bits)
+
+    return {
+        "scope": scope,
+        "ticker": ticker,
+        "trades": trades,
+        "highlights": _congress_highlights(trades),
+        "stats": {
+            "total": len(trades),
+            "buys": buys,
+            "sells": sells,
+            "exchanges": exch,
+            "avgLagDays": avg_lag,
+            "maxLagDays": max_lag,
+            "uniqueMembers": len(members),
+        },
+        "lagNote": lag_note,
+        "disclaimer": "Public STOCK Act disclosures (U.S. House Periodic Transaction "
+                      "Reports + Senate Financial Disclosures), aggregated by Quiver "
+                      "Quantitative. Amounts are disclosed as ranges, not exact values.",
+        "asOf": repo.as_of(*trades),
+        "source": repo.source_of(*trades),
+    }
+
+
 def _fallback_analysis(scope_type: str, scope: str) -> dict:
     if scope_type == "symbol":
         company = repo.get_company(scope.upper())
@@ -8295,6 +8410,25 @@ def _reg(skill: SkillDef):
 
 
 _reg(SkillDef(
+    "congress-trades", "Congressional Trades Feed", "congress_trades",
+    "Feed of recent public U.S. congressional trading disclosures filed under the "
+    "STOCK Act (House Periodic Transaction Reports + Senate Financial Disclosures). "
+    "Each row shows the member, chamber (House/Senate), party, ticker, buy/sell, "
+    "the disclosed dollar amount range, the transaction date and the (later) "
+    "disclosure date, with the reporting lag made explicit. Highlights notable "
+    "activity (individually large trades and tickers bought by several members). "
+    "Use for 'congress trades', 'congressional trading', 'what is congress buying', "
+    "'senator/representative trades', 'politician stock trades'. Pass `ticker` to "
+    "filter to one name (e.g. 'congress trades in NVDA'), `chamber` (House/Senate) "
+    "or `party` (Democrat/Republican/Independent).",
+    [
+        {"name": "load_disclosures", "description": "Read the most recent disclosed congressional trades.", "expectedOutput": "Normalized member/ticker/amount/date rows."},
+        {"name": "flag_notable", "description": "Flag large trades and clustered buying.", "expectedOutput": "Notable-activity highlights."},
+        {"name": "report_lag", "description": "Surface the STOCK Act reporting lag honestly.", "expectedOutput": "Average/longest disclosure lag."},
+    ],
+    build_congress_trades, "Congressional Trades",
+))
+_reg(SkillDef(
     "strategy-desk", "Strategy Lifecycle Desk", "strategy_desk",
     "Lists every systematic strategy across the research → backtest → paper → live "
     "lifecycle with its stage, exposures and live (real-price) P&L, plus a marked "
@@ -8831,6 +8965,8 @@ _reg(SkillDef(
         {"name": "compare_prints", "description": "Distinguish the initial print from the current revised value.", "expectedOutput": "Initial vs current values and total revision per period."},
     ],
     build_series_revisions, "Data Revision History",
+))
+_reg(SkillDef(
     "polymarket-markets", "Prediction Markets", "polymarket_markets",
     "Browses real, live Polymarket prediction markets: lists the highest-volume active "
     "events by category (politics, crypto, sports, economy, geopolitics, tech, culture) with "

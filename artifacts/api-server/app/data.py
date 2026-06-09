@@ -2217,6 +2217,125 @@ def news_for(scope_type: str, scope: str, limit: int = 40) -> List[dict]:
     return out
 
 
+# ----------------------------- congress trades -----------------------------
+# Curated fallback used only when the live STOCK Act disclosure feed and the DB
+# are both unavailable, so the panel never renders blank. These mirror the shape
+# of real disclosures (well-known frequent filers, realistic amount ranges and a
+# realistic multi-week reporting lag) and are tagged source="mock" by the
+# builder. They are illustrative, not a record of any specific actual trade.
+_CONGRESS_TRADES = [
+    # An NVDA cluster (several members buying within days) + a large buy to
+    # exercise the "notable activity" highlights.
+    {"member": "Nancy Pelosi", "chamber": "House", "party": "Democrat", "partyCode": "D",
+     "ticker": "NVDA", "type": "buy", "rawType": "Purchase", "amountRange": "$1,000,001 - $5,000,000",
+     "amountLow": 1000001.0, "amountHigh": 5000000.0, "txn_days_ago": 41, "disc_days_ago": 9,
+     "description": "Call options exercised"},
+    {"member": "Ro Khanna", "chamber": "House", "party": "Democrat", "partyCode": "D",
+     "ticker": "NVDA", "type": "buy", "rawType": "Purchase", "amountRange": "$15,001 - $50,000",
+     "amountLow": 15001.0, "amountHigh": 50000.0, "txn_days_ago": 38, "disc_days_ago": 7,
+     "description": None},
+    {"member": "Michael McCaul", "chamber": "House", "party": "Republican", "partyCode": "R",
+     "ticker": "NVDA", "type": "buy", "rawType": "Purchase", "amountRange": "$50,001 - $100,000",
+     "amountLow": 50001.0, "amountHigh": 100000.0, "txn_days_ago": 33, "disc_days_ago": 5,
+     "description": None},
+    {"member": "Tommy Tuberville", "chamber": "Senate", "party": "Republican", "partyCode": "R",
+     "ticker": "MSFT", "type": "buy", "rawType": "Purchase", "amountRange": "$100,001 - $250,000",
+     "amountLow": 100001.0, "amountHigh": 250000.0, "txn_days_ago": 29, "disc_days_ago": 4,
+     "description": None},
+    {"member": "Sheldon Whitehouse", "chamber": "Senate", "party": "Democrat", "partyCode": "D",
+     "ticker": "AAPL", "type": "sell", "rawType": "Sale (Full)", "amountRange": "$15,001 - $50,000",
+     "amountLow": 15001.0, "amountHigh": 50000.0, "txn_days_ago": 26, "disc_days_ago": 6,
+     "description": None},
+    {"member": "Marjorie Taylor Greene", "chamber": "House", "party": "Republican", "partyCode": "R",
+     "ticker": "TSLA", "type": "buy", "rawType": "Purchase", "amountRange": "$1,001 - $15,000",
+     "amountLow": 1001.0, "amountHigh": 15000.0, "txn_days_ago": 22, "disc_days_ago": 3,
+     "description": None},
+    {"member": "Josh Gottheimer", "chamber": "House", "party": "Democrat", "partyCode": "D",
+     "ticker": "MSFT", "type": "buy", "rawType": "Purchase", "amountRange": "$50,001 - $100,000",
+     "amountLow": 50001.0, "amountHigh": 100000.0, "txn_days_ago": 20, "disc_days_ago": 5,
+     "description": None},
+    {"member": "Daniel Goldman", "chamber": "House", "party": "Democrat", "partyCode": "D",
+     "ticker": "AMZN", "type": "buy", "rawType": "Purchase", "amountRange": "$250,001 - $500,000",
+     "amountLow": 250001.0, "amountHigh": 500000.0, "txn_days_ago": 18, "disc_days_ago": 8,
+     "description": None},
+    {"member": "Tommy Tuberville", "chamber": "Senate", "party": "Republican", "partyCode": "R",
+     "ticker": "GOOGL", "type": "sell", "rawType": "Sale (Partial)", "amountRange": "$15,001 - $50,000",
+     "amountLow": 15001.0, "amountHigh": 50000.0, "txn_days_ago": 16, "disc_days_ago": 4,
+     "description": None},
+    {"member": "Ro Khanna", "chamber": "House", "party": "Democrat", "partyCode": "D",
+     "ticker": "AAPL", "type": "buy", "rawType": "Purchase", "amountRange": "$1,001 - $15,000",
+     "amountLow": 1001.0, "amountHigh": 15000.0, "txn_days_ago": 14, "disc_days_ago": 2,
+     "description": None},
+    {"member": "Markwayne Mullin", "chamber": "Senate", "party": "Republican", "partyCode": "R",
+     "ticker": "JPM", "type": "buy", "rawType": "Purchase", "amountRange": "$50,001 - $100,000",
+     "amountLow": 50001.0, "amountHigh": 100000.0, "txn_days_ago": 12, "disc_days_ago": 3,
+     "description": None},
+    {"member": "Virginia Foxx", "chamber": "House", "party": "Republican", "partyCode": "R",
+     "ticker": "META", "type": "sell", "rawType": "Sale (Full)", "amountRange": "$100,001 - $250,000",
+     "amountLow": 100001.0, "amountHigh": 250000.0, "txn_days_ago": 11, "disc_days_ago": 5,
+     "description": None},
+    {"member": "Bernie Moreno", "chamber": "Senate", "party": "Republican", "partyCode": "R",
+     "ticker": "NVDA", "type": "buy", "rawType": "Purchase", "amountRange": "$250,001 - $500,000",
+     "amountLow": 250001.0, "amountHigh": 500000.0, "txn_days_ago": 9, "disc_days_ago": 2,
+     "description": None},
+    {"member": "Josh Gottheimer", "chamber": "House", "party": "Democrat", "partyCode": "D",
+     "ticker": "AVGO", "type": "buy", "rawType": "Purchase", "amountRange": "$15,001 - $50,000",
+     "amountLow": 15001.0, "amountHigh": 50000.0, "txn_days_ago": 7, "disc_days_ago": 1,
+     "description": None},
+    {"member": "Dan Crenshaw", "chamber": "House", "party": "Republican", "partyCode": "R",
+     "ticker": "TSLA", "type": "buy", "rawType": "Purchase", "amountRange": "$1,001 - $15,000",
+     "amountLow": 1001.0, "amountHigh": 15000.0, "txn_days_ago": 6, "disc_days_ago": 1,
+     "description": None},
+    {"member": "Angus King", "chamber": "Senate", "party": "Independent", "partyCode": "I",
+     "ticker": "JNJ", "type": "buy", "rawType": "Purchase", "amountRange": "$1,001 - $15,000",
+     "amountLow": 1001.0, "amountHigh": 15000.0, "txn_days_ago": 4, "disc_days_ago": 1,
+     "description": None},
+]
+
+
+def congress_trades(ticker: Optional[str] = None, chamber: Optional[str] = None,
+                    party: Optional[str] = None, limit: int = 60) -> List[dict]:
+    """Curated mock congressional trades, optionally filtered, newest disclosure first."""
+    import hashlib as _hashlib
+    from urllib.parse import quote as _quote
+    today = date.today()
+    out: List[dict] = []
+    for t in _CONGRESS_TRADES:
+        if ticker and t["ticker"] != ticker.upper():
+            continue
+        if chamber and t["chamber"].lower() != chamber.strip().lower():
+            continue
+        if party:
+            p = party.strip().lower()
+            if p not in (t["party"].lower(), t["partyCode"].lower()):
+                continue
+        txn = today - timedelta(days=t["txn_days_ago"])
+        disc = today - timedelta(days=t["disc_days_ago"])
+        key = f'{t["member"]}|{t["ticker"]}|{txn.isoformat()}|{t["rawType"]}|{t["amountRange"]}'
+        out.append({
+            "id": "ct-" + _hashlib.sha1(key.encode("utf-8")).hexdigest()[:16],
+            "member": t["member"],
+            "chamber": t["chamber"],
+            "party": t["party"],
+            "partyCode": t["partyCode"],
+            "ticker": t["ticker"],
+            "type": t["type"],
+            "rawType": t["rawType"],
+            "amountRange": t["amountRange"],
+            "amountLow": t["amountLow"],
+            "amountHigh": t["amountHigh"],
+            "transactionDate": txn.isoformat(),
+            "disclosureDate": disc.isoformat(),
+            "lagDays": (disc - txn).days,
+            "sourceUrl": f'https://www.quiverquant.com/congresstrading/politician/{_quote(t["member"])}',
+            "description": t["description"],
+            "_asOf": None,
+            "_source": "mock",
+        })
+    out.sort(key=lambda r: (r["disclosureDate"], r["transactionDate"]), reverse=True)
+    return out[:limit]
+
+
 # ----------------------------- earnings calendar -----------------------------
 # Report dates and consensus EPS estimates come from the live yfinance calendar
 # feed (stored on the fundamentals table, surfaced as ``earningsDate`` /
