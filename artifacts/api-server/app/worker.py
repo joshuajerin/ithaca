@@ -28,6 +28,7 @@ from .sources import iex_deep
 from .sources import news as n_src
 from .sources import prices as p_src
 from .sources import sentiment as s_src
+from .sources import thirteenf as t_src
 from .sources._resilient import CircuitOpenError
 
 log = logging.getLogger("terminal.worker")
@@ -58,6 +59,35 @@ INSIDER_INTERVAL = 3 * 3600
 # many recent ownership filings to parse per name per pass.
 INSIDER_WINDOW_DAYS = 180
 INSIDER_MAX_FILINGS = 40
+# Institutional 13F refresh cadence. Managers file quarterly (within 45 days of
+# quarter end), so a slow daily-ish sweep of the curated managers keeps the
+# cross-section fresh while staying gentle on EDGAR.
+INST_INTERVAL = 12 * 3600
+# Number of most-recent report periods to ingest per manager (latest + prior,
+# so quarter-over-quarter flows can be computed).
+INST_QUARTERS = 2
+# Curated 13F managers (verified live CIKs). These cover the largest index
+# complexes plus marquee active/quant managers, so the cross-stock holder view
+# has real breadth. BlackRock's old 13F CIK is stale and Norges Bank 404s, so
+# both are intentionally excluded rather than shown with stale/fabricated data.
+INST_MANAGERS = [
+    ("0001067983", "Berkshire Hathaway"),
+    ("0000102909", "Vanguard Group"),
+    ("0000093751", "State Street"),
+    ("0000315066", "FMR (Fidelity)"),
+    ("0001214717", "Geode Capital"),
+    ("0000895421", "Morgan Stanley"),
+    ("0000019617", "JPMorgan Chase"),
+    ("0000886982", "Goldman Sachs"),
+    ("0000902219", "Wellington Management"),
+    ("0001350694", "Bridgewater Associates"),
+    ("0001037389", "Renaissance Technologies"),
+    ("0001423053", "Citadel Advisors"),
+    ("0001029160", "Soros Fund Management"),
+    ("0001167483", "Tiger Global Management"),
+    ("0000080255", "T. Rowe Price"),
+    ("0001179392", "Two Sigma Investments"),
+]
 # Daily mark cadence: re-check hourly. record_daily_snapshots is idempotent per
 # trading day (one row per strategy per day), so an hourly pass simply keeps the
 # day's NAV fresh and settles to the close once prices stop moving.
@@ -249,6 +279,55 @@ def _seed_universe() -> None:
     )
     db.execute("CREATE INDEX IF NOT EXISTS congress_trades_ticker_idx ON congress_trades (ticker)")
     db.execute("CREATE INDEX IF NOT EXISTS congress_trades_disc_idx ON congress_trades (disclosure_date DESC)")
+    # Real institutional 13F filings (one row per manager per report period) and
+    # their parsed information-table positions (one row per manager/period/
+    # cusip/putCall). Keyed for idempotent re-ingest; the ticker is resolved from
+    # the SEC FTD CUSIP feed at ingest and may be NULL when a CUSIP has no
+    # listed-equity ticker. Everything is parsed live from EDGAR; nothing faked.
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inst_filings (
+            cik TEXT NOT NULL,
+            period DATE NOT NULL,
+            institution TEXT,
+            accession_no TEXT,
+            form TEXT,
+            filing_date DATE,
+            url TEXT,
+            total_value DOUBLE PRECISION,
+            positions INTEGER,
+            source TEXT,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (cik, period)
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inst_holdings (
+            cik TEXT NOT NULL,
+            period DATE NOT NULL,
+            cusip TEXT NOT NULL,
+            put_call TEXT NOT NULL DEFAULT '',
+            institution TEXT,
+            ticker TEXT,
+            name TEXT,
+            title_of_class TEXT,
+            shares_type TEXT,
+            shares DOUBLE PRECISION,
+            value DOUBLE PRECISION,
+            url TEXT,
+            accession_no TEXT,
+            source TEXT,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (cik, period, cusip, put_call)
+        )
+        """
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS inst_holdings_ticker_idx "
+        "ON inst_holdings (ticker, period)"
+    )
 
     # Dedicated macro quote table — kept separate from `fundamentals` so live
     # macro instruments never leak into equity screeners/heatmaps/all_symbols.
@@ -669,6 +748,72 @@ def _upsert_insider(transactions: list) -> None:
         """,
         payload,
     )
+
+
+def _upsert_13f(cik: str, institution: str, periods: list) -> None:
+    """Persist parsed 13F periods for one manager into ``inst_filings`` and
+    ``inst_holdings``. Idempotent: re-ingesting a period upserts its rows."""
+    if not periods:
+        return
+    fil_rows = []
+    hold_rows = []
+    for p in periods:
+        period = p.get("period")
+        if not period:
+            continue
+        fil_rows.append((
+            cik, period, institution, p.get("accession"), p.get("form"),
+            p.get("filingDate"), p.get("url"), p.get("totalValue"),
+            p.get("count"), "live",
+        ))
+        for h in (p.get("holdings") or []):
+            hold_rows.append((
+                cik, period, h.get("cusip"), h.get("putCall") or "",
+                institution, h.get("ticker"), h.get("name"),
+                h.get("titleOfClass"), h.get("sharesType"), h.get("shares"),
+                h.get("value"), p.get("url"), p.get("accession"), "live",
+            ))
+    if fil_rows:
+        db.execute_many(
+            """
+            INSERT INTO inst_filings (cik, period, institution, accession_no,
+                form, filing_date, url, total_value, positions, source, updated_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+            ON CONFLICT (cik, period) DO UPDATE SET
+              institution = EXCLUDED.institution,
+              accession_no = EXCLUDED.accession_no,
+              form = EXCLUDED.form,
+              filing_date = EXCLUDED.filing_date,
+              url = EXCLUDED.url,
+              total_value = EXCLUDED.total_value,
+              positions = EXCLUDED.positions,
+              source = EXCLUDED.source,
+              updated_at = now()
+            """,
+            fil_rows,
+        )
+    if hold_rows:
+        db.execute_many(
+            """
+            INSERT INTO inst_holdings (cik, period, cusip, put_call, institution,
+                ticker, name, title_of_class, shares_type, shares, value, url,
+                accession_no, source, updated_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+            ON CONFLICT (cik, period, cusip, put_call) DO UPDATE SET
+              institution = EXCLUDED.institution,
+              ticker = EXCLUDED.ticker,
+              name = EXCLUDED.name,
+              title_of_class = EXCLUDED.title_of_class,
+              shares_type = EXCLUDED.shares_type,
+              shares = EXCLUDED.shares,
+              value = EXCLUDED.value,
+              url = EXCLUDED.url,
+              accession_no = EXCLUDED.accession_no,
+              source = EXCLUDED.source,
+              updated_at = now()
+            """,
+            hold_rows,
+        )
 
 
 def _upsert_news(items: list) -> None:
@@ -1141,6 +1286,50 @@ async def _insider_loop():
         await asyncio.sleep(INSIDER_INTERVAL)
 
 
+async def _ingest_13f(cik: str, institution: str) -> int:
+    """Fetch and persist the most recent 13F periods for one manager.
+
+    Returns the number of periods persisted. Skips a manager whose latest filing
+    is already stored (cheap re-pass). Failures are isolated and logged."""
+    try:
+        # Skip if the manager's latest already-stored period matches its latest
+        # filing — avoids re-parsing huge info tables every cycle.
+        latest_period = await asyncio.to_thread(repo.inst_latest_period, cik)
+        periods = await _net(
+            lambda: t_src.fetch_13f_holdings(cik, max_quarters=INST_QUARTERS)
+        )
+        if not periods:
+            return 0
+        if latest_period and periods[0].get("period") == latest_period:
+            # Already have the newest filing for this manager; nothing to do.
+            return 0
+        await asyncio.to_thread(_upsert_13f, cik, institution, periods)
+        rows = sum(len(p.get("holdings") or []) for p in periods)
+        log.info("13F ingested for %s (%d periods, %d positions)",
+                 institution, len(periods), rows)
+        return len(periods)
+    except CircuitOpenError as exc:
+        log.debug("13F ingest skipped for %s: %s", institution, exc)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("13F ingest failed for %s: %s", institution, exc)
+    return 0
+
+
+async def _inst_loop():
+    """Refresh real institutional 13F holdings for the curated managers. Runs an
+    immediate first pass (so the cross-stock holder view fills shortly after
+    boot) then sweeps on a long cadence. Index complexes are ingested first so
+    the broadest-coverage holders appear soonest; per-manager failures isolate."""
+    while True:
+        try:
+            for cik, name in INST_MANAGERS:
+                await _ingest_13f(cik, name)
+            log.info("13F cycle complete")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("13F loop error: %s", exc)
+        await asyncio.sleep(INST_INTERVAL)
+
+
 async def _ondemand_loop():
     while True:
         try:
@@ -1288,6 +1477,7 @@ async def start() -> None:
     _tasks.append(asyncio.create_task(_breadth_market_cap_loop()))
     _tasks.append(asyncio.create_task(_pit_loop()))
     _tasks.append(asyncio.create_task(_insider_loop()))
+    _tasks.append(asyncio.create_task(_inst_loop()))
     _tasks.append(asyncio.create_task(_ondemand_loop()))
     _tasks.append(asyncio.create_task(_orderbook_loop()))
     _tasks.append(asyncio.create_task(_snapshot_loop()))

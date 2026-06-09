@@ -56,6 +56,8 @@ import { ETFHoldingsPanel } from "./panels/ETFHoldingsPanel";
 import { ETFExposurePanel } from "./panels/ETFExposurePanel";
 import { InsiderActivityPanel } from "./panels/InsiderActivityPanel";
 import { CongressTradesPanel } from "./panels/CongressTradesPanel";
+import { InstitutionalHoldersPanel } from "./panels/InstitutionalHoldersPanel";
+import { InstitutionalFlowsPanel } from "./panels/InstitutionalFlowsPanel";
 import { MACPanel } from "./panels/MACPanel";
 import { CompanyAnalyticsPanel } from "./panels/CompanyAnalyticsPanel";
 import { CompanyAnalyticsComparePanel } from "./panels/CompanyAnalyticsComparePanel";
@@ -357,6 +359,8 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted, onBui
       case "etf_exposure": return <ETFExposurePanel data={panel.data as any} />;
       case "insider_activity": return <InsiderActivityPanel data={panel.data as any} />;
       case "congress_trades": return <CongressTradesPanel data={panel.data as any} />;
+      case "institutional_holders": return <InstitutionalHoldersPanel data={panel.data as any} />;
+      case "institutional_flows": return <InstitutionalFlowsPanel data={panel.data as any} />;
       case "ma_tracker": return <MACPanel data={panel.data as any} />;
       case "company_analytics": return <CompanyAnalyticsPanel data={panel.data as any} />;
       case "company_analytics_compare": return <CompanyAnalyticsComparePanel data={panel.data as any} />;

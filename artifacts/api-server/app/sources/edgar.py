@@ -148,12 +148,14 @@ def _recent_filings(submissions: Dict) -> List[Dict]:
     forms = recent.get("form") or []
     fdates = recent.get("filingDate") or []
     primary = recent.get("primaryDocument") or []
+    rdates = recent.get("reportDate") or []
     out: List[Dict] = []
     for i, acc in enumerate(accession):
         out.append({
             "accession": acc,
             "form": forms[i] if i < len(forms) else "",
             "filingDate": fdates[i] if i < len(fdates) else None,
+            "reportDate": rdates[i] if i < len(rdates) else None,
             "primaryDocument": primary[i] if i < len(primary) else "",
         })
     return out

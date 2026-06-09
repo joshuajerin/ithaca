@@ -45,6 +45,8 @@ class PanelType(str, Enum):
     signal_scorecard = "signal_scorecard"
     analyst_ratings = "analyst_ratings"
     congress_trades = "congress_trades"
+    institutional_holders = "institutional_holders"
+    institutional_flows = "institutional_flows"
 
 
 class PanelStatus(str, Enum):
@@ -611,6 +613,99 @@ class AnalystRatingsData(BaseModel):
     consensus: AnalystConsensus
     priceTarget: AnalystPriceTarget
     changes: List[AnalystRatingChange] = []
+    note: Optional[str] = None
+
+
+# --- institutional_holders / institutional_flows (SEC 13F) ---
+class InstCoverage(BaseModel):
+    managersConfigured: int = 0
+    managersWithData: int = 0
+    managersHolding: int = 0
+    # Curated managers with no ingested 13F data yet (flagged honestly, never
+    # silently dropped or imputed).
+    missing: List[str] = []
+
+
+class InstHolderRow(BaseModel):
+    institution: str
+    cik: Optional[str] = None
+    shares: float = 0.0
+    value: float = 0.0
+    # Position value as a fraction of the manager's total 13F portfolio value.
+    pctOfPortfolio: Optional[float] = None
+    period: Optional[str] = None
+    priorShares: Optional[float] = None
+    priorValue: Optional[float] = None
+    deltaShares: Optional[float] = None
+    deltaValue: Optional[float] = None
+    changePct: Optional[float] = None
+    # one of: new | added | trimmed | unchanged | exited
+    change: str = "unchanged"
+    url: Optional[str] = None
+
+
+class InstHoldersSummary(BaseModel):
+    totalValue: float = 0.0
+    totalShares: float = 0.0
+    holderCount: int = 0
+    newCount: int = 0
+    addedCount: int = 0
+    trimmedCount: int = 0
+    exitedCount: int = 0
+    unchangedCount: int = 0
+    netDeltaShares: float = 0.0
+    netDeltaValue: float = 0.0
+
+
+class InstitutionalHoldersData(BaseModel):
+    symbol: str
+    name: Optional[str] = None
+    cusip: Optional[str] = None
+    reportPeriod: Optional[str] = None
+    holders: List[InstHolderRow] = []
+    summary: InstHoldersSummary = InstHoldersSummary()
+    coverage: InstCoverage = InstCoverage()
+    feedSource: str = "live"
+    note: Optional[str] = None
+
+
+class InstFlowRow(BaseModel):
+    institution: str
+    cik: Optional[str] = None
+    change: str = "unchanged"
+    shares: float = 0.0
+    value: float = 0.0
+    deltaShares: float = 0.0
+    deltaValue: float = 0.0
+    # Estimated dollars traded = change in shares x the reported price (13F
+    # value / shares). Isolates the discretionary trade from mark-to-market
+    # revaluation, so a share-adder is never miscounted as a seller.
+    tradeValue: float = 0.0
+    period: Optional[str] = None
+    url: Optional[str] = None
+
+
+class InstFlowsSummary(BaseModel):
+    buyerCount: int = 0
+    sellerCount: int = 0
+    newCount: int = 0
+    exitedCount: int = 0
+    totalBought: float = 0.0
+    totalSold: float = 0.0
+    netValue: float = 0.0
+
+
+class InstitutionalFlowsData(BaseModel):
+    symbol: str
+    name: Optional[str] = None
+    cusip: Optional[str] = None
+    reportPeriod: Optional[str] = None
+    priorPeriod: Optional[str] = None
+    buyers: List[InstFlowRow] = []
+    sellers: List[InstFlowRow] = []
+    summary: InstFlowsSummary = InstFlowsSummary()
+    coverage: InstCoverage = InstCoverage()
+    feedSource: str = "live"
     note: Optional[str] = None
 
 

@@ -294,6 +294,39 @@ def _tools() -> list:
             }},
         }},
         {"type": "function", "function": {
+            "name": "add_institutional_holders",
+            "description": (
+                f"Add an institutional holders panel showing the top INSTITUTIONAL owners of ONE company "
+                f"from REAL SEC 13F filings — a ranked table of each large manager (Berkshire, Vanguard, "
+                f"State Street, Citadel, Renaissance, Bridgewater, etc.) with its share count, position "
+                f"market value, percent of that manager's 13F portfolio, and the quarter-over-quarter "
+                f"change (NEW/added/trimmed/EXITED), each linking to the source EDGAR filing, with the "
+                f"report period shown and marked live. Managers not yet ingested are flagged honestly, "
+                f"never imputed. Use for 'who owns X', 'institutional holders/ownership of X', 'which "
+                f"funds/institutions hold X', '13F holders', 'top shareholders'. {sizing}"
+            ),
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"The company ticker. From: {syms}"},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_institutional_flows",
+            "description": (
+                f"Add an institutional flows panel showing quarter-over-quarter INSTITUTIONAL fund FLOWS "
+                f"in ONE company from REAL SEC 13F filings: the biggest BUYERS (new + added positions) and "
+                f"biggest SELLERS (trimmed + exited) ranked by the change in position value, each linking "
+                f"to the source EDGAR filing, with the report period shown and marked live. Only managers "
+                f"with a comparable prior quarter are scored; the rest are reported as coverage, never "
+                f"imputed. Use for 'who is buying/selling X', 'institutional flows/buying/selling for X', "
+                f"'biggest buyers/sellers of X', 'fund flows into X'. {sizing}"
+            ),
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"The company ticker. From: {syms}"},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
+        {"type": "function", "function": {
             "name": "add_macro_dashboard",
             "description": (
                 f"Add a macro/cross-asset dashboard panel. {sizing} "
@@ -1031,6 +1064,8 @@ _TOOL_TO_TYPE = {
     "add_etf_exposure": "etf_exposure",
     "add_insider_activity": "insider_activity",
     "add_congress_trades": "congress_trades",
+    "add_institutional_holders": "institutional_holders",
+    "add_institutional_flows": "institutional_flows",
     "add_ma_tracker": "ma_tracker",
     "add_company_analytics": "company_analytics",
     "add_company_analytics_compare": "company_analytics_compare",
@@ -1148,6 +1183,10 @@ def _system_prompt() -> str:
         "- For congressional / congress / senator / representative / politician stock trades, "
         "'what is congress buying', or STOCK Act disclosures, use add_congress_trades "
         "(pass ticker to filter, e.g. 'congress trades in NVDA').\n"
+        "- For 'who owns X' / 'institutional holders/ownership of X' / 'which funds/institutions hold X' / "
+        "'13F holders' / 'top shareholders', use add_institutional_holders. For institutional FLOWS — 'who "
+        "is buying/selling X', 'biggest buyers/sellers of X', 'fund flows into X' — use add_institutional_flows. "
+        "Both are real SEC 13F data (distinct from add_insider_activity, which is Form 4 insiders).\n"
         "- For M&A / deal flow / mergers / acquisitions / arb spread requests, use add_ma_tracker.\n"
         "- For backtest / strategy / Sharpe / drawdown requests, use add_backtest. For research-integrity "
         "checks — 'is this strategy overfit / robust / data-mined', out-of-sample or walk-forward validation, "
@@ -2906,6 +2945,8 @@ _TYPE_LABELS = {
     "earnings_calendar": "an earnings calendar",
     "insider_activity": "insider activity",
     "congress_trades": "a congressional trades feed",
+    "institutional_holders": "institutional holders",
+    "institutional_flows": "institutional flows",
     "ma_tracker": "an M&A tracker",
     "company_analytics": "a company analytics panel",
     "company_analytics_compare": "a company comparison",
@@ -3786,6 +3827,21 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         "officers buying", "officers selling", "director buying", "director selling",
         "open market purchase", "open-market purchase",
     ]) or ("insider" in q and any(k in q for k in ["buy", "buying", "sell", "selling", "bought", "sold", "trade", "activity"]))
+    wants_inst_flows = any(k in q for k in [
+        "institutional flows", "institutional buying", "institutional selling",
+        "13f flows", "fund flows", "biggest buyers", "biggest sellers",
+        "who is buying", "who's buying", "who is selling", "who's selling",
+    ]) or (("institution" in q or "13f" in q or "fund" in q) and any(
+        k in q for k in ["flow", "buying", "selling", "buyers", "sellers", "accumulat", "reduc"]))
+    wants_inst_holders = (
+        any(k in q for k in [
+            "institutional holders", "institutional ownership", "institutional owners",
+            "13f holders", "13f", "top shareholders", "top holders", "largest holders",
+            "biggest holders", "which funds hold", "which institutions hold",
+            "what funds own", "what institutions own", "who holds",
+        ])
+        or (("who owns" in q or "who own" in q) and "etf" not in q)
+    )
     wants_ma = any(k in q for k in ["m&a", "merger", "acquisition", "deal", "arb spread", "takeover", "buyout"])
     wants_company_analytics = any(k in q for k in [
         "why is", "why is it", "what drives", "price driver", "company analytics",
@@ -3946,6 +4002,16 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         add("insider_activity", {"symbol": sym}, 12, 6)
         name = data.get_company(sym)["name"] if data.get_company(sym) else sym
         return panels, f"Insider activity for {name}: real SEC Form 4 buys, sells and option exercises with a net buying-vs-selling summary."
+    if wants_inst_flows and symbols:
+        sym = symbols[0]
+        add("institutional_flows", {"symbol": sym}, 12, 6)
+        name = data.get_company(sym)["name"] if data.get_company(sym) else sym
+        return panels, f"Institutional 13F flows for {name}: the biggest buyers and sellers quarter-over-quarter from real SEC filings, with source links."
+    if wants_inst_holders and symbols:
+        sym = symbols[0]
+        add("institutional_holders", {"symbol": sym}, 12, 6)
+        name = data.get_company(sym)["name"] if data.get_company(sym) else sym
+        return panels, f"Top institutional holders of {name} from real SEC 13F filings, with each manager's stake, portfolio weight and quarter-over-quarter change."
 
     if wants_ma:
         sym = symbols[0] if symbols else None
@@ -5035,6 +5101,9 @@ def _refine_params_heuristic(panel_type: str, panel: dict, instruction: str) -> 
         elif d0.get("windowDays"):
             out["days"] = d0["windowDays"]
         return out
+    if panel_type in ("institutional_holders", "institutional_flows"):
+        d0 = panel.get("data") or {}
+        return {"symbol": (syms[0] if syms else d0.get("symbol"))}
     d = panel.get("data") or {}
     if panel_type == "portfolio_risk":
         return {"symbols": syms or d.get("symbols") or []}

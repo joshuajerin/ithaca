@@ -2031,6 +2031,95 @@ def ensure_insider(symbol: str, days: int = 180) -> dict:
     }
 
 
+# --------------------------------------------------------------------------- #
+# Institutional 13F holdings
+# --------------------------------------------------------------------------- #
+def inst_data_available() -> bool:
+    """True when any institutional 13F filings have been ingested yet."""
+    if not db.db_available():
+        return False
+    try:
+        rows = db.query("SELECT 1 FROM inst_filings LIMIT 1")
+        return bool(rows)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def inst_latest_period(cik: str) -> Optional[str]:
+    """Most recent stored report period for a manager CIK, or None."""
+    if not db.db_available():
+        return None
+    try:
+        rows = db.query(
+            "SELECT period FROM inst_filings WHERE cik = %s ORDER BY period DESC LIMIT 1",
+            (cik,),
+        )
+        return _iso_date(rows[0]["period"]) if rows else None
+    except Exception as exc:  # noqa: BLE001
+        log.warning("inst_latest_period DB error (%s): %s", cik, exc)
+        return None
+
+
+def inst_filing_periods() -> List[dict]:
+    """Every stored 13F filing (one per manager per period), newest first.
+
+    Used to identify each manager's latest and prior report periods and the
+    portfolio total backing percent-of-portfolio."""
+    if not db.db_available():
+        return []
+    try:
+        rows = db.query(
+            "SELECT cik, institution, period, filing_date, accession_no, url, "
+            "total_value, positions FROM inst_filings ORDER BY cik, period DESC"
+        )
+        return [{
+            "cik": r.get("cik"),
+            "institution": r.get("institution"),
+            "period": _iso_date(r.get("period")),
+            "filingDate": _iso_date(r.get("filing_date")),
+            "accession": r.get("accession_no"),
+            "url": r.get("url"),
+            "totalValue": _numn(r.get("total_value")),
+            "positions": r.get("positions"),
+        } for r in rows]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("inst_filing_periods DB error: %s", exc)
+        return []
+
+
+def inst_holdings_for_ticker(ticker: str) -> List[dict]:
+    """All stored institutional positions in a ticker (share positions and
+    option positions across every manager/period). Empty when none — never mock."""
+    sym = (ticker or "").upper().strip()
+    if not sym or not db.db_available():
+        return []
+    try:
+        rows = db.query(
+            "SELECT cik, period, cusip, put_call, institution, ticker, name, "
+            "title_of_class, shares_type, shares, value, url, accession_no "
+            "FROM inst_holdings WHERE ticker = %s",
+            (sym,),
+        )
+        return [{
+            "cik": r.get("cik"),
+            "period": _iso_date(r.get("period")),
+            "cusip": r.get("cusip"),
+            "putCall": r.get("put_call") or "",
+            "institution": r.get("institution"),
+            "ticker": r.get("ticker"),
+            "name": r.get("name"),
+            "titleOfClass": r.get("title_of_class"),
+            "sharesType": r.get("shares_type"),
+            "shares": _numn(r.get("shares")),
+            "value": _numn(r.get("value")),
+            "url": r.get("url"),
+            "accession": r.get("accession_no"),
+        } for r in rows]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("inst_holdings_for_ticker DB error (%s): %s", sym, exc)
+        return []
+
+
 def as_of(*records) -> Optional[str]:
     """Most-recent freshness timestamp across the given company/sentiment records."""
     stamps = [r.get("_asOf") for r in records if isinstance(r, dict) and r.get("_asOf")]

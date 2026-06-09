@@ -48,6 +48,8 @@ DATA_MODELS = {
     "signal_scorecard": models.SignalScorecardData,
     "analyst_ratings": models.AnalystRatingsData,
     "congress_trades": models.CongressTradesData,
+    "institutional_holders": models.InstitutionalHoldersData,
+    "institutional_flows": models.InstitutionalFlowsData,
 }
 
 

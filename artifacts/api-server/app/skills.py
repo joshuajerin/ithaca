@@ -7746,6 +7746,323 @@ def build_insider_activity(params: dict) -> dict:
     }
 
 
+def _inst_resolve_symbol(params: dict) -> str:
+    symbol = params.get("symbol")
+    symbols_param = params.get("symbols")
+    if not symbol and symbols_param:
+        symbol = symbols_param[0]
+    if not symbol:
+        raise ValueError("Institutional ownership needs a specific company ticker.")
+    return str(symbol).upper().strip()
+
+
+def _inst_assemble(sym: str) -> dict:
+    """Aggregate pre-ingested SEC 13F filings into per-manager positions in one
+    ticker, with quarter-over-quarter deltas. Pure read from the worker-populated
+    store — never fetches or fabricates. Returns the building blocks both the
+    holders and the flows panels format.
+
+    Missing managers (configured but not yet ingested) are flagged honestly in
+    ``coverage.missing`` and never imputed."""
+    from collections import defaultdict
+    from . import worker as _worker
+    from .sources import thirteenf as _t13f
+
+    available = repo.inst_data_available()
+    periods = repo.inst_filing_periods()
+    holdings = repo.inst_holdings_for_ticker(sym)
+
+    # Per-manager report periods, newest first.
+    cik_periods: dict = defaultdict(list)
+    for p in periods:
+        cik_periods[p["cik"]].append(p)
+
+    # Aggregate SHARE positions (exclude option positions, putCall != "") by
+    # (cik, period); a name can appear under multiple share-class CUSIPs.
+    share_pos: dict = defaultdict(lambda: {"shares": 0.0, "value": 0.0, "url": None})
+    issuer_name = None
+    cusip = None
+    for h in holdings:
+        if h.get("putCall"):
+            continue
+        k = (h["cik"], h["period"])
+        sp = share_pos[k]
+        sp["shares"] += h.get("shares") or 0.0
+        sp["value"] += h.get("value") or 0.0
+        sp["url"] = h.get("url") or sp["url"]
+        issuer_name = issuer_name or h.get("name")
+        cusip = cusip or h.get("cusip")
+
+    if not cusip:
+        try:
+            cusip = _t13f.resolve_ticker_cusip(sym)
+        except Exception:  # noqa: BLE001
+            cusip = None
+
+    _eps = 1.0  # share-count noise floor for unchanged classification
+    rows: list = []
+    latest_periods: list = []
+    for cik, plist in cik_periods.items():
+        latest_period = plist[0]["period"]
+        prior_period = plist[1]["period"] if len(plist) > 1 else None
+        institution = plist[0].get("institution") or cik
+        total_value = plist[0].get("totalValue") or 0.0
+        latest = share_pos.get((cik, latest_period))
+        prior = share_pos.get((cik, prior_period)) if prior_period else None
+        lat_sh = latest["shares"] if latest else 0.0
+        lat_val = latest["value"] if latest else 0.0
+        pri_sh = prior["shares"] if prior else 0.0
+        pri_val = prior["value"] if prior else 0.0
+
+        # Skip managers with no position in either reported quarter.
+        if lat_sh <= 0 and pri_sh <= 0:
+            continue
+
+        has_prior = prior_period is not None
+        if lat_sh > 0 and has_prior and pri_sh <= 0:
+            change = "new"
+        elif lat_sh <= 0 and pri_sh > 0:
+            change = "exited"
+        elif lat_sh > 0 and pri_sh > 0:
+            d = lat_sh - pri_sh
+            if d > _eps:
+                change = "added"
+            elif d < -_eps:
+                change = "trimmed"
+            else:
+                change = "unchanged"
+        else:
+            # Holds now but no prior quarter available → can't classify QoQ.
+            change = "unchanged"
+
+        delta_sh = (lat_sh - pri_sh) if has_prior else None
+        delta_val = (lat_val - pri_val) if has_prior else None
+        change_pct = ((lat_sh - pri_sh) / pri_sh * 100.0) if (has_prior and pri_sh > 0) else None
+        pct_port = (lat_val / total_value) if total_value > 0 else None
+
+        rows.append({
+            "institution": institution,
+            "cik": cik,
+            "shares": lat_sh,
+            "value": lat_val,
+            "pctOfPortfolio": pct_port,
+            "period": latest_period,
+            "priorShares": pri_sh if has_prior else None,
+            "priorValue": pri_val if has_prior else None,
+            "deltaShares": delta_sh,
+            "deltaValue": delta_val,
+            "changePct": change_pct,
+            "change": change,
+            "hasPrior": has_prior,
+            "url": (latest or prior or {}).get("url") or plist[0].get("url"),
+        })
+        if lat_sh > 0:
+            latest_periods.append(latest_period)
+
+    report_period = max(latest_periods) if latest_periods else None
+
+    configured = list(getattr(_worker, "INST_MANAGERS", []))
+    ciks_with_data = set(cik_periods.keys())
+    missing = [name for cik, name in configured if cik not in ciks_with_data]
+    holders = [r for r in rows if r["shares"] > 0]
+
+    if not available:
+        feed = "pending"
+    else:
+        feed = "live"
+
+    company = data.get_company(sym)
+    name = issuer_name or (company.get("name") if company else None)
+
+    return {
+        "symbol": sym,
+        "name": name,
+        "cusip": cusip,
+        "reportPeriod": report_period,
+        "rows": rows,
+        "holders": holders,
+        "feedSource": feed,
+        "coverage": {
+            "managersConfigured": len(configured),
+            "managersWithData": len(ciks_with_data),
+            "managersHolding": len(holders),
+            "missing": missing,
+        },
+    }
+
+
+def build_institutional_holders(params: dict) -> dict:
+    """Top institutional holders of ONE ticker from real SEC 13F filings: each
+    manager's share count, position market value, percent of that manager's
+    portfolio, and the quarter-over-quarter change (new/added/trimmed/exited),
+    each linking to the source EDGAR filing. Pre-aggregated by the worker from
+    per-institution 13F-HR filings; cold store returns an honest 'pending'."""
+    sym = _inst_resolve_symbol(params)
+    a = _inst_assemble(sym)
+    feed = a["feedSource"]
+    holders = sorted(
+        a["holders"], key=lambda r: (r["value"] or 0.0, r["shares"] or 0.0), reverse=True
+    )
+
+    counts = {"new": 0, "added": 0, "trimmed": 0, "exited": 0, "unchanged": 0}
+    total_value = total_shares = 0.0
+    net_delta_shares = net_delta_value = 0.0
+    for r in holders:
+        counts[r["change"]] = counts.get(r["change"], 0) + 1
+        total_value += r["value"] or 0.0
+        total_shares += r["shares"] or 0.0
+        if r["deltaShares"] is not None:
+            net_delta_shares += r["deltaShares"]
+        if r["deltaValue"] is not None:
+            net_delta_value += r["deltaValue"]
+
+    max_rows = 50
+    shown = holders[:max_rows]
+
+    label = a["name"] or sym
+    title = f"Institutional Holders — {label}"
+
+    if feed == "pending":
+        note = ("Institutional 13F filings are still being ingested. The cross-stock "
+                "holder view fills shortly after startup — refresh in a moment.")
+        source = "pending"
+    elif not holders:
+        note = (f"No tracked institution reports a 13F position in {sym}. Coverage spans "
+                f"{a['coverage']['managersConfigured']} large managers; a small/foreign/"
+                "non-13F name may simply not appear.")
+        source = "live"
+    else:
+        note = None
+        source = "live"
+
+    return {
+        "title": title,
+        "symbol": sym,
+        "name": a["name"],
+        "cusip": a["cusip"],
+        "reportPeriod": a["reportPeriod"],
+        "holders": shown,
+        "summary": {
+            "totalValue": total_value,
+            "totalShares": total_shares,
+            "holderCount": len(holders),
+            "newCount": counts.get("new", 0),
+            "addedCount": counts.get("added", 0),
+            "trimmedCount": counts.get("trimmed", 0),
+            "exitedCount": counts.get("exited", 0),
+            "unchangedCount": counts.get("unchanged", 0),
+            "netDeltaShares": net_delta_shares,
+            "netDeltaValue": net_delta_value,
+        },
+        "coverage": a["coverage"],
+        "feedSource": feed,
+        "note": note,
+        "asOf": a["reportPeriod"],
+        "source": source,
+    }
+
+
+def build_institutional_flows(params: dict) -> dict:
+    """Quarter-over-quarter institutional fund flows in ONE ticker from real SEC
+    13F filings: the biggest buyers (new + added positions) and biggest sellers
+    (trimmed + exited) ranked by change in position value. Only managers with a
+    comparable prior-quarter filing are scored; the rest are reported as coverage,
+    never imputed."""
+    sym = _inst_resolve_symbol(params)
+    a = _inst_assemble(sym)
+    feed = a["feedSource"]
+
+    # Flows need a comparable prior quarter; managers without one are excluded
+    # (their delta is unknown, not zero). Buyers/sellers are split on the
+    # discretionary SHARE change (new/added vs trimmed/exited) — NOT the change
+    # in position value, which would misclassify a share-adder when the price
+    # falls. Each row carries an estimated dollars-traded = Δshares × the
+    # reported per-share price.
+    def _flow_row(r: dict) -> dict:
+        lat_sh = r.get("shares") or 0.0
+        lat_val = r.get("value") or 0.0
+        pri_sh = r.get("priorShares") or 0.0
+        pri_val = r.get("priorValue") or 0.0
+        if lat_sh > 0:
+            price = lat_val / lat_sh
+        elif pri_sh > 0:
+            price = pri_val / pri_sh
+        else:
+            price = 0.0
+        dsh = r.get("deltaShares") or 0.0
+        return {
+            "institution": r["institution"],
+            "cik": r["cik"],
+            "change": r["change"],
+            "shares": lat_sh,
+            "value": lat_val,
+            "deltaShares": dsh,
+            "deltaValue": r.get("deltaValue") or 0.0,
+            "tradeValue": dsh * price,
+            "period": r["period"],
+            "url": r["url"],
+        }
+
+    comparable = [
+        _flow_row(r) for r in a["rows"]
+        if r.get("hasPrior") and r.get("deltaShares") is not None
+    ]
+    buyers = sorted(
+        [r for r in comparable if r["change"] in ("new", "added")],
+        key=lambda r: r["tradeValue"], reverse=True,
+    )
+    sellers = sorted(
+        [r for r in comparable if r["change"] in ("trimmed", "exited")],
+        key=lambda r: r["tradeValue"],
+    )
+
+    total_bought = sum(r["tradeValue"] for r in buyers)
+    total_sold = sum(-r["tradeValue"] for r in sellers)
+    new_count = sum(1 for r in buyers if r["change"] == "new")
+    exited_count = sum(1 for r in sellers if r["change"] == "exited")
+
+    max_rows = 15
+    label = a["name"] or sym
+    title = f"Institutional Flows — {label}"
+
+    if feed == "pending":
+        note = ("Institutional 13F filings are still being ingested — the flows view "
+                "fills shortly after startup. Refresh in a moment.")
+        source = "pending"
+    elif not comparable:
+        note = (f"No tracked institution has two comparable 13F quarters for {sym} yet, "
+                "so quarter-over-quarter flows can't be computed.")
+        source = "live"
+    else:
+        note = None
+        source = "live"
+
+    return {
+        "title": title,
+        "symbol": sym,
+        "name": a["name"],
+        "cusip": a["cusip"],
+        "reportPeriod": a["reportPeriod"],
+        "priorPeriod": None,
+        "buyers": buyers[:max_rows],
+        "sellers": sellers[:max_rows],
+        "summary": {
+            "buyerCount": len(buyers),
+            "sellerCount": len(sellers),
+            "newCount": new_count,
+            "exitedCount": exited_count,
+            "totalBought": total_bought,
+            "totalSold": total_sold,
+            "netValue": total_bought - total_sold,
+        },
+        "coverage": a["coverage"],
+        "feedSource": feed,
+        "note": note,
+        "asOf": a["reportPeriod"],
+        "source": source,
+    }
+
+
 # ----------------------------- M&A tracker builder -----------------------------
 _MA_DEALS = [
     {
@@ -9194,6 +9511,37 @@ _reg(SkillDef(
         {"name": "summarize_flow", "description": "Aggregate open-market buys vs sells into a net-flow sentiment with top buyers/sellers.", "expectedOutput": "Net shares/value, buy/sell counts and ranked insiders."},
     ],
     build_insider_activity, "Insider Activity",
+))
+_reg(SkillDef(
+    "institutional-holders", "Institutional Holders (13F)", "institutional_holders",
+    "Shows the top INSTITUTIONAL holders of ONE company from real SEC 13F filings — a ranked "
+    "table of each large manager (Berkshire, Vanguard, State Street, Citadel, Renaissance, "
+    "Bridgewater, etc.) with its share count, position market value, percent of that manager's "
+    "13F portfolio, and the quarter-over-quarter change (NEW / added / trimmed / EXITED), each "
+    "linking to the source EDGAR filing, with the report period shown and marked live. Data is "
+    "pre-aggregated from per-institution 13F-HR filings; managers not yet ingested are flagged "
+    "honestly and never imputed. Use when the user asks 'who owns X', 'institutional holders/"
+    "ownership of X', 'which funds/institutions hold X', '13F holders', or 'top shareholders'.",
+    [
+        {"name": "resolve_cusip", "description": "Map the ticker to its CUSIP via SEC fails-to-deliver data.", "expectedOutput": "A CUSIP for matching 13F positions, or an honest unavailable."},
+        {"name": "aggregate_13f", "description": "Aggregate pre-ingested 13F positions across managers for the ticker.", "expectedOutput": "Per-manager share/value rows with portfolio weight."},
+        {"name": "compute_qoq", "description": "Classify each holder's quarter-over-quarter change (new/added/trimmed/exited).", "expectedOutput": "QoQ deltas and a holder summary with coverage."},
+    ],
+    build_institutional_holders, "Institutional Holders",
+))
+_reg(SkillDef(
+    "institutional-flows", "Institutional 13F Flows", "institutional_flows",
+    "Shows quarter-over-quarter INSTITUTIONAL fund FLOWS in ONE company from real SEC 13F filings: "
+    "the biggest BUYERS (new + added positions) and biggest SELLERS (trimmed + exited) ranked by "
+    "the change in position value, each linking to the source EDGAR filing, with the report period "
+    "shown and marked live. Only managers with a comparable prior-quarter filing are scored; the "
+    "rest are reported as coverage, never imputed. Use when the user asks 'who is buying/selling X', "
+    "'institutional flows/buying/selling for X', 'biggest buyers/sellers of X', or 'fund flows into X'.",
+    [
+        {"name": "aggregate_13f", "description": "Aggregate pre-ingested 13F positions across two quarters for the ticker.", "expectedOutput": "Per-manager latest vs prior position rows."},
+        {"name": "rank_flows", "description": "Rank managers by change in position value into buyers and sellers.", "expectedOutput": "Top buyers and sellers with QoQ value/share deltas and coverage."},
+    ],
+    build_institutional_flows, "Institutional Flows",
 ))
 _reg(SkillDef(
     "signal-research", "Alpha Signal Research", "signal_research",

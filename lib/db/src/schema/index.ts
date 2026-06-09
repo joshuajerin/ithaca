@@ -4,6 +4,7 @@ export * from "./ohlcv";
 export * from "./fundamentals";
 export * from "./pit";
 export * from "./insider";
+export * from "./institutional";
 export * from "./news";
 export * from "./sentiment";
 export * from "./strategies";
