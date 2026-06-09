@@ -8,13 +8,14 @@ import logging
 import math
 import re
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional
 
 from . import ai, cache, data, db, engine, factor_model, orderbook_store, quality, repo
 from .sources import fundamentals as fundamentals_src
 from .sources import holdings as h_src
 from .sources import iex_deep
+from .sources import polymarket as poly_src
 from .sources import prices as p_src
 from .sources import rates as rates_src
 
@@ -2896,6 +2897,252 @@ def build_series_revisions(params: dict) -> dict:
         "revisedPeriods": view["revisedPeriods"],
         "totalPeriods": view["totalPeriods"],
         "asOf": live.get("asOf"),
+        "source": "live",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Polymarket prediction markets (real, key-less public APIs).
+#
+# Data is fetched on-demand at query time and cached briefly (prediction-market
+# prices move continuously, so a short TTL keeps the panel fresh without
+# hammering the upstream). Every builder is real-only: when the upstream is
+# unavailable the panel fails honestly via ``_clean_failure`` rather than
+# fabricating markets, prices, or trades.
+# ---------------------------------------------------------------------------
+
+def _poly_ttl() -> float:
+    import os
+    try:
+        return max(15.0, float(os.environ.get("POLYMARKET_REFRESH_SECONDS", "60")))
+    except (TypeError, ValueError):
+        return 60.0
+
+
+# Categories offered as quick filters in the markets browser. Slugs match Gamma
+# tag slugs; labels are what we show. Mirrors the source adapter's priority list.
+_POLY_CATEGORIES = [
+    {"slug": None, "label": "Trending"},
+    {"slug": "politics", "label": "Politics"},
+    {"slug": "crypto", "label": "Crypto"},
+    {"slug": "sports", "label": "Sports"},
+    {"slug": "economy", "label": "Economy"},
+    {"slug": "geopolitics", "label": "Geopolitics"},
+    {"slug": "tech", "label": "Tech"},
+    {"slug": "pop-culture", "label": "Culture"},
+]
+_POLY_CATEGORY_SLUGS = {c["slug"] for c in _POLY_CATEGORIES if c["slug"]}
+
+
+def _poly_resolve_category(params: dict) -> Optional[str]:
+    raw = (params.get("category") or params.get("query") or "").strip().lower()
+    if not raw:
+        return None
+    if raw in _POLY_CATEGORY_SLUGS:
+        return raw
+    # Tolerate label-style input ("Politics", "pop culture").
+    norm = raw.replace(" ", "-")
+    if norm in _POLY_CATEGORY_SLUGS:
+        return norm
+    for c in _POLY_CATEGORIES:
+        if c["slug"] and (c["label"].lower() == raw or c["slug"] == norm):
+            return c["slug"]
+    return None
+
+
+def build_polymarket_markets(params: dict) -> dict:
+    """Browse active Polymarket events/markets by category.
+
+    Lists the highest-volume active events, each with implied probability for its
+    leading outcome(s), 24h volume and liquidity. An optional ``category`` filters
+    to a Polymarket tag (politics/crypto/sports/...). Real, key-less Gamma data.
+    """
+    category = _poly_resolve_category(params)
+    try:
+        limit = int(params.get("limit") or 24)
+    except (TypeError, ValueError):
+        limit = 24
+    limit = max(6, min(limit, 50))
+
+    try:
+        events = cache.cached(
+            f"poly:events:{category or 'trending'}:{limit}",
+            _poly_ttl(),
+            lambda: poly_src.fetch_events(category=category, limit=limit),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("polymarket events fetch failed: %s", exc)
+        events = None
+
+    if not events:
+        return _clean_failure(
+            "Polymarket markets are unavailable right now",
+            "The Polymarket Gamma API didn't return any active events "
+            "(it may be rate-limiting). Try again shortly.",
+        )
+
+    label = next((c["label"] for c in _POLY_CATEGORIES if c["slug"] == category),
+                 category.title() if category else "Trending")
+    asof = datetime.now(tz=timezone.utc).isoformat()
+    return {
+        "title": f"Polymarket — {label}",
+        "category": category,
+        "categoryLabel": label,
+        "categories": _POLY_CATEGORIES,
+        "events": events,
+        "asOf": asof,
+        "source": "live",
+    }
+
+
+def build_polymarket_market(params: dict) -> dict:
+    """Detail for a single Polymarket market: probability history + recent trades.
+
+    Resolves the market from an explicit ``slug``/``market_id`` or a free-text
+    ``query``, then charts the yes-share price (implied probability) over time and
+    shows the recent trades tape. Real CLOB + data-API data; fails honestly when
+    the market can't be resolved or has no history.
+    """
+    slug = (params.get("slug") or "").strip()
+    market_id = (params.get("market_id") or params.get("marketId") or "").strip()
+    query = (params.get("query") or params.get("market") or "").strip()
+    interval = (params.get("interval") or params.get("range") or "1m").strip().lower()
+    if interval not in {"1h", "6h", "1d", "1w", "1m", "max"}:
+        interval = "1m"
+
+    market = None
+    try:
+        if slug:
+            market = poly_src.fetch_market_by_slug(slug)
+        elif market_id:
+            market = poly_src.fetch_market_by_id(market_id)
+        elif query:
+            market = poly_src.search_market(query)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("polymarket market resolve failed: %s", exc)
+        market = None
+
+    if not market:
+        return _clean_failure(
+            "Couldn't find that Polymarket market",
+            "No active Polymarket market matched the request. Try a market name "
+            "from the browser, or a more specific phrase.",
+        )
+
+    token_ids = market.get("tokenIds") or []
+    history = None
+    if token_ids:
+        try:
+            history = cache.cached(
+                f"poly:hist:{token_ids[0]}:{interval}",
+                _poly_ttl(),
+                lambda: poly_src.fetch_price_history(token_ids[0], interval=interval),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("polymarket price history failed: %s", exc)
+            history = None
+
+    trades = None
+    try:
+        trades = cache.cached(
+            f"poly:trades:{market['conditionId']}",
+            _poly_ttl(),
+            lambda: poly_src.fetch_trades(market["conditionId"], limit=40),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("polymarket trades failed: %s", exc)
+        trades = None
+
+    bid, ask = market.get("bestBid"), market.get("bestAsk")
+    spread = round((ask - bid) * 100.0, 1) if (bid is not None and ask is not None) else None
+
+    return {
+        "title": market.get("question") or "Polymarket Market",
+        "question": market.get("question"),
+        "label": market.get("label"),
+        "slug": market.get("slug"),
+        "conditionId": market.get("conditionId"),
+        "icon": market.get("icon"),
+        "endDate": market.get("endDate"),
+        "outcomes": market.get("outcomes"),
+        "prices": market.get("prices"),
+        "yesProbability": market.get("yesProbability"),
+        "bestBid": bid,
+        "bestAsk": ask,
+        "spreadPct": spread,
+        "volume": market.get("volume"),
+        "volume24hr": market.get("volume24hr"),
+        "liquidity": market.get("liquidity"),
+        "interval": interval,
+        "history": (history or {}).get("points") if history else None,
+        "historyAvailable": bool(history and history.get("points")),
+        "trades": trades if trades else [],
+        "tradesAvailable": trades is not None,
+        "asOf": datetime.now(tz=timezone.utc).isoformat(),
+        "source": "live",
+    }
+
+
+_POLY_ADDR_RE = re.compile(r"0x[a-fA-F0-9]{40}")
+
+
+def build_polymarket_wallet(params: dict) -> dict:
+    """Summarize a Polymarket wallet: open positions, PnL and portfolio value.
+
+    Takes a wallet ``address`` (0x...) or extracts one from ``query``. Returns
+    real open positions with cost basis, current mark and PnL, plus aggregate
+    value/PnL totals. Fails honestly when no address is given or the wallet has
+    no positions.
+    """
+    raw = (params.get("address") or params.get("wallet") or params.get("query") or "").strip()
+    m = _POLY_ADDR_RE.search(raw)
+    address = m.group(0) if m else None
+    if not address:
+        return _clean_failure(
+            "A wallet address is required",
+            "Provide a Polymarket wallet address (0x followed by 40 hex "
+            "characters) to see its positions and PnL.",
+        )
+
+    wallet = None
+    try:
+        wallet = cache.cached(
+            f"poly:wallet:{address.lower()}",
+            _poly_ttl(),
+            lambda: poly_src.fetch_wallet(address),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("polymarket wallet fetch failed: %s", exc)
+        wallet = None
+
+    if not wallet:
+        return _clean_failure(
+            "Polymarket wallet data is unavailable",
+            "The Polymarket data API didn't return positions for that address "
+            "(it may be empty or rate-limiting). Double-check the address.",
+        )
+
+    positions = wallet.get("positions") or []
+    current_value = sum(p["currentValue"] for p in positions if p.get("currentValue"))
+    cost_basis = sum(p["initialValue"] for p in positions if p.get("initialValue"))
+    unrealized = sum(p["cashPnl"] for p in positions if p.get("cashPnl"))
+    realized = sum(p["realizedPnl"] for p in positions if p.get("realizedPnl"))
+    total_pct = round((unrealized / cost_basis) * 100.0, 2) if cost_basis else None
+
+    return {
+        "title": f"Polymarket Wallet — {address[:6]}…{address[-4:]}",
+        "address": address,
+        "value": wallet.get("value"),
+        "positions": positions,
+        "positionCount": len(positions),
+        "summary": {
+            "currentValue": round(current_value, 2),
+            "costBasis": round(cost_basis, 2),
+            "unrealizedPnl": round(unrealized, 2),
+            "realizedPnl": round(realized, 2),
+            "totalPnlPct": total_pct,
+        },
+        "asOf": wallet.get("asOf"),
         "source": "live",
     }
 
@@ -8464,6 +8711,46 @@ _reg(SkillDef(
         {"name": "compare_prints", "description": "Distinguish the initial print from the current revised value.", "expectedOutput": "Initial vs current values and total revision per period."},
     ],
     build_series_revisions, "Data Revision History",
+    "polymarket-markets", "Prediction Markets", "polymarket_markets",
+    "Browses real, live Polymarket prediction markets: lists the highest-volume active "
+    "events by category (politics, crypto, sports, economy, geopolitics, tech, culture) with "
+    "each event's implied probability, 24h volume and liquidity. Use when the user asks about "
+    "prediction markets, Polymarket, betting odds / market-implied probabilities of an event, "
+    "what the market thinks the odds are, election/crypto/sports prediction-market odds, or to "
+    "browse trending prediction markets.",
+    [
+        {"name": "fetch_events", "description": "Pull top active Polymarket events (optionally by category) from the Gamma API.", "expectedOutput": "A list of active events with markets, volume and liquidity."},
+        {"name": "compute_probabilities", "description": "Decode each event's leading outcomes into implied probabilities.", "expectedOutput": "Top outcomes with implied probability per event."},
+        {"name": "rank_by_volume", "description": "Sort events by 24-hour traded volume.", "expectedOutput": "Events ordered by activity."},
+    ],
+    build_polymarket_markets, "Prediction Markets",
+))
+_reg(SkillDef(
+    "polymarket-market", "Prediction Market Detail", "polymarket_market",
+    "Shows the detail for a single Polymarket prediction market: the implied-probability "
+    "history chart (the yes-share price over time) plus the recent trades tape, current "
+    "odds, bid/ask spread, volume and liquidity. Use when the user asks for detail on a "
+    "specific prediction market, a Polymarket market's probability history or price chart, "
+    "the odds over time for an event, or the recent trades on a prediction market.",
+    [
+        {"name": "resolve_market", "description": "Resolve the request to a specific Polymarket market by slug, id, or search.", "expectedOutput": "A market with its CLOB token and condition ids."},
+        {"name": "fetch_probability_history", "description": "Pull the yes-share price history (implied probability over time) from the CLOB API.", "expectedOutput": "A time series of implied probability."},
+        {"name": "fetch_trades", "description": "Pull the recent trades tape for the market from the data API.", "expectedOutput": "Recent buy/sell prints with price and size."},
+    ],
+    build_polymarket_market, "Prediction Market Detail",
+))
+_reg(SkillDef(
+    "polymarket-wallet", "Prediction Wallet", "polymarket_wallet",
+    "Analyzes a Polymarket wallet by address (0x...): its open positions with cost basis, "
+    "current mark and unrealized/realized PnL, plus aggregate portfolio value and total PnL. "
+    "Use when the user asks to analyze a Polymarket wallet, see a trader's prediction-market "
+    "positions or PnL, or look up what a given 0x address holds on Polymarket.",
+    [
+        {"name": "parse_address", "description": "Extract the 0x wallet address from the request.", "expectedOutput": "A wallet address."},
+        {"name": "fetch_positions", "description": "Pull the wallet's open positions and portfolio value from the data API.", "expectedOutput": "Open positions with cost basis, mark and PnL."},
+        {"name": "summarize_pnl", "description": "Aggregate value, cost basis and realized/unrealized PnL across positions.", "expectedOutput": "Portfolio-level value and PnL summary."},
+    ],
+    build_polymarket_wallet, "Prediction Wallet",
 ))
 _reg(SkillDef(
     "cashflow-duration", "Cash Flow & Duration", "cashflow_duration",

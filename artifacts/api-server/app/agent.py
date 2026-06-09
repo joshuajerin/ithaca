@@ -312,6 +312,32 @@ def _tools() -> list:
             }},
         }},
         {"type": "function", "function": {
+            "name": "add_polymarket_markets",
+            "description": f"Browse real, live Polymarket prediction markets by category (politics, crypto, sports, economy, geopolitics, tech, culture): lists top active events with implied probability, 24h volume and liquidity. Use for prediction markets, Polymarket, market-implied odds/probabilities of events. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "category": {"type": "string", "description": "Optional category filter: politics, crypto, sports, economy, geopolitics, tech, pop-culture. Omit for trending."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
+        {"type": "function", "function": {
+            "name": "add_polymarket_market",
+            "description": f"Show detail for one Polymarket prediction market: implied-probability history chart (yes-share price over time) + recent trades tape, current odds, spread, volume. Use for a specific prediction market's probability history/odds over time. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "query": {"type": "string", "description": "Free-text market name to resolve (e.g. 'Spain win World Cup', 'Fed rate cut')."},
+                "slug": {"type": "string", "description": "Exact Polymarket market slug, if known."},
+                "interval": {"type": "string", "enum": ["1h", "6h", "1d", "1w", "1m", "max"], "description": "History range; default 1m (one month)."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
+        {"type": "function", "function": {
+            "name": "add_polymarket_wallet",
+            "description": f"Analyze a Polymarket wallet by 0x address: open positions with cost basis, current mark and PnL, plus aggregate portfolio value and total PnL. Use to analyze a prediction-market trader's positions/PnL. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "address": {"type": "string", "description": "Polymarket wallet address (0x + 40 hex chars)."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["address"]},
+        }},
+        {"type": "function", "function": {
             "name": "add_cashflow_duration",
             "description": f"Show bond cash flows, duration, convexity, and rate-shock scenario table (yields off the live Treasury curve + live credit spreads). {sizing}",
             "parameters": {"type": "object", "properties": {
@@ -928,6 +954,9 @@ _TOOL_TO_TYPE = {
     "add_credit_stress": "credit_stress",
     "add_economic_releases": "economic_releases",
     "add_series_revisions": "series_revisions",
+    "add_polymarket_markets": "polymarket_markets",
+    "add_polymarket_market": "polymarket_market",
+    "add_polymarket_wallet": "polymarket_wallet",
     "add_cashflow_duration": "cashflow_duration",
     "add_portfolio_risk": "portfolio_risk",
     "add_backtest": "backtest",
@@ -1046,6 +1075,12 @@ def _system_prompt() -> str:
         "Fixed-income panels use live data: US Treasury par yields come from the U.S. Treasury daily "
         "curve, and credit spreads (bond OAS, CDS proxies) from live ICE BofA OAS indices; each panel "
         "labels its source live/mock so you can tell when a feed is unavailable.\n"
+        "- For prediction markets / Polymarket / market-implied odds: browse trending or by-category "
+        "markets → add_polymarket_markets (pass category for politics/crypto/sports/economy/geopolitics/"
+        "tech/pop-culture); a specific market's probability history + recent trades → add_polymarket_market "
+        "(pass the market name as query, or a slug); analyze a wallet's positions/PnL by 0x address → "
+        "add_polymarket_wallet. This is real, live, key-less Polymarket data (Gamma/CLOB/data APIs); "
+        "panels fail honestly when a market can't be resolved or a feed is unavailable.\n"
         "- For alert requests ('alert me', 'notify me', 'set up alerts', 'watch for block trades/sweeps', "
         "'manage alert rules'), use add_alerts (optionally with the symbol to pre-fill).\n"
         "- For pre-trade risk / compliance requests ('is this trade allowed', 'can I trade X', "
@@ -2789,6 +2824,9 @@ _TYPE_LABELS = {
     "credit_stress": "a credit stress monitor",
     "economic_releases": "an economic releases calendar",
     "series_revisions": "a data revision history",
+    "polymarket_markets": "a prediction markets browser",
+    "polymarket_market": "a prediction market detail",
+    "polymarket_wallet": "a prediction-market wallet analysis",
     "cashflow_duration": "cash flow & duration",
     "portfolio_risk": "a portfolio risk breakdown",
     "backtest": "a backtest",
@@ -3299,6 +3337,20 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         "credit spreads", "spread widening", "spreads widening", "credit widening",
         "widening credit", "ig vs hy", "hy vs ig", "ig/hy", "hy/ig", "high yield",
         "high-yield", "investment grade", "investment-grade", "risk-off credit", "risk on credit",
+    ])
+    poly_addr_match = re.search(r"0x[a-fA-F0-9]{40}", query)
+    wants_polymarket = any(k in q for k in [
+        "polymarket", "prediction market", "prediction-market", "predictionmarket",
+        "betting market", "betting odds", "market-implied odds", "market implied odds",
+        "implied probability", "implied odds", "odds of", "what are the odds",
+    ])
+    wants_poly_wallet = bool(poly_addr_match) and (
+        wants_polymarket or any(k in q for k in ["wallet", "positions", "pnl", "trader", "address"])
+    )
+    wants_poly_detail = wants_polymarket and any(k in q for k in [
+        "probability history", "price history", "odds over time", "probability over time",
+        "history chart", "recent trades", "trades on", "detail on", "detail for", "chart for",
+        "chart of",
     ])
     wants_cashflow = any(k in q for k in ["cash flow", "cashflow", "duration", "convexity", "dv01", "rate sensitivity", "bond cash", "modified duration"])
     wants_revisions = any(k in q for k in [
@@ -3893,6 +3945,43 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
     if wants_econ_releases:
         add("economic_releases", {}, 12, 6)
         return panels, "Economic releases calendar — recent and upcoming key US data with reported vs prior values (live FRED)."
+    if wants_poly_wallet:
+        add("polymarket_wallet", {"address": poly_addr_match.group(0)}, 8, 5)
+        return panels, "Polymarket wallet — open positions, cost basis and PnL with portfolio value."
+
+    if wants_poly_detail:
+        params: Dict[str, object] = {}
+        cat = None
+        for c in ["politics", "crypto", "sports", "economy", "geopolitics", "tech", "culture"]:
+            if c in q:
+                cat = c
+        # Strip the prediction-market framing so the search hits the event name.
+        cleaned = q
+        for kw in ["polymarket", "prediction market", "prediction-market",
+                   "probability history", "price history", "odds over time",
+                   "probability over time", "history chart", "recent trades",
+                   "detail on", "detail for", "chart for", "chart of", "show me",
+                   "the", "market", "for", "of"]:
+            cleaned = cleaned.replace(kw, " ")
+        cleaned = " ".join(cleaned.split())
+        if cleaned:
+            params["query"] = cleaned
+        add("polymarket_market", params, 8, 6)
+        return panels, "Polymarket market detail — implied-probability history and the recent trades tape."
+
+    if wants_polymarket:
+        category = None
+        cat_map = {"politics": "politics", "election": "politics", "crypto": "crypto",
+                   "bitcoin": "crypto", "sport": "sports", "economy": "economy",
+                   "economic": "economy", "geopolit": "geopolitics", "tech": "tech",
+                   "culture": "pop-culture"}
+        for kw, slug in cat_map.items():
+            if kw in q:
+                category = slug
+                break
+        add("polymarket_markets", {"category": category} if category else {}, 12, 6)
+        label = category.replace("-", " ") if category else "trending"
+        return panels, f"Polymarket prediction markets — top active {label} events with implied probability and volume."
 
     if wants_credit_stress:
         add("credit_stress", {}, 8, 5)
