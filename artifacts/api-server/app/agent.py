@@ -1179,10 +1179,120 @@ def _resolve_target_strategy(query: str, signal: Optional[str]) -> Optional[dict
     return max(strategies, key=lambda s: s.get("updatedAt") or "")
 
 
+def _session_portfolio(sid: str) -> Optional[dict]:
+    """Most recent ``signal_portfolio`` panel payload in this session, if any.
+
+    Lets the lifecycle handler promote a freshly constructed portfolio into the
+    desk using its own holdings/weights rather than re-deriving from a signal.
+    """
+    for p in reversed(state.get_dashboard(sid) or []):
+        if p.get("type") == "signal_portfolio" and isinstance(p.get("data"), dict):
+            return p.get("data")
+    return None
+
+
+def _wants_portfolio_promotion(q: str) -> bool:
+    """True when the user asks to track / paper-trade an existing constructed
+    portfolio (e.g. 'paper trade this portfolio', 'track this book').
+
+    Requires an explicit portfolio/book/holdings reference (not a bare 'it') so
+    it never hijacks a strategy-by-name command like 'paper trade the value
+    strategy'. The session must actually hold a portfolio for this to fire.
+    """
+    refers = re.search(r"\bportfolio\b|\bholdings\b|\bconstruction\b|\bbook\b", q)
+    if not refers:
+        return False
+    return bool(re.search(
+        r"\btrack\b|\bpaper[- ]?trad\w*\b|\bregister\b|\bmonitor\b|\bpromote\b"
+        r"|\bturn\b[^.]*\bstrateg|\bmake\b[^.]*\bstrateg|\badd\b[^.]*\bdesk\b", q))
+
+
+def _register_portfolio_strategy(query: str, data: dict) -> Tuple[dict, str, List[str]]:
+    """Register a strategy from a constructed signal_portfolio's holdings/weights
+    and start paper-trading it. Returns (view, summary, dropped_symbols).
+
+    The portfolio's signed fraction weights are passed through verbatim, so a
+    long-only book stays long and a dollar-neutral long/short book keeps its
+    short leg. Names the portfolio already excluded — plus any holding that no
+    longer resolves to a real company — are carried onto the strategy's
+    construction so the real-data-only / exclusion contract is preserved.
+    """
+    holdings = data.get("holdings") or []
+    picks = [
+        (str(h.get("symbol")).upper(), float(h.get("weight") or 0.0))
+        for h in holdings
+        if h.get("symbol") and float(h.get("weight") or 0.0) != 0.0
+    ]
+    resolved = [(s, w) for s, w in picks if repo.get_company(s)]
+    dropped = [s for s, _ in picks if not repo.get_company(s)]
+    if not resolved:
+        raise ValueError("portfolio has no tradeable holdings to register")
+
+    symbols = [s for s, _ in resolved]
+    weights = [w for _, w in resolved]
+    signal = engine.normalize_signal(data.get("signal") or "momentum")
+
+    # Carry the portfolio's own exclusions (insufficient history / missing
+    # fundamentals) plus any dropped name onto the strategy's construction.
+    excl: List[str] = []
+    for e in data.get("excludedNames") or []:
+        if isinstance(e, dict) and e.get("symbol"):
+            excl.append(str(e["symbol"]))
+        elif isinstance(e, str):
+            excl.append(e)
+    excl.extend(dropped)
+
+    scheme_label = data.get("schemeLabel") or ""
+    label = data.get("label") or engine.signal_label(signal)
+    name = _extract_strategy_name(query) or (
+        f"{label} {scheme_label}".strip() + " Portfolio").strip()
+
+    cons = {
+        "source": "signal_portfolio",
+        "scheme": data.get("scheme"),
+        "schemeLabel": scheme_label or None,
+        "universe": data.get("universe"),
+    }
+    if excl:
+        cons["excluded"] = excl
+
+    capital = _extract_capital(query)
+    target = strategy.create_strategy(
+        name=name, signal=signal, symbols=symbols, weights=weights,
+        construction=cons, capital=capital, paper=True,
+    )
+    excl_note = f" ({len(excl)} names excluded)" if excl else ""
+    msg = (f"Promoted {target['name']} from your constructed portfolio into the "
+           f"strategy desk and started paper-trading a ${int(target['capital']):,} "
+           f"book of {len(symbols)} holdings{excl_note}.")
+    return target, msg, dropped
+
+
+def _extract_capital(q: str) -> Optional[float]:
+    """Parse an optional book size like '$2m' / '500k of capital' from the query."""
+    m = re.search(r"\$?\s*([\d,]+(?:\.\d+)?)\s*(k|m|mm|million|thousand|bn|billion)?\s*"
+                  r"(?:of\s+)?(?:capital|equity|book|nav)?", q.lower())
+    if not m or not m.group(2):
+        return None
+    amt = float(m.group(1).replace(",", ""))
+    unit = m.group(2)
+    if unit in ("k", "thousand"):
+        amt *= 1_000
+    elif unit in ("m", "mm", "million"):
+        amt *= 1_000_000
+    elif unit in ("bn", "billion"):
+        amt *= 1_000_000_000
+    return amt if amt > 0 else None
+
+
 def _handle_lifecycle(query: str, sid: str, voice: bool) -> Optional[dict]:
     q = query.lower()
     action = _lifecycle_action(q)
-    if not action:
+    # Promote a freshly constructed signal portfolio into the desk: this takes
+    # precedence over the generic paper/promote actions when the session holds a
+    # portfolio and the user explicitly references it.
+    portfolio_src = _session_portfolio(sid) if _wants_portfolio_promotion(q) else None
+    if not action and portfolio_src is None:
         return None
     signal = _signal_in_query(q)
     symbols = _extract_symbols(query)
@@ -1191,7 +1301,10 @@ def _handle_lifecycle(query: str, sid: str, voice: bool) -> Optional[dict]:
     block_result: Optional[dict] = None
 
     try:
-        if action == "create":
+        if portfolio_src is not None:
+            target, msg, _dropped = _register_portfolio_strategy(query, portfolio_src)
+            action = "paper"  # downstream panels treat it as a fresh paper book
+        elif action == "create":
             target = strategy.create_strategy(
                 name=_extract_strategy_name(query), signal=signal,
                 symbols=symbols or None, paper=bool(re.search(r"\bpaper", q)),

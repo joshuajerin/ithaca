@@ -29,9 +29,18 @@ _API_SERVER_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _API_SERVER_DIR not in sys.path:
     sys.path.insert(0, _API_SERVER_DIR)
 
-from app import agent, harness, repo, strategy, strategy_store  # noqa: E402
+from app import agent, compliance_store, harness, repo, state, strategy, strategy_store  # noqa: E402
 from app.engine import paperbook  # noqa: E402
 from app.strategy_store import db as _store_db  # noqa: E402
+
+# Permissive firm limits so a deterministic few-name paper book isn't refused by
+# the pre-trade compliance gate (the lifecycle service runs precheck on every
+# paper_trade). Compliance shares the same `db` module forced off below, so this
+# keeps the gate hermetic and effectively open for the lifecycle math under test.
+_OPEN_LIMITS = {
+    "maxPositionPct": 100.0, "maxNetPct": 1000.0,
+    "maxLeverage": 100.0, "maxConcentrationPct": 100.0,
+}
 
 
 # =========================================================================
@@ -54,8 +63,12 @@ def _stub_all_companies():
 
 
 def _stub_series(sym, n=8):
+    # Historical closes ending today (matching real data: the series is in the
+    # past). A fresh paper book has inception == today, so its bootstrap NAV
+    # reconstruction keeps only points >= inception — i.e. ~1 day — which keeps
+    # trackDays below minDays so a brand-new book's promotion is correctly gated.
     base = _PRICES.get(sym.upper(), 100.0)
-    d0 = datetime.date.today()
+    d0 = datetime.date.today() - datetime.timedelta(days=n - 1)
     pts, px = [], base
     for i in range(n):
         pts.append({"t": (d0 + datetime.timedelta(days=i)).isoformat(), "c": round(px, 4)})
@@ -82,15 +95,21 @@ def lifecycle_env(use_memory=True):
         "price_closes_bulk": repo.price_closes_bulk,
         "db_available": _store_db.db_available,
         "schema_ready": strategy_store._schema_ready,
+        "comp_cfg": compliance_store._mem_cfg,
     }
     repo.get_company = _stub_get_company
     repo.all_symbols = lambda: list(_PRICES.keys())
     repo.get_all_companies = _stub_all_companies
     repo.price_closes_bulk = _stub_price_closes_bulk
     if use_memory:
+        # compliance_store shares this same `db` module, so forcing it off routes
+        # both the strategy store AND the compliance gate to their in-memory path.
         _store_db.db_available = lambda: False
         strategy_store._mem.clear()
         strategy_store._schema_ready = False
+        cfg = compliance_store._default_config()
+        cfg["limits"] = dict(_OPEN_LIMITS)
+        compliance_store._mem_cfg = cfg
     try:
         yield
     finally:
@@ -100,6 +119,7 @@ def lifecycle_env(use_memory=True):
         repo.price_closes_bulk = saved["price_closes_bulk"]
         _store_db.db_available = saved["db_available"]
         strategy_store._schema_ready = saved["schema_ready"]
+        compliance_store._mem_cfg = saved["comp_cfg"]
         if use_memory:
             strategy_store._mem.clear()
 
@@ -415,6 +435,99 @@ def test_agent_demote_and_retire_intents():
         retired = agent._handle_lifecycle("retire the momentum strategy", "s", voice=False)
         assert retired is not None
         assert strategy_store.get_strategy("Momentum Strategy")["stage"] == "retired"
+
+
+def _seed_portfolio_panel(sid, scheme="top_quantile", holdings=None):
+    """Place a signal_portfolio panel in the session so the lifecycle handler can
+    promote it into the desk."""
+    if holdings is None:
+        holdings = [
+            {"symbol": "AAA", "side": "long", "weight": 0.5, "score": 0.9, "name": "AAA Corp"},
+            {"symbol": "BBB", "side": "long", "weight": 0.5, "score": 0.7, "name": "BBB Corp"},
+        ]
+    state.set_dashboard(sid, [{
+        "id": "sp", "type": "signal_portfolio", "status": "ok",
+        "data": {
+            "signal": "momentum", "label": "Momentum", "scheme": scheme,
+            "schemeLabel": "Top quantile (long-only)", "universe": "US large-cap",
+            "holdings": holdings, "excludedNames": [{"symbol": "EEE", "reason": "insufficient price history"}],
+        },
+    }])
+
+
+def test_agent_promote_portfolio_to_paper_strategy():
+    with lifecycle_env(), stub_panels():
+        sid = "sess-promote-pf"
+        _seed_portfolio_panel(sid)
+        out = agent._handle_lifecycle("paper trade this portfolio", sid, voice=False)
+        assert out is not None
+        assert "promoted" in out["summary"].lower()
+        rows = strategy_store.list_strategies()
+        assert len(rows) == 1
+        strat = rows[0]
+        assert strat["stage"] == "paper"
+        # Uses the portfolio's own holdings (AAA + BBB), normalized to fractions.
+        assert set(strat["targetWeights"].keys()) == {"AAA", "BBB"}
+        assert math.isclose(sum(strat["targetWeights"].values()), 1.0, abs_tol=1e-6)
+        # The portfolio's exclusions are carried onto the strategy construction.
+        assert "EEE" in (strat["construction"].get("excluded") or [])
+        assert strat["construction"].get("source") == "signal_portfolio"
+
+
+def test_agent_track_portfolio_phrasing():
+    with lifecycle_env(), stub_panels():
+        sid = "sess-track-pf"
+        _seed_portfolio_panel(sid)
+        out = agent._handle_lifecycle("track this portfolio in the desk", sid, voice=False)
+        assert out is not None
+        rows = strategy_store.list_strategies()
+        assert len(rows) == 1 and rows[0]["stage"] == "paper"
+
+
+def test_agent_promote_long_short_portfolio_keeps_short_leg():
+    with lifecycle_env(), stub_panels():
+        sid = "sess-ls-pf"
+        _seed_portfolio_panel(sid, scheme="long_short", holdings=[
+            {"symbol": "AAA", "side": "long", "weight": 0.5, "score": 0.9, "name": "AAA Corp"},
+            {"symbol": "BBB", "side": "long", "weight": 0.5, "score": 0.8, "name": "BBB Corp"},
+            {"symbol": "CCC", "side": "short", "weight": -0.5, "score": -0.7, "name": "CCC Corp"},
+            {"symbol": "DDD", "side": "short", "weight": -0.5, "score": -0.9, "name": "DDD Corp"},
+        ])
+        out = agent._handle_lifecycle("paper trade this portfolio", sid, voice=False)
+        assert out is not None
+        strat = strategy_store.list_strategies()[0]
+        tw = strat["targetWeights"]
+        assert set(tw.keys()) == {"AAA", "BBB", "CCC", "DDD"}
+        # short leg stays negative, long leg positive; gross sums to 1.
+        assert tw["AAA"] > 0 and tw["CCC"] < 0
+        assert math.isclose(sum(abs(w) for w in tw.values()), 1.0, abs_tol=1e-6)
+
+
+def test_named_strategy_command_not_hijacked_by_portfolio():
+    """A strategy-by-name command must still target that strategy even when a
+    portfolio panel sits in the session (no 'portfolio'/'book' reference)."""
+    with lifecycle_env(), stub_panels():
+        sid = "sess-named"
+        strategy.create_strategy(
+            name="Momentum Strategy", signal="momentum", symbols=["AAA", "BBB"], weights=[0.5, 0.5],
+        )
+        _seed_portfolio_panel(sid)
+        out = agent._handle_lifecycle("paper trade the momentum strategy", sid, voice=False)
+        assert out is not None
+        # No NEW strategy was registered from the portfolio; the named one papered.
+        rows = strategy_store.list_strategies()
+        assert len(rows) == 1
+        assert strategy_store.get_strategy("Momentum Strategy")["stage"] == "paper"
+
+
+def test_promote_portfolio_without_session_panel_passes_through():
+    """'paper trade this portfolio' with no portfolio in session falls back to the
+    normal (no strategies yet) lifecycle response rather than crashing."""
+    with lifecycle_env(), stub_panels():
+        out = agent._handle_lifecycle("paper trade this portfolio", "sess-empty", voice=False)
+        assert out is not None
+        assert "don't have any strategies" in out["summary"].lower()
+        assert strategy_store.list_strategies() == []
 
 
 def test_agent_non_lifecycle_query_passes_through():
