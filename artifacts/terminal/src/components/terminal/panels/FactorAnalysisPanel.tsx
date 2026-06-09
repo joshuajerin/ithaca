@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import type { FactorAnalysisData } from "@workspace/api-client-react";
+import { Loader2 } from "lucide-react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -23,9 +24,10 @@ const FACTOR_COLORS: Record<string, string> = {
 interface Props {
   data: FactorAnalysisData;
   onRefine?: (params: Record<string, unknown>) => void;
+  pending?: boolean;
 }
 
-export function FactorAnalysisPanel({ data, onRefine }: Props) {
+export function FactorAnalysisPanel({ data, onRefine, pending }: Props) {
   const { monthlyAttribution, loadings } = data;
   const [draft, setDraft] = useState("");
 
@@ -68,20 +70,29 @@ export function FactorAnalysisPanel({ data, onRefine }: Props) {
           {data.name} ({data.symbol}) · Factor Return Attribution
         </div>
         {onRefine && (
-          <form onSubmit={submitSymbol} className="shrink-0">
-            <input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="swap ticker"
-              aria-label="Swap ticker"
-              spellCheck={false}
-              className="w-24 bg-transparent border border-dashed border-border px-1.5 py-0.5 text-[10px] font-mono uppercase text-white placeholder:text-muted-foreground focus:outline-none focus:border-white/60 transition-colors"
-            />
-          </form>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {pending && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" strokeWidth={1.5} />}
+            <form onSubmit={submitSymbol}>
+              <input
+                value={draft}
+                disabled={pending}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="swap ticker"
+                aria-label="Swap ticker"
+                spellCheck={false}
+                className="w-24 bg-transparent border border-dashed border-border px-1.5 py-0.5 text-[10px] font-mono uppercase text-white placeholder:text-muted-foreground focus:outline-none focus:border-white/60 transition-colors disabled:opacity-50"
+              />
+            </form>
+          </div>
         )}
       </div>
 
-      <div className="flex gap-3 flex-1 min-h-0">
+      <div className="relative flex gap-3 flex-1 min-h-0">
+        {pending && (
+          <div className="absolute inset-0 z-10 bg-black/50 flex items-center justify-center pointer-events-none">
+            <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" strokeWidth={1.5} />
+          </div>
+        )}
         <div className="flex-[3] min-h-0 flex flex-col">
           <div className="text-[9px] text-muted-foreground uppercase tracking-widest mb-1 shrink-0">
             Monthly Attribution (%)

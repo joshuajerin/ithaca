@@ -11,14 +11,15 @@ import {
   Cell,
   ReferenceLine,
 } from "recharts";
-import { X } from "lucide-react";
+import { X, Loader2 } from "lucide-react";
 
 interface Props {
   data: PortfolioRiskData;
   onRefine?: (params: Record<string, unknown>) => void;
+  pending?: boolean;
 }
 
-export function PortfolioRiskPanel({ data, onRefine }: Props) {
+export function PortfolioRiskPanel({ data, onRefine, pending }: Props) {
   const { summary, varHistogram, factorExposures } = data;
   const [draft, setDraft] = useState("");
 
@@ -66,6 +67,12 @@ export function PortfolioRiskPanel({ data, onRefine }: Props) {
 
   return (
     <div className="flex flex-col h-full gap-3">
+      <div className="relative flex-1 flex flex-col gap-3 min-h-0">
+        {pending && (
+          <div className="absolute inset-0 z-10 bg-black/50 flex items-center justify-center pointer-events-none">
+            <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" strokeWidth={1.5} />
+          </div>
+        )}
       <div className="grid grid-cols-3 gap-3 shrink-0">
         <div className="border border-border p-2">
           <div className="text-[9px] text-muted-foreground uppercase tracking-widest mb-1">1-Day 95% VaR</div>
@@ -144,6 +151,7 @@ export function PortfolioRiskPanel({ data, onRefine }: Props) {
           </div>
         </div>
       </div>
+      </div>
 
       <div className="shrink-0">
         <div className="text-[9px] text-muted-foreground uppercase tracking-widest mb-1">Holdings</div>
@@ -157,8 +165,9 @@ export function PortfolioRiskPanel({ data, onRefine }: Props) {
               {onRefine && symbols.length > 1 && (
                 <button
                   type="button"
+                  disabled={pending}
                   onClick={() => removeSymbol(s)}
-                  className="text-muted-foreground hover:text-red-400 transition-colors"
+                  className="text-muted-foreground hover:text-red-400 transition-colors disabled:opacity-50"
                   aria-label={`Remove ${s}`}
                 >
                   <X className="w-2.5 h-2.5" strokeWidth={2} />
@@ -170,11 +179,12 @@ export function PortfolioRiskPanel({ data, onRefine }: Props) {
             <form onSubmit={addSymbol}>
               <input
                 value={draft}
+                disabled={pending}
                 onChange={(e) => setDraft(e.target.value)}
                 placeholder="+ ticker"
                 aria-label="Add ticker"
                 spellCheck={false}
-                className="w-16 bg-transparent border border-dashed border-border px-1.5 py-0.5 text-[10px] font-mono uppercase text-white placeholder:text-muted-foreground focus:outline-none focus:border-white/60 transition-colors"
+                className="w-16 bg-transparent border border-dashed border-border px-1.5 py-0.5 text-[10px] font-mono uppercase text-white placeholder:text-muted-foreground focus:outline-none focus:border-white/60 transition-colors disabled:opacity-50"
               />
             </form>
           )}

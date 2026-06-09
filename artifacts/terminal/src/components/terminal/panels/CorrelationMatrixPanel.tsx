@@ -1,4 +1,5 @@
 import React from "react";
+import { Loader2 } from "lucide-react";
 import type { CorrelationMatrixData } from "@workspace/api-client-react";
 
 function corrColor(v: number): string {
@@ -25,9 +26,10 @@ function textColor(v: number): string {
 interface Props {
   data: CorrelationMatrixData;
   onRefine?: (params: Record<string, unknown>) => void;
+  pending?: boolean;
 }
 
-export function CorrelationMatrixPanel({ data, onRefine }: Props) {
+export function CorrelationMatrixPanel({ data, onRefine, pending }: Props) {
   const window = data.window as 30 | 90;
   const { symbols, matrix, betas } = data;
 
@@ -37,14 +39,16 @@ export function CorrelationMatrixPanel({ data, onRefine }: Props) {
         <div className="text-[9px] text-muted-foreground uppercase tracking-widest">
           Pairwise Correlations
         </div>
-        <div className="flex gap-1">
+        <div className="flex items-center gap-1">
+          {pending && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground mr-1" strokeWidth={1.5} />}
           {([30, 90] as const).map((w) => (
             <button
               key={w}
+              disabled={pending}
               onClick={() => {
                 if (w !== window) onRefine?.({ symbols, window: w });
               }}
-              className={`text-[9px] px-2 py-0.5 border uppercase tracking-widest transition-colors ${
+              className={`text-[9px] px-2 py-0.5 border uppercase tracking-widest transition-colors disabled:opacity-50 ${
                 window === w
                   ? "border-white text-white bg-white/10"
                   : "border-border text-muted-foreground hover:border-white/40"
@@ -56,7 +60,12 @@ export function CorrelationMatrixPanel({ data, onRefine }: Props) {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 flex flex-col gap-2">
+      <div className="relative flex-1 min-h-0 flex flex-col gap-2">
+        {pending && (
+          <div className="absolute inset-0 z-10 bg-black/50 flex items-center justify-center pointer-events-none">
+            <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" strokeWidth={1.5} />
+          </div>
+        )}
         <div className="overflow-auto">
           <table className="text-[10px] font-mono border-collapse">
             <thead>

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import type { BacktestData } from "@workspace/api-client-react";
+import { Loader2 } from "lucide-react";
 import { CoverageBadge, type DataCoverage } from "./CoverageBadge";
 import {
   ResponsiveContainer,
@@ -22,6 +23,7 @@ const RANGES = ["1M", "3M", "6M", "1Y"] as const;
 interface Props {
   data: BacktestData;
   onRefine?: (params: Record<string, unknown>) => void;
+  pending?: boolean;
 }
 
 function fmtUsd(v?: number | null, compact = false): string {
@@ -35,7 +37,7 @@ function fmtUsd(v?: number | null, compact = false): string {
   });
 }
 
-export function BacktestPanel({ data, onRefine }: Props) {
+export function BacktestPanel({ data, onRefine, pending }: Props) {
   const { stats, curve, drawdown } = data;
   const range = (data.range ?? "1Y").toUpperCase();
   const invested = data.investment ?? 0;
@@ -150,22 +152,25 @@ export function BacktestPanel({ data, onRefine }: Props) {
                   type="text"
                   inputMode="numeric"
                   value={amountInput}
+                  disabled={pending}
                   onChange={(e) => setAmountInput(e.target.value)}
                   onBlur={commitAmount}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") (e.target as HTMLInputElement).blur();
                   }}
-                  className="w-24 text-[10px] bg-black px-1 py-0.5 font-mono text-white focus:outline-none"
+                  className="w-24 text-[10px] bg-black px-1 py-0.5 font-mono text-white focus:outline-none disabled:opacity-50"
                   placeholder="10,000"
                 />
               </div>
             </div>
             <div className="flex items-center gap-1.5">
+              {pending && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" strokeWidth={1.5} />}
               <span className="text-[9px] text-muted-foreground uppercase tracking-widest">Strategy</span>
               <select
                 value={data.strategy}
+                disabled={pending}
                 onChange={(e) => refine({ strategy: e.target.value })}
-                className="text-[10px] bg-black border border-border px-1.5 py-0.5 font-mono text-white focus:outline-none focus:border-white/60 transition-colors"
+                className="text-[10px] bg-black border border-border px-1.5 py-0.5 font-mono text-white focus:outline-none focus:border-white/60 transition-colors disabled:opacity-50"
               >
                 {STRATEGIES.map((s) => (
                   <option key={s.value} value={s.value}>
@@ -179,8 +184,9 @@ export function BacktestPanel({ data, onRefine }: Props) {
             <span className="text-[9px] text-muted-foreground uppercase tracking-widest">Entry</span>
             <div className="flex gap-1 flex-wrap">
               <button
+                disabled={pending}
                 onClick={() => refine({ entry: "peak" })}
-                className={`text-[9px] px-2 py-0.5 border uppercase tracking-widest transition-colors ${
+                className={`text-[9px] px-2 py-0.5 border uppercase tracking-widest transition-colors disabled:opacity-50 ${
                   entryMode === "peak"
                     ? "border-white text-white bg-white/10"
                     : "border-border text-muted-foreground hover:border-white/40"
@@ -189,8 +195,9 @@ export function BacktestPanel({ data, onRefine }: Props) {
                 Peak
               </button>
               <button
+                disabled={pending}
                 onClick={() => entryMode !== "date" && commitDate(dateInput || data.entry?.date || "")}
-                className={`text-[9px] px-2 py-0.5 border uppercase tracking-widest transition-colors ${
+                className={`text-[9px] px-2 py-0.5 border uppercase tracking-widest transition-colors disabled:opacity-50 ${
                   entryMode === "date"
                     ? "border-white text-white bg-white/10"
                     : "border-border text-muted-foreground hover:border-white/40"
@@ -201,8 +208,9 @@ export function BacktestPanel({ data, onRefine }: Props) {
               {RANGES.map((r) => (
                 <button
                   key={r}
+                  disabled={pending}
                   onClick={() => refine({ entry: "preset", range: r })}
-                  className={`text-[9px] px-2 py-0.5 border uppercase tracking-widest transition-colors ${
+                  className={`text-[9px] px-2 py-0.5 border uppercase tracking-widest transition-colors disabled:opacity-50 ${
                     entryMode === "preset" && range === r
                       ? "border-white text-white bg-white/10"
                       : "border-border text-muted-foreground hover:border-white/40"
@@ -216,14 +224,21 @@ export function BacktestPanel({ data, onRefine }: Props) {
               <input
                 type="date"
                 value={dateInput}
+                disabled={pending}
                 onChange={(e) => commitDate(e.target.value)}
-                className="text-[10px] bg-black border border-border px-1.5 py-0.5 font-mono text-white focus:outline-none focus:border-white/60 transition-colors"
+                className="text-[10px] bg-black border border-border px-1.5 py-0.5 font-mono text-white focus:outline-none focus:border-white/60 transition-colors disabled:opacity-50"
               />
             )}
           </div>
         </div>
       )}
 
+      <div className="relative flex-1 flex flex-col gap-3 min-h-0">
+        {pending && (
+          <div className="absolute inset-0 z-10 bg-black/50 flex items-center justify-center pointer-events-none">
+            <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" strokeWidth={1.5} />
+          </div>
+        )}
       {/* Dollar outcome summary */}
       {invested > 0 && (
         <div className="grid grid-cols-4 gap-2 shrink-0">
@@ -350,6 +365,7 @@ export function BacktestPanel({ data, onRefine }: Props) {
             </ComposedChart>
           </ResponsiveContainer>
         </div>
+      </div>
       </div>
     </div>
   );

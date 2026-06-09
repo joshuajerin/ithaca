@@ -188,6 +188,21 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted, onBui
     }
   };
 
+  // In-panel control refine: routed through a separate mutation so the global
+  // "Processing" overlay (keyed off refineMutation.isPending) never fires. The
+  // panel keeps its control rows mounted and shows a local loading state via the
+  // `pending` prop instead.
+  const handleRefineParamsLive = async (params: Record<string, unknown>) => {
+    try {
+      const result = await paramRefineMutation.mutateAsync({
+        data: { sessionId, panelId: panel.id, params },
+      });
+      onRefined(result);
+    } catch (e) {
+      console.error("Failed to refine panel", e);
+    }
+  };
+
   const renderContent = () => {
     if (panel.status === "loading" || refineMutation.isPending) {
       return (
@@ -244,12 +259,12 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted, onBui
       case "bond_rv": return <BondRVPanel data={panel.data as any} />;
       case "cds_pricer": return <CDSPricerPanel data={panel.data as any} />;
       case "cashflow_duration": return <CashFlowPanel data={panel.data as any} />;
-      case "portfolio_risk": return <PortfolioRiskPanel data={panel.data as any} onRefine={handleRefineParams} />;
-      case "backtest": return <BacktestPanel data={panel.data as any} onRefine={handleRefineParams} />;
+      case "portfolio_risk": return <PortfolioRiskPanel data={panel.data as any} onRefine={handleRefineParamsLive} pending={paramRefineMutation.isPending} />;
+      case "backtest": return <BacktestPanel data={panel.data as any} onRefine={handleRefineParamsLive} pending={paramRefineMutation.isPending} />;
       case "walk_forward": return <WalkForwardPanel data={panel.data as any} onRefine={handleRefineParams} />;
       case "monte_carlo": return <MonteCarloPanel data={panel.data as any} />;
-      case "correlation_matrix": return <CorrelationMatrixPanel data={panel.data as any} onRefine={handleRefineParams} />;
-      case "factor_analysis": return <FactorAnalysisPanel data={panel.data as any} onRefine={handleRefineParams} />;
+      case "correlation_matrix": return <CorrelationMatrixPanel data={panel.data as any} onRefine={handleRefineParamsLive} pending={paramRefineMutation.isPending} />;
+      case "factor_analysis": return <FactorAnalysisPanel data={panel.data as any} onRefine={handleRefineParamsLive} pending={paramRefineMutation.isPending} />;
       case "risk_model": return <RiskModelPanel data={panel.data as any} />;
       case "risk_comparison": return <RiskComparisonPanel data={panel.data as any} />;
       case "portfolio_optimizer": return <PortfolioOptimizerPanel data={panel.data as any} />;
