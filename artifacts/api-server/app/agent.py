@@ -882,6 +882,27 @@ def _tools() -> list:
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }},
         }},
+        {"type": "function", "function": {
+            "name": "add_strategy_marketplace",
+            "description": (
+                "Add the STRATEGY TEMPLATES MARKETPLACE: a browsable CATALOG of pre-built, "
+                "parameterized strategy templates (presets of an alpha signal — momentum, value, "
+                "quality, low volatility or short-term reversal — over an optional sector universe). "
+                "The selected template shows a live PREVIEW: a real top-quantile backtest (Sharpe, "
+                "CAGR, drawdown vs benchmark). From the panel the user can tweak parameters, CLONE a "
+                f"template into the paper desk, or SAVE their own. {sizing} Use for 'strategy "
+                "templates', 'strategy marketplace', 'template library', 'browse strategies', "
+                "'pre-built/preset strategies', 'strategy catalog'. This BROWSES templates — use "
+                "add_strategy_desk for the user's existing strategies and add_signal_portfolio to "
+                "build a one-off portfolio from a signal. Pass `templateId` to focus one."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "templateId": {"type": "string", "description": "Optional template id to focus."},
+                "signal": {"type": "string", "description": "Optional signal to preview (momentum/value/quality/low_volatility/short_reversal)."},
+                "sector": {"type": "string", "description": "Optional sector universe filter; empty for the broad universe."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
     ]
 
 
@@ -956,6 +977,7 @@ _TOOL_TO_TYPE = {
     "add_strategy_desk": "strategy_desk",
     "add_multi_strategy": "multi_strategy",
     "add_rebalance_plan": "rebalance_plan",
+    "add_strategy_marketplace": "strategy_marketplace",
 }
 
 
@@ -1139,6 +1161,12 @@ def _system_prompt() -> str:
         "to its latest signal targets and prices the trade list with the real square-root impact model. Set "
         "`apply` true only when the user clearly wants to execute the trades; otherwise leave it off to "
         "preview. (Strategy rebalances are usually handled before you are called.)\n"
+        "- For the STRATEGY TEMPLATES MARKETPLACE ('strategy templates', 'strategy marketplace', "
+        "'template library', 'browse strategies', 'pre-built/preset strategies', 'strategy catalog'), "
+        "use add_strategy_marketplace: a browsable catalog of pre-built parameterized strategy "
+        "templates the user can preview (real backtest), tweak, clone into the paper desk, or save "
+        "their own. This BROWSES templates — use add_strategy_desk for the user's existing "
+        "strategies and add_signal_portfolio to build a one-off portfolio from a signal.\n"
         "- Decide each panel's width (3-12 grid columns) and height (2-6 row units). Make the "
         "primary panel larger; supporting panels narrower. A full-width hero is width 12.\n"
         "- Only use tickers and sectors that exist in the dataset.\n"
@@ -1395,6 +1423,12 @@ def _extract_capital(q: str) -> Optional[float]:
 
 def _handle_lifecycle(query: str, sid: str, voice: bool) -> Optional[dict]:
     q = query.lower()
+    # Template/marketplace requests (e.g. "build a strategy from the momentum
+    # template", "browse strategy templates") are NOT lifecycle actions — they
+    # browse/preview the marketplace catalog. Let them fall through so the create
+    # verb ("build … strategy") doesn't hijack them into the desk.
+    if re.search(r"\btemplate\b|\bmarketplace\b|\btemplates\b", q):
+        return None
     action = _lifecycle_action(q)
     # Promote a freshly constructed signal portfolio into the desk: this takes
     # precedence over the generic paper/promote actions when the session holds a
@@ -2801,6 +2835,7 @@ _TYPE_LABELS = {
     "strategy_desk": "the strategy desk",
     "multi_strategy": "the multi-strategy allocation",
     "rebalance_plan": "a cost-aware rebalance plan",
+    "strategy_marketplace": "the strategy templates marketplace",
 }
 
 
@@ -3317,6 +3352,15 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         "paper book", "paper-book", "strategy registry", "strategy roster", "live book",
         "strategy book", "the book",
     ])
+    # Strategy templates MARKETPLACE: a browsable catalog of pre-built strategies.
+    # Detected before wants_desk (it mentions "strategies") and before the
+    # signal-portfolio path so "browse strategy templates" opens the catalog.
+    wants_marketplace = any(k in q for k in [
+        "strategy template", "strategy templates", "strategy marketplace", "template library",
+        "template gallery", "strategy catalog", "strategy catalogue", "browse strategies",
+        "browse strategy", "pre-built strateg", "prebuilt strateg", "preset strateg",
+        "strategy preset", "pre-built strategies", "templates marketplace",
+    ]) or ("template" in q and "strateg" in q)
     _invest_parsed = _parse_invest_entry(query)
     # A plain "invest $X in <ticker> ... what's it worth now" is a buy-and-hold
     # dollar question, not a systematic-strategy backtest. Detect it explicitly so
@@ -3486,6 +3530,16 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         return panels, ("Shorting desk: per-name borrow tier and fee, locate-infeasible names, the "
                         "carrying-cost drag (borrow + financing − rebate) and the Reg-T margin, "
                         "leverage and any breach for the book.")
+
+    if wants_marketplace:
+        mp_params: dict = {}
+        sig = _signal_in_query(q)
+        if sig:
+            mp_params["signal"] = sig
+        add("strategy_marketplace", mp_params, 12, 7)
+        return panels, ("Here's the strategy templates marketplace: browse pre-built strategies, "
+                        "preview their backtest, tweak the parameters, then clone one into your "
+                        "paper desk or save your own.")
 
     if wants_desk:
         add("strategy_desk", {}, 12, 5)
@@ -4516,6 +4570,19 @@ def _structured_refine_params(panel_type: str, panel: dict, params: dict) -> dic
         out["splits"] = params.get("splits") or d.get("nSplits")
     elif panel_type == "factor_analysis":
         out["symbol"] = (params.get("symbol") or d.get("symbol") or "").upper() or None
+    elif panel_type == "strategy_marketplace":
+        # In-panel template tweaks: keep the focused template and overlay only the
+        # changed controls. ``sector`` is passed through even when empty ("" =
+        # broad universe) so it survives the None-strip below.
+        sel = d.get("selected") or {}
+        out["templateId"] = params.get("templateId") or sel.get("id")
+        out["signal"] = params.get("signal") or sel.get("signal")
+        sector = params.get("sector") if "sector" in params else sel.get("sector")
+        out["sector"] = "" if sector is None else sector
+        out["topN"] = params.get("topN") if params.get("topN") is not None else sel.get("topN")
+        out["capital"] = params.get("capital") if params.get("capital") is not None else sel.get("capital")
+        if params.get("name"):
+            out["name"] = params.get("name")
     else:
         out = dict(params)
     return {k: v for k, v in out.items() if v is not None}

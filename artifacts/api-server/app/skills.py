@@ -7876,6 +7876,38 @@ def build_rebalance_plan(params: dict) -> dict:
     }
 
 
+def build_strategy_marketplace(params: dict) -> dict:
+    """Strategy Templates Marketplace: a browsable catalog of pre-built,
+    parameterized strategy templates.
+
+    Each template is an alpha-signal preset (momentum / value / quality / low
+    volatility / short reversal) over an optional sector universe, with a target
+    holdings count and book size. The selected template carries a live preview —
+    a real top-quantile backtest from ``build_signal_portfolio`` (identical stats
+    to the Signal Portfolio desk). Tweaks (signal / sector / topN / capital) flow
+    in via ``params`` and re-run the preview; cloning and saving happen over
+    dedicated endpoints.
+    """
+    from . import templates as _templates
+
+    cfg = _templates.resolve_config(params)
+    prev, err = _templates.preview(cfg)
+    selected = dict(cfg)
+    selected["preview"] = prev
+    selected["previewError"] = err
+
+    data: dict = {
+        "templates": _templates.list_all(),
+        "selected": selected,
+        "signals": _templates.signal_options(),
+        "sectors": _templates.sector_options(),
+    }
+    if prev:
+        data["asOf"] = prev.get("asOf")
+        data["source"] = prev.get("source")
+    return data
+
+
 # ----------------------------- registry -----------------------------
 class SkillDef:
     def __init__(self, id, name, panel_type, description, subskills, builder, default_title):
@@ -8647,6 +8679,24 @@ _reg(SkillDef(
         {"name": "construct_and_backtest", "description": "Rank the cross-section, size positions and backtest the realized book on real data.", "expectedOutput": "Holdings with weights, equity curve, drawdown, performance stats and coverage."},
     ],
     build_signal_portfolio, "Signal Portfolio",
+))
+_reg(SkillDef(
+    "strategy-marketplace", "Strategy Templates Marketplace", "strategy_marketplace",
+    "A browsable CATALOG of pre-built, parameterized strategy TEMPLATES (presets of an alpha "
+    "signal — momentum, value, quality, low volatility or short-term reversal — over an optional "
+    "sector universe). Each selected template carries a live PREVIEW: a real top-quantile backtest "
+    "(Sharpe, CAGR, drawdown vs benchmark). Users can tweak a template's parameters, CLONE it into "
+    "the paper-trading strategy desk, or SAVE their own configured template. Use for 'strategy "
+    "templates', 'strategy marketplace', 'template library', 'browse strategies', 'preset/pre-built "
+    "strategies', 'strategy catalog', 'clone a template'. This is the BROWSE/PREVIEW catalog — use "
+    "add_strategy_desk for the user's existing strategies and add_signal_portfolio to construct a "
+    "one-off portfolio from a signal.",
+    [
+        {"name": "load_catalog", "description": "List built-in and user-saved templates.", "expectedOutput": "The template catalog."},
+        {"name": "resolve_template", "description": "Focus a template and overlay any parameter tweaks.", "expectedOutput": "The selected template config."},
+        {"name": "preview_backtest", "description": "Backtest the template's signal as a top-quantile book on real data.", "expectedOutput": "Equity curve, drawdown and performance stats."},
+    ],
+    build_strategy_marketplace, "Strategy Marketplace",
 ))
 _reg(SkillDef(
     "combined-alpha", "Combined Alpha (Signal Blend)", "combined_alpha",

@@ -355,6 +355,65 @@ def rebalance_strategy(strategy_id: str, req: StrategyRebalanceRequest | None = 
     return {"ok": bool(info.get("applied")), "rebalance": info, "strategy": updated}
 
 
+# ------------------------------ strategy templates marketplace ----------------
+class TemplateConfig(BaseModel):
+    id: str | None = None
+    templateId: str | None = None
+    name: str | None = None
+    description: str | None = None
+    category: str | None = None
+    signal: str | None = None
+    sector: str | None = None
+    topN: int | None = None
+    capital: float | None = None
+
+
+@api.get("/templates")
+def list_templates():
+    from . import templates
+    return {"templates": templates.list_all()}
+
+
+@api.post("/templates/clone")
+def clone_template(req: TemplateConfig):
+    """Clone a configured template into the paper-trading desk."""
+    from . import strategy, templates
+    cfg = templates.resolve_config(req.model_dump(exclude_none=True))
+    try:
+        view = templates.clone(cfg)
+    except strategy.ComplianceBlock as cb:
+        return {"ok": False, "blocked": True, "reason": cb.result.get("reason"),
+                "compliance": cb.result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"could not clone template: {exc}")
+    return {"ok": True, "strategy": view}
+
+
+@api.post("/templates")
+def save_template(req: TemplateConfig):
+    """Save a user-configured template as a reusable preset."""
+    from . import templates
+    cfg = templates.resolve_config(req.model_dump(exclude_none=True))
+    try:
+        saved = templates.save(cfg)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"could not save template: {exc}")
+    return {"ok": True, "template": saved, "templates": templates.list_all()}
+
+
+@api.delete("/templates/{template_id}")
+def delete_template(template_id: str):
+    from . import templates, template_store
+    if not template_id.startswith("user-"):
+        raise HTTPException(status_code=400, detail="only your saved templates can be deleted")
+    removed = template_store.delete(template_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="template not found")
+    return {"ok": True, "templates": templates.list_all()}
+
+
 @api.get("/generated-panels")
 def get_generated_panels():
     """Return the source of every AI-generated panel component.

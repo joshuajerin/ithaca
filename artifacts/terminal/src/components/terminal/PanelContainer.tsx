@@ -73,6 +73,7 @@ import { CompliancePanel } from "./panels/CompliancePanel";
 import { MultiStrategyPanel } from "./panels/MultiStrategyPanel";
 import { ShortingDeskPanel } from "./panels/ShortingDeskPanel";
 import { RebalancePlanPanel } from "./panels/RebalancePlanPanel";
+import { StrategyMarketplacePanel } from "./panels/StrategyMarketplacePanel";
 import { DynamicPanel } from "./panels/generated/DynamicPanel";
 
 interface PanelContainerProps {
@@ -382,6 +383,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted, onBui
       case "multi_strategy": return <MultiStrategyPanel data={panel.data as any} onRefine={handleRefineParams} />;
       case "shorting_desk": return <ShortingDeskPanel data={panel.data as any} />;
       case "rebalance_plan": return <RebalancePlanPanel data={panel.data as any} />;
+      case "strategy_marketplace": return <StrategyMarketplacePanel data={panel.data as any} sessionId={sessionId} onRefine={handleRefineParamsLive} pending={paramRefineMutation.isPending} />;
       default: return <DynamicPanel type={panel.type} data={panel.data as any} />;
     }
   };
