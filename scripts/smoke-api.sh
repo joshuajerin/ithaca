@@ -57,12 +57,44 @@ if [[ "${HEALTHY}" != "1" ]]; then
 fi
 echo "Health check OK."
 
+# The whole business API is gated behind a session (multi-tenant auth), so the
+# boot check must authenticate first. Sign up a throwaway firm/admin and grab the
+# session token. The cookie is Secure (not echoed back over plain http), so we
+# present the token via the supported `Authorization: Bearer` header instead.
+echo "POST /api/auth/signup ..."
+HDRS="$(mktemp)"
+SUFFIX="$$_$(date +%s)"
+signup_status="$(curl -s -o "${BODY}" -D "${HDRS}" -w '%{http_code}' \
+  -X POST "${BASE}/api/auth/signup" \
+  -H 'Content-Type: application/json' \
+  --max-time 30 \
+  -d "{\"firmName\":\"Smoke Firm ${SUFFIX}\",\"name\":\"Smoke Admin\",\"email\":\"smoke_${SUFFIX}@example.com\",\"password\":\"smoke-pass-123\"}" || true)"
+
+if [[ "${signup_status}" != "200" ]]; then
+  echo "ERROR: POST /api/auth/signup returned ${signup_status} (expected 200)."
+  echo "----- response body -----"; cat "${BODY}"; echo
+  echo "----- server log -----"; cat "${LOG}"
+  rm -f "${HDRS}"
+  exit 1
+fi
+
+# Pull the session token out of the Set-Cookie: at_session=<token>; ... header.
+TOKEN="$(grep -i '^set-cookie:' "${HDRS}" | sed -n 's/.*at_session=\([^;]*\).*/\1/p' | head -n1)"
+rm -f "${HDRS}"
+if [[ -z "${TOKEN}" ]]; then
+  echo "ERROR: could not extract at_session token from signup response."
+  echo "----- server log -----"; cat "${LOG}"
+  exit 1
+fi
+echo "Signup OK (session established)."
+
 # Assert the orchestrate endpoint serves a 200. This exercises the full request
 # path (model imports, skill harness, data layer), not just a bare health route.
 echo "POST /api/orchestrate ..."
 status="$(curl -s -o "${BODY}" -w '%{http_code}' \
   -X POST "${BASE}/api/orchestrate" \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer ${TOKEN}" \
   --max-time 90 \
   -d '{"query":"Give me a market overview of what is moving today"}' || true)"
 

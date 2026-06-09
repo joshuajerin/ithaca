@@ -9,6 +9,9 @@ import { z } from "zod/v4";
 // reconstructed from real OHLCV since `inceptionDate`, never persisted synthetic.
 export const strategiesTable = pgTable("strategies", {
   id: text("id").primaryKey(),
+  // Owning firm for multi-tenant isolation. Every read/write is scoped to the
+  // authenticated firm; legacy rows backfill to 'default'.
+  firmId: text("firm_id").notNull().default("default"),
   name: text("name").notNull(),
   signal: text("signal"),
   construction: jsonb("construction"),
@@ -38,6 +41,8 @@ export const strategySnapshotsTable = pgTable(
   "strategy_snapshots",
   {
     strategyId: text("strategy_id").notNull(),
+    // Owning firm for multi-tenant isolation (mirrors strategies.firm_id).
+    firmId: text("firm_id").notNull().default("default"),
     d: date("d").notNull(),
     nav: doublePrecision("nav"),
     pnl: doublePrecision("pnl"),

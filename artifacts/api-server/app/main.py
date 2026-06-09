@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import agent, alerts, auth, auth_store, dashboard_store, dynamic_skills, feature_builder, firm_settings, harness, models, repo, security, skills, state, worker
+from . import agent, alerts, auth, auth_store, dashboard_store, dynamic_skills, feature_builder, firm_settings, harness, models, repo, security, skills, state, tenant, worker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,7 +48,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
-def require_identity(
+async def require_identity(
     session: str | None = Cookie(default=None, alias=auth.COOKIE_NAME),
     authorization: str | None = Header(default=None),
 ) -> auth.Identity:
@@ -78,6 +78,10 @@ def require_identity(
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
     firm = auth_store.get_firm(user["firmId"])
+    # Bind the firm for the rest of this request so every store call (however deep)
+    # scopes reads and stamps writes to this tenant. Set in an async dependency so
+    # the value propagates into the threadpool that runs sync handlers.
+    tenant.set_current_firm(user["firmId"])
     return auth.Identity(
         user_id=user["id"],
         firm_id=user["firmId"],

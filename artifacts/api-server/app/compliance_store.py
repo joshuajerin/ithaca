@@ -21,19 +21,18 @@ import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-from . import db
+from . import db, tenant
 from .engine import compliance as comp
 
 log = logging.getLogger(__name__)
 
-_GLOBAL_ID = "global"
-
 _schema_ready = False
 _schema_lock = threading.Lock()
 
-# In-memory fallbacks (only used when no DB is available).
-_mem_cfg: Optional[dict] = None
-_mem_audit: List[dict] = []
+# In-memory fallbacks (only used when no DB is available). Both are keyed by
+# firm_id so Firm A's config and audit trail are isolated from Firm B's.
+_mem_cfg: Dict[str, dict] = {}
+_mem_audit: Dict[str, List[dict]] = {}
 _mem_lock = threading.Lock()
 
 
@@ -78,6 +77,7 @@ def _ensure_schema() -> None:
                 """
                 CREATE TABLE IF NOT EXISTS compliance_audit (
                     id text PRIMARY KEY,
+                    firm_id text NOT NULL DEFAULT 'default',
                     at timestamptz NOT NULL DEFAULT now(),
                     action text,
                     strategy_id text,
@@ -87,6 +87,16 @@ def _ensure_schema() -> None:
                     detail jsonb
                 )
                 """
+            )
+            # Per-firm scoping: the config PK *is* the firm_id. Rename the legacy
+            # single global row, and stamp the audit trail with its owning firm.
+            db.execute("UPDATE compliance_config SET id = 'default' WHERE id = 'global'")
+            db.execute(
+                "ALTER TABLE compliance_audit ADD COLUMN IF NOT EXISTS firm_id text NOT NULL DEFAULT 'default'"
+            )
+            db.execute("UPDATE compliance_audit SET firm_id = 'default' WHERE firm_id IS NULL")
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS compliance_audit_firm_idx ON compliance_audit (firm_id, at DESC)"
             )
             _schema_ready = True
         except Exception as exc:  # noqa: BLE001
@@ -119,12 +129,13 @@ def _coerce_config(raw: Optional[dict]) -> dict:
 
 
 # ------------------------------- config -------------------------------
-def get_config() -> dict:
+def get_config(firm_id: Optional[str] = None) -> dict:
     _ensure_schema()
+    fid = tenant.resolve_firm(firm_id)
     if db.db_available():
         try:
             row = db.query_one(
-                "SELECT * FROM compliance_config WHERE id = %s", (_GLOBAL_ID,)
+                "SELECT * FROM compliance_config WHERE id = %s", (fid,)
             )
             if not row:
                 return _default_config()
@@ -139,14 +150,15 @@ def get_config() -> dict:
         except Exception as exc:  # noqa: BLE001
             log.warning("get_config DB error: %s", exc)
     with _mem_lock:
-        return dict(_coerce_config(_mem_cfg))
+        return dict(_coerce_config(_mem_cfg.get(fid)))
 
 
-def save_config(cfg: dict) -> dict:
-    """Persist a full config dict (already coerced) and return the stored view."""
-    global _mem_cfg
+def save_config(cfg: dict, firm_id: Optional[str] = None) -> dict:
+    """Persist a full config dict (already coerced) for the caller's firm and
+    return the stored view."""
     cfg = _coerce_config(cfg)
     _ensure_schema()
+    fid = tenant.resolve_firm(firm_id)
     if db.db_available():
         try:
             db.execute(
@@ -164,7 +176,7 @@ def save_config(cfg: dict) -> dict:
                     updated_at = now()
                 """,
                 (
-                    _GLOBAL_ID,
+                    fid,
                     json.dumps(cfg["limits"]),
                     json.dumps(cfg["restricted"]),
                     json.dumps(cfg["watch"]),
@@ -177,7 +189,7 @@ def save_config(cfg: dict) -> dict:
         except Exception as exc:  # noqa: BLE001
             log.warning("save_config DB error: %s", exc)
     with _mem_lock:
-        _mem_cfg = dict(cfg)
+        _mem_cfg[fid] = dict(cfg)
         return dict(cfg)
 
 
@@ -259,8 +271,11 @@ def append_audit(
     strategy_id: Optional[str] = None,
     strategy_name: Optional[str] = None,
     detail: Optional[dict] = None,
+    firm_id: Optional[str] = None,
 ) -> dict:
-    """Append one gate decision to the audit trail. Best-effort: never raises."""
+    """Append one gate decision to the caller's firm audit trail. Best-effort:
+    never raises."""
+    fid = tenant.resolve_firm(firm_id)
     entry = {
         "id": uuid.uuid4().hex[:12],
         "at": _now_iso(),
@@ -277,11 +292,11 @@ def append_audit(
             db.execute(
                 """
                 INSERT INTO compliance_audit
-                    (id, at, action, strategy_id, strategy_name, decision, summary, detail)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                    (id, firm_id, at, action, strategy_id, strategy_name, decision, summary, detail)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
                 """,
                 (
-                    entry["id"], entry["at"], action, strategy_id, strategy_name,
+                    entry["id"], fid, entry["at"], action, strategy_id, strategy_name,
                     decision, summary, json.dumps(entry["detail"]),
                 ),
             )
@@ -289,18 +304,21 @@ def append_audit(
         except Exception as exc:  # noqa: BLE001
             log.warning("append_audit DB error: %s", exc)
     with _mem_lock:
-        _mem_audit.insert(0, entry)
-        del _mem_audit[200:]
+        trail = _mem_audit.setdefault(fid, [])
+        trail.insert(0, entry)
+        del trail[200:]
     return entry
 
 
-def list_audit(limit: int = 50) -> List[dict]:
+def list_audit(limit: int = 50, firm_id: Optional[str] = None) -> List[dict]:
     _ensure_schema()
+    fid = tenant.resolve_firm(firm_id)
     limit = max(1, min(int(limit or 50), 200))
     if db.db_available():
         try:
             rows = db.query(
-                "SELECT * FROM compliance_audit ORDER BY at DESC LIMIT %s", (limit,)
+                "SELECT * FROM compliance_audit WHERE firm_id = %s ORDER BY at DESC LIMIT %s",
+                (fid, limit),
             )
             out: List[dict] = []
             for r in rows:
@@ -319,18 +337,20 @@ def list_audit(limit: int = 50) -> List[dict]:
         except Exception as exc:  # noqa: BLE001
             log.warning("list_audit DB error: %s", exc)
     with _mem_lock:
-        return [dict(e) for e in _mem_audit[:limit]]
+        return [dict(e) for e in _mem_audit.get(fid, [])[:limit]]
 
 
-def clear_audit() -> int:
+def clear_audit(firm_id: Optional[str] = None) -> int:
     _ensure_schema()
+    fid = tenant.resolve_firm(firm_id)
     if db.db_available():
         try:
-            db.execute("DELETE FROM compliance_audit")
+            db.execute("DELETE FROM compliance_audit WHERE firm_id = %s", (fid,))
             return 0
         except Exception as exc:  # noqa: BLE001
             log.warning("clear_audit DB error: %s", exc)
     with _mem_lock:
-        n = len(_mem_audit)
-        _mem_audit.clear()
+        trail = _mem_audit.get(fid, [])
+        n = len(trail)
+        _mem_audit[fid] = []
         return n

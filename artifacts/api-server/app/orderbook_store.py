@@ -12,6 +12,12 @@ Storage mirrors the rest of the backend: a Postgres table when ``DATABASE_URL``
 is set (JSON written as ``json.dumps(...)::jsonb``), with an in-process
 dict fallback so the feature still works (within the running process) when the
 DB is unavailable.
+
+Multi-tenancy note: order-book replays are **shared by design** and intentionally
+NOT firm-scoped. A reconstructed session is firm-agnostic market data (real venue
+depth for a symbol/date), identical for every firm and expensive to rebuild, so it
+is cached once and served to all tenants. This is the deliberate exception to the
+per-firm isolation applied to every user-owned store.
 """
 from __future__ import annotations
 

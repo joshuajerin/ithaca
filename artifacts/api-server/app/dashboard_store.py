@@ -20,7 +20,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-from . import db
+from . import db, tenant
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +44,7 @@ def _ensure_schema() -> None:
                 """
                 CREATE TABLE IF NOT EXISTS saved_dashboards (
                     id text PRIMARY KEY,
+                    firm_id text NOT NULL DEFAULT 'default',
                     name text NOT NULL,
                     summary text,
                     panels jsonb NOT NULL,
@@ -51,6 +52,13 @@ def _ensure_schema() -> None:
                     updated_at timestamptz NOT NULL DEFAULT now()
                 )
                 """
+            )
+            db.execute(
+                "ALTER TABLE saved_dashboards ADD COLUMN IF NOT EXISTS firm_id text NOT NULL DEFAULT 'default'"
+            )
+            db.execute("UPDATE saved_dashboards SET firm_id = 'default' WHERE firm_id IS NULL")
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS saved_dashboards_firm_idx ON saved_dashboards (firm_id)"
             )
             _schema_ready = True
         except Exception as exc:  # noqa: BLE001
@@ -80,34 +88,40 @@ def _iso(v) -> Optional[str]:
     return v.isoformat() if hasattr(v, "isoformat") else v
 
 
-def list_dashboards() -> List[dict]:
-    """Return metadata for all saved dashboards, newest first."""
+def list_dashboards(firm_id: Optional[str] = None) -> List[dict]:
+    """Return metadata for all saved dashboards in the caller's firm, newest first."""
     _ensure_schema()
+    fid = tenant.resolve_firm(firm_id)
     if db.db_available():
         try:
             rows = db.query(
                 "SELECT id, name, summary, panels, created_at, updated_at "
-                "FROM saved_dashboards ORDER BY updated_at DESC"
+                "FROM saved_dashboards WHERE firm_id = %s ORDER BY updated_at DESC",
+                (fid,),
             )
             return [_meta(r) for r in rows]
         except Exception as exc:  # noqa: BLE001
             log.warning("list_dashboards DB error: %s", exc)
     with _mem_lock:
-        rows = sorted(_mem.values(), key=lambda r: r.get("updatedAt") or "", reverse=True)
+        rows = sorted(
+            (r for r in _mem.values() if (r.get("firmId") or tenant.DEFAULT_FIRM_ID) == fid),
+            key=lambda r: r.get("updatedAt") or "", reverse=True,
+        )
         return [_meta(r) for r in rows]
 
 
-def get_dashboard(dash_id: str) -> Optional[dict]:
-    """Return the full saved dashboard (including panels) by id."""
+def get_dashboard(dash_id: str, firm_id: Optional[str] = None) -> Optional[dict]:
+    """Return the full saved dashboard (including panels) by id, scoped to firm."""
     if not dash_id:
         return None
     _ensure_schema()
+    fid = tenant.resolve_firm(firm_id)
     if db.db_available():
         try:
             row = db.query_one(
                 "SELECT id, name, summary, panels, created_at, updated_at "
-                "FROM saved_dashboards WHERE id = %s",
-                (dash_id,),
+                "FROM saved_dashboards WHERE id = %s AND firm_id = %s",
+                (dash_id, fid),
             )
             if not row:
                 return None
@@ -126,10 +140,12 @@ def get_dashboard(dash_id: str) -> Optional[dict]:
         return dict(rec) if rec else None
 
 
-def save_dashboard(name: str, summary: str, panels: List[dict]) -> dict:
-    """Persist a new named dashboard. Saving the same name overwrites the prior
-    layout of that name so the saved list does not fill with duplicates."""
+def save_dashboard(name: str, summary: str, panels: List[dict], firm_id: Optional[str] = None) -> dict:
+    """Persist a new named dashboard in the caller's firm. Saving the same name
+    (within that firm) overwrites the prior layout so the saved list does not
+    fill with duplicates; the same name in a different firm is independent."""
     _ensure_schema()
+    fid = tenant.resolve_firm(firm_id)
     name = (name or "").strip()
     summary = summary or ""
     panels = list(panels or [])
@@ -138,23 +154,23 @@ def save_dashboard(name: str, summary: str, panels: List[dict]) -> dict:
     if db.db_available():
         try:
             existing = db.query_one(
-                "SELECT id FROM saved_dashboards WHERE lower(name) = lower(%s) LIMIT 1",
-                (name,),
+                "SELECT id FROM saved_dashboards WHERE lower(name) = lower(%s) AND firm_id = %s LIMIT 1",
+                (name, fid),
             )
             dash_id = existing["id"] if existing else uuid.uuid4().hex[:12]
             db.execute(
                 """
-                INSERT INTO saved_dashboards (id, name, summary, panels, created_at, updated_at)
-                VALUES (%s, %s, %s, %s::jsonb, %s, %s)
+                INSERT INTO saved_dashboards (id, firm_id, name, summary, panels, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s)
                 ON CONFLICT (id) DO UPDATE SET
                     name = EXCLUDED.name,
                     summary = EXCLUDED.summary,
                     panels = EXCLUDED.panels,
                     updated_at = EXCLUDED.updated_at
                 """,
-                (dash_id, name, summary, json.dumps(panels), now, now),
+                (dash_id, fid, name, summary, json.dumps(panels), now, now),
             )
-            return get_dashboard(dash_id) or {}
+            return get_dashboard(dash_id, firm_id=fid) or {}
         except Exception as exc:  # noqa: BLE001
             log.warning("save_dashboard DB error: %s", exc)
 
@@ -162,7 +178,8 @@ def save_dashboard(name: str, summary: str, panels: List[dict]) -> dict:
     with _mem_lock:
         dash_id = None
         for rid, rec in _mem.items():
-            if (rec.get("name") or "").lower() == name.lower():
+            if (rec.get("name") or "").lower() == name.lower() and \
+               (rec.get("firmId") or tenant.DEFAULT_FIRM_ID) == fid:
                 dash_id = rid
                 break
         created = now
@@ -172,6 +189,7 @@ def save_dashboard(name: str, summary: str, panels: List[dict]) -> dict:
             created = _mem[dash_id].get("createdAt") or now
         _mem[dash_id] = {
             "id": dash_id,
+            "firmId": fid,
             "name": name,
             "summary": summary,
             "panels": panels,
@@ -181,13 +199,21 @@ def save_dashboard(name: str, summary: str, panels: List[dict]) -> dict:
         return dict(_mem[dash_id])
 
 
-def delete_dashboard(dash_id: str) -> bool:
+def delete_dashboard(dash_id: str, firm_id: Optional[str] = None) -> bool:
     _ensure_schema()
+    fid = tenant.resolve_firm(firm_id)
     if db.db_available():
         try:
-            db.execute("DELETE FROM saved_dashboards WHERE id = %s", (dash_id,))
-            return True
+            res = db.query_one(
+                "DELETE FROM saved_dashboards WHERE id = %s AND firm_id = %s RETURNING id",
+                (dash_id, fid),
+            )
+            return bool(res)
         except Exception as exc:  # noqa: BLE001
             log.warning("delete_dashboard DB error: %s", exc)
     with _mem_lock:
-        return _mem.pop(dash_id, None) is not None
+        rec = _mem.get(dash_id)
+        if rec and (rec.get("firmId") or tenant.DEFAULT_FIRM_ID) == fid:
+            _mem.pop(dash_id, None)
+            return True
+        return False

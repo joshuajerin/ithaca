@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from . import compliance_store, engine, repo, strategy_store
+from . import compliance_store, engine, repo, strategy_store, tenant
 
 # Stages whose books are actively marked end-of-day and accrue a track record.
 ACTIVE_STAGES = ("paper", "live")
@@ -254,6 +254,7 @@ def _persist(view: dict) -> dict:
     """Map the camelCase view back to the store's column record and upsert."""
     record = {
         "id": view["id"],
+        "firm_id": view.get("firmId"),
         "name": view.get("name"),
         "signal": view.get("signal"),
         "construction": view.get("construction"),
@@ -675,19 +676,23 @@ def run_scheduled_rebalances(as_of: Optional[date] = None) -> dict:
     skipped = 0
     errors = 0
     results: List[dict] = []
-    for s in strategy_store.list_strategies():
+    # Worker path: iterate every firm's books. Each book is processed inside its
+    # owning firm's context so all downstream store calls (rebalance → precheck →
+    # compliance, _persist, snapshots) auto-scope to that firm.
+    for s in strategy_store.list_all_strategies():
         try:
-            if not is_due(s, day):
-                skipped += 1
-                continue
-            _, info = rebalance(s)
-            if info.get("applied"):
-                done += 1
-                results.append({"id": s.get("id"), "name": s.get("name"),
-                                "trades": info.get("trades"), "costUsd": info.get("costUsd"),
-                                "turnoverPct": info.get("turnoverPct")})
-            else:
-                skipped += 1
+            with tenant.firm_context(s.get("firmId")):
+                if not is_due(s, day):
+                    skipped += 1
+                    continue
+                _, info = rebalance(s)
+                if info.get("applied"):
+                    done += 1
+                    results.append({"id": s.get("id"), "name": s.get("name"),
+                                    "trades": info.get("trades"), "costUsd": info.get("costUsd"),
+                                    "turnoverPct": info.get("turnoverPct")})
+                else:
+                    skipped += 1
         except Exception as exc:  # noqa: BLE001 — one bad book must not block the rest
             log.warning("scheduled rebalance failed for %s: %s", s.get("id"), exc)
             errors += 1
@@ -799,7 +804,9 @@ def record_daily_snapshots(as_of: Optional[date] = None) -> dict:
 
     recorded = 0
     skipped = 0
-    for s in strategy_store.list_strategies():
+    # Worker path: iterate every firm's books inside their owning firm context so
+    # mark() reads that firm's snapshot series and record_snapshot stamps it.
+    for s in strategy_store.list_all_strategies():
         stage = (s.get("stage") or "").lower()
         # Every active (paper/live) book is marked daily — including a flat/empty
         # book, whose NAV is simply its cash so the audited series stays continuous.
@@ -807,13 +814,14 @@ def record_daily_snapshots(as_of: Optional[date] = None) -> dict:
             skipped += 1
             continue
         try:
-            m = mark(s)
-            strategy_store.record_snapshot(
-                s["id"], day.isoformat(),
-                nav=m["bookValue"], pnl=m["pnl"], pnl_pct=m["pnlPct"],
-                cash=m["cash"], capital=m["capital"], stage=stage,
-                source=m.get("source"),
-            )
+            with tenant.firm_context(s.get("firmId")):
+                m = mark(s)
+                strategy_store.record_snapshot(
+                    s["id"], day.isoformat(),
+                    nav=m["bookValue"], pnl=m["pnl"], pnl_pct=m["pnlPct"],
+                    cash=m["cash"], capital=m["capital"], stage=stage,
+                    source=m.get("source"),
+                )
             recorded += 1
         except Exception as exc:  # noqa: BLE001
             log.warning("snapshot failed for %s: %s", s.get("id"), exc)
