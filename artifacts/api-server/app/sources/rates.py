@@ -22,7 +22,7 @@ from __future__ import annotations
 import csv
 import io
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 import httpx
@@ -300,6 +300,85 @@ def _fetch_fred_latest(series_id: str, api_key: str) -> Optional[Tuple[date, flo
             d = date.today()
         return d, v
     return None
+
+
+def _fetch_fred_series(
+    series_id: str, api_key: str, start: date
+) -> List[Tuple[date, float]]:
+    """Ascending [(date, value_pct)] for a FRED series since ``start``."""
+    params = {
+        "series_id": series_id,
+        "api_key": api_key,
+        "file_type": "json",
+        "sort_order": "asc",
+        "observation_start": start.isoformat(),
+    }
+    with httpx.Client(timeout=_TIMEOUT, headers=_HEADERS, follow_redirects=True) as client:
+        resp = client.get(_FRED_URL, params=params)
+        resp.raise_for_status()
+        payload = resp.json()
+    out: List[Tuple[date, float]] = []
+    for obs in payload.get("observations") or []:
+        val = (obs.get("value") or "").strip()
+        if val in ("", "."):
+            continue
+        try:
+            v = float(val)
+        except ValueError:
+            continue
+        try:
+            d = datetime.strptime(obs["date"], "%Y-%m-%d").date()
+        except (KeyError, ValueError):
+            continue
+        out.append((d, v))
+    return out
+
+
+# Investment-grade and high-yield master OAS series, used by the credit-stress
+# monitor to chart IG vs HY spreads and their recent trend.
+_CREDIT_HISTORY_SERIES = {
+    "IG": "BAMLC0A0CM",     # ICE BofA US Corporate Master OAS
+    "HY": "BAMLH0A0HYM2",   # ICE BofA US High Yield Master II OAS
+}
+
+
+def fetch_credit_spread_history(window_days: int = 180) -> Optional[Dict]:
+    """Return recent IG and HY OAS history (basis points), or ``None``.
+
+    Shape::
+
+        {"series": {"IG": [["YYYY-MM-DD", bps], ...], "HY": [...]},
+         "asOf": "YYYY-MM-DD", "source": "live"}
+
+    Requires a ``FRED_API_KEY``. Returns ``None`` when no key is configured or
+    when not a single series could be fetched, so callers fall back to curated
+    mock history and report ``source="mock"`` rather than inventing levels.
+    """
+    api_key = fred_api_key()
+    if not api_key:
+        return None
+
+    start = date.today() - timedelta(days=max(window_days, 30) + 14)
+    series: Dict[str, List[List]] = {}
+    latest: Optional[date] = None
+    for code, series_id in _CREDIT_HISTORY_SERIES.items():
+        try:
+            pts = _fetch_fred_series(series_id, api_key, start)
+        except Exception:
+            continue
+        if not pts:
+            continue
+        series[code] = [[d.isoformat(), round(v * 100.0, 1)] for d, v in pts]
+        last_d = pts[-1][0]
+        latest = last_d if latest is None else max(latest, last_d)
+
+    if not series:
+        return None
+    return {
+        "series": series,
+        "asOf": latest.isoformat() if latest else None,
+        "source": "live",
+    }
 
 
 def fetch_credit_spreads() -> Optional[Dict]:

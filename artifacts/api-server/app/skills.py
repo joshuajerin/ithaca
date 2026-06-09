@@ -1774,6 +1774,13 @@ def _live_credit_spreads() -> Optional[dict]:
     return cache.cached("rates:credit", _rates_ttl(), rates_src.fetch_credit_spreads)
 
 
+def _live_credit_history() -> Optional[dict]:
+    """Cached live IG/HY OAS history, or None if no key / upstream down."""
+    return cache.cached(
+        "rates:credit_history", _rates_ttl(), rates_src.fetch_credit_spread_history
+    )
+
+
 def _rating_bucket(rating: str) -> str:
     """Map a composite rating string (e.g. "Baa1/BBB+", "Ba2/BB+") to an OAS bucket."""
     r = (rating or "").upper()
@@ -2230,6 +2237,147 @@ def build_cds_pricer(params: dict) -> dict:
         "impliedPd5y": implied_pd5y,
         "asOf": spread_as_of,
         "source": spread_source,
+    }
+
+
+# --- Credit stress monitor (IG vs HY OAS) -----------------------------------
+
+# Display metadata per credit bucket shown on the stress monitor.
+_CREDIT_STRESS_META = {
+    "IG": {"name": "Investment Grade", "color": "#4ade80"},
+    "HY": {"name": "High Yield", "color": "#f87171"},
+}
+
+# Curated current OAS levels (bps) anchoring the mock fallback history when no
+# FRED key is configured. Roughly mid-cycle ICE BofA master OAS levels.
+_CREDIT_STRESS_MOCK_NOW = {"IG": 92.0, "HY": 315.0}
+
+
+def _mock_credit_history(window_days: int) -> dict:
+    """Deterministic synthetic IG/HY OAS path for the no-key fallback.
+
+    Honestly labelled ``source="mock"``; uses a smooth wave + mild drift so the
+    trend chart and widening flags have realistic shape without fabricating that
+    the data is live.
+    """
+    today = date.today()
+    series: Dict[str, list] = {}
+    for code, level in _CREDIT_STRESS_MOCK_NOW.items():
+        pts = []
+        for i in range(window_days, -1, -1):
+            d = today - timedelta(days=i)
+            if d.weekday() >= 5:  # business days only
+                continue
+            t = (window_days - i) / window_days  # 0 (oldest) .. 1 (today)
+            wave = math.sin(t * math.pi * 2.0) * (level * 0.06)
+            drift = (t - 0.5) * (level * 0.05)
+            jitter = math.sin(i * 1.7) * (level * 0.01)
+            pts.append([d.isoformat(), round(level + wave + drift + jitter, 1)])
+        series[code] = pts
+    return {"series": series, "asOf": today.isoformat(), "source": "mock"}
+
+
+def _credit_stress_stats(pts: list) -> dict:
+    """Current/1m/window stats + percentile + widening flag from [[date,bps]]."""
+    vals = [v for _, v in pts]
+    current = vals[-1]
+    first = vals[0]
+    lo, hi = min(vals), max(vals)
+    # ~1 month ago: 22 observations back (business days) if available.
+    month_ago = vals[max(len(vals) - 22, 0)]
+    change_1m = round(current - month_ago, 1)
+    change_window = round(current - first, 1)
+    rng = hi - lo
+    pct = round((current - lo) / rng * 100.0) if rng > 0 else 50.0
+    widening = bool(
+        change_1m > 0
+        and (pct >= 70 or (month_ago > 0 and change_1m / month_ago >= 0.08))
+    )
+    return {
+        "current": round(current, 1),
+        "monthAgo": round(month_ago, 1),
+        "change1m": change_1m,
+        "changeWindow": change_window,
+        "min": round(lo, 1),
+        "max": round(hi, 1),
+        "percentile": pct,
+        "widening": widening,
+    }
+
+
+def _credit_regime(metrics: list) -> dict:
+    """Risk-on/off read keyed off the high-yield (or IG fallback) trend."""
+    by = {m["code"]: m for m in metrics}
+    ref = by.get("HY") or (metrics[0] if metrics else None)
+    if not ref:
+        return {"label": "Insufficient data", "tone": "neutral", "note": ""}
+    pct = ref["percentile"]
+    ch = ref["change1m"]
+    mo = ref.get("monthAgo") or ref["current"]
+    rel = (ch / mo) if mo else 0.0
+    sign = "+" if ch >= 0 else ""
+    base = (
+        f"{ref['label']} OAS at {ref['current']:.0f}bp "
+        f"({pct:.0f}th pct of the last 6 months), {sign}{ch:.0f}bp over the past month."
+    )
+    if (pct >= 70 and ch > 0) or rel >= 0.08:
+        return {"label": "Risk-Off — credit widening", "tone": "risk-off", "note": base}
+    if pct <= 30 and ch <= 0:
+        return {"label": "Risk-On — credit tightening", "tone": "risk-on", "note": base}
+    return {"label": "Neutral — credit range-bound", "tone": "neutral", "note": base}
+
+
+def build_credit_stress(params: dict) -> dict:
+    """Chart IG vs HY OAS with a recent-trend + risk-on/off read.
+
+    Reuses the live ICE BofA OAS feed (via FRED). Falls back to a clearly-mock
+    synthetic history when ``FRED_API_KEY`` is absent, labelling ``source``
+    accordingly so the panel badge never overstates the data.
+    """
+    try:
+        window = int(params.get("window_days") or 180)
+    except (TypeError, ValueError):
+        window = 180
+    window = max(60, min(window, 365))
+
+    hist = _live_credit_history()
+    source = "live"
+    if not hist or not hist.get("series"):
+        hist = _mock_credit_history(window)
+        source = "mock"
+    series_data = hist["series"]
+
+    codes = [c for c in ("IG", "HY") if series_data.get(c)]
+
+    # Merge the two series onto shared dates for the overlay chart.
+    by_date: Dict[str, dict] = {}
+    for code in codes:
+        for d, v in series_data[code]:
+            by_date.setdefault(d, {"date": d})[code] = v
+    points = [by_date[d] for d in sorted(by_date)]
+
+    metrics = []
+    for code in codes:
+        st = _credit_stress_stats(series_data[code])
+        st["code"] = code
+        st["label"] = _CREDIT_STRESS_META[code]["name"]
+        metrics.append(st)
+
+    regime = _credit_regime(metrics)
+
+    return {
+        "title": "Credit Stress Monitor — IG vs HY OAS",
+        "series": [
+            {"code": c, "name": _CREDIT_STRESS_META[c]["name"],
+             "color": _CREDIT_STRESS_META[c]["color"]}
+            for c in codes
+        ],
+        "points": points,
+        "metrics": metrics,
+        "regime": regime,
+        "windowDays": window,
+        "asOf": hist.get("asOf"),
+        "source": source,
     }
 
 
@@ -7282,6 +7430,19 @@ _reg(SkillDef(
         {"name": "compute_upfront", "description": "Calculate the upfront fee relative to the standard 100bps coupon.", "expectedOutput": "Upfront fee as a percentage of notional."},
     ],
     build_cds_pricer, "CDS Pricer",
+))
+_reg(SkillDef(
+    "credit-stress", "Credit Stress Monitor", "credit_stress",
+    "Charts investment-grade (IG) vs high-yield (HY) ICE BofA OAS credit spreads over the last "
+    "~6 months with a risk-on/risk-off read, flagging notable widening vs recent history. Use "
+    "when the user asks about credit stress, credit conditions, credit spreads widening, IG vs HY "
+    "spreads, high-yield vs investment-grade, risk-on/risk-off credit, or a credit-market monitor.",
+    [
+        {"name": "fetch_oas_history", "description": "Pull recent IG and HY ICE BofA OAS history (live FRED or mock).", "expectedOutput": "Daily IG/HY OAS series in basis points."},
+        {"name": "compute_trend", "description": "Derive current level, 1-month and window change, range percentile per bucket.", "expectedOutput": "Per-bucket trend metrics with a widening flag."},
+        {"name": "read_regime", "description": "Translate the HY trend into a risk-on / risk-off / neutral credit read.", "expectedOutput": "A regime label, tone and explanatory note."},
+    ],
+    build_credit_stress, "Credit Stress Monitor",
 ))
 _reg(SkillDef(
     "cashflow-duration", "Cash Flow & Duration", "cashflow_duration",

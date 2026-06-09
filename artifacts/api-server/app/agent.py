@@ -276,6 +276,13 @@ def _tools() -> list:
             }, "required": ["ticker"]},
         }},
         {"type": "function", "function": {
+            "name": "add_credit_stress",
+            "description": f"Add a credit stress monitor: charts investment-grade (IG) vs high-yield (HY) ICE BofA OAS over ~6 months with a risk-on/risk-off read and widening flags. Use for credit conditions, IG vs HY spreads, credit stress/widening. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
+        {"type": "function", "function": {
             "name": "add_cashflow_duration",
             "description": f"Show bond cash flows, duration, convexity, and rate-shock scenario table (yields off the live Treasury curve + live credit spreads). {sizing}",
             "parameters": {"type": "object", "properties": {
@@ -807,6 +814,7 @@ _TOOL_TO_TYPE = {
     "add_sovereign_compare": "sovereign_compare",
     "add_bond_rv": "bond_rv",
     "add_cds_pricer": "cds_pricer",
+    "add_credit_stress": "credit_stress",
     "add_cashflow_duration": "cashflow_duration",
     "add_portfolio_risk": "portfolio_risk",
     "add_backtest": "backtest",
@@ -906,7 +914,8 @@ def _system_prompt() -> str:
         "- For macro and fixed income: global view → add_macro_dashboard; single-country yield curve → add_yield_curve; "
         "comparing sovereign curves across countries/currencies (e.g. 'US vs German curve', 'UST vs Bund', "
         "'Treasury vs Gilt 10Y spread') → add_sovereign_compare (pass the 2–4 region codes); "
-        "bond RV → add_bond_rv; CDS → add_cds_pricer; duration/cash flows → add_cashflow_duration. "
+        "bond RV → add_bond_rv; CDS → add_cds_pricer; credit stress / IG vs HY spreads / credit "
+        "conditions / spread widening → add_credit_stress; duration/cash flows → add_cashflow_duration. "
         "Fixed-income panels use live data: US Treasury par yields come from the U.S. Treasury daily "
         "curve, and credit spreads (bond OAS, CDS proxies) from live ICE BofA OAS indices; each panel "
         "labels its source live/mock so you can tell when a feed is unavailable.\n"
@@ -2044,7 +2053,7 @@ def _answer_fallback(panels: List[dict]) -> str:
 # --------------------- context-aware panel relevance ---------------------
 # Panel types that are market-wide rather than tied to a single subject; they
 # can reasonably stay on screen even when the user switches focus.
-_SUBJECT_AGNOSTIC_TYPES = {"macro_dashboard", "yield_curve", "sovereign_compare"}
+_SUBJECT_AGNOSTIC_TYPES = {"macro_dashboard", "yield_curve", "sovereign_compare", "credit_stress"}
 
 # Keyword → sovereign region code, used by the heuristic fallback to detect
 # multi-country curve comparisons (e.g. "US vs German curve", "UST vs Bund").
@@ -2487,6 +2496,7 @@ _TYPE_LABELS = {
     "sovereign_compare": "a sovereign curve comparison",
     "bond_rv": "bond relative value",
     "cds_pricer": "a CDS pricer",
+    "credit_stress": "a credit stress monitor",
     "cashflow_duration": "cash flow & duration",
     "portfolio_risk": "a portfolio risk breakdown",
     "backtest": "a backtest",
@@ -2913,6 +2923,12 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
     wants_yield_curve = any(k in q for k in ["yield curve", "treasury curve", "rates curve", "rate curve", "interest rate", "treasury yield", "yield spread", "2s10s", "inversion"])
     wants_bond_rv = any(k in q for k in ["bond rv", "bond relative value", "z-spread", "z spread", "oas", "asset swap", "asset-swap", "corporate bond", "credit spread"])
     wants_cds = any(k in q for k in ["cds", "credit default swap", "credit risk", "default swap", "survival prob"])
+    wants_credit_stress = any(k in q for k in [
+        "credit stress", "credit-stress", "credit condition", "credit market", "credit monitor",
+        "credit spreads", "spread widening", "spreads widening", "credit widening",
+        "widening credit", "ig vs hy", "hy vs ig", "ig/hy", "hy/ig", "high yield",
+        "high-yield", "investment grade", "investment-grade", "risk-off credit", "risk on credit",
+    ])
     wants_cashflow = any(k in q for k in ["cash flow", "cashflow", "duration", "convexity", "dv01", "rate sensitivity", "bond cash", "modified duration"])
     wants_risk = any(k in q for k in ["risk", "var", "value at risk", "tracking error", "factor exposure", "portfolio risk"])
     wants_riskmodel = any(k in q for k in ["risk model", "risk decomp", "decompose risk", "factor vs specific", "specific risk", "mctr", "marginal contribution", "where is my risk", "risk contribution", "factor risk"])
@@ -3397,6 +3413,11 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         add("yield_curve", {"region": region}, 8, 5)
         add("news", {"scope_type": "sector", "scope": "energy"}, 4, 5)
         return panels, f"{region} Treasury yield curve with historical overlays and spread analysis."
+
+    if wants_credit_stress:
+        add("credit_stress", {}, 8, 5)
+        add("yield_curve", {"region": "US"}, 4, 5)
+        return panels, "Credit stress monitor — IG vs HY OAS spreads with a risk-on/risk-off read and widening flags."
 
     if wants_cds:
         cds_entities = {"ford": "F", "intel": "INTC", "occidental": "OXY", "oxy": "OXY",
