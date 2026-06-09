@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { BacktestDataParams } from './backtestDataParams';
 import type { BacktestEntry } from './backtestEntry';
 import type { BacktestPoint } from './backtestPoint';
 import type { BacktestStats } from './backtestStats';
@@ -14,6 +15,11 @@ import type { TradeLogEntry } from './tradeLogEntry';
 export interface BacktestData {
   symbol: string;
   strategy: string;
+  /**
+     * Effective tunable strategy parameters used for this run (defaults filled in), e.g. {lookback: 90} for momentum or {lookback: 20, threshold: 1.0} for mean reversion. Drives the in-panel parameter controls.
+     * @nullable
+     */
+  params?: BacktestDataParams;
   /** Lookback window used for the backtest, e.g. 1M, 3M, 6M, 1Y. */
   range?: string;
   curve: BacktestPoint[];

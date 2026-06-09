@@ -296,6 +296,12 @@ export interface TradeLogEntry {
   pnlPct?: number;
 }
 
+/**
+ * Effective tunable strategy parameters used for this run (defaults filled in), e.g. {lookback: 90} for momentum or {lookback: 20, threshold: 1.0} for mean reversion. Drives the in-panel parameter controls.
+ * @nullable
+ */
+export type BacktestDataParams = { [key: string]: unknown } | null;
+
 export interface BacktestEntry {
   /** Entry mode actually used (peak, date, range, preset). */
   mode?: string;
@@ -310,6 +316,11 @@ export interface BacktestEntry {
 export interface BacktestData {
   symbol: string;
   strategy: string;
+  /**
+     * Effective tunable strategy parameters used for this run (defaults filled in), e.g. {lookback: 90} for momentum or {lookback: 20, threshold: 1.0} for mean reversion. Drives the in-panel parameter controls.
+     * @nullable
+     */
+  params?: BacktestDataParams;
   /** Lookback window used for the backtest, e.g. 1M, 3M, 6M, 1Y. */
   range?: string;
   curve: BacktestPoint[];

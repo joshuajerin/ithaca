@@ -759,6 +759,7 @@ class BacktestEntry(BaseModel):
 class BacktestData(BaseModel):
     symbol: str
     strategy: str
+    params: Optional[dict] = None
     range: Optional[str] = None
     curve: List[BacktestPoint]
     drawdown: List[DrawdownPoint]

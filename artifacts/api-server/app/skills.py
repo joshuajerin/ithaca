@@ -1051,11 +1051,18 @@ def build_backtest(params: dict) -> dict:
         meta = repo.price_series_meta(symbol, days=days)
     points = meta["points"]
 
-    strat_params = {
-        k: params[k]
-        for k in ("fast", "slow", "lookback", "threshold")
-        if params.get(k) is not None
-    }
+    # Effective strategy parameters: start from the selected strategy's defaults
+    # (so out-of-the-box behavior is unchanged) and override only with explicitly
+    # provided, relevant keys. Irrelevant keys (e.g. a stale `threshold` left over
+    # after switching to momentum) are ignored because they aren't in the defaults.
+    strat_params = engine.default_params(strategy)
+    for k in strat_params:
+        v = params.get(k)
+        if v is not None:
+            try:
+                strat_params[k] = type(strat_params[k])(v)
+            except (TypeError, ValueError):
+                pass
 
     def _run(pts):
         spec = engine.resolve_entry(pts, mode=entry_mode, date=entry_date, start=start, end=end)
@@ -1116,6 +1123,7 @@ def build_backtest(params: dict) -> dict:
     return {
         "symbol": symbol,
         "strategy": result["strategy"],
+        "params": strat_params,
         "range": rng_key,
         "investment": round(amount, 2),
         "entry": entry,

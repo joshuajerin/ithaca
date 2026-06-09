@@ -9,6 +9,7 @@
 export * from './analysisData';
 export * from './analysisDataStance';
 export * from './backtestData';
+export * from './backtestDataParams';
 export * from './backtestEntry';
 export * from './backtestPoint';
 export * from './backtestStats';

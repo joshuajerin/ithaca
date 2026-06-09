@@ -4031,6 +4031,18 @@ def _structured_refine_params(panel_type: str, panel: dict, params: dict) -> dic
         out["date"] = params.get("date") or (cur_entry.get("date") if (params.get("entry") or cur_entry.get("mode")) == "date" else None)
         out["start"] = params.get("start")
         out["end"] = params.get("end")
+        # Strategy parameters (lookback/threshold/fast/slow): an explicit param
+        # wins; otherwise keep the panel's current tuned value — but only when the
+        # strategy is unchanged, so switching strategies starts from fresh defaults
+        # instead of leaking the previous strategy's settings.
+        cur_params = d.get("params") or {}
+        strategy_changed = bool(params.get("strategy")) and params.get("strategy") != d.get("strategy")
+        for key in ("lookback", "threshold", "fast", "slow"):
+            val = params.get(key)
+            if val is None and not strategy_changed:
+                val = cur_params.get(key)
+            if val is not None:
+                out[key] = val
     elif panel_type == "walk_forward":
         out["symbol"] = (params.get("symbol") or d.get("symbol") or "").upper() or None
         out["strategy"] = params.get("strategy") or d.get("strategy")

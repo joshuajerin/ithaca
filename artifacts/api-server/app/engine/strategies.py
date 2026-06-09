@@ -129,6 +129,24 @@ def available_strategies() -> List[str]:
     return list(STRATEGIES.keys())
 
 
+# The tunable parameters (and their defaults) each strategy exposes. These
+# defaults mirror the inline fallbacks in the ``signal_*`` functions, so a
+# backtest run with these values reproduces the current out-of-the-box
+# behavior exactly. ``buy_and_hold`` has no free parameters.
+_DEFAULT_PARAMS: Dict[str, dict] = {
+    "buy_and_hold": {},
+    "momentum": {"lookback": 90},
+    "mean_reversion": {"lookback": 20, "threshold": 1.0},
+    "ma_crossover": {"fast": 20, "slow": 50},
+}
+
+
+def default_params(strategy: str) -> dict:
+    """Return the default tunable parameters for a strategy (with defaults
+    filled in). Unknown strategies resolve via ``normalize_strategy``."""
+    return dict(_DEFAULT_PARAMS.get(normalize_strategy(strategy), {}))
+
+
 def param_grid(strategy: str) -> List[dict]:
     """The configuration grid a researcher would realistically sweep for each
     strategy. These are the "trials" the multiple-testing / overfitting

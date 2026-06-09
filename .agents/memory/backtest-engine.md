@@ -37,6 +37,22 @@ OHLCV, so `days` is effectively capped there.
 - Tests: `tests/test_engine.py`, standalone-runnable (`python tests/test_engine.py`)
   since pytest is NOT installed in api-server.
 
+## In-panel tunable strategy params
+Backtest exposes per-strategy knobs (lookback/threshold/fast/slow) editable in the
+panel and re-run via the structured-refine path.
+**Two invariants that keep this safe:**
+- Effective params = strategy defaults (canonical, mirror the `signal_*` inline
+  fallbacks) overridden only by relevant provided keys. **Why:** so doing nothing
+  reproduces original behavior, and a stale key (e.g. a leftover `threshold` after
+  switching to momentum) can never alter a run — it's not in that strategy's
+  defaults, so it's ignored.
+- A strategy switch must NOT inherit the previous strategy's tuning: refine carries
+  current params forward only when the strategy is unchanged, otherwise drops them
+  so the new strategy starts from fresh defaults.
+**How to apply:** a tunable knob must be wired in lockstep across four places
+(strategy defaults, build_backtest's override step, the refine passthrough, the
+panel control) or the value silently fails to round-trip.
+
 ## Engine package re-exports (gotcha)
 Skills call engine functions as `engine.<fn>` (the `app.engine` package namespace),
 NOT `engine.backtest.<fn>`. A new function added to a submodule (e.g.

@@ -20,6 +20,29 @@ const STRATEGIES: { value: string; label: string }[] = [
 ];
 const RANGES = ["1M", "3M", "6M", "1Y"] as const;
 
+// Tunable parameters surfaced per strategy. Defaults mirror the engine so the
+// controls reflect current behavior; changing one fires a structured refine.
+interface ParamSpec {
+  key: string;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  integer?: boolean;
+}
+const STRATEGY_PARAMS: Record<string, ParamSpec[]> = {
+  momentum: [{ key: "lookback", label: "Lookback", min: 2, max: 252, step: 1, integer: true }],
+  mean_reversion: [
+    { key: "lookback", label: "Lookback", min: 2, max: 252, step: 1, integer: true },
+    { key: "threshold", label: "Threshold", min: 0.1, max: 4, step: 0.1 },
+  ],
+  ma_crossover: [
+    { key: "fast", label: "Fast MA", min: 2, max: 200, step: 1, integer: true },
+    { key: "slow", label: "Slow MA", min: 3, max: 400, step: 1, integer: true },
+  ],
+  buy_and_hold: [],
+};
+
 interface Props {
   data: BacktestData;
   onRefine?: (params: Record<string, unknown>) => void;
@@ -58,6 +81,23 @@ export function BacktestPanel({ data, onRefine, pending }: Props) {
     if (entryMode === "date" && data.entry?.date) setDateInput(data.entry.date);
   }, [entryMode, data.entry?.date]);
 
+  // Tunable parameters for the selected strategy. Local string inputs so typing
+  // doesn't fire a refine per keystroke; commit on Enter/blur. Reset whenever the
+  // panel's params change (e.g. after a re-run or strategy switch).
+  const paramSpecs = STRATEGY_PARAMS[data.strategy] ?? [];
+  const currentParams = (data.params ?? {}) as Record<string, number>;
+  const paramsSig = paramSpecs.map((p) => `${p.key}:${currentParams[p.key]}`).join("|");
+  const [paramInputs, setParamInputs] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    for (const p of paramSpecs) {
+      const v = currentParams[p.key];
+      if (v !== undefined && v !== null) next[p.key] = p.integer ? String(Math.round(v)) : String(v);
+    }
+    setParamInputs(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paramsSig]);
+
   const refine = (patch: Record<string, unknown>) => {
     if (!onRefine) return;
     onRefine({
@@ -83,6 +123,21 @@ export function BacktestPanel({ data, onRefine, pending }: Props) {
   const commitDate = (d: string) => {
     setDateInput(d);
     if (d) refine({ entry: "date", date: d });
+  };
+
+  const commitParam = (spec: ParamSpec) => {
+    const raw = paramInputs[spec.key] ?? "";
+    let parsed = Number(raw);
+    const cur = currentParams[spec.key];
+    if (!Number.isFinite(parsed)) {
+      setParamInputs((s) => ({ ...s, [spec.key]: cur != null ? String(cur) : "" }));
+      return;
+    }
+    parsed = Math.min(spec.max, Math.max(spec.min, parsed));
+    if (spec.integer) parsed = Math.round(parsed);
+    else parsed = Math.round(parsed * 100) / 100;
+    setParamInputs((s) => ({ ...s, [spec.key]: String(parsed) }));
+    if (cur == null || parsed !== cur) refine({ [spec.key]: parsed });
   };
 
   const closedTrades = (data.tradeLog ?? []).filter(
@@ -180,6 +235,32 @@ export function BacktestPanel({ data, onRefine, pending }: Props) {
               </select>
             </div>
           </div>
+          {paramSpecs.length > 0 && (
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="text-[9px] text-muted-foreground uppercase tracking-widest">Params</span>
+              {paramSpecs.map((spec) => (
+                <div key={spec.key} className="flex items-center gap-1.5">
+                  <span className="text-[9px] text-muted-foreground">{spec.label}</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min={spec.min}
+                    max={spec.max}
+                    step={spec.step}
+                    value={paramInputs[spec.key] ?? ""}
+                    onChange={(e) =>
+                      setParamInputs((s) => ({ ...s, [spec.key]: e.target.value }))
+                    }
+                    onBlur={() => commitParam(spec)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                    className="w-16 text-[10px] bg-black border border-border px-1.5 py-0.5 font-mono text-white focus:outline-none focus:border-white/60 transition-colors"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[9px] text-muted-foreground uppercase tracking-widest">Entry</span>
             <div className="flex gap-1 flex-wrap">

@@ -73,6 +73,7 @@ from .stats import (
 from .strategies import (
     STRATEGIES,
     available_strategies,
+    default_params,
     normalize_strategy,
     param_grid,
     param_label,
@@ -119,6 +120,9 @@ __all__ = [
     "univariate_beta",
     "STRATEGIES",
     "available_strategies",
+    "default_params",
+    "param_grid",
+    "param_label",
     "normalize_strategy",
     "riskmodel",
     "FactorModel",

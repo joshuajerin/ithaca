@@ -197,6 +197,7 @@ export const GetDefaultDashboardResponse = zod.object({
 }),zod.object({
   "symbol": zod.string(),
   "strategy": zod.string(),
+  "params": zod.record(zod.string(), zod.unknown()).nullish().describe('Effective tunable strategy parameters used for this run (defaults filled in), e.g. {lookback: 90} for momentum or {lookback: 20, threshold: 1.0} for mean reversion. Drives the in-panel parameter controls.'),
   "range": zod.string().optional().describe('Lookback window used for the backtest, e.g. 1M, 3M, 6M, 1Y.'),
   "curve": zod.array(zod.object({
   "t": zod.string(),
@@ -586,6 +587,7 @@ export const OrchestrateResponse = zod.object({
 }),zod.object({
   "symbol": zod.string(),
   "strategy": zod.string(),
+  "params": zod.record(zod.string(), zod.unknown()).nullish().describe('Effective tunable strategy parameters used for this run (defaults filled in), e.g. {lookback: 90} for momentum or {lookback: 20, threshold: 1.0} for mean reversion. Drives the in-panel parameter controls.'),
   "range": zod.string().optional().describe('Lookback window used for the backtest, e.g. 1M, 3M, 6M, 1Y.'),
   "curve": zod.array(zod.object({
   "t": zod.string(),
@@ -985,6 +987,7 @@ export const SaveDashboardBody = zod.object({
 }),zod.object({
   "symbol": zod.string(),
   "strategy": zod.string(),
+  "params": zod.record(zod.string(), zod.unknown()).nullish().describe('Effective tunable strategy parameters used for this run (defaults filled in), e.g. {lookback: 90} for momentum or {lookback: 20, threshold: 1.0} for mean reversion. Drives the in-panel parameter controls.'),
   "range": zod.string().optional().describe('Lookback window used for the backtest, e.g. 1M, 3M, 6M, 1Y.'),
   "curve": zod.array(zod.object({
   "t": zod.string(),
@@ -1373,6 +1376,7 @@ export const RestoreDashboardResponse = zod.object({
 }),zod.object({
   "symbol": zod.string(),
   "strategy": zod.string(),
+  "params": zod.record(zod.string(), zod.unknown()).nullish().describe('Effective tunable strategy parameters used for this run (defaults filled in), e.g. {lookback: 90} for momentum or {lookback: 20, threshold: 1.0} for mean reversion. Drives the in-panel parameter controls.'),
   "range": zod.string().optional().describe('Lookback window used for the backtest, e.g. 1M, 3M, 6M, 1Y.'),
   "curve": zod.array(zod.object({
   "t": zod.string(),
@@ -1828,6 +1832,7 @@ export const RefinePanelResponse = zod.object({
 }),zod.object({
   "symbol": zod.string(),
   "strategy": zod.string(),
+  "params": zod.record(zod.string(), zod.unknown()).nullish().describe('Effective tunable strategy parameters used for this run (defaults filled in), e.g. {lookback: 90} for momentum or {lookback: 20, threshold: 1.0} for mean reversion. Drives the in-panel parameter controls.'),
   "range": zod.string().optional().describe('Lookback window used for the backtest, e.g. 1M, 3M, 6M, 1Y.'),
   "curve": zod.array(zod.object({
   "t": zod.string(),
