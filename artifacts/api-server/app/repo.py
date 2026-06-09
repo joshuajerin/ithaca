@@ -1777,6 +1777,127 @@ def etf_holdings_universe() -> List[str]:
         return []
 
 
+_INSIDER_COLS = (
+    "symbol", "cik", "issuer_name", "insider_name", "role", "transaction_code",
+    "transaction_type", "acquired_disposed", "security_title", "is_derivative",
+    "shares", "price", "value", "shares_owned_after", "transaction_date",
+    "filing_date", "form", "url", "accession_no",
+)
+
+
+def _numn(v):
+    """Float-or-None — unlike ``_num`` this preserves NULLs instead of coercing
+    them to 0.0, so a missing insider price/value stays honestly absent."""
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _insider_row(r: dict) -> dict:
+    return {
+        "symbol": r.get("symbol"),
+        "cik": r.get("cik"),
+        "issuerName": r.get("issuer_name"),
+        "insider": r.get("insider_name"),
+        "role": r.get("role"),
+        "code": r.get("transaction_code"),
+        "type": r.get("transaction_type"),
+        "acquiredDisposed": r.get("acquired_disposed"),
+        "security": r.get("security_title"),
+        "isDerivative": bool(r.get("is_derivative")),
+        "shares": _numn(r.get("shares")),
+        "price": _numn(r.get("price")),
+        "value": _numn(r.get("value")),
+        "sharesOwnedAfter": _numn(r.get("shares_owned_after")),
+        "transactionDate": _iso(r.get("transaction_date")),
+        "filingDate": _iso(r.get("filing_date")),
+        "form": r.get("form"),
+        "url": r.get("url"),
+        "accession": r.get("accession_no"),
+    }
+
+
+def insider_transactions(symbol: str, days: int = 180) -> List[dict]:
+    """Real EDGAR insider (Form 4/5) transactions for a symbol in a trailing
+    window, newest first. Returns ``[]`` when the DB has none — never mock."""
+    sym = (symbol or "").upper()
+    if not db.db_available():
+        return []
+    cutoff = (date.today() - timedelta(days=days)).isoformat() if days else None
+    try:
+        if cutoff:
+            rows = db.query(
+                f"SELECT {', '.join(_INSIDER_COLS)} FROM insider_transactions "
+                "WHERE symbol = %s AND transaction_date >= %s "
+                "ORDER BY transaction_date DESC NULLS LAST, filing_date DESC NULLS LAST",
+                (sym, cutoff),
+            )
+        else:
+            rows = db.query(
+                f"SELECT {', '.join(_INSIDER_COLS)} FROM insider_transactions "
+                "WHERE symbol = %s "
+                "ORDER BY transaction_date DESC NULLS LAST, filing_date DESC NULLS LAST",
+                (sym,),
+            )
+        return [_insider_row(r) for r in rows]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("insider_transactions DB error (%s): %s", sym, exc)
+        return []
+
+
+def ensure_insider(symbol: str, days: int = 180) -> dict:
+    """Return insider transactions for a symbol, fetching live from EDGAR on the
+    request path when the DB has none yet (so an arbitrary ticker still works).
+
+    Returns ``{"transactions", "source", "asOf", "issuerName", "cik"}``. Source
+    is ``"live"`` whenever data flowed (DB or fresh fetch), ``"unavailable"``
+    when the ticker has no SEC CIK, and ``"error"`` on a hard EDGAR failure."""
+    sym = (symbol or "").upper()
+    rows = insider_transactions(sym, days)
+    if rows:
+        return {
+            "transactions": rows,
+            "source": "live",
+            "asOf": max([r["filingDate"] for r in rows if r.get("filingDate")], default=None),
+            "issuerName": rows[0].get("issuerName"),
+            "cik": rows[0].get("cik"),
+        }
+
+    # Nothing cached yet — fetch synchronously (bounded) so the panel is useful
+    # immediately, persist it, and queue the name for ongoing background refresh.
+    from .sources import edgar as e_src
+    try:
+        res = e_src.fetch_insider_transactions(sym, since_days=days, max_filings=20)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("ensure_insider EDGAR fetch failed (%s): %s", sym, exc)
+        return {"transactions": [], "source": "error", "asOf": None,
+                "issuerName": None, "cik": None}
+
+    txns = res.get("transactions") or []
+    if res.get("source") == "unavailable":
+        return {"transactions": [], "source": "unavailable", "asOf": None,
+                "issuerName": res.get("issuerName"), "cik": res.get("cik")}
+
+    if txns and db.db_available():
+        try:
+            from . import worker  # local import: worker owns the upsert SQL
+            worker._upsert_insider(txns)
+            note_symbol(sym)  # keep it fresh via the background insider loop
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ensure_insider persist failed (%s): %s", sym, exc)
+
+    return {
+        "transactions": txns,
+        "source": "live",
+        "asOf": res.get("asOf"),
+        "issuerName": res.get("issuerName"),
+        "cik": res.get("cik"),
+    }
+
+
 def as_of(*records) -> Optional[str]:
     """Most-recent freshness timestamp across the given company/sentiment records."""
     stamps = [r.get("_asOf") for r in records if isinstance(r, dict) and r.get("_asOf")]

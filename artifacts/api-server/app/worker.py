@@ -20,6 +20,7 @@ import os
 from typing import List, Optional
 
 from . import data, db, orderbook_store, repo, strategy
+from .sources import edgar as e_src
 from .sources import fundamentals as f_src
 from .sources import holdings as h_src
 from .sources import iex_deep
@@ -44,6 +45,14 @@ ORDERBOOK_INTERVAL = 20
 # quarterly fundamentals. This history barely changes, so a long sleep is fine —
 # it only needs to be present, not minute-fresh.
 PIT_INTERVAL = 6 * 3600
+# Insider-transaction (SEC EDGAR Form 4/5) refresh cadence. Filings trickle in
+# through the day but a name rarely has more than a few per day, and EDGAR asks
+# for gentle access, so a slow sweep of the tracked universe is plenty.
+INSIDER_INTERVAL = 3 * 3600
+# Trailing window the background sweep ingests per name (days), and a cap on how
+# many recent ownership filings to parse per name per pass.
+INSIDER_WINDOW_DAYS = 180
+INSIDER_MAX_FILINGS = 40
 # Daily mark cadence: re-check hourly. record_daily_snapshots is idempotent per
 # trading day (one row per strategy per day), so an hourly pass simply keeps the
 # day's NAV fresh and settles to the close once prices stop moving.
@@ -171,6 +180,42 @@ def _seed_universe() -> None:
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
         """
+    )
+    # Real insider transactions (SEC EDGAR Form 4/5), one row per transaction
+    # line within a filing. Keyed by (accession_no, txn_seq) so re-ingesting a
+    # filing upserts idempotently. Everything is parsed from the live filing.
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS insider_transactions (
+            accession_no TEXT NOT NULL,
+            txn_seq INTEGER NOT NULL,
+            symbol TEXT NOT NULL,
+            cik TEXT,
+            issuer_name TEXT,
+            insider_name TEXT,
+            role TEXT,
+            transaction_code TEXT,
+            transaction_type TEXT,
+            acquired_disposed TEXT,
+            security_title TEXT,
+            is_derivative BOOLEAN NOT NULL DEFAULT FALSE,
+            shares DOUBLE PRECISION,
+            price DOUBLE PRECISION,
+            value DOUBLE PRECISION,
+            shares_owned_after DOUBLE PRECISION,
+            transaction_date DATE,
+            filing_date DATE,
+            form TEXT,
+            url TEXT,
+            source TEXT,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (accession_no, txn_seq)
+        )
+        """
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS insider_symbol_date_idx "
+        "ON insider_transactions (symbol, transaction_date)"
     )
 
     # Dedicated macro quote table — kept separate from `fundamentals` so live
@@ -527,6 +572,66 @@ def _upsert_pit_fundamentals(rows: list) -> None:
           net_margin = EXCLUDED.net_margin,
           eps = EXCLUDED.eps,
           report_estimated = EXCLUDED.report_estimated,
+          source = EXCLUDED.source,
+          updated_at = now()
+        """,
+        payload,
+    )
+
+
+def _upsert_insider(transactions: list) -> None:
+    """Persist parsed EDGAR insider transactions into ``insider_transactions``.
+
+    Keyed by (accession_no, txn_seq) so re-ingesting a filing refreshes the same
+    rows. ``txn_seq`` is the line's position within its filing, assigned here so
+    one Form 4 with several lines yields stable, distinct keys."""
+    if not transactions:
+        return
+    seq: dict = {}
+    payload = []
+    for t in transactions:
+        acc = t.get("accession")
+        if not acc:
+            continue
+        i = seq.get(acc, 0)
+        seq[acc] = i + 1
+        payload.append((
+            acc, i, t.get("symbol"), t.get("cik"), t.get("issuerName"),
+            t.get("insider"), t.get("role"), t.get("code"), t.get("type"),
+            t.get("acquiredDisposed"), t.get("security"), bool(t.get("isDerivative")),
+            t.get("shares"), t.get("price"), t.get("value"), t.get("sharesOwnedAfter"),
+            t.get("transactionDate"), t.get("filingDate"), t.get("form"), t.get("url"),
+            "live",
+        ))
+    if not payload:
+        return
+    db.execute_many(
+        """
+        INSERT INTO insider_transactions (accession_no, txn_seq, symbol, cik,
+            issuer_name, insider_name, role, transaction_code, transaction_type,
+            acquired_disposed, security_title, is_derivative, shares, price, value,
+            shares_owned_after, transaction_date, filing_date, form, url, source,
+            updated_at)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+        ON CONFLICT (accession_no, txn_seq) DO UPDATE SET
+          symbol = EXCLUDED.symbol,
+          cik = EXCLUDED.cik,
+          issuer_name = EXCLUDED.issuer_name,
+          insider_name = EXCLUDED.insider_name,
+          role = EXCLUDED.role,
+          transaction_code = EXCLUDED.transaction_code,
+          transaction_type = EXCLUDED.transaction_type,
+          acquired_disposed = EXCLUDED.acquired_disposed,
+          security_title = EXCLUDED.security_title,
+          is_derivative = EXCLUDED.is_derivative,
+          shares = EXCLUDED.shares,
+          price = EXCLUDED.price,
+          value = EXCLUDED.value,
+          shares_owned_after = EXCLUDED.shares_owned_after,
+          transaction_date = EXCLUDED.transaction_date,
+          filing_date = EXCLUDED.filing_date,
+          form = EXCLUDED.form,
+          url = EXCLUDED.url,
           source = EXCLUDED.source,
           updated_at = now()
         """,
@@ -897,6 +1002,30 @@ async def _ingest_pit_fundamentals(symbol: str) -> None:
         log.warning("pit fundamentals failed for %s: %s", symbol, exc)
 
 
+async def _ingest_insider(symbol: str, *, since_days: int = INSIDER_WINDOW_DAYS,
+                          max_filings: int = INSIDER_MAX_FILINGS) -> int:
+    """Fetch and persist real SEC EDGAR insider transactions for one symbol.
+
+    Returns the number of transactions persisted. Foreign / unrecognised symbols
+    (no SEC CIK) yield nothing and are skipped silently — never fabricated."""
+    try:
+        res = await _net(
+            lambda: e_src.fetch_insider_transactions(
+                symbol, since_days=since_days, max_filings=max_filings,
+            )
+        )
+        txns = res.get("transactions") or []
+        if txns:
+            await asyncio.to_thread(_upsert_insider, txns)
+            log.info("insider transactions ingested for %s (%d rows)", symbol, len(txns))
+        return len(txns)
+    except CircuitOpenError as exc:
+        log.debug("insider ingest skipped for %s: %s", symbol, exc)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("insider ingest failed for %s: %s", symbol, exc)
+    return 0
+
+
 async def _ingest_delisted_history(symbol: str) -> None:
     """Best-effort real OHLCV for a curated delisted name over its trading life.
 
@@ -943,6 +1072,20 @@ async def _pit_loop():
         except Exception as exc:  # noqa: BLE001
             log.warning("pit loop error: %s", exc)
         await asyncio.sleep(PIT_INTERVAL)
+
+
+async def _insider_loop():
+    """Slowly refresh real EDGAR insider (Form 4/5) transactions for the tracked
+    universe. Serialized via the network semaphore and run on a long cadence so
+    SEC access stays gentle; per-symbol failures are isolated."""
+    while True:
+        try:
+            for sym in _tracked_symbols():
+                await _ingest_insider(sym)
+            log.info("insider cycle complete")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("insider loop error: %s", exc)
+        await asyncio.sleep(INSIDER_INTERVAL)
 
 
 async def _ondemand_loop():
@@ -1090,6 +1233,7 @@ async def start() -> None:
     _tasks.append(asyncio.create_task(_sentiment_loop()))
     _tasks.append(asyncio.create_task(_breadth_market_cap_loop()))
     _tasks.append(asyncio.create_task(_pit_loop()))
+    _tasks.append(asyncio.create_task(_insider_loop()))
     _tasks.append(asyncio.create_task(_ondemand_loop()))
     _tasks.append(asyncio.create_task(_orderbook_loop()))
     _tasks.append(asyncio.create_task(_snapshot_loop()))

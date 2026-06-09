@@ -7511,6 +7511,126 @@ def build_earnings_calendar(params: dict) -> dict:
     }
 
 
+def build_insider_activity(params: dict) -> dict:
+    """Real SEC Form 4/5 insider transactions for one ticker over a trailing
+    window, with a net-buying-vs-selling summary. All data is live from EDGAR;
+    when a name has no SEC CIK or no recent filings the panel says so honestly
+    rather than inventing trades."""
+    symbol = params.get("symbol")
+    symbols_param = params.get("symbols")
+    if not symbol and symbols_param:
+        symbol = symbols_param[0]
+    if not symbol:
+        raise ValueError("Insider activity needs a specific company ticker.")
+
+    sym = str(symbol).upper().strip()
+    days = params.get("days") or params.get("window") or 180
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        days = 180
+    days = max(30, min(days, 730))
+
+    res = repo.ensure_insider(sym, days)
+    txns = res.get("transactions") or []
+    source = res.get("source") or "unavailable"
+    issuer = res.get("issuerName")
+    company = data.get_company(sym)
+    if not issuer and company:
+        issuer = company.get("name")
+    label = issuer or sym
+    title = f"Insider Activity — {label}"
+
+    # Net buying vs selling is measured on OPEN-MARKET trades only (code P = buy,
+    # S = sell). Option exercises / grants / tax-withholding / gifts are reported
+    # in the table but excluded from the directional sentiment, since they aren't
+    # discretionary market signals.
+    buy_shares = sell_shares = 0.0
+    buy_value = sell_value = 0.0
+    buy_count = sell_count = 0
+    option_count = other_count = 0
+    buyers: dict = {}
+    sellers: dict = {}
+    insiders: set = set()
+
+    for t in txns:
+        if t.get("insider"):
+            insiders.add(t["insider"])
+        code = (t.get("code") or "").upper()
+        shares = t.get("shares") or 0.0
+        value = t.get("value")
+        if code == "P":
+            buy_count += 1
+            buy_shares += shares
+            if value:
+                buy_value += value
+            b = buyers.setdefault(t.get("insider") or "Unknown", {"insider": t.get("insider") or "Unknown", "role": t.get("role"), "shares": 0.0, "value": 0.0})
+            b["shares"] += shares
+            b["value"] += value or 0.0
+        elif code == "S":
+            sell_count += 1
+            sell_shares += shares
+            if value:
+                sell_value += value
+            s = sellers.setdefault(t.get("insider") or "Unknown", {"insider": t.get("insider") or "Unknown", "role": t.get("role"), "shares": 0.0, "value": 0.0})
+            s["shares"] += shares
+            s["value"] += value or 0.0
+        elif code in {"M", "X"}:
+            option_count += 1
+        else:
+            other_count += 1
+
+    net_shares = buy_shares - sell_shares
+    net_value = buy_value - sell_value
+    if buy_count == 0 and sell_count == 0:
+        sentiment = "no open-market activity"
+    elif net_value > 0 or (net_value == 0 and net_shares > 0):
+        sentiment = "net buying"
+    elif net_value < 0 or (net_value == 0 and net_shares < 0):
+        sentiment = "net selling"
+    else:
+        sentiment = "balanced"
+
+    top_buyers = sorted(buyers.values(), key=lambda x: x["value"] or x["shares"], reverse=True)[:5]
+    top_sellers = sorted(sellers.values(), key=lambda x: x["value"] or x["shares"], reverse=True)[:5]
+
+    max_rows = 60
+    rows = txns[:max_rows]
+
+    return {
+        "title": title,
+        "symbol": sym,
+        "issuerName": issuer,
+        "cik": res.get("cik"),
+        "windowDays": days,
+        "rows": rows,
+        "count": len(txns),
+        "shown": len(rows),
+        "summary": {
+            "buyCount": buy_count,
+            "sellCount": sell_count,
+            "optionExerciseCount": option_count,
+            "otherCount": other_count,
+            "buyShares": buy_shares,
+            "sellShares": sell_shares,
+            "buyValue": buy_value,
+            "sellValue": sell_value,
+            "netShares": net_shares,
+            "netValue": net_value,
+            "sentiment": sentiment,
+            "uniqueInsiders": len(insiders),
+        },
+        "topBuyers": top_buyers,
+        "topSellers": top_sellers,
+        # feedSource survives into the panel body (harness pops "source"/"asOf"
+        # up onto the envelope) so the panel can show its own unavailable/error
+        # state; the envelope badge still reports live/unavailable separately.
+        "feedSource": source,
+        "asOf": res.get("asOf"),
+        "source": source,
+    }
+
+
 # ----------------------------- M&A tracker builder -----------------------------
 _MA_DEALS = [
     {
@@ -8922,6 +9042,22 @@ _reg(SkillDef(
         {"name": "rank", "description": "Rank the holding ETFs by the stock's weight.", "expectedOutput": "A weight-ranked ETF list."},
     ],
     build_etf_exposure, "ETF Exposure",
+))
+_reg(SkillDef(
+    "insider-activity", "Insider Activity", "insider_activity",
+    "Shows real SEC Form 4/5 insider transactions for ONE company over a trailing window — a "
+    "dated table of each insider's name, role, transaction type (open-market buy/sell, option "
+    "exercise, grant, tax, gift), shares, price, value and filing date, each linking to the "
+    "source EDGAR filing — plus a summary of net buying vs selling and the top buyers/sellers. "
+    "Data is live from SEC EDGAR; names with no SEC filings are reported honestly, never faked. "
+    "Use when the user asks about insider activity/trading/transactions, insider buying or "
+    "selling, Form 4 filings, or what executives/officers/directors are buying or selling.",
+    [
+        {"name": "resolve_issuer", "description": "Map the ticker to its SEC CIK and issuer.", "expectedOutput": "A CIK and issuer name, or an honest unavailable."},
+        {"name": "fetch_form4", "description": "Fetch and parse recent Form 4/5 ownership filings from EDGAR.", "expectedOutput": "Dated transaction rows with insider, role, code, shares, price, value and a filing link."},
+        {"name": "summarize_flow", "description": "Aggregate open-market buys vs sells into a net-flow sentiment with top buyers/sellers.", "expectedOutput": "Net shares/value, buy/sell counts and ranked insiders."},
+    ],
+    build_insider_activity, "Insider Activity",
 ))
 _reg(SkillDef(
     "signal-research", "Alpha Signal Research", "signal_research",

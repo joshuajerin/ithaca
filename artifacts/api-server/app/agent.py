@@ -256,6 +256,23 @@ def _tools() -> list:
             }, "required": ["symbol"]},
         }},
         {"type": "function", "function": {
+            "name": "add_insider_activity",
+            "description": (
+                f"Add an insider activity panel showing REAL SEC Form 4/5 insider transactions for "
+                f"ONE company over a trailing window — a dated table of each insider's name, role, "
+                f"transaction type (open-market buy/sell, option exercise, grant, tax, gift), shares, "
+                f"price, value and filing date, each linking to the source EDGAR filing — plus a net "
+                f"buying-vs-selling summary and top buyers/sellers. Data is live from SEC EDGAR. Use "
+                f"for 'insider activity/trading/transactions', 'insider buying/selling', 'Form 4', or "
+                f"'what are executives/officers/directors buying or selling'. {sizing}"
+            ),
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"The company ticker. From: {syms}"},
+                "days": {"type": "integer", "description": "Trailing window in days (default 180, max 730)."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
+        {"type": "function", "function": {
             "name": "add_macro_dashboard",
             "description": (
                 f"Add a macro/cross-asset dashboard panel. {sizing} "
@@ -991,6 +1008,7 @@ _TOOL_TO_TYPE = {
     "add_earnings_calendar": "earnings_calendar",
     "add_etf_holdings": "etf_holdings",
     "add_etf_exposure": "etf_exposure",
+    "add_insider_activity": "insider_activity",
     "add_ma_tracker": "ma_tracker",
     "add_company_analytics": "company_analytics",
     "add_company_analytics_compare": "company_analytics_compare",
@@ -1103,6 +1121,8 @@ def _system_prompt() -> str:
         "- For ETF holdings / constituents / 'what's in <ETF>' / 'holdings of <ETF>' / 'top holdings', "
         "use add_etf_holdings. For the reverse — 'which ETFs hold <stock>' / 'what funds own <stock>' / "
         "a stock's ETF exposure — use add_etf_exposure.\n"
+        "- For insider activity / insider trading / insider buying-selling / Form 4 / 'what are "
+        "executives/officers/directors buying or selling' requests, use add_insider_activity with the symbol.\n"
         "- For M&A / deal flow / mergers / acquisitions / arb spread requests, use add_ma_tracker.\n"
         "- For backtest / strategy / Sharpe / drawdown requests, use add_backtest. For research-integrity "
         "checks — 'is this strategy overfit / robust / data-mined', out-of-sample or walk-forward validation, "
@@ -2859,6 +2879,7 @@ _TYPE_LABELS = {
     "dcf_model": "a DCF model",
     "earnings_transcript": "an earnings transcript",
     "earnings_calendar": "an earnings calendar",
+    "insider_activity": "insider activity",
     "ma_tracker": "an M&A tracker",
     "company_analytics": "a company analytics panel",
     "company_analytics_compare": "a company comparison",
@@ -3700,6 +3721,13 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
                                                                      "made up", "composition", "inside"]))
         )
     )
+    wants_insider = any(k in q for k in [
+        "insider activity", "insider trading", "insider trade", "insider transaction",
+        "insider buying", "insider selling", "insider sell", "insider buy", "insiders",
+        "form 4", "form 3", "form 5", "executives buying", "executives selling",
+        "officers buying", "officers selling", "director buying", "director selling",
+        "open market purchase", "open-market purchase",
+    ]) or ("insider" in q and any(k in q for k in ["buy", "buying", "sell", "selling", "bought", "sold", "trade", "activity"]))
     wants_ma = any(k in q for k in ["m&a", "merger", "acquisition", "deal", "arb spread", "takeover", "buyout"])
     wants_company_analytics = any(k in q for k in [
         "why is", "why is it", "what drives", "price driver", "company analytics",
@@ -3855,6 +3883,11 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
             add("etf_holdings", {"symbol": etf}, 12, 6)
             label = skills._BENCHMARK_ETFS.get(etf, etf)
             return panels, f"Top holdings of {label} with weights, top-N concentration and the fund's sector breakdown (free feed exposes top holdings only)."
+    if wants_insider and symbols:
+        sym = symbols[0]
+        add("insider_activity", {"symbol": sym}, 12, 6)
+        name = data.get_company(sym)["name"] if data.get_company(sym) else sym
+        return panels, f"Insider activity for {name}: real SEC Form 4 buys, sells and option exercises with a net buying-vs-selling summary."
 
     if wants_ma:
         sym = symbols[0] if symbols else None
@@ -4934,6 +4967,16 @@ def _refine_params_heuristic(panel_type: str, panel: dict, instruction: str) -> 
         sym = syms[0] if syms else (_extract_etf(instruction) or (panel.get("data") or {}).get("symbol"))
         if sym:
             return {"symbol": sym}
+    if panel_type == "insider_activity":
+        d0 = panel.get("data") or {}
+        out = {"symbol": (syms[0] if syms else d0.get("symbol"))}
+        ql = instruction.lower()
+        m = re.search(r"(\d{2,4})\s*(?:day|d)\b", ql)
+        if m:
+            out["days"] = int(m.group(1))
+        elif d0.get("windowDays"):
+            out["days"] = d0["windowDays"]
+        return out
     d = panel.get("data") or {}
     if panel_type == "portfolio_risk":
         return {"symbols": syms or d.get("symbols") or []}
