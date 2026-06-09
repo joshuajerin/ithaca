@@ -63,10 +63,12 @@ def _throttle() -> None:
         _last_call = time.monotonic()
 
 
-def _get(url: str, *, follow_redirects: bool = True) -> httpx.Response:
+def _get(
+    url: str, *, params: Optional[Dict] = None, follow_redirects: bool = True,
+) -> httpx.Response:
     _throttle()
     return _resilient.request(
-        _SOURCE, url, headers=_HEADERS, timeout=_TIMEOUT,
+        _SOURCE, url, params=params, headers=_HEADERS, timeout=_TIMEOUT,
         follow_redirects=follow_redirects,
     )
 
@@ -147,6 +149,9 @@ def _recent_filings(submissions: Dict) -> List[Dict]:
     accession = recent.get("accessionNumber") or []
     forms = recent.get("form") or []
     fdates = recent.get("filingDate") or []
+    rdates = recent.get("reportDate") or []
+    descs = recent.get("primaryDocDescription") or []
+    sizes = recent.get("size") or []
     primary = recent.get("primaryDocument") or []
     rdates = recent.get("reportDate") or []
     out: List[Dict] = []
@@ -156,6 +161,9 @@ def _recent_filings(submissions: Dict) -> List[Dict]:
             "form": forms[i] if i < len(forms) else "",
             "filingDate": fdates[i] if i < len(fdates) else None,
             "reportDate": rdates[i] if i < len(rdates) else None,
+            "reportDate": (rdates[i] or None) if i < len(rdates) else None,
+            "primaryDocDescription": (descs[i] or None) if i < len(descs) else None,
+            "size": sizes[i] if i < len(sizes) else None,
             "primaryDocument": primary[i] if i < len(primary) else "",
         })
     return out
@@ -192,6 +200,140 @@ def filing_index_url(cik10: str, accession: str) -> str:
     cik_int = str(int(cik10))
     nodash = accession.replace("-", "")
     return f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{accession}-index.htm"
+
+
+def filing_doc_url(cik10: str, accession: str, document: str) -> str:
+    """Direct link to a filing's primary document inside its accession folder."""
+    cik_int = str(int(cik10))
+    nodash = accession.replace("-", "")
+    return f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{document}"
+
+
+# --------------------------------------------------------------------------- #
+# Filings browser: recent filings list + EDGAR full-text search
+# --------------------------------------------------------------------------- #
+# Full-text search backend used by EDGAR's own search UI. It indexes filing
+# documents since 2001 and is key-less (still requires the User-Agent header).
+_FTS_URL = "https://efts.sec.gov/LATEST/search-index"
+
+
+def fetch_company_filings(
+    ticker: str,
+    *,
+    cik10: Optional[str] = None,
+    forms: Optional[List[str]] = None,
+    since_days: Optional[int] = None,
+    limit: int = 80,
+) -> Dict:
+    """Recent filings for an issuer, newest-first, straight from the submissions
+    feed. Returns real data only; an unknown ticker yields ``source`` =
+    ``"unavailable"`` rather than a fabricated list."""
+    sym = (ticker or "").upper().strip()
+    title: Optional[str] = None
+    if cik10 is None:
+        hit = resolve_cik(sym)
+        if not hit:
+            return {
+                "symbol": sym, "cik": None, "issuerName": None,
+                "filings": [], "asOf": None, "source": "unavailable",
+            }
+        cik10, title = hit
+    subs = fetch_submissions(cik10)
+    title = title or subs.get("name") or sym
+    cutoff = (
+        (date.today() - timedelta(days=since_days)).isoformat()
+        if since_days else None
+    )
+    want = {f.upper() for f in forms} if forms else None
+    rows: List[Dict] = []
+    for f in _recent_filings(subs):
+        form = str(f.get("form") or "")
+        root = form.split("/")[0]
+        if want and form.upper() not in want and root.upper() not in want:
+            continue
+        fdate = f.get("filingDate")
+        if cutoff and (fdate or "") < cutoff:
+            continue
+        acc = f.get("accession") or ""
+        doc = f.get("primaryDocument") or ""
+        rows.append({
+            "form": form,
+            "rootForm": root,
+            "filingDate": fdate,
+            "reportDate": f.get("reportDate"),
+            "accession": acc,
+            "description": f.get("primaryDocDescription"),
+            "size": f.get("size"),
+            "documentUrl": (
+                filing_doc_url(cik10, acc, doc) if doc
+                else filing_index_url(cik10, acc)
+            ),
+            "indexUrl": filing_index_url(cik10, acc),
+        })
+        if len(rows) >= limit:
+            break
+    as_of = max((r["filingDate"] for r in rows if r.get("filingDate")), default=None)
+    return {
+        "symbol": sym, "cik": cik10, "issuerName": title,
+        "filings": rows, "asOf": as_of, "source": "live",
+    }
+
+
+def full_text_search(
+    query: str,
+    *,
+    forms: Optional[List[str]] = None,
+    cik10: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    limit: int = 40,
+) -> Dict:
+    """EDGAR full-text keyword search (filing documents since 2001). Optionally
+    scoped to a single issuer (``cik10``), form types and a date range. Returns
+    real hits only; an empty query yields no results."""
+    q = (query or "").strip()
+    if not q:
+        return {"query": q, "hits": [], "total": 0, "source": "live"}
+    params: Dict[str, str] = {"q": q}
+    if forms:
+        params["forms"] = ",".join(forms)
+    if cik10:
+        params["ciks"] = cik10
+    if start:
+        params["startdt"] = start
+    if end:
+        params["enddt"] = end
+    data = _get(_FTS_URL, params=params).json()
+    hits_block = data.get("hits") or {}
+    total_raw = hits_block.get("total")
+    total = total_raw.get("value") if isinstance(total_raw, dict) else total_raw
+    out: List[Dict] = []
+    for h in (hits_block.get("hits") or [])[:limit]:
+        src = h.get("_source") or {}
+        _id = h.get("_id") or ""
+        adsh = src.get("adsh") or (_id.split(":", 1)[0] if ":" in _id else _id)
+        doc = _id.split(":", 1)[1] if ":" in _id else ""
+        ciks = src.get("ciks") or []
+        cik_first = ciks[0] if ciks else None
+        names = src.get("display_names") or []
+        form = src.get("form") or ((src.get("root_forms") or [None])[0])
+        out.append({
+            "company": names[0] if names else None,
+            "cik": cik_first,
+            "form": form,
+            "rootForm": (form or "").split("/")[0],
+            "filingDate": src.get("file_date"),
+            "reportDate": src.get("period_ending"),
+            "accession": adsh,
+            "fileType": src.get("file_type"),
+            "description": src.get("file_description"),
+            "documentUrl": (
+                filing_doc_url(cik_first, adsh, doc)
+                if (cik_first and doc) else None
+            ),
+            "indexUrl": filing_index_url(cik_first, adsh) if cik_first else None,
+        })
+    return {"query": q, "hits": out, "total": total or 0, "source": "live"}
 
 
 def _text(node: Optional[ET.Element], path: str) -> Optional[str]:

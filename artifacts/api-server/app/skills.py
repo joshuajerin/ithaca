@@ -7626,6 +7626,157 @@ def build_earnings_calendar(params: dict) -> dict:
     }
 
 
+# Common form types surfaced first in the filter chips, roughly in order of how
+# material they are to most investors. Anything not listed falls after these.
+_FILING_FORM_PRIORITY = [
+    "10-K", "10-Q", "8-K", "S-1", "S-3", "424B", "DEF 14A", "DEFA14A",
+    "6-K", "20-F", "40-F", "SC 13D", "SC 13G", "13F-HR", "4", "3", "5",
+    "S-8", "11-K", "SD", "144",
+]
+
+
+def _filing_form_options(rows: list) -> list:
+    """Distinct form types in a result set, with counts, ordered by materiality
+    then frequency, for the panel's filter chips."""
+    counts: dict = {}
+    for r in rows:
+        f = r.get("rootForm") or r.get("form")
+        if not f:
+            continue
+        counts[f] = counts.get(f, 0) + 1
+
+    def keyfn(item):
+        form, count = item
+        pri = (
+            _FILING_FORM_PRIORITY.index(form)
+            if form in _FILING_FORM_PRIORITY
+            else len(_FILING_FORM_PRIORITY)
+        )
+        return (pri, -count, form)
+
+    return [{"form": f, "count": c} for f, c in sorted(counts.items(), key=keyfn)]
+
+
+def build_filings_browser(params: dict) -> dict:
+    """SEC EDGAR filings browser with two real-data modes:
+
+    - recent filings for one ticker (newest-first, with form-type and period),
+    - EDGAR full-text keyword search (optionally scoped to that ticker).
+
+    Everything is live from EDGAR. An unknown ticker or an EDGAR outage is
+    reported honestly via ``feedSource`` (``unavailable``/``error``) rather than
+    fabricating filings. Form filtering happens client-side over the returned
+    list; a keyword search re-queries EDGAR."""
+    symbol = params.get("symbol") or params.get("ticker")
+    symbols_param = params.get("symbols")
+    if not symbol and symbols_param:
+        symbol = symbols_param[0]
+    sym = str(symbol).upper().strip() if symbol else None
+
+    query = params.get("query") or params.get("q")
+    if isinstance(query, str):
+        query = query.strip()
+
+    forms = params.get("forms") or params.get("form")
+    if isinstance(forms, str):
+        forms = [forms]
+    if forms:
+        forms = [str(f).upper().strip() for f in forms if str(f).strip()]
+    else:
+        forms = []
+
+    days = params.get("days") or params.get("window")
+    try:
+        days = int(days) if days else None
+    except (TypeError, ValueError):
+        days = None
+
+    # --- full-text search mode -------------------------------------------- #
+    if query:
+        res = repo.filing_search(
+            query, forms=forms or None, symbol=sym, days=days, limit=50
+        )
+        hits = res.get("hits") or []
+        source = res.get("source") or "unavailable"
+        issuer = res.get("issuerName")
+        total = res.get("total") or 0
+        scope = f" · {sym}" if sym else ""
+        title = f"EDGAR Search: \u201c{query}\u201d{scope}"
+        coverage = (
+            "Full-text search covers EDGAR filing documents since 2001. "
+            f"Showing the top {len(hits)} of {total:,} matches by relevance."
+        )
+        return {
+            "title": title,
+            "mode": "search",
+            "symbol": sym,
+            "issuerName": issuer,
+            "cik": res.get("cik"),
+            "query": query,
+            "forms": forms,
+            "formOptions": _filing_form_options(hits),
+            "filings": hits,
+            "count": len(hits),
+            "total": total,
+            "shown": len(hits),
+            "windowDays": days,
+            "coverage": coverage,
+            "feedSource": source,
+            "asOf": max(
+                (h["filingDate"] for h in hits if h.get("filingDate")), default=None
+            ),
+            "source": source,
+        }
+
+    # --- recent-filings-by-ticker mode ------------------------------------ #
+    if not sym:
+        raise ValueError(
+            "SEC filings need a company ticker or a search query."
+        )
+    # Fetch the full recent list (all forms) so the panel's form chips can filter
+    # client-side; the agent-detected form, if any, becomes the default selection.
+    res = repo.company_filings(sym, forms=None, days=days, limit=80)
+    filings = res.get("filings") or []
+    source = res.get("source") or "unavailable"
+    issuer = res.get("issuerName")
+    company = data.get_company(sym)
+    if not issuer and company:
+        issuer = company.get("name")
+    label = issuer or sym
+    title = f"SEC Filings — {label}"
+    if source == "unavailable":
+        coverage = (
+            f"No SEC filer found for {sym} — EDGAR filings are only available for "
+            "SEC-registered issuers."
+        )
+    elif source == "error":
+        coverage = "Couldn't reach SEC EDGAR right now — no filings to show."
+    else:
+        coverage = (
+            "Live from SEC EDGAR, newest-first. Use the form chips to filter by "
+            "filing type or run a full-text keyword search."
+        )
+    return {
+        "title": title,
+        "mode": "filings",
+        "symbol": sym,
+        "issuerName": issuer,
+        "cik": res.get("cik"),
+        "query": None,
+        "forms": forms,
+        "formOptions": _filing_form_options(filings),
+        "filings": filings,
+        "count": len(filings),
+        "total": len(filings),
+        "shown": len(filings),
+        "windowDays": days,
+        "coverage": coverage,
+        "feedSource": source,
+        "asOf": res.get("asOf"),
+        "source": source,
+    }
+
+
 def build_insider_activity(params: dict) -> dict:
     """Real SEC Form 4/5 insider transactions for one ticker over a trailing
     window, with a net-buying-vs-selling summary. All data is live from EDGAR;
@@ -9495,6 +9646,24 @@ _reg(SkillDef(
         {"name": "rank", "description": "Rank the holding ETFs by the stock's weight.", "expectedOutput": "A weight-ranked ETF list."},
     ],
     build_etf_exposure, "ETF Exposure",
+))
+_reg(SkillDef(
+    "filings-browser", "SEC Filings Browser", "filings_browser",
+    "Browses a company's SEC EDGAR filings — a dated, newest-first list of each "
+    "filing's form type (10-K, 10-Q, 8-K, S-1, proxy, etc.), filing date, the "
+    "period it covers and a direct link to the EDGAR document — and can run an "
+    "EDGAR full-text keyword search across filings (optionally scoped to one "
+    "company). The panel lets the user filter by form type. Data is live from SEC "
+    "EDGAR; an unknown ticker or an EDGAR outage is reported honestly, never "
+    "faked. Use when the user asks for SEC filings / EDGAR filings / a filing "
+    "history / 'recent 10-Ks/8-Ks', or to keyword-search filings. Pass `symbol` "
+    "for a company's filings, `query` to full-text search, and optional `forms`.",
+    [
+        {"name": "resolve_issuer", "description": "Map the ticker to its SEC CIK and issuer.", "expectedOutput": "A CIK and issuer name, or an honest unavailable."},
+        {"name": "list_filings", "description": "Read the company's recent filings from the EDGAR submissions feed.", "expectedOutput": "Dated filing rows with form type, period and an EDGAR document link."},
+        {"name": "full_text_search", "description": "Run an EDGAR full-text keyword search, optionally scoped to the issuer/forms.", "expectedOutput": "Ranked matching filings with company, form and document link."},
+    ],
+    build_filings_browser, "SEC Filings",
 ))
 _reg(SkillDef(
     "insider-activity", "Insider Activity", "insider_activity",

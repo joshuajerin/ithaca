@@ -58,6 +58,7 @@ import { InsiderActivityPanel } from "./panels/InsiderActivityPanel";
 import { CongressTradesPanel } from "./panels/CongressTradesPanel";
 import { InstitutionalHoldersPanel } from "./panels/InstitutionalHoldersPanel";
 import { InstitutionalFlowsPanel } from "./panels/InstitutionalFlowsPanel";
+import { FilingsBrowserPanel } from "./panels/FilingsBrowserPanel";
 import { MACPanel } from "./panels/MACPanel";
 import { CompanyAnalyticsPanel } from "./panels/CompanyAnalyticsPanel";
 import { CompanyAnalyticsComparePanel } from "./panels/CompanyAnalyticsComparePanel";
@@ -361,6 +362,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted, onBui
       case "congress_trades": return <CongressTradesPanel data={panel.data as any} />;
       case "institutional_holders": return <InstitutionalHoldersPanel data={panel.data as any} />;
       case "institutional_flows": return <InstitutionalFlowsPanel data={panel.data as any} />;
+      case "filings_browser": return <FilingsBrowserPanel data={panel.data as any} onSearch={(p) => handleParamRefine(p, "filings search")} pending={paramRefineMutation.isPending} />;
       case "ma_tracker": return <MACPanel data={panel.data as any} />;
       case "company_analytics": return <CompanyAnalyticsPanel data={panel.data as any} />;
       case "company_analytics_compare": return <CompanyAnalyticsComparePanel data={panel.data as any} />;

@@ -2118,6 +2118,48 @@ def inst_holdings_for_ticker(ticker: str) -> List[dict]:
     except Exception as exc:  # noqa: BLE001
         log.warning("inst_holdings_for_ticker DB error (%s): %s", sym, exc)
         return []
+def company_filings(symbol: str, *, forms: Optional[list] = None,
+                    days: Optional[int] = None, limit: int = 80) -> dict:
+    """Recent SEC filings for an issuer, fetched live from EDGAR on the request
+    path. ``source`` is ``"live"`` when EDGAR answered (even with zero filings),
+    ``"unavailable"`` when the ticker has no CIK, and ``"error"`` on a hard
+    failure — never a fabricated list."""
+    sym = (symbol or "").upper().strip()
+    from .sources import edgar as e_src
+    try:
+        return e_src.fetch_company_filings(sym, forms=forms, since_days=days, limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("company_filings EDGAR fetch failed (%s): %s", sym, exc)
+        return {"symbol": sym, "cik": None, "issuerName": None,
+                "filings": [], "asOf": None, "source": "error"}
+
+
+def filing_search(query: str, *, forms: Optional[list] = None,
+                  symbol: Optional[str] = None, days: Optional[int] = None,
+                  limit: int = 40) -> dict:
+    """EDGAR full-text keyword search, optionally scoped to one issuer's CIK and a
+    look-back window. Honest source states mirror ``company_filings``."""
+    from .sources import edgar as e_src
+    cik10 = None
+    issuer = None
+    sym = (symbol or "").upper().strip() or None
+    if sym:
+        try:
+            hit = e_src.resolve_cik(sym)
+            if hit:
+                cik10, issuer = hit
+        except Exception as exc:  # noqa: BLE001
+            log.warning("filing_search CIK resolve failed (%s): %s", sym, exc)
+    start = (date.today() - timedelta(days=days)).isoformat() if days else None
+    try:
+        res = e_src.full_text_search(query, forms=forms, cik10=cik10, start=start, limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("filing_search EDGAR failed (%s): %s", query, exc)
+        res = {"query": query, "hits": [], "total": 0, "source": "error"}
+    res["symbol"] = sym
+    res["cik"] = cik10
+    res["issuerName"] = issuer
+    return res
 
 
 def as_of(*records) -> Optional[str]:

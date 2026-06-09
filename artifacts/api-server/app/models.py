@@ -47,6 +47,7 @@ class PanelType(str, Enum):
     congress_trades = "congress_trades"
     institutional_holders = "institutional_holders"
     institutional_flows = "institutional_flows"
+    filings_browser = "filings_browser"
 
 
 class PanelStatus(str, Enum):
@@ -707,6 +708,44 @@ class InstitutionalFlowsData(BaseModel):
     coverage: InstCoverage = InstCoverage()
     feedSource: str = "live"
     note: Optional[str] = None
+# --- filings_browser (SEC EDGAR) ---
+class FilingRow(BaseModel):
+    form: Optional[str] = None
+    rootForm: Optional[str] = None
+    filingDate: Optional[str] = None
+    reportDate: Optional[str] = None
+    accession: Optional[str] = None
+    description: Optional[str] = None
+    size: Optional[int] = None
+    documentUrl: Optional[str] = None
+    indexUrl: Optional[str] = None
+    # Present on full-text-search hits (which can span issuers).
+    company: Optional[str] = None
+    cik: Optional[str] = None
+    fileType: Optional[str] = None
+
+
+class FilingFormOption(BaseModel):
+    form: str
+    count: int
+
+
+class FilingsBrowserData(BaseModel):
+    title: str
+    mode: str  # "filings" (recent by issuer) | "search" (full-text)
+    symbol: Optional[str] = None
+    issuerName: Optional[str] = None
+    cik: Optional[str] = None
+    query: Optional[str] = None
+    forms: List[str] = []
+    formOptions: List[FilingFormOption] = []
+    filings: List[FilingRow] = []
+    count: int = 0
+    total: int = 0
+    shown: int = 0
+    windowDays: Optional[int] = None
+    coverage: Optional[str] = None
+    feedSource: Optional[str] = None
 
 
 # --- cashflow_duration ---

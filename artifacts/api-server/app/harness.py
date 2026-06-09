@@ -50,6 +50,7 @@ DATA_MODELS = {
     "congress_trades": models.CongressTradesData,
     "institutional_holders": models.InstitutionalHoldersData,
     "institutional_flows": models.InstitutionalFlowsData,
+    "filings_browser": models.FilingsBrowserData,
 }
 
 

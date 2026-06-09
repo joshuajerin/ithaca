@@ -292,6 +292,27 @@ def _tools() -> list:
                 "party": {"type": "string", "enum": ["Democrat", "Republican", "Independent"], "description": "Optional party filter."},
                 "width": {"type": "integer"}, "height": {"type": "integer"},
             }},
+            "name": "add_filings_browser",
+            "description": (
+                f"Add a SEC EDGAR filings browser. In its default mode it lists a "
+                f"company's recent filings newest-first — each filing's form type "
+                f"(10-K, 10-Q, 8-K, S-1, proxy, etc.), filing date, the period it "
+                f"covers and a direct EDGAR document link — and the user can filter "
+                f"by form type. Pass `query` instead to run an EDGAR full-text "
+                f"keyword search across filing documents (optionally scoped to one "
+                f"company via `symbol`). Data is live from SEC EDGAR. Use for 'SEC "
+                f"filings', 'EDGAR filings', 'filing history', 'recent 10-Ks/8-Ks', "
+                f"or to keyword-search filings. NOT for insider/Form 4 (use "
+                f"add_insider_activity) or financial-statement numbers. {sizing}"
+            ),
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"The company ticker for its filings. From: {syms}"},
+                "query": {"type": "string", "description": "Keyword(s)/phrase for an EDGAR full-text search (omit for a plain filings list)."},
+                "forms": {"type": "array", "items": {"type": "string"},
+                          "description": "Optional form types to focus on, e.g. ['10-K'] or ['8-K']."},
+                "days": {"type": "integer", "description": "Optional look-back window in days."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": []},
         }},
         {"type": "function", "function": {
             "name": "add_institutional_holders",
@@ -1066,6 +1087,7 @@ _TOOL_TO_TYPE = {
     "add_congress_trades": "congress_trades",
     "add_institutional_holders": "institutional_holders",
     "add_institutional_flows": "institutional_flows",
+    "add_filings_browser": "filings_browser",
     "add_ma_tracker": "ma_tracker",
     "add_company_analytics": "company_analytics",
     "add_company_analytics_compare": "company_analytics_compare",
@@ -1187,6 +1209,11 @@ def _system_prompt() -> str:
         "'13F holders' / 'top shareholders', use add_institutional_holders. For institutional FLOWS — 'who "
         "is buying/selling X', 'biggest buyers/sellers of X', 'fund flows into X' — use add_institutional_flows. "
         "Both are real SEC 13F data (distinct from add_insider_activity, which is Form 4 insiders).\n"
+        "- For SEC filings / EDGAR filings / a company's filing history / 'recent 10-Ks/8-Ks/10-Qs' / "
+        "'show me <ticker>'s filings', or to KEYWORD-SEARCH filings ('search EDGAR for ...', 'filings "
+        "mentioning ...'), use add_filings_browser — pass symbol for a company's filings, query for a "
+        "full-text search, and forms to focus on specific filing types. This is the filings index, NOT "
+        "insider/Form 4 (add_insider_activity) and NOT financial-statement numbers (add_fundamentals).\n"
         "- For M&A / deal flow / mergers / acquisitions / arb spread requests, use add_ma_tracker.\n"
         "- For backtest / strategy / Sharpe / drawdown requests, use add_backtest. For research-integrity "
         "checks — 'is this strategy overfit / robust / data-mined', out-of-sample or walk-forward validation, "
@@ -2947,6 +2974,7 @@ _TYPE_LABELS = {
     "congress_trades": "a congressional trades feed",
     "institutional_holders": "institutional holders",
     "institutional_flows": "institutional flows",
+    "filings_browser": "a SEC filings browser",
     "ma_tracker": "an M&A tracker",
     "company_analytics": "a company analytics panel",
     "company_analytics_compare": "a company comparison",
@@ -3047,6 +3075,58 @@ def _extract_etf(q: str) -> Optional[str]:
     for t in toks:
         if t not in _ETF_STOPWORDS:
             return t
+    return None
+
+
+_FILING_FORM_RE = re.compile(
+    r"\b(10[- ]?K(?:/A)?|10[- ]?Q(?:/A)?|8[- ]?K(?:/A)?|S[- ]?1|S[- ]?3|S[- ]?8|"
+    r"6[- ]?K|20[- ]?F|40[- ]?F|11[- ]?K|DEF\s?14A|424B\d?|SC\s?13[DG]|13F)\b",
+    re.I,
+)
+
+
+def _extract_filing_forms(q: str) -> List[str]:
+    """Pull explicit SEC form types out of a filings query, normalised to EDGAR's
+    canonical spelling (e.g. '10k'/'10 k' -> '10-K'). Empty when none mentioned."""
+    out: List[str] = []
+    for m in _FILING_FORM_RE.findall(q or ""):
+        f = m.upper().replace(" ", "-")
+        # Collapse "10K" -> "10-K" etc. while leaving multi-word forms alone.
+        if re.fullmatch(r"10K|10Q|8K|S1|S3|S8|6K|20F|40F|11K", f):
+            f = f[:-1] + "-" + f[-1] if not f[1].isalpha() else f
+        f = (f.replace("DEF14A", "DEF 14A").replace("DEF-14A", "DEF 14A")
+              .replace("SC13D", "SC 13D").replace("SC-13D", "SC 13D")
+              .replace("SC13G", "SC 13G").replace("SC-13G", "SC 13G"))
+        if f not in out:
+            out.append(f)
+    return out
+
+
+# Phrases that introduce a full-text search term, e.g. "filings mentioning X".
+_FILINGS_QUERY_RE = re.compile(
+    r"(?:full[- ]?text search|search(?:\s+edgar)?(?:\s+filings)?|filings?\s+"
+    r"(?:mentioning|that mention|about|containing|with|referencing|discussing))\s+"
+    r"(?:for\s+)?(.+)$",
+    re.I,
+)
+
+
+def _extract_filings_query(q: str) -> Optional[str]:
+    """Extract a full-text search phrase from a filings query, or None for a plain
+    listing. A quoted phrase always wins; otherwise a 'search/mentioning ...'
+    trailing clause is used, stripped of trailing form/scope words."""
+    text = q or ""
+    quoted = re.search(r"[\"\u201c]([^\"\u201d]{2,})[\"\u201d]", text)
+    if quoted:
+        return quoted.group(1).strip()
+    m = _FILINGS_QUERY_RE.search(text)
+    if m:
+        term = m.group(1).strip()
+        # Drop a trailing "in 10-Ks", "in their filings", "for AAPL" tail.
+        term = re.split(r"\b(?:in|for|across|within|from)\b", term, maxsplit=1)[0].strip()
+        term = term.strip(" .?!,")
+        if term and len(term) >= 2:
+            return term
     return None
 
 
@@ -3842,6 +3922,19 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         ])
         or (("who owns" in q or "who own" in q) and "etf" not in q)
     )
+    wants_filings = (not wants_insider) and (
+        any(k in q for k in [
+            "sec filing", "sec filings", "edgar", "filing history", "recent filings",
+            "company filings", "latest filings", "list of filings", "browse filings",
+            "search filings", "full text search", "full-text search",
+            "10-k", "10k", "10-q", "10q", "8-k", "8k", "s-1", "def 14a", "proxy statement",
+            "20-f", "6-k", "prospectus",
+        ])
+        or ("filing" in q and any(k in q for k in [
+            "sec", "edgar", "recent", "list", "browse", "show", "latest", "search",
+            "mentioning", "history",
+        ]))
+    )
     wants_ma = any(k in q for k in ["m&a", "merger", "acquisition", "deal", "arb spread", "takeover", "buyout"])
     wants_company_analytics = any(k in q for k in [
         "why is", "why is it", "what drives", "price driver", "company analytics",
@@ -4012,6 +4105,27 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         add("institutional_holders", {"symbol": sym}, 12, 6)
         name = data.get_company(sym)["name"] if data.get_company(sym) else sym
         return panels, f"Top institutional holders of {name} from real SEC 13F filings, with each manager's stake, portfolio weight and quarter-over-quarter change."
+    if wants_filings:
+        fparams: dict = {}
+        if symbols:
+            fparams["symbol"] = symbols[0]
+        fq = _extract_filings_query(query)
+        if fq:
+            fparams["query"] = fq
+        fforms = _extract_filing_forms(query)
+        if fforms:
+            fparams["forms"] = fforms
+        if fparams.get("symbol") or fparams.get("query"):
+            add("filings_browser", fparams, 12, 6)
+            if fparams.get("query"):
+                scope = ""
+                if fparams.get("symbol"):
+                    nm = data.get_company(fparams["symbol"])
+                    scope = f" for {nm['name'] if nm else fparams['symbol']}"
+                return panels, f"EDGAR full-text search{scope}: real matching filings with form type, date and a document link."
+            nm = data.get_company(fparams["symbol"])
+            label = nm["name"] if nm else fparams["symbol"]
+            return panels, f"Recent SEC EDGAR filings for {label}: dated form types with periods and direct document links, filterable by form."
 
     if wants_ma:
         sym = symbols[0] if symbols else None
@@ -5091,6 +5205,16 @@ def _refine_params_heuristic(panel_type: str, panel: dict, instruction: str) -> 
         sym = syms[0] if syms else (_extract_etf(instruction) or (panel.get("data") or {}).get("symbol"))
         if sym:
             return {"symbol": sym}
+    if panel_type == "filings_browser":
+        d0 = panel.get("data") or {}
+        out: dict = {"symbol": (syms[0] if syms else d0.get("symbol"))}
+        fq = _extract_filings_query(instruction)
+        if fq:
+            out["query"] = fq
+        fforms = _extract_filing_forms(instruction)
+        if fforms:
+            out["forms"] = fforms
+        return out
     if panel_type == "insider_activity":
         d0 = panel.get("data") or {}
         out = {"symbol": (syms[0] if syms else d0.get("symbol"))}
