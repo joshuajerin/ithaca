@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { X, Sparkles, Loader2, Check, AlertTriangle, Trash2, Settings2, ArrowLeft } from "lucide-react";
+import { X, Sparkles, Loader2, Check, AlertTriangle, Trash2, Settings2, ArrowLeft, ShieldOff, Lock } from "lucide-react";
+import { useAuth } from "../../hooks/useAuth";
 
 interface FeatureRequestModalProps {
   open: boolean;
@@ -50,6 +51,16 @@ const EXAMPLES = [
 ];
 
 export function FeatureRequestModal({ open, onClose }: FeatureRequestModalProps) {
+  const { identity } = useAuth();
+  const isAdmin = identity?.user.role === "admin";
+
+  // Per-firm AI code-execution kill-switch. Server-side enforcement is
+  // authoritative; this just reflects state so non-admins / disabled firms get a
+  // clear message instead of a raw 403, and admins get a usable toggle.
+  const [codegenEnabled, setCodegenEnabled] = useState<boolean | null>(null);
+  const [togglingCodegen, setTogglingCodegen] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+
   const [view, setView] = useState<View>("build");
   const [description, setDescription] = useState("");
   const [isBuilding, setIsBuilding] = useState(false);
@@ -79,6 +90,45 @@ export function FeatureRequestModal({ open, onClose }: FeatureRequestModalProps)
       setFeaturesLoading(false);
     }
   }, []);
+
+  const loadSettings = useCallback(async () => {
+    setSettingsError(null);
+    try {
+      const res = await fetch("/api/firm/settings");
+      if (!res.ok) throw new Error(`Request failed (${res.status})`);
+      const data = (await res.json()) as { codegenEnabled?: boolean };
+      setCodegenEnabled(Boolean(data.codegenEnabled));
+    } catch {
+      // Fail open in the UI: leave the form usable; the server still enforces.
+      setCodegenEnabled(true);
+    }
+  }, []);
+
+  const toggleCodegen = useCallback(
+    async (next: boolean) => {
+      setTogglingCodegen(true);
+      setSettingsError(null);
+      try {
+        const res = await fetch("/api/firm/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ codegenEnabled: next }),
+        });
+        if (!res.ok) throw new Error(`Request failed (${res.status})`);
+        const data = (await res.json()) as { codegenEnabled?: boolean };
+        setCodegenEnabled(Boolean(data.codegenEnabled));
+      } catch {
+        setSettingsError("Couldn't update the setting. Please try again.");
+      } finally {
+        setTogglingCodegen(false);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (open) void loadSettings();
+  }, [open, loadSettings]);
 
   useEffect(() => {
     if (open && view === "manage") {
@@ -250,6 +300,40 @@ export function FeatureRequestModal({ open, onClose }: FeatureRequestModalProps)
 
         {view === "manage" ? (
           <div className="overflow-y-auto px-6 py-5 flex flex-col gap-4">
+            {isAdmin && codegenEnabled !== null && (
+              <div className="flex items-start justify-between gap-3 border border-border px-4 py-3">
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <span className="editorial-label text-[8.5px] text-muted-foreground flex items-center gap-1.5">
+                    <ShieldOff className="w-3 h-3" strokeWidth={1.5} /> AI Code Execution
+                  </span>
+                  <span className="text-xs text-muted-foreground leading-relaxed">
+                    {codegenEnabled
+                      ? "Admins can build new features. Disable to lock the self-building pipeline firm-wide."
+                      : "The self-building pipeline is disabled for your firm."}
+                  </span>
+                </div>
+                <button
+                  onClick={() => void toggleCodegen(!codegenEnabled)}
+                  disabled={togglingCodegen}
+                  className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 editorial-label text-[9px] border transition-colors disabled:opacity-40 ${
+                    codegenEnabled
+                      ? "border-border text-muted-foreground hover:text-red-400 hover:border-red-400/40"
+                      : "bg-white text-black border-white hover:bg-white/90"
+                  }`}
+                >
+                  {togglingCodegen ? (
+                    <Loader2 className="w-3 h-3 animate-spin" strokeWidth={2} />
+                  ) : null}
+                  {codegenEnabled ? "Disable" : "Enable"}
+                </button>
+              </div>
+            )}
+            {settingsError && (
+              <div className="flex items-center gap-2 text-amber-400">
+                <AlertTriangle className="w-3.5 h-3.5" strokeWidth={1.5} />
+                <span className="text-xs">{settingsError}</span>
+              </div>
+            )}
             {featuresError && (
               <div className="flex items-center gap-2 text-amber-400">
                 <AlertTriangle className="w-3.5 h-3.5" strokeWidth={1.5} />
@@ -346,7 +430,45 @@ export function FeatureRequestModal({ open, onClose }: FeatureRequestModalProps)
           </div>
         ) : (
         <div className="overflow-y-auto px-6 py-5 flex flex-col gap-5">
-          {!result && !error && (
+          {codegenEnabled === false && !result && !error && (
+            <div className="flex flex-col items-start gap-3 border border-border px-4 py-4">
+              <div className="flex items-center gap-2 text-amber-400">
+                <ShieldOff className="w-4 h-4" strokeWidth={1.5} />
+                <span className="font-serif text-base text-white">AI feature building is off</span>
+              </div>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                {isAdmin
+                  ? "Your firm has the self-building pipeline disabled. Re-enable it to let admins create new capabilities."
+                  : "An administrator has disabled the self-building pipeline for your firm."}
+              </p>
+              {isAdmin && (
+                <button
+                  onClick={() => void toggleCodegen(true)}
+                  disabled={togglingCodegen}
+                  className="flex items-center gap-2 bg-white text-black px-4 py-2 editorial-label text-[9px] disabled:opacity-40 hover:bg-white/90 transition-colors"
+                >
+                  {togglingCodegen ? (
+                    <Loader2 className="w-3 h-3 animate-spin" strokeWidth={2} />
+                  ) : (
+                    <Sparkles className="w-3 h-3" strokeWidth={2} />
+                  )}
+                  Enable feature building
+                </button>
+              )}
+              {settingsError && <span className="text-xs text-amber-400">{settingsError}</span>}
+            </div>
+          )}
+
+          {codegenEnabled !== false && !isAdmin && !result && !error && (
+            <div className="flex items-start gap-2 border border-border px-4 py-3 text-muted-foreground">
+              <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0" strokeWidth={1.5} />
+              <p className="text-xs leading-relaxed">
+                Building new features is restricted to firm administrators. You can still browse and use existing features.
+              </p>
+            </div>
+          )}
+
+          {codegenEnabled !== false && isAdmin && !result && !error && (
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
               <label className="flex flex-col gap-2">
                 <span className="editorial-label text-[8.5px] text-muted-foreground">

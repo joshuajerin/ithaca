@@ -27,7 +27,7 @@ import logging
 import re
 import threading
 import time
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 

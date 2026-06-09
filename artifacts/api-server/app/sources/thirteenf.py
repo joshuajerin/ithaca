@@ -27,7 +27,7 @@ import time
 import zipfile
 from datetime import date
 from typing import Dict, List, Optional, Tuple
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 
 from . import edgar
 

@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import agent, alerts, auth, auth_store, dashboard_store, dynamic_skills, feature_builder, harness, models, repo, skills, state, worker
+from . import agent, alerts, auth, auth_store, dashboard_store, dynamic_skills, feature_builder, firm_settings, harness, models, repo, security, skills, state, worker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,12 +31,21 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Agentic Terminal API", lifespan=lifespan)
 
+# Transport + anti-sniffing/anti-framing headers on every response, and a hard
+# body-size cap. Added before CORS so they wrap every response including errors.
+app.add_middleware(security.SecurityHeadersMiddleware)
+app.add_middleware(security.BodySizeLimitMiddleware)
+
+# CORS is pinned to the known terminal origin(s) instead of a wildcard, so the
+# credentialed session cookie can never be replayed from an attacker origin. The
+# terminal is same-origin behind the proxy, so this list is normally only the
+# Replit preview/deployment host(s).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=security.allowed_origins(),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 def require_identity(
@@ -79,6 +88,43 @@ def require_identity(
     )
 
 
+def require_role(*roles: str):
+    """Dependency factory: require the caller hold one of ``roles``.
+
+    Builds on :func:`require_identity` (so it also enforces authentication) and
+    returns the resolved identity, letting privileged handlers gate by role. The
+    role check is server-side and authoritative — the frontend hiding a control
+    is convenience only.
+    """
+    allowed = frozenset(roles)
+
+    def dependency(identity: auth.Identity = Depends(require_identity)) -> auth.Identity:
+        if identity.role not in allowed:
+            raise HTTPException(
+                status_code=403,
+                detail="You do not have permission to perform this action.",
+            )
+        return identity
+
+    return dependency
+
+
+def require_codegen_enabled(
+    identity: auth.Identity = Depends(require_role("admin")),
+) -> auth.Identity:
+    """Gate AI code-execution (build) endpoints: admin role + firm not opted out.
+
+    Combines the role check with the per-firm code-execution kill-switch so a
+    firm admin can disable the self-building pipeline for their whole firm.
+    """
+    if not firm_settings.codegen_enabled(identity.firm_id):
+        raise HTTPException(
+            status_code=403,
+            detail="AI feature building is disabled for your firm.",
+        )
+    return identity
+
+
 # Public router — no authentication required (health check + the auth flow
 # itself). Kept separate from the protected `api` router below so logged-out
 # users can reach signup/login without already holding a session.
@@ -107,7 +153,11 @@ def _set_session_cookie(response: Response, token: str) -> None:
     )
 
 
-@public.post("/auth/signup", response_model=models.AuthIdentity)
+@public.post(
+    "/auth/signup",
+    response_model=models.AuthIdentity,
+    dependencies=[Depends(security.rate_limit("auth", 10, 60))],
+)
 def auth_signup(req: models.SignupRequest, response: Response):
     """Create a firm and its first (admin) user, then start a session."""
     firm_name = (req.firmName or "").strip()
@@ -143,7 +193,11 @@ def auth_signup(req: models.SignupRequest, response: Response):
     }
 
 
-@public.post("/auth/login", response_model=models.AuthIdentity)
+@public.post(
+    "/auth/login",
+    response_model=models.AuthIdentity,
+    dependencies=[Depends(security.rate_limit("auth", 10, 60))],
+)
 def auth_login(req: models.LoginRequest, response: Response):
     """Verify credentials and start a durable session."""
     email = auth.normalize_email(req.email)
@@ -243,7 +297,11 @@ def default_dashboard():
     return _build_default_dashboard()
 
 
-@api.post("/orchestrate", response_model=models.DashboardSpec)
+@api.post(
+    "/orchestrate",
+    response_model=models.DashboardSpec,
+    dependencies=[Depends(security.rate_limit("orchestrate", 30, 60))],
+)
 def orchestrate(
     req: models.OrchestrationRequest,
     identity: auth.Identity = Depends(require_identity),
@@ -308,7 +366,10 @@ def delete_saved_dashboard(dashboard_id: str):
     return {"dashboards": dashboard_store.list_dashboards()}
 
 
-@api.post("/orchestrate/stream")
+@api.post(
+    "/orchestrate/stream",
+    dependencies=[Depends(security.rate_limit("orchestrate", 30, 60))],
+)
 def orchestrate_stream(
     req: models.OrchestrationRequest,
     identity: auth.Identity = Depends(require_identity),
@@ -346,7 +407,11 @@ def orchestrate_stream(
     )
 
 
-@api.post("/speak", response_model=models.SpeechAudio)
+@api.post(
+    "/speak",
+    response_model=models.SpeechAudio,
+    dependencies=[Depends(security.rate_limit("speak", 60, 60))],
+)
 def speak(req: models.SpeakRequest):
     import base64
 
@@ -381,7 +446,11 @@ def _filename_for_mime(mime: str | None) -> str:
     return f"audio.{ext}"
 
 
-@api.post("/transcribe", response_model=models.Transcription)
+@api.post(
+    "/transcribe",
+    response_model=models.Transcription,
+    dependencies=[Depends(security.rate_limit("transcribe", 60, 60))],
+)
 def transcribe(req: models.TranscribeRequest):
     import base64
     import binascii
@@ -599,26 +668,72 @@ def list_features():
 
 
 @api.delete("/features/{panel_type}")
-def delete_feature(panel_type: str):
-    """Remove a generated feature: unregister it and delete its source files."""
+def delete_feature(
+    panel_type: str,
+    _identity: auth.Identity = Depends(require_role("admin")),
+):
+    """Remove a generated feature: unregister it and delete its source files.
+
+    Restricted to firm admins — generated features are shared in-process, so
+    removing one affects every user; only an admin may do it.
+    """
     removed = feature_builder.remove_feature(panel_type)
     if not removed:
         raise HTTPException(status_code=404, detail=f"Unknown feature: {panel_type}")
     return {"ok": True, "panelType": panel_type}
 
 
+# ------------------------------ firm settings --------------------------------
+class FirmCodegenInput(BaseModel):
+    codegenEnabled: bool
+
+
+@api.get("/firm/settings")
+def get_firm_settings(identity: auth.Identity = Depends(require_identity)):
+    """Return the firm's security settings (e.g. the code-execution toggle).
+
+    Readable by any member so the UI can hide the build affordance; only an admin
+    may change it (see the POST below).
+    """
+    settings = firm_settings.get_settings(identity.firm_id)
+    return {**settings, "canManage": identity.role == "admin"}
+
+
+@api.post("/firm/settings")
+def update_firm_settings(
+    req: FirmCodegenInput,
+    identity: auth.Identity = Depends(require_role("admin")),
+):
+    """Admin-only: toggle the AI code-execution (feature-building) kill-switch."""
+    settings = firm_settings.set_codegen_enabled(identity.firm_id, req.codegenEnabled)
+    return {**settings, "canManage": True}
+
+
 class FeatureRequestInput(BaseModel):
     description: str
 
 
-@api.post("/feature-request")
-def feature_request(req: FeatureRequestInput):
+# The single highest-risk surface: an admin describes a feature and the AI
+# authors + executes new code. Gated by admin role + the per-firm kill-switch,
+# rate-limited at the edge (the builder also enforces its own concurrency/rate
+# limits and validates every generation before execution).
+@api.post(
+    "/feature-request",
+    dependencies=[Depends(security.rate_limit("feature-request", 10, 60))],
+)
+def feature_request(
+    req: FeatureRequestInput,
+    _identity: auth.Identity = Depends(require_codegen_enabled),
+):
     """Stream the self-building feature pipeline as Server-Sent Events.
 
     The sync generator runs in a threadpool; each stage is emitted as it completes.
     """
+    description = (req.description or "").strip()
+    if len(description) > 2000:
+        raise HTTPException(status_code=400, detail="description is too long")
     return StreamingResponse(
-        feature_builder.stream_feature_request(req.description),
+        feature_builder.stream_feature_request(description),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

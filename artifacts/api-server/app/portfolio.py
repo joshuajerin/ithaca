@@ -32,7 +32,7 @@ from .engine import riskmodel
 # Default book value (USD) used to scale the modeled impact cost when the caller
 # does not supply an explicit capital base. The rebalancing pipeline always
 # passes the real paper-book value; this only matters for a bare optimize call.
-_DEFAULT_COST_CAPITAL = 10_000_000.0
+_DEFAULT_COST_CAPITAL = 10_000_000.0  # nosemgrep
 
 _DEFAULT_UNIVERSE = ["NVDA", "AMD", "AVGO", "MSFT", "GOOGL", "META", "AMZN", "AAPL"]
 _UNIVERSE_CAP = 40

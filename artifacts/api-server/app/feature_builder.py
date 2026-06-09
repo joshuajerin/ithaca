@@ -302,7 +302,11 @@ def _validate_python(code: str) -> None:
             "PYTHONNOUSERSITE": "1",
         }
         try:
-            proc = subprocess.run(
+            # argv is a static list (sys.executable + our own validator script +
+            # an internal temp path); no user string reaches the shell. This
+            # isolated, resource-capped, network-denied subprocess IS the sandbox
+            # that validates generated code before it is ever imported.
+            proc = subprocess.run(  # nosemgrep
                 [sys.executable, "-I", script_path, mod_path],
                 capture_output=True, text=True, timeout=_VALIDATE_TIMEOUT,
                 cwd=tmp, env=env, preexec_fn=_sandbox_preexec,

@@ -1,0 +1,9 @@
+[
+  {
+    "panel_type": "e2e_test_gauge",
+    "name": "E2E Test Gauge",
+    "description": "a deterministic test gauge for the e2e suite",
+    "invoke_example": "show me the e2e test gauge",
+    "created_at": "2026-06-09T19:30:50.012444+00:00"
+  }
+]

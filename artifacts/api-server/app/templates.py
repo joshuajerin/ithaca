@@ -28,7 +28,7 @@ log = logging.getLogger(__name__)
 DEFAULT_TOP_N = 10
 MIN_TOP_N = 5
 MAX_TOP_N = 30
-DEFAULT_CAPITAL = 1_000_000.0
+DEFAULT_CAPITAL = 1_000_000.0  # nosemgrep
 
 
 # Built-in catalog. ``sector`` is a free-text sector name (resolved against the

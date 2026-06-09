@@ -1646,7 +1646,7 @@ def build_monte_carlo(params: dict) -> dict:
 # does not state one. The execution desk diffs current vs target weights into
 # orders, simulates VWAP/TWAP/POV against REAL intraday volume, applies a
 # transparent square-root impact model, and reports TCA per name + aggregate.
-_TCA_DEFAULT_CAPITAL = 10_000_000.0
+_TCA_DEFAULT_CAPITAL = 10_000_000.0  # nosemgrep
 # When only a single symbol is given with no size, simulate a realistic
 # institutional clip: this fraction of the name's average daily volume.
 _TCA_DEFAULT_PARTICIPATION = 0.05

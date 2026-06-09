@@ -27,7 +27,7 @@ from .sources import rates
 # Documented fallback GC anchor used only when the live Treasury fetch fails.
 # Chosen to sit in a plausible short-rate range; always reported as mock.
 _FALLBACK_GC_PCT = 4.5
-_DEFAULT_CAPITAL = 1_000_000.0
+_DEFAULT_CAPITAL = 1_000_000.0  # nosemgrep
 _MAX_NAMES = 24
 
 

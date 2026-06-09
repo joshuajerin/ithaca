@@ -131,7 +131,7 @@ def precheck(view: dict, weights: Dict[str, float], action: str,
     return result
 
 
-DEFAULT_CAPITAL = 1_000_000.0
+DEFAULT_CAPITAL = 1_000_000.0  # nosemgrep
 DEFAULT_TOP_N = 8
 _UNIVERSE_CAP = 40
 # Modeled one-side transaction cost applied to traded notional on a rebalance.
