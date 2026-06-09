@@ -320,6 +320,21 @@ def _tools() -> list:
             }},
         }},
         {"type": "function", "function": {
+            "name": "add_economic_releases",
+            "description": f"Add an economic-releases calendar: recent and upcoming key US data releases (CPI, PCE, GDP, unemployment, nonfarm payrolls, PPI) with reporting period, reported value, prior value, and the next scheduled release date. Live FRED data only. Use for the economic calendar, data releases, CPI/jobs/GDP release dates, what economic data is coming out. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
+        {"type": "function", "function": {
+            "name": "add_series_revisions",
+            "description": f"Chart any FRED economic series by id with its data-revision (vintage) history: overlays the current series vs the initial print and lists each vintage (release date) and the value reported then, distinguishing initial vs revised prints. Live FRED/ALFRED data only. Use for revision history, data revisions, vintages, initial vs revised GDP/payrolls, 'how was X revised', or to pull a FRED series id. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "series_id": {"type": "string", "description": "FRED series id, e.g. GDPC1 (Real GDP), PAYEMS (payrolls), CPIAUCSL (CPI), UNRATE (unemployment), PCEPI (PCE)."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }},
+        }},
+        {"type": "function", "function": {
             "name": "add_portfolio_risk",
             "description": f"Add a portfolio risk breakdown (VaR histogram, factor exposures, risk summary) for a list of tickers. {sizing}",
             "parameters": {"type": "object", "properties": {
@@ -874,6 +889,8 @@ _TOOL_TO_TYPE = {
     "add_bond_rv": "bond_rv",
     "add_cds_pricer": "cds_pricer",
     "add_credit_stress": "credit_stress",
+    "add_economic_releases": "economic_releases",
+    "add_series_revisions": "series_revisions",
     "add_cashflow_duration": "cashflow_duration",
     "add_portfolio_risk": "portfolio_risk",
     "add_backtest": "backtest",
@@ -983,6 +1000,10 @@ def _system_prompt() -> str:
         "'Treasury vs Gilt 10Y spread') → add_sovereign_compare (pass the 2–4 region codes); "
         "bond RV → add_bond_rv; CDS → add_cds_pricer; credit stress / IG vs HY spreads / credit "
         "conditions / spread widening → add_credit_stress; duration/cash flows → add_cashflow_duration. "
+        "For economic data: the economic calendar / data releases / when CPI, jobs, GDP come out, with "
+        "reported vs prior values → add_economic_releases; data revisions / vintages / initial vs revised "
+        "prints / how a FRED series (e.g. GDP, payrolls) was revised, or to pull a FRED series id → "
+        "add_series_revisions (pass series_id). Both use live FRED/ALFRED data and fail honestly when unavailable. "
         "Fixed-income panels use live data: US Treasury par yields come from the U.S. Treasury daily "
         "curve, and credit spreads (bond OAS, CDS proxies) from live ICE BofA OAS indices; each panel "
         "labels its source live/mock so you can tell when a feed is unavailable.\n"
@@ -2270,7 +2291,8 @@ def _answer_fallback(panels: List[dict]) -> str:
 # --------------------- context-aware panel relevance ---------------------
 # Panel types that are market-wide rather than tied to a single subject; they
 # can reasonably stay on screen even when the user switches focus.
-_SUBJECT_AGNOSTIC_TYPES = {"macro_dashboard", "yield_curve", "sovereign_compare", "credit_stress"}
+_SUBJECT_AGNOSTIC_TYPES = {"macro_dashboard", "yield_curve", "sovereign_compare", "credit_stress",
+                          "economic_releases", "series_revisions"}
 
 # Keyword → sovereign region code, used by the heuristic fallback to detect
 # multi-country curve comparisons (e.g. "US vs German curve", "UST vs Bund").
@@ -2714,6 +2736,8 @@ _TYPE_LABELS = {
     "bond_rv": "bond relative value",
     "cds_pricer": "a CDS pricer",
     "credit_stress": "a credit stress monitor",
+    "economic_releases": "an economic releases calendar",
+    "series_revisions": "a data revision history",
     "cashflow_duration": "cash flow & duration",
     "portfolio_risk": "a portfolio risk breakdown",
     "backtest": "a backtest",
@@ -3225,6 +3249,19 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         "high-yield", "investment grade", "investment-grade", "risk-off credit", "risk on credit",
     ])
     wants_cashflow = any(k in q for k in ["cash flow", "cashflow", "duration", "convexity", "dv01", "rate sensitivity", "bond cash", "modified duration"])
+    wants_revisions = any(k in q for k in [
+        "revision history", "data revision", "data revisions", "revisions", "revised",
+        "vintage", "vintages", "alfred", "initial print", "initial estimate",
+        "first print", "first estimate", "initial vs revised", "as first reported",
+        "fred series", "pull fred", "fred id",
+    ])
+    wants_econ_releases = any(k in q for k in [
+        "economic calendar", "economic releases", "economic release", "data releases",
+        "data calendar", "release calendar", "release schedule", "economic data",
+        "macro releases", "macro calendar", "release dates", "when is cpi",
+        "when does cpi", "when is the jobs report", "next cpi", "next gdp",
+        "next jobs report", "next payrolls", "upcoming releases", "upcoming data",
+    ])
     wants_risk = any(k in q for k in ["risk", "var", "value at risk", "tracking error", "factor exposure", "portfolio risk"])
     wants_riskmodel = any(k in q for k in ["risk model", "risk decomp", "decompose risk", "factor vs specific", "specific risk", "mctr", "marginal contribution", "where is my risk", "risk contribution", "factor risk"])
     wants_stresstest = any(k in q for k in [
@@ -3742,6 +3779,33 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         add("yield_curve", {"region": region}, 8, 5)
         add("news", {"scope_type": "sector", "scope": "energy"}, 4, 5)
         return panels, f"{region} Treasury yield curve with historical overlays and spread analysis."
+
+    if wants_revisions:
+        # Map common phrasings to a FRED series id, else pick up an explicit id token.
+        rev_aliases = {
+            "real gdp": "GDPC1", "gdp": "GDPC1", "payroll": "PAYEMS",
+            "nonfarm": "PAYEMS", "jobs": "PAYEMS", "employment": "PAYEMS",
+            "unemployment": "UNRATE", "jobless rate": "UNRATE",
+            "core pce": "PCEPILFE", "pce": "PCEPI", "core cpi": "CPILFESL",
+            "cpi": "CPIAUCSL", "inflation": "CPIAUCSL", "ppi": "PPIACO",
+            "retail sales": "RSAFS", "industrial production": "INDPRO",
+        }
+        series_id = None
+        m = re.search(r"\b([A-Z][A-Z0-9]{2,})\b", query)
+        if m and m.group(1) not in {"FRED", "GDP", "CPI", "PCE", "PPI"}:
+            series_id = m.group(1)
+        if not series_id:
+            for kw, sid in rev_aliases.items():
+                if kw in q:
+                    series_id = sid
+                    break
+        series_id = series_id or "GDPC1"
+        add("series_revisions", {"series_id": series_id}, 12, 6)
+        return panels, f"Revision history for FRED series {series_id} — current series vs initial print with each vintage."
+
+    if wants_econ_releases:
+        add("economic_releases", {}, 12, 6)
+        return panels, "Economic releases calendar — recent and upcoming key US data with reported vs prior values (live FRED)."
 
     if wants_credit_stress:
         add("credit_stress", {}, 8, 5)

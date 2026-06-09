@@ -2043,6 +2043,22 @@ def _live_credit_history() -> Optional[dict]:
     )
 
 
+def _live_economic_releases() -> Optional[dict]:
+    """Cached live FRED economic-release calendar, or None if no key / down."""
+    return cache.cached(
+        "rates:econ_releases", _rates_ttl(), rates_src.fetch_economic_releases
+    )
+
+
+def _live_series_revisions(series_id: str) -> Optional[dict]:
+    """Cached live ALFRED vintage history for one series, or None if unavailable."""
+    return cache.cached(
+        f"rates:revisions:{series_id}",
+        _rates_ttl(),
+        lambda: rates_src.fetch_series_revisions(series_id),
+    )
+
+
 def _rating_bucket(rating: str) -> str:
     """Map a composite rating string (e.g. "Baa1/BBB+", "Ba2/BB+") to an OAS bucket."""
     r = (rating or "").upper()
@@ -2640,6 +2656,208 @@ def build_credit_stress(params: dict) -> dict:
         "windowDays": window,
         "asOf": hist.get("asOf"),
         "source": source,
+    }
+
+
+# --- Economic releases calendar (FRED) --------------------------------------
+
+def build_economic_releases(params: dict) -> dict:
+    """Calendar of recent + upcoming key US economic releases (live FRED only).
+
+    Each row shows the latest reported value, the prior value, the reporting
+    periods, units/frequency, when FRED last updated it, and the next scheduled
+    release date. There is no synthetic fallback: with no ``FRED_API_KEY`` (or if
+    the feed is down) the panel honestly reports the data as unavailable.
+    """
+    live = _live_economic_releases()
+    if not live or not live.get("rows"):
+        return {
+            "title": "Economic Releases — Key US Indicators",
+            "rows": [],
+            "source": "unavailable",
+            "note": (
+                "Live FRED economic-release data is unavailable. This panel needs a "
+                "FRED_API_KEY and a reachable FRED API — no synthetic releases are shown."
+            ),
+            "asOf": None,
+        }
+
+    rows = []
+    for r in live["rows"]:
+        rows.append({
+            "seriesId": r.get("seriesId"),
+            "name": r.get("name"),
+            "short": r.get("short"),
+            "units": r.get("units"),
+            "frequency": r.get("frequency"),
+            "reported": r.get("reported"),
+            "reportedPeriod": r.get("reportedPeriod"),
+            "prior": r.get("prior"),
+            "priorPeriod": r.get("priorPeriod"),
+            "change": r.get("change"),
+            "lastUpdated": r.get("lastUpdated"),
+            "nextRelease": r.get("nextRelease"),
+        })
+
+    # Order: soonest upcoming release first (rows with a scheduled date), then the
+    # rest by most-recently updated. Keeps the "what's next" view at the top.
+    # Two-stage stable sort: pre-sort most-recently-updated first, then group by
+    # has-next / soonest-next. The stable sort preserves the lastUpdated-desc order
+    # within each group, so the no-next-date fallback rows stay most-recent first.
+    rows.sort(key=lambda row: row.get("lastUpdated") or "", reverse=True)
+    rows.sort(key=lambda row: (0, row["nextRelease"]) if row.get("nextRelease") else (1, ""))
+
+    return {
+        "title": "Economic Releases — Key US Indicators",
+        "rows": rows,
+        "asOf": live.get("asOf"),
+        "source": "live",
+    }
+
+
+# --- Series revision (vintage) history (FRED / ALFRED) ----------------------
+
+def _series_revision_view(meta: dict, vintages: Dict[str, list]) -> dict:
+    """Shape raw ALFRED vintages into chart series + a recent-period revision table.
+
+    ``chart`` carries, per observation period, the initial print and the current
+    (latest-vintage) value so the frontend can overlay them — wherever they
+    diverge is a revision. ``periods`` lists the most recent observation periods,
+    each with its full vintage sequence, the initial vs current value, and the
+    total revision since first print.
+    """
+    periods_sorted = sorted(vintages.keys())
+
+    chart = []
+    revised_total = 0
+    for p in periods_sorted:
+        prints = vintages[p]
+        if not prints:
+            continue
+        initial = prints[0]["value"]
+        current = prints[-1]["value"]
+        if len(prints) > 1 and round(current - initial, 6) != 0.0:
+            revised_total += 1
+        chart.append({
+            "date": p,
+            "initial": round(initial, 4),
+            "current": round(current, 4),
+        })
+
+    # Detailed table: most recent periods first, full vintage sequence each.
+    periods = []
+    for p in reversed(periods_sorted):
+        prints = vintages[p]
+        if not prints:
+            continue
+        seq = []
+        prev = None
+        for pr in prints:
+            v = pr["value"]
+            seq.append({
+                "vintage": pr["vintage"],
+                "value": round(v, 4),
+                "change": (round(v - prev, 4) if prev is not None else None),
+            })
+            prev = v
+        initial = prints[0]["value"]
+        current = prints[-1]["value"]
+        periods.append({
+            "period": p,
+            "prints": seq,
+            "initial": round(initial, 4),
+            "current": round(current, 4),
+            "totalRevision": round(current - initial, 4),
+            "vintageCount": len(prints),
+            "revised": len(prints) > 1 and round(current - initial, 6) != 0.0,
+        })
+
+    return {
+        "chart": chart,
+        "periods": periods,
+        "revisedPeriods": revised_total,
+        "totalPeriods": len(chart),
+    }
+
+
+def build_series_revisions(params: dict) -> dict:
+    """Chart any FRED series with its revision (vintage) history distinguished.
+
+    Pulls real ALFRED vintages for ``series_id`` (defaults to Real GDP) and shows
+    the current series vs the initial-print series, plus a per-period table of
+    each vintage (release date) and the value reported then — making initial vs
+    revised prints explicit. Real data only: a missing key, dead feed, or unknown
+    series id is reported honestly rather than fabricated.
+    """
+    raw = (
+        params.get("series_id") or params.get("series")
+        or params.get("symbol") or params.get("ticker") or "GDPC1"
+    )
+    series_id = str(raw).strip().upper()
+
+    if not rates_src.fred_api_key():
+        return {
+            "title": f"Revision History — {series_id}",
+            "seriesId": series_id,
+            "chart": [], "periods": [],
+            "source": "unavailable",
+            "note": (
+                "Live FRED/ALFRED vintage data is unavailable. This panel needs a "
+                "FRED_API_KEY — no synthetic revisions are shown."
+            ),
+            "asOf": None,
+        }
+
+    try:
+        live = _live_series_revisions(series_id)
+    except Exception:
+        # Unknown series id (FRED 400) or upstream error — fail honestly.
+        return {
+            "title": f"Revision History — {series_id}",
+            "seriesId": series_id,
+            "chart": [], "periods": [],
+            "source": "unavailable",
+            "note": (
+                f"Could not load FRED series '{series_id}'. Check the series id "
+                "(e.g. GDPC1, CPIAUCSL, PAYEMS, UNRATE) — no synthetic data is shown."
+            ),
+            "asOf": None,
+        }
+
+    if not live or not live.get("vintages"):
+        return {
+            "title": f"Revision History — {series_id}",
+            "seriesId": series_id,
+            "chart": [], "periods": [],
+            "source": "unavailable",
+            "note": (
+                f"No revision history available for FRED series '{series_id}'."
+            ),
+            "asOf": None,
+        }
+
+    meta = live.get("meta") or {}
+    view = _series_revision_view(meta, live["vintages"])
+    title = meta.get("title") or series_id
+    return {
+        "title": f"Revision History — {title}",
+        "seriesId": meta.get("id") or series_id,
+        "meta": {
+            "title": meta.get("title"),
+            "units": meta.get("units"),
+            "unitsShort": meta.get("unitsShort"),
+            "frequency": meta.get("frequency"),
+            "seasonalAdjustment": meta.get("seasonalAdjustment"),
+            "lastUpdated": meta.get("lastUpdated"),
+            "observationStart": meta.get("observationStart"),
+            "observationEnd": meta.get("observationEnd"),
+        },
+        "chart": view["chart"],
+        "periods": view["periods"],
+        "revisedPeriods": view["revisedPeriods"],
+        "totalPeriods": view["totalPeriods"],
+        "asOf": live.get("asOf"),
+        "source": "live",
     }
 
 
@@ -8146,6 +8364,35 @@ _reg(SkillDef(
         {"name": "read_regime", "description": "Translate the HY trend into a risk-on / risk-off / neutral credit read.", "expectedOutput": "A regime label, tone and explanatory note."},
     ],
     build_credit_stress, "Credit Stress Monitor",
+))
+_reg(SkillDef(
+    "economic-releases", "Economic Releases Calendar", "economic_releases",
+    "Shows recent and upcoming key US economic releases (CPI, PCE, GDP, unemployment, nonfarm "
+    "payrolls, PPI) with the reporting period, reported value, prior value, when FRED last updated "
+    "each series, and the next scheduled release date. Live FRED data only — no synthetic releases. "
+    "Use when the user asks for the economic calendar, data releases, when CPI/jobs/GDP come out, or "
+    "what economic data is reported next.",
+    [
+        {"name": "fetch_release_meta", "description": "Pull live FRED metadata for each headline series.", "expectedOutput": "Series titles, units and frequency."},
+        {"name": "fetch_latest_prints", "description": "Get the latest reported and prior values per series.", "expectedOutput": "Reported and prior values with reporting periods."},
+        {"name": "fetch_schedule", "description": "Look up the next scheduled release date for each series.", "expectedOutput": "Upcoming release dates."},
+    ],
+    build_economic_releases, "Economic Releases Calendar",
+))
+_reg(SkillDef(
+    "series-revisions", "Data Revision History", "series_revisions",
+    "Charts any FRED economic series by id with its data-revision (vintage) history: overlays the "
+    "current series against the initial print and lists each vintage (release date) and the value "
+    "reported then, distinguishing initial vs revised prints. Live FRED/ALFRED data only — no "
+    "synthetic revisions; unknown series ids fail honestly. Use when the user asks about data "
+    "revisions, vintages, initial vs revised GDP/payrolls, how a series was revised, or to pull a "
+    "FRED series id.",
+    [
+        {"name": "resolve_series", "description": "Map the request to a FRED series id and fetch its metadata.", "expectedOutput": "A FRED series id with units and frequency."},
+        {"name": "fetch_vintages", "description": "Pull every ALFRED vintage (release-time value) per recent period.", "expectedOutput": "Per-period vintage prints."},
+        {"name": "compare_prints", "description": "Distinguish the initial print from the current revised value.", "expectedOutput": "Initial vs current values and total revision per period."},
+    ],
+    build_series_revisions, "Data Revision History",
 ))
 _reg(SkillDef(
     "cashflow-duration", "Cash Flow & Duration", "cashflow_duration",

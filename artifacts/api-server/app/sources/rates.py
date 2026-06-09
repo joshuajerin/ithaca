@@ -27,6 +27,8 @@ from typing import Dict, List, Optional, Tuple
 
 import httpx
 
+from . import _resilient
+
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; AgenticTerminal/1.0)"}
 _TIMEOUT = httpx.Timeout(15.0)
 
@@ -415,5 +417,239 @@ def fetch_credit_spreads() -> Optional[Dict]:
     return {
         "buckets": buckets,
         "asOf": latest.isoformat() if latest else None,
+        "source": "live",
+    }
+
+
+# --- FRED / ALFRED: economic releases & revision (vintage) history -----------
+#
+# These power the economic-releases calendar and the series-revision-history
+# panels. They use the same keyed FRED host as the credit feed above, but route
+# through the resilience wrapper for retry/backoff + a dedicated breaker. ALFRED
+# vintages come from the same /series/observations endpoint by widening the
+# ``realtime_start``/``realtime_end`` window so every historical print (vintage)
+# is returned rather than only the latest revision. There is NO mock fallback:
+# without a key (or when upstream is down) callers get ``None`` and must report
+# the data honestly as unavailable rather than fabricate revisions.
+
+_FRED_SERIES_URL = "https://api.stlouisfed.org/fred/series"
+_FRED_SERIES_RELEASE_URL = "https://api.stlouisfed.org/fred/series/release"
+_FRED_RELEASE_DATES_URL = "https://api.stlouisfed.org/fred/release/dates"
+
+# Curated headline US releases shown on the calendar. ``name`` overrides the
+# (often verbose) FRED title; the rest of the metadata is pulled live so units,
+# frequency and revision behaviour stay accurate.
+ECON_RELEASE_SERIES: Dict[str, Dict[str, str]] = {
+    "CPIAUCSL": {"name": "Consumer Price Index (CPI)", "short": "CPI"},
+    "PCEPI": {"name": "PCE Price Index", "short": "PCE"},
+    "GDPC1": {"name": "Real Gross Domestic Product", "short": "Real GDP"},
+    "UNRATE": {"name": "Unemployment Rate", "short": "Unemployment"},
+    "PAYEMS": {"name": "Nonfarm Payrolls (All Employees)", "short": "Payrolls"},
+    "PPIACO": {"name": "Producer Price Index (PPI)", "short": "PPI"},
+}
+
+
+def _fred_get(url: str, params: dict) -> dict:
+    """GET a FRED/ALFRED endpoint through the resilience wrapper, parsed as JSON.
+
+    A non-throttle HTTP error (e.g. 400 for an unknown series id) propagates so
+    callers can surface it as an honest failure rather than a silent empty.
+    """
+    merged = {"file_type": "json", **params}
+    resp = _resilient.request(
+        "fred", url, params=merged, headers=_HEADERS,
+        timeout=_TIMEOUT, follow_redirects=True,
+    )
+    return resp.json()
+
+
+def fetch_fred_series_meta(series_id: str, api_key: str) -> Optional[dict]:
+    """Series metadata (title, units, frequency, vintage range), or ``None``."""
+    data = _fred_get(_FRED_SERIES_URL, {"series_id": series_id, "api_key": api_key})
+    arr = data.get("seriess") or []
+    if not arr:
+        return None
+    s = arr[0]
+    return {
+        "id": s.get("id", series_id),
+        "title": s.get("title"),
+        "units": s.get("units"),
+        "unitsShort": s.get("units_short"),
+        "frequency": s.get("frequency"),
+        "frequencyShort": s.get("frequency_short"),
+        "seasonalAdjustment": s.get("seasonal_adjustment_short"),
+        "lastUpdated": s.get("last_updated"),
+        "observationStart": s.get("observation_start"),
+        "observationEnd": s.get("observation_end"),
+    }
+
+
+def _fred_latest_observations(series_id: str, api_key: str, limit: int = 4) -> List[Tuple[str, float]]:
+    """Most-recent ``limit`` non-empty observations as descending [(date, value)]."""
+    data = _fred_get(_FRED_URL, {
+        "series_id": series_id, "api_key": api_key,
+        "sort_order": "desc", "limit": limit,
+    })
+    out: List[Tuple[str, float]] = []
+    for obs in data.get("observations") or []:
+        val = (obs.get("value") or "").strip()
+        if val in ("", "."):
+            continue
+        try:
+            v = float(val)
+        except ValueError:
+            continue
+        d = obs.get("date")
+        if d:
+            out.append((d, v))
+    return out
+
+
+def fetch_fred_next_release(series_id: str, api_key: str) -> Optional[str]:
+    """Next scheduled release date (ISO) for a series, or ``None`` if unknown."""
+    rel = _fred_get(_FRED_SERIES_RELEASE_URL, {"series_id": series_id, "api_key": api_key})
+    arr = rel.get("releases") or []
+    if not arr:
+        return None
+    rid = arr[0].get("id")
+    if rid is None:
+        return None
+    dates = _fred_get(_FRED_RELEASE_DATES_URL, {
+        "release_id": rid, "api_key": api_key,
+        "include_release_dates_with_no_data": "true",
+        "sort_order": "desc", "limit": 12,
+    })
+    today = date.today().isoformat()
+    future = sorted(
+        x["date"] for x in (dates.get("release_dates") or [])
+        if x.get("date") and x["date"] >= today
+    )
+    return future[0] if future else None
+
+
+def fetch_fred_vintages(
+    series_id: str, api_key: str, observation_start: date
+) -> Dict[str, List[dict]]:
+    """All ALFRED vintages per observation period since ``observation_start``.
+
+    Returns ``{period_date: [{"vintage": realtime_start, "value": v}, ...]}`` with
+    each period's prints sorted oldest-vintage first (initial print first, current
+    print last). Widening the realtime window to all-time makes FRED return one row
+    per (period, revision) instead of only the latest revision.
+    """
+    data = _fred_get(_FRED_URL, {
+        "series_id": series_id, "api_key": api_key,
+        "realtime_start": "1776-07-04", "realtime_end": "9999-12-31",
+        "observation_start": observation_start.isoformat(),
+        "sort_order": "asc",
+    })
+    by_date: Dict[str, List[dict]] = {}
+    for obs in data.get("observations") or []:
+        val = (obs.get("value") or "").strip()
+        if val in ("", "."):
+            continue
+        try:
+            v = float(val)
+        except ValueError:
+            continue
+        period = obs.get("date")
+        vintage = obs.get("realtime_start")
+        if not period or not vintage:
+            continue
+        by_date.setdefault(period, []).append({"vintage": vintage, "value": v})
+    for prints in by_date.values():
+        prints.sort(key=lambda p: p["vintage"])
+    return by_date
+
+
+def fetch_economic_releases(series_ids: Optional[List[str]] = None) -> Optional[dict]:
+    """Live calendar of key US economic releases, or ``None`` when unavailable.
+
+    Each row carries the latest reported value, the prior value, the period dates,
+    units/frequency, when FRED last updated it, and the next scheduled release.
+    Requires ``FRED_API_KEY``; returns ``None`` with no key so the panel reports
+    the data as unavailable rather than inventing releases.
+    """
+    api_key = fred_api_key()
+    if not api_key:
+        return None
+
+    ids = series_ids or list(ECON_RELEASE_SERIES.keys())
+    rows: List[dict] = []
+    latest_updated: Optional[str] = None
+    for sid in ids:
+        try:
+            meta = fetch_fred_series_meta(sid, api_key)
+        except Exception:
+            continue
+        if not meta:
+            continue
+        try:
+            obs = _fred_latest_observations(sid, api_key, limit=4)
+        except Exception:
+            continue
+        if not obs:
+            continue
+        reported_period, reported = obs[0]
+        prior_period, prior = obs[1] if len(obs) > 1 else (None, None)
+        try:
+            next_release = fetch_fred_next_release(sid, api_key)
+        except Exception:
+            next_release = None
+        curated = ECON_RELEASE_SERIES.get(sid, {})
+        rows.append({
+            "seriesId": sid,
+            "name": curated.get("name") or meta.get("title"),
+            "short": curated.get("short"),
+            "units": meta.get("unitsShort") or meta.get("units"),
+            "frequency": meta.get("frequencyShort"),
+            "reported": reported,
+            "reportedPeriod": reported_period,
+            "prior": prior,
+            "priorPeriod": prior_period,
+            "change": round(reported - prior, 3) if prior is not None else None,
+            "lastUpdated": meta.get("lastUpdated"),
+            "nextRelease": next_release,
+        })
+        lu = meta.get("lastUpdated")
+        if lu and (latest_updated is None or lu > latest_updated):
+            latest_updated = lu
+
+    if not rows:
+        return None
+    return {
+        "rows": rows,
+        "asOf": latest_updated[:10] if latest_updated else None,
+        "source": "live",
+    }
+
+
+def fetch_series_revisions(
+    series_id: str, lookback_days: int = 1100
+) -> Optional[dict]:
+    """Vintage/revision history for any FRED series, or ``None`` when unavailable.
+
+    Returns the series metadata plus ``{period: [vintage prints]}`` covering
+    roughly the last ``lookback_days`` of observation periods. Requires
+    ``FRED_API_KEY``; an unknown series id propagates as an exception (the caller
+    reports it as not found) rather than fabricating a series.
+    """
+    api_key = fred_api_key()
+    if not api_key:
+        return None
+    sid = (series_id or "").strip().upper()
+    if not sid:
+        return None
+    meta = fetch_fred_series_meta(sid, api_key)
+    if not meta:
+        return None
+    start = date.today() - timedelta(days=max(lookback_days, 120))
+    vintages = fetch_fred_vintages(sid, api_key, start)
+    if not vintages:
+        return None
+    return {
+        "meta": meta,
+        "vintages": vintages,
+        "asOf": (meta.get("lastUpdated") or "")[:10] or None,
         "source": "live",
     }

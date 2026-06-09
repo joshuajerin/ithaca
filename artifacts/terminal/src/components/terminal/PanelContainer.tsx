@@ -21,6 +21,8 @@ import { SovereignComparePanel } from "./panels/SovereignComparePanel";
 import { BondRVPanel } from "./panels/BondRVPanel";
 import { CDSPricerPanel } from "./panels/CDSPricerPanel";
 import { CreditStressPanel } from "./panels/CreditStressPanel";
+import { EconomicReleasesPanel } from "./panels/EconomicReleasesPanel";
+import { SeriesRevisionsPanel } from "./panels/SeriesRevisionsPanel";
 import { CashFlowPanel } from "./panels/CashFlowPanel";
 import { PortfolioRiskPanel } from "./panels/PortfolioRiskPanel";
 import { BacktestPanel } from "./panels/BacktestPanel";
@@ -313,6 +315,8 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted, onBui
       case "bond_rv": return <BondRVPanel data={panel.data as any} />;
       case "cds_pricer": return <CDSPricerPanel data={panel.data as any} />;
       case "credit_stress": return <CreditStressPanel data={panel.data as any} />;
+      case "economic_releases": return <EconomicReleasesPanel data={panel.data as any} source={panel.source} />;
+      case "series_revisions": return <SeriesRevisionsPanel data={panel.data as any} source={panel.source} onRefine={handleRefineParamsLive} pending={paramRefineMutation.isPending} />;
       case "cashflow_duration": return <CashFlowPanel data={panel.data as any} />;
       case "portfolio_risk": return <PortfolioRiskPanel data={panel.data as any} onRefine={handleRefineParamsLive} pending={paramRefineMutation.isPending} />;
       case "backtest": return <BacktestPanel data={panel.data as any} onRefine={handleRefineParamsLive} pending={paramRefineMutation.isPending} />;
