@@ -20,6 +20,7 @@ from typing import List, Optional
 
 from . import data, db, orderbook_store, repo, strategy
 from .sources import fundamentals as f_src
+from .sources import holdings as h_src
 from .sources import iex_deep
 from .sources import news as n_src
 from .sources import prices as p_src
@@ -49,6 +50,22 @@ SNAPSHOT_INTERVAL = 3600
 # How often to check for due scheduled rebalances. The check itself is cheap and
 # per-strategy cadence is enforced in days by ``strategy.is_due``.
 REBALANCE_INTERVAL = 3600
+
+# ETF holdings refresh: fund compositions change slowly, so a gentle round-robin
+# over the common ETF set keeps the holdings cache warm for instant panels and
+# the reverse "which ETFs hold X" lookup. Deferred and small-batch so it never
+# competes with the live price/fundamentals loops.
+HOLDINGS_INTERVAL = 600
+HOLDINGS_BATCH = 4
+HOLDINGS_STARTUP_DELAY = 240
+# Common, liquid ETFs whose top holdings power the holdings panel and seed the
+# reverse-lookup index. Mirrors the benchmark/sector ETF set used elsewhere.
+HOLDINGS_ETFS = [
+    "SPY", "QQQ", "DIA", "IWM", "VTI", "VOO", "RSP", "MDY",
+    "XLK", "XLF", "XLE", "XLV", "XLY", "XLP", "XLI", "XLC", "XLB", "XLRE", "XLU",
+    "SMH", "SOXX", "CIBR", "XBI", "ITA", "ICLN", "ARKK", "IYT", "KIE", "XME",
+    "EFA", "EEM",
+]
 
 # Breadth market-cap refresh: a deliberately slow round-robin that touches only
 # the single market_cap field on mock breadth names (is_live = FALSE), so the
@@ -136,6 +153,28 @@ def _seed_universe() -> None:
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
         """
+    )
+
+    # Real ETF constituents (top holdings) from the free Yahoo funds feed. Kept
+    # in its own table — it indexes holding tickers that may not be in `universe`
+    # (the feed supplies the name), and powers both the holdings panel and the
+    # reverse "which ETFs hold X" lookup.
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS etf_holdings (
+            etf TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            name TEXT,
+            weight DOUBLE PRECISION,
+            as_of DATE,
+            source TEXT,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (etf, symbol)
+        )
+        """
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS etf_holdings_symbol_idx ON etf_holdings (symbol)"
     )
 
     for sid, name in data.SECTORS.items():
@@ -903,6 +942,43 @@ async def _orderbook_loop():
         await asyncio.sleep(ORDERBOOK_INTERVAL)
 
 
+async def _ingest_etf_holdings(etf: str) -> None:
+    """Fetch + persist one ETF's real top holdings (best-effort)."""
+    try:
+        res = await _net(h_src.fetch_etf_holdings, etf)
+        if res and res.get("holdings"):
+            await asyncio.to_thread(
+                repo.upsert_etf_holdings, etf, res["holdings"],
+                res.get("asOf"), res.get("source", "live"),
+            )
+    except CircuitOpenError:
+        pass  # source cooling down; try again next sweep
+    except Exception as exc:  # noqa: BLE001
+        log.debug("holdings ingest skipped for %s: %s", etf, exc)
+
+
+async def _holdings_loop():
+    """Round-robin the common ETF set, keeping the holdings cache warm.
+
+    A small batch per tick walks through ``HOLDINGS_ETFS`` so a full sweep
+    completes over time without bursting the Yahoo funds feed. Deferred at start
+    so it never piles onto cold-start ingestion."""
+    await asyncio.sleep(HOLDINGS_STARTUP_DELAY)
+    idx = 0
+    while True:
+        try:
+            batch = HOLDINGS_ETFS[idx:idx + HOLDINGS_BATCH]
+            if not batch:
+                idx = 0
+                batch = HOLDINGS_ETFS[idx:idx + HOLDINGS_BATCH]
+            for etf in batch:
+                await _ingest_etf_holdings(etf)
+            idx = (idx + HOLDINGS_BATCH) % max(1, len(HOLDINGS_ETFS))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("holdings loop error: %s", exc)
+        await asyncio.sleep(HOLDINGS_INTERVAL)
+
+
 # ----------------------------- lifecycle -----------------------------
 async def start() -> None:
     # Boot smoke checks (scripts/smoke_api.py) set this so the app can verify it
@@ -932,6 +1008,7 @@ async def start() -> None:
     _tasks.append(asyncio.create_task(_orderbook_loop()))
     _tasks.append(asyncio.create_task(_snapshot_loop()))
     _tasks.append(asyncio.create_task(_rebalance_loop()))
+    _tasks.append(asyncio.create_task(_holdings_loop()))
     log.info("data worker started (%d loops)", len(_tasks))
 
 

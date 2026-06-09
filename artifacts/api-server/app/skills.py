@@ -12,6 +12,7 @@ from datetime import date, timedelta
 from typing import Callable, Dict, List, Optional
 
 from . import ai, cache, data, db, engine, factor_model, orderbook_store, quality, repo
+from .sources import holdings as h_src
 from .sources import iex_deep
 from .sources import prices as p_src
 from .sources import rates as rates_src
@@ -4710,6 +4711,178 @@ def _etf_sector_weights(ticker: str) -> Optional[dict]:
     return val
 
 
+# How many uncached common ETFs a single reverse-lookup request may fetch
+# synchronously to bootstrap a cold cache (the worker warms the rest in the
+# background). Bounds request latency under the preview proxy window.
+_EXPOSURE_BOOTSTRAP_CAP = 8
+
+
+def _resolve_etf_param(params: dict) -> str:
+    """The ETF ticker an ``etf_holdings`` request targets."""
+    raw = params.get("symbol") or params.get("etf") or params.get("ticker") or ""
+    return str(raw).upper().strip().lstrip("$")
+
+
+def _load_etf_holdings(etf: str) -> Optional[dict]:
+    """Cached-first REAL top holdings for an ETF; fetch + persist on miss/stale.
+
+    Returns ``{holdings:[{symbol,name,weight}], asOf, source}`` or ``None`` when
+    no real fund composition is sourceable (the caller then reports the gap). A
+    stale-but-real cached snapshot is preferred over nothing if a refresh fails.
+    """
+    cached = repo.etf_holdings(etf)
+    if cached and not cached.get("stale"):
+        return cached
+    fetched = h_src.fetch_etf_holdings(etf)
+    if fetched and fetched.get("holdings"):
+        repo.upsert_etf_holdings(
+            etf, fetched["holdings"], fetched.get("asOf"),
+            fetched.get("source", "live"),
+        )
+        return fetched
+    return cached  # possibly stale-but-real, or None
+
+
+def build_etf_holdings(params: dict) -> dict:
+    """Real ranked constituents (top holdings) for an ETF.
+
+    Sources the fund's actual top holdings from the free Yahoo funds feed
+    (cached) — which exposes the TOP names only, so coverage is partial and
+    reported honestly (never padded). Adds top-N concentration and the fund's
+    real GICS sector breakdown (reusing the shared sector-weight cache). Nothing
+    is imputed: an instrument with no real composition returns an empty,
+    explicitly-unavailable panel.
+    """
+    etf = _resolve_etf_param(params)
+    if not etf:
+        raise ValueError("No ETF ticker provided.")
+    name = _BENCHMARK_ETFS.get(etf, etf)
+    loaded = _load_etf_holdings(etf)
+
+    if not loaded or not loaded.get("holdings"):
+        return {
+            "title": f"{etf} · Holdings",
+            "etf": etf, "etfName": name,
+            "rows": [], "holdingsCount": 0,
+            "coverage": None, "top5": None, "top10": None,
+            "sectorBreakdown": [],
+            "note": (
+                f"No real holdings are available from the free fund feed for {etf} "
+                "(full constituent lists require a paid feed)."
+            ),
+            "source": "unavailable", "asOf": None,
+        }
+
+    holdings = loaded["holdings"]
+    rows = [
+        {"rank": i + 1, "symbol": h["symbol"],
+         "name": h.get("name") or h["symbol"],
+         "weight": round(float(h["weight"]), 4)}
+        for i, h in enumerate(holdings)
+    ]
+    weights = [r["weight"] for r in rows]
+    coverage = round(sum(weights), 2)
+    top5 = round(sum(weights[:5]), 2)
+    top10 = round(sum(weights[:10]), 2)
+
+    # Real GICS sector breakdown from the shared sector-weight cache (fractions
+    # ~summing to 1.0 -> percent). Empty when the fund's composition isn't sourced.
+    sec = _etf_sector_weights(etf) or {}
+    sector_breakdown = sorted(
+        [{"sector": k,
+          "label": _GICS_LABELS.get(k, k.replace("_", " ").title()),
+          "weight": round(v * 100.0, 2)}
+         for k, v in sec.items()],
+        key=lambda s: s["weight"], reverse=True,
+    )
+
+    return {
+        "title": f"{etf} · Holdings",
+        "etf": etf, "etfName": name,
+        "rows": rows, "holdingsCount": len(rows),
+        "coverage": coverage, "top5": top5, "top10": top10,
+        "sectorBreakdown": sector_breakdown,
+        "note": (
+            "Free fund feed exposes top holdings only; the listed "
+            f"{len(rows)} names span {coverage}% of the fund."
+        ),
+        "source": loaded.get("source", "live"),
+        "asOf": loaded.get("asOf"),
+    }
+
+
+def build_etf_exposure(params: dict) -> dict:
+    """Reverse lookup: every (common) ETF whose top holdings include a stock.
+
+    Scans the cached top holdings of the common benchmark/sector ETF set and
+    lists the funds that hold ``symbol``, with that stock's weight in each. On a
+    cold cache it bootstraps a bounded number of uncached ETFs synchronously
+    (the worker warms the rest). Because the free feed only exposes each fund's
+    TOP names, a stock held deeper than the top slice won't appear — this limit
+    is reported, never hidden.
+    """
+    sym = str(params.get("symbol") or params.get("ticker") or "").upper().strip().lstrip("$")
+    if not sym:
+        raise ValueError("No stock ticker provided for the ETF exposure lookup.")
+    company = repo.get_company(sym)
+    stock_name = company["name"] if company else sym
+
+    # Warm a cold cache (bounded) so the first request still answers.
+    scan = list(_BENCHMARK_ETFS.keys())
+    cached_universe = set(repo.etf_holdings_universe())
+    fetched = 0
+    for e in scan:
+        if e in cached_universe:
+            continue
+        if fetched >= _EXPOSURE_BOOTSTRAP_CAP:
+            break
+        fetched += 1
+        res = h_src.fetch_etf_holdings(e)
+        if res and res.get("holdings"):
+            repo.upsert_etf_holdings(
+                e, res["holdings"], res.get("asOf"), res.get("source", "live"))
+
+    matches = repo.etfs_holding(sym)
+    scanned = repo.etf_holdings_universe()
+    rows = sorted(
+        [{"etf": m["etf"], "etfName": _BENCHMARK_ETFS.get(m["etf"], m["etf"]),
+          "weight": round(float(m["weight"]), 4), "asOf": m.get("asOf")}
+         for m in matches],
+        key=lambda r: r["weight"], reverse=True,
+    )
+    as_of = max([m["asOf"] for m in matches if m.get("asOf")], default=None)
+    source = "live" if scanned else "unavailable"
+
+    if not scanned:
+        note = (
+            "ETF holdings have not been cached yet — the live fund feed is "
+            "unavailable right now."
+        )
+    elif rows:
+        note = (
+            f"{stock_name} appears in the top holdings of {len(rows)} of "
+            f"{len(scanned)} ETFs scanned. Only each fund's top holdings are "
+            "available from the free feed, so funds that hold it more deeply may "
+            "not be listed."
+        )
+    else:
+        note = (
+            f"{sym} is not in the top holdings of any of the {len(scanned)} ETFs "
+            "scanned. The free feed exposes top holdings only, so a smaller "
+            "position held deeper in a fund would not appear here."
+        )
+
+    return {
+        "title": f"ETFs Holding {sym}",
+        "symbol": sym, "stockName": stock_name,
+        "rows": rows, "count": len(rows),
+        "scannedCount": len(scanned),
+        "scanned": scanned,
+        "note": note,
+        "source": source, "asOf": as_of,
+    }
+
+
 def _resolve_benchmark(params: dict) -> tuple:
     """Resolve a REAL benchmark ticker + display name from params.
 
@@ -8113,6 +8286,37 @@ _reg(SkillDef(
         {"name": "flag_imminent", "description": "Flag companies reporting within the next 24 hours.", "expectedOutput": "An imminent list plus the next report."},
     ],
     build_earnings_calendar, "Earnings Calendar",
+))
+_reg(SkillDef(
+    "etf-holdings", "ETF Holdings", "etf_holdings",
+    "Lists the real ranked constituents (top holdings) of an ETF or index fund — each row "
+    "carries the holding's ticker, name and weight — plus top-N concentration (top 5 / top 10) "
+    "and the fund's real GICS sector breakdown. Holdings come from the free fund feed, which "
+    "exposes a fund's TOP holdings only, so coverage is partial and the share of the fund the "
+    "listed names span is reported honestly (nothing is imputed). Use when the user asks what's "
+    "in an ETF, an ETF's holdings/constituents/components, what an ETF holds, or its top "
+    "holdings (e.g. 'holdings of XLK', \"what's in QQQ\", 'top holdings of SPY').",
+    [
+        {"name": "resolve_etf", "description": "Resolve the request to an ETF ticker.", "expectedOutput": "A valid ETF ticker."},
+        {"name": "fetch_holdings", "description": "Fetch + cache the fund's real top holdings.", "expectedOutput": "Ranked constituents with weights."},
+        {"name": "summarize", "description": "Compute top-N concentration and the sector breakdown.", "expectedOutput": "Concentration stats and sector weights."},
+    ],
+    build_etf_holdings, "ETF Holdings",
+))
+_reg(SkillDef(
+    "etf-exposure", "ETF Exposure", "etf_exposure",
+    "Reverse lookup: lists the ETFs whose top holdings include a given stock, with that "
+    "stock's weight in each fund, ranked by weight. Scans the cached top holdings of the "
+    "common benchmark and sector ETFs. Because the free feed exposes each fund's TOP holdings "
+    "only, a stock held more deeply may not appear — this limit is reported, never hidden. Use "
+    "when the user asks which ETFs hold a stock, what funds own a name, or a stock's ETF "
+    "exposure (e.g. 'which ETFs hold NVDA', 'what funds own AAPL').",
+    [
+        {"name": "resolve_stock", "description": "Resolve the request to a stock ticker.", "expectedOutput": "A valid ticker."},
+        {"name": "scan_etfs", "description": "Scan the cached top holdings of the common ETF set for the stock.", "expectedOutput": "ETFs holding the stock with its weight."},
+        {"name": "rank", "description": "Rank the holding ETFs by the stock's weight.", "expectedOutput": "A weight-ranked ETF list."},
+    ],
+    build_etf_exposure, "ETF Exposure",
 ))
 _reg(SkillDef(
     "signal-research", "Alpha Signal Research", "signal_research",

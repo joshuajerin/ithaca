@@ -227,6 +227,35 @@ def _tools() -> list:
             }},
         }},
         {"type": "function", "function": {
+            "name": "add_etf_holdings",
+            "description": (
+                f"Add an ETF holdings panel listing the real ranked constituents (top holdings) of an "
+                f"ETF or index fund — each row has the holding's ticker, name and weight — plus top-N "
+                f"concentration (top 5 / top 10) and the fund's real GICS sector breakdown. The free "
+                f"fund feed exposes a fund's TOP holdings only, so coverage is partial and reported "
+                f"honestly. Use for \"what's in QQQ\", 'holdings of XLK', 'top holdings of SPY', an "
+                f"ETF's constituents/components, or what an ETF holds. {sizing}"
+            ),
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": "The ETF ticker (e.g. QQQ, XLK, SPY)."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
+        {"type": "function", "function": {
+            "name": "add_etf_exposure",
+            "description": (
+                f"Add an ETF exposure panel: reverse lookup listing the ETFs whose top holdings include "
+                f"a given stock, with that stock's weight in each fund, ranked by weight. Scans the "
+                f"common benchmark and sector ETFs; because the free feed exposes top holdings only, a "
+                f"stock held more deeply may not appear (reported honestly). Use for 'which ETFs hold "
+                f"NVDA', 'what funds own AAPL', or a stock's ETF exposure. {sizing}"
+            ),
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": "The stock ticker to find ETFs for."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
+        {"type": "function", "function": {
             "name": "add_macro_dashboard",
             "description": (
                 f"Add a macro/cross-asset dashboard panel. {sizing} "
@@ -877,6 +906,8 @@ _TOOL_TO_TYPE = {
     "add_dcf_model": "dcf_model",
     "add_earnings_transcript": "earnings_transcript",
     "add_earnings_calendar": "earnings_calendar",
+    "add_etf_holdings": "etf_holdings",
+    "add_etf_exposure": "etf_exposure",
     "add_ma_tracker": "ma_tracker",
     "add_company_analytics": "company_analytics",
     "add_company_analytics_compare": "company_analytics_compare",
@@ -974,6 +1005,9 @@ def _system_prompt() -> str:
         "- For earnings call / transcript / 'what did management say' requests, use add_earnings_transcript.\n"
         "- For the earnings calendar / upcoming earnings / earnings dates / 'who reports next' / "
         "'when does X report', use add_earnings_calendar.\n"
+        "- For ETF holdings / constituents / 'what's in <ETF>' / 'holdings of <ETF>' / 'top holdings', "
+        "use add_etf_holdings. For the reverse — 'which ETFs hold <stock>' / 'what funds own <stock>' / "
+        "a stock's ETF exposure — use add_etf_exposure.\n"
         "- For M&A / deal flow / mergers / acquisitions / arb spread requests, use add_ma_tracker.\n"
         "- For backtest / strategy / Sharpe / drawdown requests, use add_backtest. For research-integrity "
         "checks — 'is this strategy overfit / robust / data-mined', out-of-sample or walk-forward validation, "
@@ -2779,6 +2813,41 @@ def _extract_symbols(q: str) -> List[str]:
     return found
 
 
+_ETF_TOKEN_RE = re.compile(r"\b[A-Z]{2,5}\b")
+# Short all-caps tokens that are English words, not ETF tickers — keeps the
+# fallback extractor from mistaking "of"/"top" etc. for a ticker.
+_ETF_STOPWORDS = {
+    "OF", "IN", "ON", "IS", "IT", "BE", "TO", "DO", "GO", "AT", "BY", "AS", "OR",
+    "AN", "IF", "SO", "UP", "MY", "ME", "WE", "US", "THE", "AND", "FOR", "ETF",
+    "ETFS", "FUND", "TOP", "ALL", "ITS", "NOW", "OWN", "OWNS", "OWNED", "HOLD",
+    "HOLDS", "WHAT", "WHATS", "HELD", "HAVE", "HAS", "ARE", "WHO", "HOW", "WHY",
+    "NEW", "OLD", "BIG", "LOW", "HIGH", "BOND", "CASH", "LIST", "SHOW", "GIVE",
+    "WHICH", "FUNDS", "INDEX", "STOCK", "SHARE",
+}
+
+
+def _extract_etf(q: str) -> Optional[str]:
+    """Best-effort ETF ticker from a holdings query.
+
+    Prefers a recognised benchmark/sector ETF; otherwise falls back to a
+    standalone ticker-looking token (skipping common English words). Returns the
+    upper-cased ticker, or None when nothing plausible is present.
+    """
+    known = set(skills._BENCHMARK_ETFS.keys())
+    toks = _ETF_TOKEN_RE.findall(q.upper())
+    dollar = {d.upper() for d in re.findall(r"\$([A-Za-z]{2,5})", q)}
+    for t in toks:
+        if t in known:
+            return t
+    for t in toks:
+        if t in dollar:
+            return t
+    for t in toks:
+        if t not in _ETF_STOPWORDS:
+            return t
+    return None
+
+
 def _order_symbols_by_query(q: str, symbols: List[str]) -> List[str]:
     """Order matched symbols by where they (or their company name) first appear in the query."""
     up = q.upper()
@@ -3453,6 +3522,24 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         ])
         or (("report" in q or "reporting" in q) and any(k in q for k in ["when", "next", "upcoming", "calendar", "date", "schedule"]))
     )
+    wants_etf_exposure = (
+        any(k in q for k in ["which etf", "which etfs", "what etf", "what etfs", "what funds own",
+                             "which funds own", "etf exposure", "funds holding", "etfs holding",
+                             "etfs that hold", "funds that hold", "etfs that own", "funds that own",
+                             "what funds hold", "which funds hold"])
+        or (("etf" in q or "fund" in q) and any(k in q for k in ["hold", "own", "contain", "include"])
+            and any(k in q for k in ["which", "what", "list"]))
+    )
+    wants_etf_holdings = (
+        not wants_etf_exposure
+        and (
+            any(k in q for k in ["etf holding", "etf holdings", "fund holding", "fund holdings",
+                                 "holdings of", "what's in", "whats in", "what is in",
+                                 "constituents", "constituent", "components of", "top holdings"])
+            or (("etf" in q or "fund" in q) and any(k in q for k in ["hold", "holding", "contain",
+                                                                     "made up", "composition", "inside"]))
+        )
+    )
     wants_ma = any(k in q for k in ["m&a", "merger", "acquisition", "deal", "arb spread", "takeover", "buyout"])
     wants_company_analytics = any(k in q for k in [
         "why is", "why is it", "what drives", "price driver", "company analytics",
@@ -3577,6 +3664,21 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         add("price_chart", {"symbol": sym, "range": "3M"}, 4, 6)
         name = data.get_company(sym)["name"]
         return panels, f"Company analytics for {name}: price drivers, competitive landscape, metric correlations, and catalyst watch."
+
+    if wants_etf_exposure:
+        sym = symbols[0] if symbols else _extract_etf(query)
+        if sym:
+            add("etf_exposure", {"symbol": sym}, 12, 6)
+            c = data.get_company(sym)
+            label = c["name"] if c else sym
+            return panels, f"ETFs holding {label}, ranked by the stock's weight in each fund (top holdings of the common ETF set; deeper positions may not appear)."
+
+    if wants_etf_holdings:
+        etf = _extract_etf(query) or (symbols[0] if symbols else None)
+        if etf:
+            add("etf_holdings", {"symbol": etf}, 12, 6)
+            label = skills._BENCHMARK_ETFS.get(etf, etf)
+            return panels, f"Top holdings of {label} with weights, top-N concentration and the fund's sector breakdown (free feed exposes top holdings only)."
 
     if wants_ma:
         sym = symbols[0] if symbols else None
@@ -4571,6 +4673,14 @@ def _refine_params_heuristic(panel_type: str, panel: dict, instruction: str) -> 
         if sector:
             return {"sector": sector}
         return {}
+    if panel_type == "etf_holdings":
+        etf = _extract_etf(instruction) or (syms[0] if syms else (panel.get("data") or {}).get("etf"))
+        if etf:
+            return {"symbol": etf}
+    if panel_type == "etf_exposure":
+        sym = syms[0] if syms else (_extract_etf(instruction) or (panel.get("data") or {}).get("symbol"))
+        if sym:
+            return {"symbol": sym}
     d = panel.get("data") or {}
     if panel_type == "portfolio_risk":
         return {"symbols": syms or d.get("symbols") or []}

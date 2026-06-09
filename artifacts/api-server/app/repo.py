@@ -1595,6 +1595,126 @@ def universe_overview(sector: Optional[str] = None, limit: int = 150) -> dict:
             "source": "mock", "asOf": None}
 
 
+# ----------------------------- ETF holdings -----------------------------
+# Real ETF constituents (top holdings) sourced from the free Yahoo funds feed and
+# cached in `etf_holdings` (created at runtime by the worker). The free feed only
+# exposes each fund's TOP names, so coverage is partial and reported honestly —
+# we never pad or impute the remaining weight.
+_ETF_HOLDINGS_STALE_DAYS = 14
+
+
+def upsert_etf_holdings(etf: str, holdings: List[dict], as_of_iso: Optional[str],
+                        source: str = "live") -> None:
+    """Persist a fund's top holdings, replacing any prior snapshot for that ETF."""
+    e = (etf or "").upper().strip().lstrip("$")
+    if not e or not holdings or not db.db_available():
+        return
+    try:
+        db.execute("DELETE FROM etf_holdings WHERE etf = %s", (e,))
+        rows = [
+            (e, str(h["symbol"]).upper(), h.get("name") or str(h["symbol"]).upper(),
+             float(h["weight"]), as_of_iso, source)
+            for h in holdings
+            if h.get("symbol") and h.get("weight") is not None
+        ]
+        db.execute_many(
+            """
+            INSERT INTO etf_holdings (etf, symbol, name, weight, as_of, source)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (etf, symbol) DO UPDATE
+              SET name = EXCLUDED.name, weight = EXCLUDED.weight,
+                  as_of = EXCLUDED.as_of, source = EXCLUDED.source,
+                  updated_at = now()
+            """,
+            rows,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("upsert_etf_holdings DB error for %s: %s", e, exc)
+
+
+def etf_holdings(etf: str) -> Optional[dict]:
+    """Persisted top holdings for an ETF, or ``None`` when none are cached.
+
+    Returns ``{holdings: [{symbol, name, weight}], asOf, source, stale}`` where
+    ``stale`` flags a snapshot older than the freshness window (the caller can
+    then re-fetch). Largest weight first.
+    """
+    e = (etf or "").upper().strip().lstrip("$")
+    if not e or not db.db_available():
+        return None
+    try:
+        rows = db.query(
+            """
+            SELECT symbol, name, weight, as_of, source, updated_at
+            FROM etf_holdings WHERE etf = %s ORDER BY weight DESC
+            """,
+            (e,),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("etf_holdings DB error for %s: %s", e, exc)
+        return None
+    if not rows:
+        return None
+    holdings = [
+        {"symbol": r["symbol"], "name": r.get("name") or r["symbol"],
+         "weight": _num(r.get("weight"))}
+        for r in rows if r.get("weight") is not None
+    ]
+    if not holdings:
+        return None
+    updated = rows[0].get("updated_at")
+    stale = False
+    if isinstance(updated, datetime):
+        age = datetime.now(timezone.utc) - (
+            updated if updated.tzinfo else updated.replace(tzinfo=timezone.utc))
+        stale = age > timedelta(days=_ETF_HOLDINGS_STALE_DAYS)
+    return {
+        "holdings": holdings,
+        "asOf": _iso_date(rows[0].get("as_of")),
+        "source": rows[0].get("source") or "live",
+        "stale": stale,
+    }
+
+
+def etfs_holding(symbol: str) -> List[dict]:
+    """Reverse lookup: every cached ETF that holds ``symbol`` and its weight.
+
+    Returns ``[{etf, name, weight, asOf}]`` sorted by the stock's weight in each
+    fund (largest first). Empty when nothing is cached.
+    """
+    sym = (symbol or "").upper().strip().lstrip("$")
+    if not sym or not db.db_available():
+        return []
+    try:
+        rows = db.query(
+            """
+            SELECT etf, name, weight, as_of FROM etf_holdings
+            WHERE symbol = %s ORDER BY weight DESC
+            """,
+            (sym,),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("etfs_holding DB error for %s: %s", sym, exc)
+        return []
+    return [
+        {"etf": r["etf"], "name": r.get("name") or sym,
+         "weight": _num(r.get("weight")), "asOf": _iso_date(r.get("as_of"))}
+        for r in rows if r.get("weight") is not None
+    ]
+
+
+def etf_holdings_universe() -> List[str]:
+    """Distinct ETFs with cached holdings (for reverse-lookup coverage)."""
+    if not db.db_available():
+        return []
+    try:
+        rows = db.query("SELECT DISTINCT etf FROM etf_holdings ORDER BY etf")
+        return [r["etf"] for r in rows]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("etf_holdings_universe DB error: %s", exc)
+        return []
+
+
 def as_of(*records) -> Optional[str]:
     """Most-recent freshness timestamp across the given company/sentiment records."""
     stamps = [r.get("_asOf") for r in records if isinstance(r, dict) and r.get("_asOf")]

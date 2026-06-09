@@ -47,6 +47,8 @@ import { SupplyChainPanel } from "./panels/SupplyChainPanel";
 import { DCFPanel } from "./panels/DCFPanel";
 import { TranscriptPanel } from "./panels/TranscriptPanel";
 import { EarningsCalendarPanel } from "./panels/EarningsCalendarPanel";
+import { ETFHoldingsPanel } from "./panels/ETFHoldingsPanel";
+import { ETFExposurePanel } from "./panels/ETFExposurePanel";
 import { MACPanel } from "./panels/MACPanel";
 import { CompanyAnalyticsPanel } from "./panels/CompanyAnalyticsPanel";
 import { CompanyAnalyticsComparePanel } from "./panels/CompanyAnalyticsComparePanel";
@@ -337,6 +339,8 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted, onBui
       case "dcf_model": return <DCFPanel data={panel.data as any} sessionId={sessionId} />;
       case "earnings_transcript": return <TranscriptPanel data={panel.data as any} />;
       case "earnings_calendar": return <EarningsCalendarPanel data={panel.data as any} />;
+      case "etf_holdings": return <ETFHoldingsPanel data={panel.data as any} />;
+      case "etf_exposure": return <ETFExposurePanel data={panel.data as any} />;
       case "ma_tracker": return <MACPanel data={panel.data as any} />;
       case "company_analytics": return <CompanyAnalyticsPanel data={panel.data as any} />;
       case "company_analytics_compare": return <CompanyAnalyticsComparePanel data={panel.data as any} />;
