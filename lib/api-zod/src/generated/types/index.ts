@@ -8,6 +8,9 @@
 
 export * from './analysisData';
 export * from './analysisDataStance';
+export * from './authFirm';
+export * from './authIdentity';
+export * from './authUser';
 export * from './backtestData';
 export * from './backtestDataParams';
 export * from './backtestEntry';
@@ -35,6 +38,8 @@ export * from './heatmapData';
 export * from './holdingExposure';
 export * from './iCDecayPoint';
 export * from './iCStat';
+export * from './loginRequest';
+export * from './logoutResult';
 export * from './monteCarloData';
 export * from './monteCarloFanPoint';
 export * from './monteCarloPath';
@@ -80,6 +85,7 @@ export * from './sentimentTrendPoint';
 export * from './signalResearchData';
 export * from './signalScorecardData';
 export * from './signalScoreRow';
+export * from './signupRequest';
 export * from './skill';
 export * from './skillCatalog';
 export * from './speakRequest';

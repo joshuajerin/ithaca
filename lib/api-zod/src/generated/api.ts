@@ -18,6 +18,81 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
+ * Registers a new firm (tenant) and its first user as admin, then starts an authenticated session via an httpOnly cookie.
+ * @summary Create a firm and its first admin user
+ */
+export const SignupBody = zod.object({
+  "firmName": zod.string(),
+  "name": zod.string(),
+  "email": zod.string(),
+  "password": zod.string()
+})
+
+export const SignupResponse = zod.object({
+  "user": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "email": zod.string(),
+  "role": zod.string()
+}),
+  "firm": zod.object({
+  "id": zod.string(),
+  "name": zod.string()
+})
+})
+
+
+/**
+ * Verifies credentials and starts an authenticated session via an httpOnly cookie.
+ * @summary Log in with email and password
+ */
+export const LoginBody = zod.object({
+  "email": zod.string(),
+  "password": zod.string()
+})
+
+export const LoginResponse = zod.object({
+  "user": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "email": zod.string(),
+  "role": zod.string()
+}),
+  "firm": zod.object({
+  "id": zod.string(),
+  "name": zod.string()
+})
+})
+
+
+/**
+ * Invalidates the current session and clears the session cookie.
+ * @summary Log out
+ */
+export const LogoutResponse = zod.object({
+  "ok": zod.boolean()
+})
+
+
+/**
+ * Returns the current user, firm and role. Responds 401 when not authenticated.
+ * @summary Get the current authenticated user
+ */
+export const GetCurrentUserResponse = zod.object({
+  "user": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "email": zod.string(),
+  "role": zod.string()
+}),
+  "firm": zod.object({
+  "id": zod.string(),
+  "name": zod.string()
+})
+})
+
+
+/**
  * Returns the catalog of panel skills, each with its descriptive setup and subskills
  * @summary List terminal skills
  */

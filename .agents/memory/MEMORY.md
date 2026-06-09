@@ -70,3 +70,4 @@
 - [SEC filings browser (EDGAR)](filings-browser-edgar.md) — filings_browser panel; FTS `ticker=` IGNORED (use zero-pad `ciks=`), covers since 2001 ranked by relevance; client-side form-chip filter; honest unavailable/error.
 - [EDGAR Form 4/5 XML quirk](edgar-form4-xml-quirk.md) — most insider-filing fields are <value>-wrapped but transactionCode/owner/issuer/relationship are DIRECT text; wrong helper silently yields None (all trades "other", insiders "Unknown").
 - [Institutional holdings & 13F flows](institutional-13f.md) — 13F panels: partial-amendment filings must not supersede the full book (pick max-holdings); flows split on share change w/ tradeValue=Δshares×price.
+- [Auth / firms / roles foundation](auth-firms-roles.md) — multi-tenant identity (firm signup→admin, durable secure-cookie sessions, protected router); traps: secure cookie needs https TestClient, orval LogoutResponse collision, refresh composite dist for ApiError.

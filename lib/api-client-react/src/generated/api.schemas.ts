@@ -5,6 +5,39 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export interface SignupRequest {
+  firmName: string;
+  name: string;
+  email: string;
+  password: string;
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+}
+
+export interface AuthFirm {
+  id: string;
+  name: string;
+}
+
+export interface AuthIdentity {
+  user: AuthUser;
+  firm: AuthFirm;
+}
+
+export interface LogoutResult {
+  ok: boolean;
+}
+
 export interface HealthStatus {
   status: string;
 }

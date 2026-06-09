@@ -15,6 +15,7 @@ import { AlertsNotifications } from "@/components/terminal/AlertsNotifications";
 import { useVoiceConductor } from "@/hooks/useVoiceConductor";
 import { useNavigator } from "@/hooks/useNavigator";
 import { useConsoleConversation } from "@/hooks/useConsoleConversation";
+import { useAuth } from "@/hooks/useAuth";
 import { FeatureRequestModal } from "@/components/terminal/FeatureRequestModal";
 import { SavedDashboardsModal } from "@/components/terminal/SavedDashboardsModal";
 import { DotWaveCanvas } from "@/components/terminal/DotWaveCanvas";
@@ -25,7 +26,7 @@ import {
   saveVoiceSettings,
   type VoiceSettings,
 } from "@/lib/voiceSettings";
-import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles, Compass, CalendarClock, Command, X, LayoutGrid } from "lucide-react";
+import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles, Compass, CalendarClock, Command, X, LayoutGrid, LogOut } from "lucide-react";
 import {
   formatEarningsCountdown,
   type EarningsRow,
@@ -106,7 +107,8 @@ export default function Terminal() {
   // to) is persisted in localStorage so it survives a page reload. Reusing the
   // stored session id keeps follow-up questions in context with the same
   // backend session.
-  const convo = useConsoleConversation();
+  const { identity, logout } = useAuth();
+  const convo = useConsoleConversation(identity?.user.id);
 
   // Surface an assistant reply in the UI with a fresh nonce.
   const pushReply = useCallback((spec: DashboardSpec) => {
@@ -612,6 +614,28 @@ export default function Terminal() {
               {voiceMode ? <Mic className="w-3.5 h-3.5" strokeWidth={1.5} /> : <MicOff className="w-3.5 h-3.5" strokeWidth={1.5} />}
               <span className="hidden sm:inline">{voiceMode ? "Voice On" : "Voice Off"}</span>
             </button>
+            {identity && (
+              <>
+                <div className="hidden md:block h-7 w-px bg-border" />
+                <div className="hidden md:flex flex-col items-end max-w-[180px]">
+                  <span className="font-serif text-sm leading-none truncate w-full text-right">
+                    {identity.user.name}
+                  </span>
+                  <span className="editorial-label text-[9px] text-muted-foreground mt-1 truncate w-full text-right">
+                    {identity.firm.name} · {identity.user.role}
+                  </span>
+                </div>
+                <button
+                  onClick={() => void logout()}
+                  title="Sign out"
+                  aria-label="Sign out"
+                  className="flex items-center gap-2 px-2.5 sm:px-3 py-2 editorial-label text-[9px] border border-border bg-black text-white hover:border-white transition-colors group/btn"
+                >
+                  <LogOut className="w-3.5 h-3.5 text-muted-foreground group-hover/btn:text-white transition-colors" strokeWidth={1.5} />
+                  <span className="hidden sm:inline">Sign out</span>
+                </button>
+              </>
+            )}
           </div>
         </header>
 

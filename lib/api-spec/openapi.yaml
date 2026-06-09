@@ -12,6 +12,8 @@ tags:
     description: Health operations
   - name: terminal
     description: Agentic terminal orchestration and skills
+  - name: auth
+    description: Authentication, firms and roles
   - name: watchlist
     description: Watchlist operations
 paths:
@@ -28,6 +30,72 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /auth/signup:
+    post:
+      operationId: signup
+      tags: [auth]
+      summary: Create a firm and its first admin user
+      description: Registers a new firm (tenant) and its first user as admin, then starts an authenticated session via an httpOnly cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignupRequest"
+      responses:
+        "200":
+          description: Authenticated identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthIdentity"
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Log in with email and password
+      description: Verifies credentials and starts an authenticated session via an httpOnly cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authenticated identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthIdentity"
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Log out
+      description: Invalidates the current session and clears the session cookie.
+      responses:
+        "200":
+          description: Logout result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogoutResult"
+  /auth/user:
+    get:
+      operationId: getCurrentUser
+      tags: [auth]
+      summary: Get the current authenticated user
+      description: Returns the current user, firm and role. Responds 401 when not authenticated.
+      responses:
+        "200":
+          description: Authenticated identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthIdentity"
+        "401":
+          description: Not authenticated
   /skills:
     get:
       operationId: getSkills
@@ -310,6 +378,75 @@ paths:
                 $ref: "#/components/schemas/Watchlist"
 components:
   schemas:
+    SignupRequest:
+      type: object
+      properties:
+        firmName:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+        password:
+          type: string
+      required:
+        - firmName
+        - name
+        - email
+        - password
+    LoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+      required:
+        - email
+        - password
+    AuthUser:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+      required:
+        - id
+        - name
+        - email
+        - role
+    AuthFirm:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+      required:
+        - id
+        - name
+    AuthIdentity:
+      type: object
+      properties:
+        user:
+          $ref: "#/components/schemas/AuthUser"
+        firm:
+          $ref: "#/components/schemas/AuthFirm"
+      required:
+        - user
+        - firm
+    LogoutResult:
+      type: object
+      properties:
+        ok:
+          type: boolean
+      required:
+        - ok
     HealthStatus:
       type: object
       properties:

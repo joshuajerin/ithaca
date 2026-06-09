@@ -15,6 +15,9 @@ _dcf_models: Dict[str, List[dict]] = {}
 _alert_rules: Dict[str, List[dict]] = {}
 # sessionId -> list of fired alert event dicts (most recent last)
 _alert_events: Dict[str, List[dict]] = {}
+# sessionId -> {"userId", "firmId"} owning identity (set once a logged-in user
+# drives a session). Foundation hook for the separate firm-isolation task.
+_session_owners: Dict[str, dict] = {}
 
 _watchlist: List[str] = ["NVDA", "XOM", "MSFT"]
 
@@ -47,6 +50,25 @@ def get_panel(session_id: str, panel_id: str) -> dict | None:
             if p.get("id") == panel_id:
                 return dict(p)
     return None
+
+
+def set_session_owner(session_id: str, user_id: str, firm_id: str) -> None:
+    """Tag a session with the logged-in user/firm that drives it.
+
+    Recorded once and not overwritten, so the first authenticated caller owns the
+    session. This is the hook the separate firm-isolation task builds on; it does
+    not itself gate access.
+    """
+    if not session_id or not user_id:
+        return
+    with _lock:
+        _session_owners.setdefault(session_id, {"userId": user_id, "firmId": firm_id})
+
+
+def get_session_owner(session_id: str) -> dict | None:
+    with _lock:
+        owner = _session_owners.get(session_id)
+        return dict(owner) if owner else None
 
 
 def get_history(session_id: str) -> List[dict]:

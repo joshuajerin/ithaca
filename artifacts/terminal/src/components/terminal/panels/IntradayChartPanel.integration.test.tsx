@@ -32,7 +32,7 @@ import React, { useState } from "react";
 import { render, screen, fireEvent, waitFor, cleanup, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Panel } from "@workspace/api-client-react";
-import { setBaseUrl } from "@workspace/api-client-react";
+import { setBaseUrl, setAuthTokenGetter } from "@workspace/api-client-react";
 
 import { PanelContainer } from "../PanelContainer";
 
@@ -57,6 +57,39 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const TRIGGER = "intraday OHLCV chart for AAPL at 5-minute resolution";
 
 let server: ChildProcess | null = null;
+// Session token obtained from a throwaway firm signup. The business endpoints
+// (/api/orchestrate, /api/refine) are behind the auth gate, so every request
+// must present this token. Node/jsdom has no cookie jar, so we send it as the
+// `Authorization: Bearer <token>` header the API accepts for non-browser
+// clients (the same header the generated client attaches via setAuthTokenGetter).
+let sessionToken: string | null = null;
+
+/** Sign up a throwaway firm and capture its session token from the Set-Cookie header. */
+async function authenticate(): Promise<void> {
+  const res = await fetch(`${BASE}/api/auth/signup`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      firmName: "Intraday IT",
+      name: "Intraday Test",
+      email: `intraday-it-${Date.now()}@example.com`,
+      password: "password123",
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`signup failed: ${res.status} ${await res.text()}`);
+  }
+  const setCookie = res.headers.get("set-cookie") ?? "";
+  const match = setCookie.match(/at_session=([^;]+)/);
+  if (!match) {
+    throw new Error(`signup did not set a session cookie: ${setCookie}`);
+  }
+  sessionToken = match[1];
+}
+
+function authHeaders(): Record<string, string> {
+  return sessionToken ? { authorization: `Bearer ${sessionToken}` } : {};
+}
 
 /** Boot the FastAPI app the same way scripts/smoke-api.sh does and wait for health. */
 async function bootServer(): Promise<void> {
@@ -118,7 +151,7 @@ async function acquireIntradayPanel(attempts = 6): Promise<OrchestrateResult> {
     const sessionId = `intraday-it-${Date.now()}-${i}`;
     const res = await fetch(`${BASE}/api/orchestrate`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...authHeaders() },
       body: JSON.stringify({ query: TRIGGER, sessionId }),
     });
     if (!res.ok) continue;
@@ -169,11 +202,17 @@ const ACTIVE = /bg-white/; // active segment style adds "text-black bg-white bor
 describe("intraday chart in-panel controls (live)", () => {
   beforeAll(async () => {
     await bootServer();
+    await authenticate();
     setBaseUrl(BASE);
+    // The production <PanelContainer> issues its /api/refine calls through the
+    // generated client, which attaches `Authorization: Bearer <token>` from this
+    // getter — the same session token the manual orchestrate fetches use.
+    setAuthTokenGetter(() => sessionToken);
   }, 90_000);
 
   afterAll(() => {
     setBaseUrl(null);
+    setAuthTokenGetter(null);
     cleanup();
     if (server && server.exitCode == null) {
       server.kill("SIGTERM");

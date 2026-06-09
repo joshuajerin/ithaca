@@ -5,12 +5,12 @@ import json
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, Cookie, Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import agent, alerts, dashboard_store, dynamic_skills, feature_builder, harness, models, repo, skills, state, worker
+from . import agent, alerts, auth, auth_store, dashboard_store, dynamic_skills, feature_builder, harness, models, repo, skills, state, worker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,13 +39,144 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-api = APIRouter(prefix="/api")
+def require_identity(
+    session: str | None = Cookie(default=None, alias=auth.COOKIE_NAME),
+    authorization: str | None = Header(default=None),
+) -> auth.Identity:
+    """Resolve the authenticated caller from the session token or 401.
+
+    Attached to the protected API router so every business endpoint receives a
+    verified ``{user, firm, role}`` identity. Logged-out callers (no/invalid/
+    expired token) are rejected before any handler runs.
+
+    Browsers send the session as the httpOnly ``at_session`` cookie. Non-browser
+    clients (and test harnesses, which have no cookie jar) may instead present
+    the same session token as an ``Authorization: Bearer <token>`` header — the
+    generated API client already attaches it this way when a token getter is set.
+    The cookie takes precedence; both resolve through the same session lookup.
+    """
+    token = session
+    if not token and authorization:
+        scheme, _, value = authorization.partition(" ")
+        if scheme.lower() == "bearer" and value.strip():
+            token = value.strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    user_id = auth_store.get_session_user_id(auth.hash_token(token))
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    user = auth_store.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    firm = auth_store.get_firm(user["firmId"])
+    return auth.Identity(
+        user_id=user["id"],
+        firm_id=user["firmId"],
+        role=user["role"],
+        name=user["name"],
+        email=user["email"],
+        firm_name=firm["name"] if firm else "",
+    )
 
 
-@api.get("/healthz")
+# Public router — no authentication required (health check + the auth flow
+# itself). Kept separate from the protected `api` router below so logged-out
+# users can reach signup/login without already holding a session.
+public = APIRouter(prefix="/api")
+
+# Protected router — every route gets the identity dependency, so the whole
+# business API requires a valid session and resolves {user, firm, role}.
+api = APIRouter(prefix="/api", dependencies=[Depends(require_identity)])
+
+
+@public.get("/healthz")
 def healthz():
     from . import ai
     return {"status": "ok", "aiAvailable": ai.ai_available()}
+
+
+def _set_session_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=auth.COOKIE_NAME,
+        value=token,
+        max_age=auth.SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+
+
+@public.post("/auth/signup", response_model=models.AuthIdentity)
+def auth_signup(req: models.SignupRequest, response: Response):
+    """Create a firm and its first (admin) user, then start a session."""
+    firm_name = (req.firmName or "").strip()
+    name = (req.name or "").strip()
+    email = auth.normalize_email(req.email)
+    password = req.password or ""
+    if not firm_name or not name or not email or not password:
+        raise HTTPException(status_code=400, detail="All fields are required")
+    if "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(status_code=400, detail="Enter a valid email address")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if auth_store.email_exists(email):
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+
+    firm = auth_store.create_firm(firm_name)
+    pw_hash, pw_salt = auth.hash_password(password)
+    # The first user of a firm is its admin.
+    user = auth_store.create_user(
+        firm_id=firm["id"],
+        email=email,
+        name=name,
+        role="admin",
+        password_hash=pw_hash,
+        password_salt=pw_salt,
+    )
+    token = auth.new_session_token()
+    auth_store.create_session(auth.hash_token(token), user["id"], auth.SESSION_TTL_SECONDS)
+    _set_session_cookie(response, token)
+    return {
+        "user": {"id": user["id"], "name": user["name"], "email": user["email"], "role": user["role"]},
+        "firm": {"id": firm["id"], "name": firm["name"]},
+    }
+
+
+@public.post("/auth/login", response_model=models.AuthIdentity)
+def auth_login(req: models.LoginRequest, response: Response):
+    """Verify credentials and start a durable session."""
+    email = auth.normalize_email(req.email)
+    password = req.password or ""
+    user = auth_store.get_user_by_email(email)
+    if not user or not auth.verify_password(password, user["passwordHash"], user["passwordSalt"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    firm = auth_store.get_firm(user["firmId"])
+    token = auth.new_session_token()
+    auth_store.create_session(auth.hash_token(token), user["id"], auth.SESSION_TTL_SECONDS)
+    _set_session_cookie(response, token)
+    return {
+        "user": {"id": user["id"], "name": user["name"], "email": user["email"], "role": user["role"]},
+        "firm": {"id": firm["id"], "name": firm["name"]} if firm else {"id": user["firmId"], "name": ""},
+    }
+
+
+@public.post("/auth/logout", response_model=models.LogoutResult)
+def auth_logout(
+    response: Response,
+    session: str | None = Cookie(default=None, alias=auth.COOKIE_NAME),
+):
+    """Invalidate the current session and clear the cookie."""
+    if session:
+        auth_store.delete_session(auth.hash_token(session))
+    response.delete_cookie(key=auth.COOKIE_NAME, path="/")
+    return {"ok": True}
+
+
+@public.get("/auth/user", response_model=models.AuthIdentity)
+def auth_user(identity: auth.Identity = Depends(require_identity)):
+    """Return the current user/firm/role, or 401 when not authenticated."""
+    return identity.to_payload()
 
 
 @api.get("/skills", response_model=models.SkillCatalog)
@@ -113,10 +244,18 @@ def default_dashboard():
 
 
 @api.post("/orchestrate", response_model=models.DashboardSpec)
-def orchestrate(req: models.OrchestrationRequest):
+def orchestrate(
+    req: models.OrchestrationRequest,
+    identity: auth.Identity = Depends(require_identity),
+):
     if not req.query or not req.query.strip():
         raise HTTPException(status_code=400, detail="query is required")
-    return agent.orchestrate(req.query.strip(), req.sessionId, voice=bool(req.voice))
+    result = agent.orchestrate(req.query.strip(), req.sessionId, voice=bool(req.voice))
+    # Tie this session to the authenticated user/firm (foundation for isolation).
+    sid = result.get("sessionId") if isinstance(result, dict) else None
+    if sid:
+        state.set_session_owner(sid, identity.user_id, identity.firm_id)
+    return result
 
 
 @api.get("/dashboards", response_model=models.SavedDashboardList)
@@ -170,7 +309,10 @@ def delete_saved_dashboard(dashboard_id: str):
 
 
 @api.post("/orchestrate/stream")
-def orchestrate_stream(req: models.OrchestrationRequest):
+def orchestrate_stream(
+    req: models.OrchestrationRequest,
+    identity: auth.Identity = Depends(require_identity),
+):
     """Stream a Console reply as Server-Sent Events.
 
     A conversational *question* streams as ``{"type":"delta","text":...}`` events
@@ -187,6 +329,12 @@ def orchestrate_stream(req: models.OrchestrationRequest):
             for event in agent.orchestrate_stream(
                 req.query.strip(), req.sessionId, voice=bool(req.voice)
             ):
+                # Tie the session to the authenticated user/firm once its id is known.
+                if isinstance(event, dict) and event.get("type") == "done":
+                    result = event.get("result") or {}
+                    sid = result.get("sessionId")
+                    if sid:
+                        state.set_session_owner(sid, identity.user_id, identity.firm_id)
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as exc:  # noqa: BLE001
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
@@ -710,4 +858,5 @@ def remove_watch(symbol: str):
     return _compliance_payload()
 
 
+app.include_router(public)
 app.include_router(api)

@@ -9,3 +9,4 @@ export * from "./news";
 export * from "./sentiment";
 export * from "./strategies";
 export * from "./orderbook";
+export * from "./auth";

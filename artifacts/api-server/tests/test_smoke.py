@@ -102,12 +102,30 @@ def test_endpoints_round_trip():
     worker.start = _noop_worker  # type: ignore[assignment]
     worker.stop = _noop_worker  # type: ignore[assignment]
     try:
-        with TestClient(app) as client:
+        # The session cookie is ``secure``; use https so the TestClient jar
+        # replays it (otherwise the authed orchestrate probe would 401).
+        with TestClient(app, base_url="https://testserver") as client:
             health = client.get("/api/healthz")
             assert health.status_code == 200, (
                 f"healthz returned {health.status_code}: {health.text[:300]}"
             )
             assert health.json().get("status") == "ok"
+
+            # orchestrate is a protected route now: establish a session first.
+            import uuid
+
+            signup = client.post(
+                "/api/auth/signup",
+                json={
+                    "firmName": "Smoke Co",
+                    "name": "Smoke Test",
+                    "email": f"smoke-{uuid.uuid4().hex[:12]}@example.com",
+                    "password": "password123",
+                },
+            )
+            assert signup.status_code == 200, (
+                f"signup returned {signup.status_code}: {signup.text[:300]}"
+            )
 
             chat = client.post(
                 "/api/orchestrate",

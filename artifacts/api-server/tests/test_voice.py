@@ -50,17 +50,36 @@ async def _noop_worker(*_args, **_kwargs):
 
 @contextmanager
 def _client():
-    """A TestClient with the background data worker neutralized.
+    """An authenticated TestClient with the background data worker neutralized.
 
     The staggered network-ingestion loops are irrelevant to the voice endpoints
     and would make the tests slow/flaky; endpoints answer from already-ingested
     rows or the deterministic mock fallback either way. The real lifespan still
     runs (dynamic-skill loading, worker wiring) so import-time breakage surfaces.
+
+    The voice endpoints (/api/speak, /api/orchestrate) are behind the auth gate,
+    so the client signs up a throwaway firm first to obtain a session. The base
+    URL is https so the ``secure`` session cookie is replayed on later requests
+    (over plain http the cookie jar would hold it but never send it back).
     """
+    import uuid
+
     from fastapi.testclient import TestClient
 
     with _patched(worker, "start", _noop_worker), _patched(worker, "stop", _noop_worker):
-        with TestClient(app) as client:
+        with TestClient(app, base_url="https://testserver") as client:
+            signup = client.post(
+                "/api/auth/signup",
+                json={
+                    "firmName": "Voice Co",
+                    "name": "Voice Test",
+                    "email": f"voice-{uuid.uuid4().hex[:12]}@example.com",
+                    "password": "password123",
+                },
+            )
+            assert signup.status_code == 200, (
+                f"voice test signup failed: {signup.status_code} {signup.text[:200]}"
+            )
             yield client
 
 
@@ -70,7 +89,7 @@ def test_speak_returns_base64_audio_payload():
     fake_audio = b"\x00\x01FAKE-MP3-BYTES\xff"
     captured = {}
 
-    def fake_speak(text, voice=None, fmt="mp3"):
+    def fake_speak(text, voice=None, speed=None, fmt="mp3"):
         captured["text"] = text
         captured["voice"] = voice
         return fake_audio
@@ -173,14 +192,18 @@ def test_orchestrate_voice_returns_narration_segments():
     narration = body.get("narration")
     assert isinstance(narration, list) and narration, f"missing narration: {body}"
 
-    # First segment is a spoken lead-in tied to no panel.
-    lead = narration[0]
-    assert lead.get("panelId") is None, f"lead-in must have no panelId: {lead}"
-    assert lead.get("text"), "lead-in segment must have spoken text"
+    # The narration opens with one or more spoken lead-ins tied to no panel.
+    # (With the AI client forced unavailable the build is "degraded", which
+    # prepends a notice lead-in ahead of the summary lead-in — both panel-less.)
+    assert narration[0].get("panelId") is None, f"must open with a lead-in: {narration[0]}"
+    assert any(
+        s.get("panelId") is None and s.get("text", "").strip() for s in narration
+    ), "at least one spoken lead-in segment is required"
 
-    # Remaining segments map onto real panels, in panel order.
+    # Every panel gets exactly one segment, in panel order — the panel-bound
+    # segments (ignoring any panel-less lead-ins) map onto the built panels.
     panel_ids = [p["id"] for p in panels]
-    seg_panel_ids = [s.get("panelId") for s in narration[1:]]
+    seg_panel_ids = [s.get("panelId") for s in narration if s.get("panelId") is not None]
     assert seg_panel_ids == panel_ids, (
         f"per-panel narration must follow panel order: {seg_panel_ids} vs {panel_ids}"
     )

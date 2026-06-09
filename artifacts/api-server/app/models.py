@@ -1700,3 +1700,37 @@ class Watchlist(BaseModel):
 
 class WatchlistInput(BaseModel):
     symbol: str
+
+
+# --- auth, firms & roles ---
+class SignupRequest(BaseModel):
+    firmName: str
+    name: str
+    email: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class AuthUser(BaseModel):
+    id: str
+    name: str
+    email: str
+    role: str
+
+
+class AuthFirm(BaseModel):
+    id: str
+    name: str
+
+
+class AuthIdentity(BaseModel):
+    user: AuthUser
+    firm: AuthFirm
+
+
+class LogoutResult(BaseModel):
+    ok: bool
