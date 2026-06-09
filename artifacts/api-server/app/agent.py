@@ -553,6 +553,25 @@ def _tools() -> list:
             }, "required": ["symbol"]},
         }},
         {"type": "function", "function": {
+            "name": "add_options_screener",
+            "description": f"Scan a whole universe (the tracked watchlist, or a sector/market) for options contracts matching filters, and rank the matches in one table. {sizing} Use for cross-symbol options screens like 'find high-IV calls', 'cheapest puts across tech', 'unusual options volume', 'scan for options expiring within 30 days', 'widest skew names'. NOT for a single ticker's chain (use add_options_chain) or a single strategy payoff (use add_options_strategy).",
+            "parameters": {"type": "object", "properties": {
+                "sector": {"type": "string", "description": "Optional sector to scope the scan (e.g. semiconductors, energy). Omit to scan the watchlist."},
+                "country": {"type": "string", "description": "Optional market filter: 'United States' or 'Singapore'."},
+                "exchange": {"type": "string", "description": "Optional exchange filter: 'NASDAQ'/'NYSE'/'SGX'."},
+                "option_type": {"type": "string", "description": "call, put, or all (default)."},
+                "iv_min": {"type": "number", "description": "Minimum implied vol in percent (e.g. 40)."},
+                "iv_max": {"type": "number", "description": "Maximum implied vol in percent."},
+                "dte_min": {"type": "number", "description": "Minimum days to expiry."},
+                "dte_max": {"type": "number", "description": "Maximum days to expiry."},
+                "moneyness": {"type": "string", "description": "all (default), otm, itm, or atm."},
+                "volume_min": {"type": "number", "description": "Minimum contract volume."},
+                "oi_min": {"type": "number", "description": "Minimum open interest."},
+                "rank_by": {"type": "string", "description": "Ranking metric: iv (default), volume, oi, cheap, or skew."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": []},
+        }},
+        {"type": "function", "function": {
             "name": "add_options_strategy",
             "description": f"Add an options strategy payoff diagram with Greeks. {sizing} Use for options trades, straddles, condors, spreads etc.",
             "parameters": {"type": "object", "properties": {
@@ -850,6 +869,7 @@ _TOOL_TO_TYPE = {
     "add_shorting_desk": "shorting_desk",
     "add_iv_surface": "iv_surface",
     "add_options_chain": "options_chain",
+    "add_options_screener": "options_screener",
     "add_options_strategy": "options_strategy",
     "add_vol_term_structure": "vol_term_structure",
     "add_structured_product": "structured_product",
@@ -921,6 +941,10 @@ def _system_prompt() -> str:
         "semiconductors', 'Singapore banks'), pass country ('United States'/'Singapore') and/or "
         "exchange ('NASDAQ'/'NYSE'/'SGX') to add_screener / add_heatmap, combined with sector when given.\n"
         "- For derivatives requests: vol surface → add_iv_surface; options chain/calls and puts/all strikes → add_options_chain; "
+        "cross-symbol options SCREEN/scan ('find/scan/screen options across names', 'high-IV calls', "
+        "'cheapest puts in tech', 'unusual options volume', 'options expiring within N days', 'widest skew') "
+        "→ add_options_screener (optionally pass sector/country/exchange and filters like iv_min, dte_max, "
+        "option_type, moneyness, rank_by); "
         "options strategy → add_options_strategy; "
         "VIX/vol curve → add_vol_term_structure; barrier/exotic → add_structured_product.\n"
         "- For macro and fixed income: global view → add_macro_dashboard; single-country yield curve → add_yield_curve; "
@@ -2680,6 +2704,7 @@ _TYPE_LABELS = {
     "shorting_desk": "a shorting desk (borrow cost, financing & margin)",
     "iv_surface": "an IV surface",
     "options_chain": "an options chain",
+    "options_screener": "an options screener",
     "options_strategy": "an options strategy",
     "vol_term_structure": "a vol term structure",
     "structured_product": "a structured product pricer",
@@ -3043,6 +3068,47 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
                 params["symbol" if "symbol" in prop_names else "ticker"] = symbols[0]
             add(d["panel_type"], params, 12, 5)
             return panels, f"Added the {d['name']} panel."
+
+    # Cross-symbol options screen/scan. Detected EARLY (before compliance/trade_flow/
+    # equity-screener) so words like "watchlist" or "unusual" don't divert a clear
+    # options screen, and before the single-symbol chain/strategy intents below.
+    wants_opt_screen = (
+        any(k in q for k in ["options screen", "option screen", "options screener",
+                             "option screener", "screen options", "screen for options",
+                             "scan options", "scan for options", "options scan",
+                             "unusual options", "unusual option"])
+        or (any(k in q for k in ["option", "options", "calls", "puts"])
+            and any(k in q for k in ["screen", "scan", "find", "search for", "look for",
+                                     "across", "universe", "watchlist", "which names",
+                                     "cheapest", "highest iv", "high iv", "widest skew"]))
+    )
+    if wants_opt_screen:
+        sp: dict = {}
+        if sector:
+            sp["sector"] = sector
+        elif market:
+            if market.get("country"):
+                sp["country"] = market["country"]
+            if market.get("exchange"):
+                sp["exchange"] = market["exchange"]
+        if "put" in q and "call" not in q:
+            sp["option_type"] = "put"
+        elif "call" in q and "put" not in q:
+            sp["option_type"] = "call"
+        if "cheap" in q:
+            sp["rank_by"] = "cheap"
+        elif "skew" in q:
+            sp["rank_by"] = "skew"
+        elif "volume" in q or "unusual" in q or "active" in q:
+            sp["rank_by"] = "volume"
+        elif "open interest" in q:
+            sp["rank_by"] = "oi"
+        m = re.search(r"(\d+)\s*day", q)
+        if m:
+            sp["dte_max"] = float(m.group(1))
+        add("options_screener", sp, 12, 6)
+        scope_label = repo.sector_name(sector) if sector else "your watchlist"
+        return panels, f"Options screener across {scope_label} — contracts ranked by your filters with per-row provenance."
 
     wants_compare = any(k in q for k in ["compare", "vs", "versus", "against"]) or len(symbols) >= 2
     wants_news = "news" in q or "headline" in q or "happening" in q
@@ -4443,6 +4509,39 @@ def _refine_params_heuristic(panel_type: str, panel: dict, instruction: str) -> 
         exp = _extract_expiry(instruction)
         if exp:
             params["expiry"] = exp
+        return params
+    if panel_type == "options_screener":
+        ql = instruction.lower()
+        params = dict(panel.get("data", {}).get("filters") or {})
+        # carry the current universe forward
+        d = panel.get("data") or {}
+        if sector:
+            params["sector"] = sector
+        if "put" in ql and "call" not in ql:
+            params["optionType"] = "put"
+        elif "call" in ql and "put" not in ql:
+            params["optionType"] = "call"
+        elif "all" in ql and ("type" in ql or "call" in ql or "put" in ql):
+            params["optionType"] = "all"
+        if "cheap" in ql:
+            params["rankBy"] = "cheap"
+        elif "skew" in ql:
+            params["rankBy"] = "skew"
+        elif "volume" in ql or "unusual" in ql or "active" in ql:
+            params["rankBy"] = "volume"
+        elif "open interest" in ql:
+            params["rankBy"] = "oi"
+        elif "high iv" in ql or "highest iv" in ql or "implied vol" in ql:
+            params["rankBy"] = "iv"
+        for band in ("otm", "itm", "atm"):
+            if band in ql:
+                params["moneyness"] = band
+        m = re.search(r"(\d+)\s*day", ql)
+        if m:
+            params["dteMax"] = float(m.group(1))
+        m = re.search(r"iv\s*(?:over|above|>|min|of)?\s*(\d+)", ql)
+        if m:
+            params["ivMin"] = float(m.group(1))
         return params
     if panel_type == "options_strategy" and syms:
         return {"symbol": syms[0], "strategy": _extract_strategy(instruction)}

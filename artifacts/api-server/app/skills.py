@@ -2961,6 +2961,234 @@ def build_options_chain(params: dict) -> dict:
     }
 
 
+# ----------------------------- options screener -----------------------------
+_OPT_SCREEN_EXPIRY_LABELS = ["1W", "2W", "1M", "2M", "3M", "6M", "1Y"]
+_OPT_SCREEN_EXPIRY_DAYS = [7, 14, 30, 60, 90, 180, 365]
+# Cap the scanned universe so a full multi-symbol contract sweep stays within
+# the preview proxy's response window.
+_OPT_SCREEN_MAX_SCAN = 14
+
+_OPT_RANK_ALIASES = {
+    "iv": "iv", "high iv": "iv", "highest iv": "iv", "implied vol": "iv",
+    "rich": "iv", "expensive": "iv",
+    "volume": "volume", "vol": "volume", "unusual": "volume", "active": "volume",
+    "oi": "oi", "open interest": "oi",
+    "cheap": "cheap", "cheapest": "cheap", "premium": "cheap", "low premium": "cheap",
+    "skew": "skew", "wide skew": "skew",
+}
+_OPT_RANK_LABELS = {
+    "iv": "Highest IV", "volume": "Top Volume", "oi": "Top Open Interest",
+    "cheap": "Cheapest Premium", "skew": "Widest Skew",
+}
+
+
+def _opt_screen_rank(raw) -> str:
+    if not raw:
+        return "iv"
+    return _OPT_RANK_ALIASES.get(str(raw).strip().lower().replace("_", " "), "iv")
+
+
+def _opt_screen_type(raw) -> str:
+    if not raw:
+        return "all"
+    r = str(raw).strip().lower()
+    if r in ("call", "calls", "c"):
+        return "call"
+    if r in ("put", "puts", "p"):
+        return "put"
+    return "all"
+
+
+def _opt_screen_moneyness(raw) -> str:
+    if not raw:
+        return "all"
+    r = str(raw).strip().lower().replace("-", "").replace(" ", "").replace("_", "")
+    if r in ("otm", "outofthemoney"):
+        return "otm"
+    if r in ("itm", "inthemoney"):
+        return "itm"
+    if r in ("atm", "atthemoney", "near", "nearthemoney"):
+        return "atm"
+    return "all"
+
+
+def _moneyness_ok(band: str, opt_type: str, K: float, S: float) -> bool:
+    """Directional ITM/OTM/ATM test for a contract relative to spot."""
+    if band == "all" or not S:
+        return True
+    rel = K / S - 1.0
+    if band == "atm":
+        return abs(rel) <= 0.05
+    if opt_type == "call":
+        return rel > 0 if band == "otm" else rel < 0
+    # put
+    return rel < 0 if band == "otm" else rel > 0
+
+
+def _opt_screen_filters(params: dict) -> dict:
+    def g(*keys, default=None):
+        for k in keys:
+            v = params.get(k)
+            if v is not None and v != "":
+                return v
+        return default
+
+    def num(*keys, default=None):
+        v = g(*keys)
+        if v is None or v == "":
+            return default
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return default
+
+    limit = int(num("limit", default=40) or 40)
+    return {
+        "iv_min": num("iv_min", "ivMin", default=0.0) or 0.0,
+        "iv_max": num("iv_max", "ivMax"),
+        "dte_min": num("dte_min", "dteMin", default=0.0) or 0.0,
+        "dte_max": num("dte_max", "dteMax"),
+        "vol_min": num("volume_min", "volMin", "volumeMin", default=0.0) or 0.0,
+        "oi_min": num("oi_min", "oiMin", default=0.0) or 0.0,
+        "option_type": _opt_screen_type(g("option_type", "optionType", "type")),
+        "moneyness": _opt_screen_moneyness(g("moneyness")),
+        "rank_by": _opt_screen_rank(g("rank_by", "rankBy", "rank")),
+        "limit": max(1, min(100, limit)),
+    }
+
+
+def _opt_screen_sort(rows: list, rank_by: str) -> list:
+    if rank_by == "volume":
+        key = lambda r: r["volume"]
+    elif rank_by == "oi":
+        key = lambda r: r["oi"]
+    elif rank_by == "cheap":
+        # Cheapest premium first; tie-break on volume so liquid names surface.
+        return sorted(rows, key=lambda r: (r["mid"], -r["volume"]))
+    elif rank_by == "skew":
+        key = lambda r: r["skew"]
+    else:  # iv
+        key = lambda r: r["iv"]
+    return sorted(rows, key=key, reverse=True)
+
+
+def build_options_screener(params: dict) -> dict:
+    """Scan a universe (watchlist or sector/market) for options matching filters.
+
+    Reuses the single-symbol chain's grounded-synthetic contract generation
+    (BS mid + smile IV + deterministic bid/ask/volume/OI) across every name in
+    the universe, applies IV / days-to-expiry / moneyness / type / volume / OI
+    filters, then ranks the survivors. Provenance is carried honestly per row.
+    """
+    f = _opt_screen_filters(params)
+    sid, country, exchange = _market_filter(params)
+    if sid or country or exchange:
+        syms = repo.symbols_by_market(sid, country, exchange)
+        universe_label = _market_title(sid, country, exchange, "Universe", "Market")
+    else:
+        syms = repo.prompt_symbols(_OPT_SCREEN_MAX_SCAN)
+        universe_label = "Watchlist"
+
+    scan = syms[:_OPT_SCREEN_MAX_SCAN]
+    bulk = repo.companies_bulk(scan)
+    r = 0.05
+    rows: list = []
+    used: list = []
+    scanned = 0
+    for s in scan:
+        c = bulk.get(s)
+        if not c or not c.get("price"):
+            continue
+        scanned += 1
+        used.append(c)
+        S = c["price"]
+        beta = c.get("beta") or 1.0
+        base_iv = max(0.15, min(0.80, 0.18 + beta * 0.09 + abs(c.get("changePct") or 0.0) * 0.005))
+        step = _strike_step(S)
+        atm = round(S / step) * step
+        n = 8
+        strikes = [k for k in (round(atm + i * step, 2) for i in range(-n, n + 1)) if k > 0]
+        src = c.get("_source")
+        as_of = c.get("_asOf")
+        types = ("call", "put") if f["option_type"] == "all" else (f["option_type"],)
+        for label, days in zip(_OPT_SCREEN_EXPIRY_LABELS, _OPT_SCREEN_EXPIRY_DAYS):
+            if days < f["dte_min"]:
+                continue
+            if f["dte_max"] is not None and days > f["dte_max"]:
+                continue
+            T = days / 365.0
+            atm_iv = round(_iv_smile(0.0, T, base_iv) * 100, 2)
+            for K in strikes:
+                m = math.log(K / S)
+                iv = _iv_smile(m, T, base_iv)
+                for opt_type in types:
+                    if not _moneyness_ok(f["moneyness"], opt_type, K, S):
+                        continue
+                    mid = _bs_price(S, K, T, r, iv, opt_type)
+                    # Drop untradeable contracts: a sub-penny mid means no real
+                    # market, and ranking by "cheapest" on $0.00 is meaningless.
+                    if mid < 0.05:
+                        continue
+                    q = _opt_quote(S, K, days, iv, mid, opt_type)
+                    iv_pct = q["iv"]
+                    if iv_pct < f["iv_min"]:
+                        continue
+                    if f["iv_max"] is not None and iv_pct > f["iv_max"]:
+                        continue
+                    if q["volume"] < f["vol_min"] or q["oi"] < f["oi_min"]:
+                        continue
+                    rows.append({
+                        "symbol": s,
+                        "name": c.get("name") or s,
+                        "expiry": label,
+                        "dte": days,
+                        "strike": K,
+                        "type": opt_type,
+                        "iv": iv_pct,
+                        "mid": round(mid, 2),
+                        "bid": q["bid"],
+                        "ask": q["ask"],
+                        "last": q["last"],
+                        "volume": q["volume"],
+                        "oi": q["oi"],
+                        "moneyness": round((K / S - 1.0) * 100, 2),
+                        "skew": round(iv_pct - atm_iv, 2),
+                        "source": src,
+                        "asOf": as_of,
+                    })
+
+    matched = len(rows)
+    rows = _opt_screen_sort(rows, f["rank_by"])[: f["limit"]]
+
+    return {
+        "universeLabel": universe_label,
+        "rows": rows,
+        "rankBy": f["rank_by"],
+        "rankLabel": _OPT_RANK_LABELS.get(f["rank_by"], "Highest IV"),
+        "filters": {
+            "ivMin": f["iv_min"],
+            "ivMax": f["iv_max"],
+            "dteMin": f["dte_min"],
+            "dteMax": f["dte_max"],
+            "volumeMin": f["vol_min"],
+            "oiMin": f["oi_min"],
+            "optionType": f["option_type"],
+            "moneyness": f["moneyness"],
+            "limit": f["limit"],
+            # Carry the resolved universe scope so in-panel refines re-run on the
+            # SAME universe instead of silently reverting to the watchlist.
+            "sector": sid,
+            "country": country,
+            "exchange": exchange,
+        },
+        "scanned": scanned,
+        "matched": matched,
+        "shown": len(rows),
+        "asOf": repo.as_of(*used),
+        "source": repo.source_of(*used),
+    }
+
+
 def _parse_strategy(query: str) -> str:
     """Map natural-language or param to a canonical strategy name."""
     q = query.lower().replace("-", " ").replace("_", " ")
@@ -7783,6 +8011,20 @@ _reg(SkillDef(
         {"name": "price_contracts", "description": "Price each call and put with Black-Scholes and synthesize bid/ask, IV, volume and OI per expiry.", "expectedOutput": "A calls-and-puts chain for every expiry."},
     ],
     build_options_chain, "Options Chain",
+))
+_reg(SkillDef(
+    "options-screener", "Options Screener", "options_screener",
+    "Scans a whole universe — the tracked watchlist or a sector/market — for options contracts "
+    "matching filters (IV range, days-to-expiry range, moneyness, call/put, volume and open-interest "
+    "thresholds) and ranks the matches in one table (by IV, volume, open interest, cheapest premium, "
+    "or widest skew). Use for cross-symbol options screens: 'find high-IV calls', 'cheapest puts in "
+    "tech', 'unusual options volume', 'options expiring within 30 days', 'widest skew names'.",
+    [
+        {"name": "resolve_universe", "description": "Resolve the watchlist or sector/market universe to scan.", "expectedOutput": "A capped list of tickers."},
+        {"name": "generate_contracts", "description": "Price each name's chain (BS mid + smile IV + synthesized bid/ask/volume/OI).", "expectedOutput": "Grounded-synthetic contracts per symbol."},
+        {"name": "filter_and_rank", "description": "Apply the IV/DTE/moneyness/type/volume/OI filters and rank the survivors.", "expectedOutput": "A ranked table of matching contracts with per-row provenance."},
+    ],
+    build_options_screener, "Options Screener",
 ))
 _reg(SkillDef(
     "options-strategy", "Options Strategy Builder", "options_strategy",

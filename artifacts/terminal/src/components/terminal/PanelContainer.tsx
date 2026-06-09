@@ -39,6 +39,7 @@ import { SignalPortfolioPanel } from "./panels/SignalPortfolioPanel";
 import { CombinedAlphaPanel } from "./panels/CombinedAlphaPanel";
 import { IVSurfacePanel } from "./panels/IVSurfacePanel";
 import { OptionsChainPanel } from "./panels/OptionsChainPanel";
+import { OptionsScreenerPanel } from "./panels/OptionsScreenerPanel";
 import { OptionsStrategyPanel } from "./panels/OptionsStrategyPanel";
 import { VolTermStructurePanel } from "./panels/VolTermStructurePanel";
 import { StructuredProductPanel } from "./panels/StructuredProductPanel";
@@ -328,6 +329,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted, onBui
       case "combined_alpha": return <CombinedAlphaPanel data={panel.data as any} />;
       case "iv_surface": return <IVSurfacePanel data={panel.data as any} onCellSelect={onBuildOption} />;
       case "options_chain": return <OptionsChainPanel data={panel.data as any} />;
+      case "options_screener": return <OptionsScreenerPanel data={panel.data as any} onRefine={handleRefineParamsLive} pending={paramRefineMutation.isPending} />;
       case "options_strategy": return <OptionsStrategyPanel data={panel.data as any} />;
       case "vol_term_structure": return <VolTermStructurePanel data={panel.data as any} />;
       case "structured_product": return <StructuredProductPanel data={panel.data as any} />;
