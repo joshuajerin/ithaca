@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import type { Panel } from "@workspace/api-client-react";
 import { useRefinePanel } from "@workspace/api-client-react";
 import { Loader2, AlertTriangle, Settings2, Download, FileText, Table2, Satellite } from "lucide-react";
@@ -103,6 +103,55 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted, onBui
 
   const refineMutation = useRefinePanel();
   const paramRefineMutation = useRefinePanel();
+  const pollMutation = useRefinePanel();
+
+  // Auto-refresh a panel stuck in the "fetching live data" state. When a user
+  // asks for a ticker the backend hasn't ingested yet, the builder returns a
+  // pending envelope and the on-demand worker fetches the real data ~15s later.
+  // Rather than make the user ask again, poll the panel's own data on a short
+  // interval and swap it in the moment live data lands. Uses a dedicated
+  // mutation so the poll never flips the panel into the "Processing" spinner.
+  const isPending = !!(panel.data as any)?.pending;
+  const onRefinedRef = useRef(onRefined);
+  onRefinedRef.current = onRefined;
+  useEffect(() => {
+    if (!isPending) return;
+    const symbol = (panel.data as any)?.symbol;
+    if (!symbol) return;
+    const range = (panel.data as any)?.range;
+    const POLL_MS = 5000;
+    const MAX_MS = 60000;
+    const start = Date.now();
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const poll = async () => {
+      if (cancelled || Date.now() - start > MAX_MS) return;
+      try {
+        const params: Record<string, unknown> = { symbol };
+        if (range) params.range = range;
+        const result = await pollMutation.mutateAsync({
+          data: { sessionId, panelId: panel.id, params },
+        });
+        if (cancelled) return;
+        onRefinedRef.current(result);
+        if ((result?.data as any)?.pending) {
+          timer = setTimeout(poll, POLL_MS);
+        }
+      } catch {
+        if (!cancelled) timer = setTimeout(poll, POLL_MS);
+      }
+    };
+
+    timer = setTimeout(poll, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // Depend only on primitives so a fresh `data` ref each poll doesn't restart
+    // the timer; the loop self-schedules and stops once data is no longer pending.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPending, panel.id, sessionId]);
 
   const handleExportCsv = () => {
     setExportOpen(false);
@@ -234,7 +283,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted, onBui
             Fetching live data{sym ? ` · ${sym}` : ""}
           </span>
           <span className="text-[10px] text-muted-foreground/70 max-w-[220px] leading-snug">
-            Live feed is warming up for this ticker — ask again in a moment and it will populate.
+            Live feed is warming up for this ticker — this panel will fill in automatically.
           </span>
         </div>
       );
