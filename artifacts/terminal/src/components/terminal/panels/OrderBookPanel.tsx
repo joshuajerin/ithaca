@@ -26,6 +26,12 @@ export function OrderBookPanel({ data }: { data: any }) {
   // Events at or before the current frame are "passed" — highlight them.
   const currentPos = hasReplay ? index / Math.max(1, frames.length - 1) : 1;
 
+  // Real-vs-simulated provenance. `replayReal` is true only when frames were
+  // reconstructed from a real IEX DEEP capture; otherwise depth is simulated.
+  const replayReal = data.replayReal === true;
+  const session: string | undefined = data.session;
+  const coverage: string | undefined = data.coverage;
+
   return (
     <div className="flex flex-col h-full gap-3">
       <div className="flex items-center justify-between shrink-0">
@@ -45,6 +51,28 @@ export function OrderBookPanel({ data }: { data: any }) {
             ${frame.spread.toFixed(2)}
           </div>
         </div>
+      </div>
+
+      <div className="shrink-0 flex items-center gap-2 text-[10px] -mt-1">
+        <span
+          className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-semibold uppercase tracking-wide ${
+            replayReal
+              ? "bg-emerald-500/15 text-emerald-300"
+              : "bg-amber-500/15 text-amber-300"
+          }`}
+        >
+          <span
+            className={`inline-block h-1.5 w-1.5 rounded-full ${
+              replayReal ? "bg-emerald-400" : "bg-amber-400"
+            }`}
+          />
+          {replayReal ? "Real" : "Simulated"}
+        </span>
+        <span className="text-muted-foreground truncate">
+          {replayReal
+            ? `IEX DEEP · venue-only · T+1${session ? ` · ${session}` : ""}`
+            : coverage || "Simulated depth — real IEX DEEP replay loading"}
+        </span>
       </div>
 
       <div className="grid grid-cols-2 gap-2 flex-1 min-h-0">

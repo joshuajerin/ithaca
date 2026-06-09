@@ -29,7 +29,8 @@ import logging
 import random
 import threading
 import time
-from typing import Callable, Optional, TypeVar
+from contextlib import contextmanager
+from typing import Callable, Iterator, Optional, TypeVar
 
 import httpx
 
@@ -211,6 +212,47 @@ def request(
             raise
 
     _open_and_raise(breaker, source, last_exc or ThrottleError(source))
+
+
+@contextmanager
+def stream(
+    source: str,
+    url: str,
+    *,
+    params: Optional[dict] = None,
+    headers: Optional[dict] = None,
+    timeout: Optional[httpx.Timeout] = None,
+    follow_redirects: bool = True,
+) -> Iterator[httpx.Response]:
+    """Open a streaming GET, breaker-guarded, yielding the live ``httpx.Response``.
+
+    For very large downloads (e.g. multi-GB IEX HIST captures) the body is read
+    incrementally by the caller via ``resp.iter_bytes(...)``, so we deliberately
+    do NOT retry mid-stream — a connection drop part-way is surfaced as a normal
+    exception for the caller to abandon and retry from scratch. The per-source
+    breaker still applies so a source that keeps failing connection setup backs
+    off like any other.
+    """
+    breaker = _breaker(source)
+    breaker.check()
+    try:
+        with httpx.Client(timeout=timeout, headers=headers,
+                          follow_redirects=follow_redirects) as client:
+            with client.stream("GET", url, params=params) as resp:
+                if _is_throttle_status(resp.status_code):
+                    cooldown = breaker.on_throttle()
+                    if cooldown:
+                        throttle_log.warning(
+                            "circuit opened for %s: cooling down %.0fs (stream HTTP %s)",
+                            source, cooldown, resp.status_code,
+                        )
+                    raise ThrottleError(f"{source} HTTP {resp.status_code}")
+                resp.raise_for_status()
+                breaker.on_success()
+                yield resp
+    except (httpx.TransportError, httpx.TimeoutException) as exc:
+        breaker.on_throttle()
+        raise ThrottleError(f"{source} stream failed: {exc}") from exc
 
 
 def guard(source: str, fn: Callable[..., T], *args) -> T:

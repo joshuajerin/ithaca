@@ -11,7 +11,8 @@ import uuid
 from datetime import date, timedelta
 from typing import Callable, Dict, List, Optional
 
-from . import ai, cache, data, db, engine, factor_model, quality, repo
+from . import ai, cache, data, db, engine, factor_model, orderbook_store, quality, repo
+from .sources import iex_deep
 from .sources import prices as p_src
 from .sources import rates as rates_src
 
@@ -582,8 +583,79 @@ def build_order_book(params: dict) -> dict:
         return {
             "symbol": symbol, "name": symbol, "lastPrice": 0.0, "spread": 0.0,
             "bids": [], "asks": [], "tape": [], "pending": True,
-            "asOf": None, "source": "pending",
+            "asOf": None, "source": "pending", "replayReal": False,
         }
+
+    # 1. Serve a cached REAL IEX DEEP replay when one has been reconstructed.
+    replay = orderbook_store.latest_replay(symbol)
+    if replay and replay.get("payload"):
+        payload = dict(replay["payload"])
+        payload["name"] = company["name"]
+        _select_order_book_frame(payload, params.get("timestamp"))
+        payload["replayReal"] = True
+        payload["venue"] = "IEX"
+        payload["session"] = replay.get("session") or payload.get("session")
+        payload["asOf"] = replay.get("asOf") or replay.get("session")
+        payload["source"] = replay.get("source") or "IEX DEEP (venue-only, T+1)"
+        return payload
+
+    # 2. No real replay yet: enqueue a background reconstruction and return a
+    #    clearly-labelled synthetic fallback for this turn.
+    status = orderbook_store.request_job(symbol)
+    syn = _synthetic_order_book(symbol, company, params)
+    syn["replayReal"] = False
+    syn["venue"] = "simulated"
+    syn["session"] = iex_deep.latest_session_date()
+    if status == "unavailable":
+        syn["source"] = "simulated — IEX published no DEEP depth for this symbol"
+        syn["coverage"] = (
+            "Simulated depth — IEX carried no order-book activity for this name on "
+            "the last session, so no real replay is available."
+        )
+    else:
+        syn["source"] = "simulated — real IEX DEEP replay loading"
+        syn["coverage"] = (
+            "Simulated depth — reconstructing the real IEX DEEP (venue-only, T+1) "
+            "replay in the background; re-ask in a few minutes for real frames."
+        )
+    return syn
+
+
+def _select_order_book_frame(payload: dict, requested: Optional[str]) -> None:
+    """Point the top-level snapshot at the frame nearest ``requested`` ("HH:MM"),
+    or the latest (live) frame when absent — mirrors the synthetic selector so a
+    real replay scrubs identically."""
+    frames = payload.get("frames") or []
+    if not frames:
+        return
+    n = len(frames)
+    sel = n - 1
+    if requested:
+        try:
+            rh, rm = str(requested).split(":")[:2]
+            rmin = int(rh) * 60 + int(rm)
+
+            def _fmin(fr: dict) -> int:
+                hh, mm = str(fr.get("time", "0:0")).split(":")[:2]
+                return int(hh) * 60 + int(mm)
+
+            sel = min(range(n), key=lambda i: abs(_fmin(frames[i]) - rmin))
+        except Exception:
+            sel = n - 1
+    cur = frames[sel]
+    payload["lastPrice"] = cur["lastPrice"]
+    payload["spread"] = cur["spread"]
+    payload["bids"] = cur["bids"]
+    payload["asks"] = cur["asks"]
+    payload["tape"] = cur["tape"]
+    payload["timestamp"] = cur["time"]
+    payload["selectedIndex"] = sel
+    payload["isLive"] = sel == n - 1
+
+
+def _synthetic_order_book(symbol: str, company: dict, params: dict) -> dict:
+    """Deterministic *simulated* order book used as the labelled fallback until a
+    real IEX DEEP replay has been reconstructed for the symbol."""
     last = company["price"]
     avg_vol = company.get("volume") or 1_000_000
     seed = data._seed(symbol + "obk")

@@ -18,8 +18,9 @@ import logging
 import os
 from typing import List, Optional
 
-from . import data, db, strategy
+from . import data, db, orderbook_store, repo, strategy
 from .sources import fundamentals as f_src
+from .sources import iex_deep
 from .sources import news as n_src
 from .sources import prices as p_src
 from .sources import sentiment as s_src
@@ -34,6 +35,9 @@ NEWS_INTERVAL = 120
 SENTIMENT_INTERVAL = 600
 MACRO_INTERVAL = 120
 ONDEMAND_INTERVAL = 15
+# How often to check for queued order-book replay reconstructions. The job itself
+# is very slow (streams a ~13 GB DEEP capture), so the poll is gentle.
+ORDERBOOK_INTERVAL = 20
 # Point-in-time backfill cadence: real OHLCV for delisted names + as-reported
 # quarterly fundamentals. This history barely changes, so a long sleep is fine —
 # it only needs to be present, not minute-fresh.
@@ -839,6 +843,66 @@ async def _ondemand_loop():
         await asyncio.sleep(ONDEMAND_INTERVAL)
 
 
+async def _orderbook_loop():
+    """Reconstruct real IEX DEEP order-book replays for queued symbols.
+
+    Drains ``pending`` jobs, resolves the latest published DEEP session, and
+    reconstructs every queued symbol in a SINGLE streaming pass over that day's
+    capture (the ~13 GB download is shared, so batching is essentially free).
+    Symbols with no real IEX depth that day are marked ``unavailable`` so the
+    panel stops promising a real replay; transient failures become ``error`` and
+    are retried when the panel is re-opened."""
+    while True:
+        try:
+            syms = await asyncio.to_thread(orderbook_store.pending_jobs, 8)
+            if syms:
+                sess = await asyncio.to_thread(iex_deep.latest_session)
+                if not sess:
+                    log.warning("no IEX DEEP session available; deferring %d job(s)", len(syms))
+                else:
+                    session_iso, link = sess
+                    names: dict = {}
+                    thresholds: dict = {}
+                    for s in syms:
+                        c = await asyncio.to_thread(repo.get_company, s)
+                        names[s] = (c or {}).get("name") or s
+                        avg_vol = (c or {}).get("volume") or 1_000_000
+                        thresholds[s] = float(avg_vol) * 0.002
+                        await asyncio.to_thread(
+                            orderbook_store.mark_job, s, "running", session_iso, None
+                        )
+                    log.info("reconstructing IEX DEEP replay for %s (session %s)", syms, session_iso)
+                    try:
+                        results = await asyncio.to_thread(
+                            iex_deep.reconstruct, set(syms), link, session_iso, names, thresholds
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("IEX DEEP reconstruction failed: %s", exc)
+                        for s in syms:
+                            await asyncio.to_thread(
+                                orderbook_store.mark_job, s, "error", session_iso, str(exc)[:200]
+                            )
+                        results = {}
+                    for s in syms:
+                        payload = results.get(s)
+                        if payload:
+                            await asyncio.to_thread(
+                                orderbook_store.save_replay, s, session_iso, payload,
+                                payload.get("source", "IEX DEEP (venue-only, T+1)"), session_iso,
+                            )
+                            await asyncio.to_thread(
+                                orderbook_store.mark_job, s, "done", session_iso, None
+                            )
+                        elif (await asyncio.to_thread(orderbook_store.job_status, s)) == "running":
+                            await asyncio.to_thread(
+                                orderbook_store.mark_job, s, "unavailable", session_iso,
+                                "no IEX DEEP depth for symbol on session",
+                            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("order-book loop error: %s", exc)
+        await asyncio.sleep(ORDERBOOK_INTERVAL)
+
+
 # ----------------------------- lifecycle -----------------------------
 async def start() -> None:
     # Boot smoke checks (scripts/smoke_api.py) set this so the app can verify it
@@ -865,6 +929,7 @@ async def start() -> None:
     _tasks.append(asyncio.create_task(_breadth_market_cap_loop()))
     _tasks.append(asyncio.create_task(_pit_loop()))
     _tasks.append(asyncio.create_task(_ondemand_loop()))
+    _tasks.append(asyncio.create_task(_orderbook_loop()))
     _tasks.append(asyncio.create_task(_snapshot_loop()))
     _tasks.append(asyncio.create_task(_rebalance_loop()))
     log.info("data worker started (%d loops)", len(_tasks))

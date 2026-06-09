@@ -6,3 +6,4 @@ export * from "./pit";
 export * from "./news";
 export * from "./sentiment";
 export * from "./strategies";
+export * from "./orderbook";

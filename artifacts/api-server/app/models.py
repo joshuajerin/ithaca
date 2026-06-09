@@ -257,6 +257,13 @@ class OrderBookData(BaseModel):
     sessionStart: Optional[str] = None
     sessionEnd: Optional[str] = None
     pending: Optional[bool] = False
+    # Honesty/provenance for the real-vs-simulated IEX DEEP replay. ``replayReal``
+    # is True only when frames are reconstructed from a real IEX DEEP capture;
+    # otherwise the depth is simulated and clearly labelled in the header.
+    replayReal: Optional[bool] = None
+    session: Optional[str] = None
+    venue: Optional[str] = None
+    coverage: Optional[str] = None
 
 
 # --- trade_flow ---
