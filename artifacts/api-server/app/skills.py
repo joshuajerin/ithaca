@@ -1822,11 +1822,13 @@ def build_yield_curve(params: dict) -> dict:
                 by_tenor = {p["tenor"]: p["spot"] for p in points}
                 spreads = _curve_spreads(by_tenor)
                 inverted = any(s["inverted"] for s in spreads[:2])
+                recession = _recession_read(spreads, live.get("inversion"))
                 return {
                     "title": title,
                     "points": points,
                     "spreads": spreads,
                     "inverted": inverted,
+                    "recession": recession,
                     "asOf": live.get("asOf"),
                     "source": "live",
                 }
@@ -1857,8 +1859,100 @@ def build_yield_curve(params: dict) -> dict:
     ]
 
     inverted = any(s["inverted"] for s in spreads[:2])
+    recession = _recession_read(spreads, None)
     return {"title": title, "points": points, "spreads": spreads, "inverted": inverted,
-            "source": "mock"}
+            "recession": recession, "source": "mock"}
+
+
+def _humanize_duration(days: int) -> str:
+    """Plain-language span, e.g. 18 -> '18 days', 410 -> '1 year, 1 month'."""
+    if days < 31:
+        return f"{days} day{'s' if days != 1 else ''}"
+    months = round(days / 30.44)
+    if months < 12:
+        return f"about {months} month{'s' if months != 1 else ''}"
+    years = months // 12
+    rem = months % 12
+    parts = [f"{years} year{'s' if years != 1 else ''}"]
+    if rem:
+        parts.append(f"{rem} month{'s' if rem != 1 else ''}")
+    return "about " + ", ".join(parts)
+
+
+# Maps a spread label to the inversion-streak key returned by the rates source.
+_SEGMENT_KEYS = {"2Y–10Y": "2Y-10Y", "3M–10Y": "3M-10Y"}
+
+
+def _recession_read(spreads: List[dict], inversion: Optional[dict]) -> dict:
+    """Turn raw curve spreads into a plain-language recession-risk read.
+
+    The 2s10s and 3m10s segments are the market's most-watched recession
+    signals: an inverted curve (short yield > long yield) has preceded every
+    U.S. recession since the 1970s. When live ``inversion`` streak data is
+    available we also report how long each segment has been inverted.
+    """
+    inversion = inversion or {}
+    watched = {"2Y–10Y", "3M–10Y"}
+
+    segments: List[dict] = []
+    for s in spreads:
+        if s["label"] not in watched:
+            continue
+        seg = {"label": s["label"], "value": s["value"], "inverted": s["inverted"]}
+        streak = inversion.get(_SEGMENT_KEYS.get(s["label"], ""))
+        if streak and streak.get("inverted") and streak.get("days"):
+            seg["days"] = streak["days"]
+            seg["since"] = streak.get("since")
+        segments.append(seg)
+
+    inverted_segs = [seg for seg in segments if seg["inverted"]]
+    n_inverted = len(inverted_segs)
+    watched_count = len(segments)
+
+    if watched_count and n_inverted == watched_count:
+        level = "warning"
+        headline = "Inverted — historically a recession warning"
+    elif n_inverted:
+        level = "watch"
+        headline = "Partially inverted — early recession warning"
+    else:
+        level = "normal"
+        headline = "Upward-sloping — no recession signal"
+
+    # Add an inversion-duration sentence when we have a streak to report.
+    longest = None
+    for seg in inverted_segs:
+        if seg.get("days"):
+            if longest is None or seg["days"] > longest.get("days", 0):
+                longest = seg
+    if longest is not None:
+        span = _humanize_duration(longest["days"])
+        detail = (
+            f"The {longest['label']} curve has been inverted for {span}"
+            f"{' (since ' + longest['since'] + ')' if longest.get('since') else ''}. "
+            "An inverted curve has preceded every U.S. recession since the 1970s."
+        )
+    elif level == "warning":
+        detail = (
+            "Both watched segments are inverted. An inverted curve has preceded "
+            "every U.S. recession since the 1970s."
+        )
+    elif level == "watch":
+        detail = (
+            f"The {inverted_segs[0]['label']} segment is inverted — an early sign "
+            "the bond market is pricing in slower growth ahead."
+        )
+    else:
+        detail = "Long yields sit above short yields — the bond market is not flashing a recession signal."
+
+    return {
+        "level": level,
+        "headline": headline,
+        "detail": detail,
+        "segments": segments,
+        "invertedCount": n_inverted,
+        "watchedCount": watched_count,
+    }
 
 
 def _curve_spreads(by_tenor: Dict[str, float]) -> List[dict]:

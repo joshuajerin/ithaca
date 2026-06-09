@@ -416,11 +416,29 @@ class YieldCurveSpread(BaseModel):
     inverted: bool
 
 
+class YieldCurveRecessionSegment(BaseModel):
+    label: str
+    value: float
+    inverted: bool
+    days: Optional[int] = None
+    since: Optional[str] = None
+
+
+class YieldCurveRecession(BaseModel):
+    level: str
+    headline: str
+    detail: str
+    segments: List[YieldCurveRecessionSegment]
+    invertedCount: int
+    watchedCount: int
+
+
 class YieldCurveData(BaseModel):
     title: str
     points: List[YieldCurvePoint]
     spreads: List[YieldCurveSpread]
     inverted: bool
+    recession: Optional[YieldCurveRecession] = None
 
 
 # --- sovereign_compare ---

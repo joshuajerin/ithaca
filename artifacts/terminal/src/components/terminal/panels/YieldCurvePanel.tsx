@@ -33,9 +33,29 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
+const RECESSION_STYLES: Record<string, { wrap: string; dot: string; label: string }> = {
+  warning: {
+    wrap: "border-red-500/40 bg-red-500/10",
+    dot: "bg-red-400",
+    label: "text-red-300",
+  },
+  watch: {
+    wrap: "border-yellow-400/40 bg-yellow-400/10",
+    dot: "bg-yellow-400",
+    label: "text-yellow-300",
+  },
+  normal: {
+    wrap: "border-emerald-500/30 bg-emerald-500/10",
+    dot: "bg-emerald-400",
+    label: "text-emerald-300",
+  },
+};
+
 export function YieldCurvePanel({ data }: YieldCurvePanelProps) {
   const inversionZone = data.spreads.find((s: any) => s.label === "2Y–10Y");
   const isInverted = inversionZone?.inverted ?? false;
+  const recession = data.recession;
+  const style = RECESSION_STYLES[recession?.level as string] ?? RECESSION_STYLES.normal;
 
   return (
     <div className="flex flex-col h-full w-full">
@@ -44,10 +64,19 @@ export function YieldCurvePanel({ data }: YieldCurvePanelProps) {
           <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">
             {data.title}
           </div>
-          {isInverted && (
-            <div className="text-[10px] font-bold uppercase tracking-wider text-yellow-400 border border-yellow-400/40 bg-yellow-400/10 px-2 py-0.5 inline-block">
-              ⚠ Curve Inverted
+          {recession ? (
+            <div
+              className={`text-[10px] font-bold uppercase tracking-wider ${style.label} border ${style.wrap} px-2 py-0.5 inline-flex items-center gap-1.5`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${style.dot} ${recession.level !== "normal" ? "animate-pulse" : ""}`} />
+              {recession.headline}
             </div>
+          ) : (
+            isInverted && (
+              <div className="text-[10px] font-bold uppercase tracking-wider text-yellow-400 border border-yellow-400/40 bg-yellow-400/10 px-2 py-0.5 inline-block">
+                ⚠ Curve Inverted
+              </div>
+            )
           )}
         </div>
         <div className="flex gap-3 shrink-0">
@@ -61,6 +90,25 @@ export function YieldCurvePanel({ data }: YieldCurvePanelProps) {
           ))}
         </div>
       </div>
+
+      {recession && (
+        <div className={`mb-3 shrink-0 border ${style.wrap} px-3 py-2`}>
+          <p className="text-[11px] leading-snug text-foreground/90">{recession.detail}</p>
+          {recession.segments?.some((seg: any) => seg.inverted && seg.days) && (
+            <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
+              {recession.segments
+                .filter((seg: any) => seg.inverted && seg.days)
+                .map((seg: any) => (
+                  <div key={seg.label} className="text-[9px] uppercase tracking-widest text-muted-foreground">
+                    {seg.label} inverted{" "}
+                    <span className={`font-mono ${style.label}`}>{seg.days}d</span>
+                    {seg.since ? <span className="text-muted-foreground/70"> · since {seg.since}</span> : null}
+                  </div>
+                ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="flex-1 w-full min-h-0">
         <ResponsiveContainer width="100%" height="100%">

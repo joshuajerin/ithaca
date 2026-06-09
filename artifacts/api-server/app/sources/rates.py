@@ -100,6 +100,62 @@ def _closest_row(
     return min(rows, key=lambda r: abs((r[0] - target).days))
 
 
+# Curve segments whose inversion is the market's most-watched recession signal.
+# (short tenor, long tenor) — an inversion means short yield > long yield.
+_RECESSION_SEGMENTS = [("2Y", "10Y"), ("3M", "10Y")]
+
+
+def _inversion_streak(
+    rows: List[Tuple[date, Dict[str, float]]],
+    short_tenor: str,
+    long_tenor: str,
+) -> Optional[Dict]:
+    """How long a curve segment has been continuously inverted at the latest date.
+
+    Walks backward from the most recent observation through the supplied daily
+    rows, counting consecutive trading days where ``short`` yield > ``long``
+    yield. Stops at the first day the segment is not inverted, so the result is
+    an honest *current* inversion streak (not a cumulative count).
+
+    Returns ``{"inverted", "days", "obs", "since"}`` where ``days`` is the
+    calendar span from the first day of the current streak to the latest date,
+    ``obs`` is the number of inverted trading days, and ``since`` is the start
+    date (ISO). Returns ``None`` when neither tenor is observable.
+    """
+    usable = sorted(
+        (
+            (d, y[short_tenor], y[long_tenor])
+            for d, y in rows
+            if short_tenor in y and long_tenor in y
+        ),
+        key=lambda r: r[0],
+        reverse=True,
+    )
+    if not usable:
+        return None
+
+    latest_date = usable[0][0]
+    latest_inverted = usable[0][1] > usable[0][2]
+    if not latest_inverted:
+        return {"inverted": False, "days": 0, "obs": 0, "since": None}
+
+    obs = 0
+    start_date = latest_date
+    for d, short_v, long_v in usable:
+        if short_v > long_v:
+            obs += 1
+            start_date = d
+        else:
+            break
+
+    return {
+        "inverted": True,
+        "days": (latest_date - start_date).days,
+        "obs": obs,
+        "since": start_date.isoformat(),
+    }
+
+
 def fetch_treasury_curve() -> Optional[Dict]:
     """Return the latest real Treasury par-yield curve plus 1y/2y-ago history.
 
@@ -109,6 +165,7 @@ def fetch_treasury_curve() -> Optional[Dict]:
             "tenors":  {tenor: spot_pct},
             "ago1y":   {tenor: pct},   # may be empty if history unavailable
             "ago2y":   {tenor: pct},
+            "inversion": {"2Y-10Y": {inverted, days, obs, since}, ...},
             "asOf":    "YYYY-MM-DD",
             "source":  "live",
         }
@@ -129,6 +186,8 @@ def fetch_treasury_curve() -> Optional[Dict]:
 
     ago1y: Dict[str, float] = {}
     ago2y: Dict[str, float] = {}
+    prev_rows: List[Tuple[date, Dict[str, float]]] = []
+    prev2_rows: List[Tuple[date, Dict[str, float]]] = []
     try:
         prev_rows = _fetch_treasury_year(today.year - 1)
         match = _closest_row(prev_rows, latest_date.replace(year=latest_date.year - 1))
@@ -144,10 +203,20 @@ def fetch_treasury_curve() -> Optional[Dict]:
     except Exception:
         pass
 
+    # Measure how long each watched segment has been inverted, walking back
+    # through every daily row we already fetched (current + two prior years).
+    all_rows = cur_rows + prev_rows + prev2_rows
+    inversion: Dict[str, Dict] = {}
+    for short_t, long_t in _RECESSION_SEGMENTS:
+        streak = _inversion_streak(all_rows, short_t, long_t)
+        if streak is not None:
+            inversion[f"{short_t}-{long_t}"] = streak
+
     return {
         "tenors": latest,
         "ago1y": ago1y,
         "ago2y": ago2y,
+        "inversion": inversion,
         "asOf": latest_date.isoformat(),
         "source": "live",
     }
