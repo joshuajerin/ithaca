@@ -325,6 +325,17 @@ def _tools() -> list:
             }, "required": ["symbol"]},
         }},
         {"type": "function", "function": {
+            "name": "add_walk_forward_compare",
+            "description": f"Add a MULTI-NAME research-integrity validation: run the same anchored walk-forward / overfitting check across a UNIVERSE of tickers (an explicit list OR a sector) and aggregate the per-name verdicts into a robustness score. Use when the user asks whether a strategy is overfit / robust / data-mined ACROSS multiple names, a list, or a sector ('is momentum overfit across megacap tech', 'walk-forward momentum on NVDA, AMD, AVGO', 'is this robust across semis') — a single-name pass can itself be a lucky draw. Prefer this over add_walk_forward whenever two or more tickers (or a sector) are in scope. {sizing}",
+            "parameters": {"type": "object", "properties": {
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": f"Two or more tickers to validate. One of: {syms}"},
+                "sector": {"type": "string", "description": "Optional sector to expand into its members instead of an explicit list (e.g. 'tech', 'semis', 'financials')."},
+                "strategy": {"type": "string", "description": "Strategy name, e.g. 'momentum', 'mean_reversion', 'ma_crossover', 'buy_and_hold'."},
+                "splits": {"type": "integer", "description": "Number of anchored walk-forward folds per name (2-8, default 5)."},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": []},
+        }},
+        {"type": "function", "function": {
             "name": "add_monte_carlo",
             "description": f"Add a Monte Carlo forward simulation for one ticker (percentile fan p5-p95, sample paths, expected/median terminal value, probability of loss, terminal VaR/CVaR) fitted to real historical returns. {sizing}",
             "parameters": {"type": "object", "properties": {
@@ -819,6 +830,7 @@ _TOOL_TO_TYPE = {
     "add_portfolio_risk": "portfolio_risk",
     "add_backtest": "backtest",
     "add_walk_forward": "walk_forward",
+    "add_walk_forward_compare": "walk_forward_compare",
     "add_monte_carlo": "monte_carlo",
     "add_correlation_matrix": "correlation_matrix",
     "add_factor_analysis": "factor_analysis",
@@ -2044,9 +2056,43 @@ def _ser_walk_forward(data: dict) -> str:
     return "; ".join(p for p in parts if p)
 
 
+def _ser_walk_forward_compare(data: dict) -> str:
+    parts: List[str] = []
+    head = []
+    if data.get("strategy"):
+        head.append(f"strategy={data['strategy']}")
+    cards = data.get("cards") or []
+    if cards:
+        head.append(f"{len(cards)} names")
+    if head:
+        parts.append(", ".join(head))
+    agg = data.get("aggregate") or {}
+    if agg.get("summary"):
+        parts.append(f"aggregate: {agg['summary']}")
+    if agg.get("robustnessScore") is not None:
+        parts.append(
+            f"robustness {_ser_scalar(agg.get('robustnessScore'))}/100, "
+            f"{agg.get('judged')} judged / {agg.get('inconclusive')} inconclusive, "
+            f"mean OOS Sharpe {_ser_scalar(agg.get('meanOosSharpe'))}, "
+            f"mean degradation {_ser_scalar(agg.get('meanDegradationPct'))}%"
+        )
+    rows = ", ".join(
+        f"{c.get('symbol')}: {c.get('verdictLabel')} (OOS Sharpe {_ser_scalar(c.get('oosSharpe'))}, "
+        f"{_ser_scalar(c.get('degradationPct'))}% decay)"
+        for c in cards[:12]
+    )
+    if rows:
+        parts.append(f"per name: {rows}")
+    failed = data.get("failed") or []
+    if failed:
+        parts.append("could not validate: " + ", ".join(f.get("symbol", "?") for f in failed))
+    return "; ".join(p for p in parts if p)
+
+
 _PANEL_SERIALIZERS = {
     "backtest": _ser_backtest,
     "walk_forward": _ser_walk_forward,
+    "walk_forward_compare": _ser_walk_forward_compare,
     "signal_portfolio": _ser_signal_portfolio,
     "combined_alpha": _ser_combined_alpha,
     "shorting_desk": _ser_shorting_desk,
@@ -2614,6 +2660,7 @@ _TYPE_LABELS = {
     "portfolio_risk": "a portfolio risk breakdown",
     "backtest": "a backtest",
     "walk_forward": "a walk-forward validation",
+    "walk_forward_compare": "a multi-name walk-forward robustness check",
     "monte_carlo": "a Monte Carlo simulation",
     "correlation_matrix": "a correlation matrix",
     "factor_analysis": "a factor analysis",
@@ -3127,7 +3174,8 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         "deflated sharpe", "pbo", "probability of backtest overfitting",
         "backtest overfitting", "multiple testing", "multiple-testing", "data mined",
         "data-mined", "data mining", "research integrity", "is this robust",
-        "is it robust", "robustness check", "cross-validation", "cross validation",
+        "is it robust", "robustness check", "robust across", "robust over",
+        "hold up across", "holds up across", "cross-validation", "cross validation",
     ])
     wants_backtest = wants_invest or any(k in q for k in ["backtest", "back test", "back-test", "momentum strategy", "strategy", "sharpe", "cagr", "drawdown"])
     wants_montecarlo = any(k in q for k in ["monte carlo", "montecarlo", "monte-carlo", "simulate", "simulation", "forward project", "project price", "scenario analysis", "probability of loss", "forecast price", "gbm", "geometric brownian", "bootstrap"])
@@ -3698,8 +3746,28 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         return "momentum"
 
     if wants_walkforward:
-        sym = symbols[0] if symbols else "NVDA"
         strategy = _strategy_from_query()
+        # A strategy can survive out-of-sample on one name by luck, so when the
+        # user names two-plus tickers OR a whole sector, validate across that
+        # universe and aggregate the verdicts rather than picking a single name.
+        wf_across = any(k in q for k in ["across", "each of", "all of", "universe", "basket", "every", "list of"])
+        if len(symbols) >= 2 or (sector and (wf_across or not symbols)):
+            wfc_params: dict = {"strategy": strategy}
+            if len(symbols) >= 2:
+                wfc_params["symbols"] = symbols
+                scope = ", ".join(symbols[:4]) + ("..." if len(symbols) > 4 else "")
+            else:
+                wfc_params["sector"] = sector
+                scope = repo.sector_name(sector)
+            add("walk_forward_compare", wfc_params, 12, 6)
+            summary = (
+                f"Walk-forward robustness of the {strategy.replace('_', ' ')} strategy across {scope}: "
+                "per-name out-of-sample verdicts (deflated Sharpe, PBO, decay) and an aggregate "
+                "robustness score, so you can see if the edge holds across the universe or was a lucky draw. "
+                "Thin-history names are flagged, not hidden."
+            )
+            return panels, summary
+        sym = symbols[0] if symbols else "NVDA"
         add("walk_forward", {"symbol": sym, "strategy": strategy}, 12, 6)
         name = data.get_company(sym)["name"]
         summary = (

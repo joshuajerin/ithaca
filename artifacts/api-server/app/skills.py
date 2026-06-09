@@ -1179,6 +1179,195 @@ def build_walk_forward(params: dict) -> dict:
     return result
 
 
+# Maps each per-name overfitting verdict to a 0-100 robustness score so the
+# universe-level aggregate is a simple, explainable mean. "inconclusive" names
+# (too little real history) are EXCLUDED from the score and reported separately
+# rather than fabricating a verdict for them — preserving the honest-coverage
+# contract from the single-name walk-forward panel.
+_WF_VERDICT_SCORE = {
+    "robust": 100.0,
+    "some_overfitting": 60.0,
+    "likely_overfit": 30.0,
+    "severe_overfitting": 0.0,
+}
+_WF_VERDICT_LABEL = {
+    "robust": "ROBUST",
+    "some_overfitting": "SOME DECAY",
+    "likely_overfit": "LIKELY OVERFIT",
+    "severe_overfitting": "SEVERE OVERFITTING",
+    "inconclusive": "INCONCLUSIVE",
+}
+
+
+def build_walk_forward_compare(params: dict) -> dict:
+    """Run the same anchored walk-forward / overfitting check across a UNIVERSE
+    of tickers instead of one name, then aggregate the per-name verdicts into a
+    single robustness read.
+
+    A strategy that survives out-of-sample on one ticker can still be a lucky
+    draw; quants want to know whether the edge holds *across* a list or sector.
+    This fans out ``build_walk_forward`` per symbol concurrently (each name's
+    real price history, isolated like the analyst-compare panel so one failing
+    name never sinks the panel), distills each into a compact card, and computes
+    an aggregate robustness score. Honest coverage is preserved per name:
+    thin-history names are flagged ``inconclusive`` and excluded from the score
+    rather than hidden.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    strategy = engine.normalize_strategy(params.get("strategy") or "momentum")
+    try:
+        n_splits = int(params.get("splits") or 5)
+    except (TypeError, ValueError):
+        n_splits = 5
+    n_splits = max(2, min(8, n_splits))
+
+    # Resolve the universe: an explicit symbol list wins, else expand a sector.
+    raw_syms = params.get("symbols") or []
+    sector = params.get("sector")
+    seen: set = set()
+    symbols: List[str] = []
+    for s in raw_syms:
+        u = str(s).upper().strip()
+        if u and u not in seen:
+            seen.add(u)
+            symbols.append(u)
+    if len(symbols) < 2 and sector:
+        for u in repo.symbols_in_sector(sector):
+            uu = str(u).upper().strip()
+            if uu and uu not in seen:
+                seen.add(uu)
+                symbols.append(uu)
+    symbols = symbols[:12]
+    if len(symbols) < 2:
+        raise ValueError("Validating a strategy across a universe needs at least two tickers.")
+
+    def _one(sym: str) -> dict:
+        return build_walk_forward({"symbol": sym, "strategy": strategy, "splits": n_splits})
+
+    with ThreadPoolExecutor(max_workers=min(6, len(symbols))) as ex:
+        results = list(ex.map(lambda s: (s, _safe_call(_one, s)), symbols))
+    by_sym = {s: res for s, res in results}
+
+    cards: List[dict] = []
+    failed: List[dict] = []
+    as_of = None
+    source = _live_source()
+    for sym in symbols:  # preserve requested order
+        ok, payload = by_sym.get(sym, (False, "no result"))
+        if not ok:
+            failed.append({"symbol": sym, "reason": payload})
+            continue
+        wf = payload
+        verdict = wf.get("verdict") or {}
+        is_stats = wf.get("isStats") or {}
+        oos_stats = wf.get("oosStats") or {}
+        dsr = wf.get("deflatedSharpe") or {}
+        pbo = wf.get("pbo")
+        coverage = wf.get("coverage") or {}
+        cards.append({
+            "symbol": sym,
+            "name": wf.get("name") or sym,
+            "verdict": verdict.get("label") or "inconclusive",
+            "verdictLabel": _WF_VERDICT_LABEL.get(verdict.get("label") or "inconclusive", "INCONCLUSIVE"),
+            "summary": verdict.get("summary"),
+            "isSharpe": is_stats.get("sharpe"),
+            "oosSharpe": oos_stats.get("sharpe"),
+            "degradationPct": wf.get("degradationPct"),
+            "dsr": dsr.get("dsr"),
+            "haircutPct": dsr.get("haircutPct"),
+            "pbo": pbo.get("pbo") if pbo else None,
+            "nSplits": wf.get("nSplits"),
+            "paramGridSize": wf.get("paramGridSize"),
+            "usable": bool(coverage.get("usable")),
+            "bars": coverage.get("bars"),
+            "folds": coverage.get("folds"),
+            "coverageNote": coverage.get("note"),
+        })
+        if wf.get("asOf"):
+            as_of = wf["asOf"] if as_of is None else max(as_of, wf["asOf"])
+        source = wf.get("source") or source
+
+    if not cards:
+        raise ValueError("Could not validate the strategy for any of the requested tickers.")
+
+    # --- aggregate robustness across the names we could honestly judge ---
+    judged = [c for c in cards if c["verdict"] in _WF_VERDICT_SCORE]
+    inconclusive = [c for c in cards if c["verdict"] not in _WF_VERDICT_SCORE]
+    verdict_counts: Dict[str, int] = {}
+    for c in cards:
+        verdict_counts[c["verdict"]] = verdict_counts.get(c["verdict"], 0) + 1
+
+    def _mean(vals: List[float]) -> Optional[float]:
+        nums = [v for v in vals if isinstance(v, (int, float))]
+        return round(sum(nums) / len(nums), 2) if nums else None
+
+    if judged:
+        robustness = round(sum(_WF_VERDICT_SCORE[c["verdict"]] for c in judged) / len(judged), 1)
+        n_robust = sum(1 for c in judged if c["verdict"] == "robust")
+        consistency = round(n_robust / len(judged) * 100.0, 0)
+        mean_degradation = _mean([c["degradationPct"] for c in judged])
+        mean_oos_sharpe = _mean([c["oosSharpe"] for c in judged])
+        mean_dsr = _mean([c["dsr"] for c in judged])
+        n_severe = verdict_counts.get("severe_overfitting", 0)
+        n_overfit = verdict_counts.get("likely_overfit", 0) + n_severe
+        if robustness >= 80 and n_severe == 0:
+            agg_label = "robust"
+            agg_summary = (
+                f"Holds up across the universe: {n_robust} of {len(judged)} judged names look robust "
+                f"out-of-sample (robustness {robustness:.0f}/100). The edge is consistent, not a single-name fluke."
+            )
+        elif robustness >= 55:
+            agg_label = "mixed"
+            agg_summary = (
+                f"Mixed: robust on {n_robust} of {len(judged)} judged names but decaying on the rest "
+                f"(robustness {robustness:.0f}/100). The edge is real on some names and data-mined on others."
+            )
+        else:
+            agg_label = "fragile"
+            agg_summary = (
+                f"Fragile across the universe: only {n_robust} of {len(judged)} judged names survive out-of-sample "
+                f"({n_overfit} look overfit, robustness {robustness:.0f}/100). The single-name result was likely a lucky draw."
+            )
+    else:
+        robustness = None
+        consistency = None
+        mean_degradation = mean_oos_sharpe = mean_dsr = None
+        agg_label = "inconclusive"
+        agg_summary = (
+            "Inconclusive across the universe: none of the requested names had enough real out-of-sample "
+            "history to judge overfitting. Per-name diagnostics are shown but no robustness verdict is reported."
+        )
+    if inconclusive:
+        agg_summary += (
+            f" {len(inconclusive)} name{'s' if len(inconclusive) != 1 else ''} excluded from the score for "
+            "thin history."
+        )
+
+    return {
+        "title": "Walk-Forward Robustness · " + strategy.replace("_", " ") + " · " + str(len(cards)) + " names",
+        "strategy": strategy,
+        "nSplits": n_splits,
+        "cards": cards,
+        "failed": failed,
+        "aggregate": {
+            "label": agg_label,
+            "summary": agg_summary,
+            "robustnessScore": robustness,
+            "consistencyPct": consistency,
+            "judged": len(judged),
+            "inconclusive": len(inconclusive),
+            "total": len(cards),
+            "verdictCounts": verdict_counts,
+            "meanDegradationPct": mean_degradation,
+            "meanOosSharpe": mean_oos_sharpe,
+            "meanDsr": mean_dsr,
+        },
+        "asOf": as_of,
+        "source": source,
+    }
+
+
 def build_monte_carlo(params: dict) -> dict:
     import numpy as np
 
@@ -7228,6 +7417,25 @@ _reg(SkillDef(
         {"name": "overfitting_stats", "description": "Compute deflated Sharpe, multiple-testing haircut, and PBO.", "expectedOutput": "Overfitting diagnostics and a verdict."},
     ],
     build_walk_forward, "Walk-Forward Validation",
+))
+_reg(SkillDef(
+    "walk-forward-compare", "Walk-Forward Robustness", "walk_forward_compare",
+    "Runs the SAME anchored walk-forward / overfitting check across a UNIVERSE of "
+    "tickers (an explicit list or a whole sector) instead of one name, then "
+    "aggregates the per-name verdicts into a single robustness score. Use when "
+    "the user asks whether a strategy is overfit / robust / data-mined ACROSS "
+    "multiple names, a list, or a sector ('is momentum overfit across megacap "
+    "tech', 'walk-forward momentum on NVDA, AMD, AVGO', 'is this robust across "
+    "semis'), since a single-name pass can itself be a lucky draw. Each ticker is "
+    "validated independently and concurrently; thin-history names are flagged "
+    "inconclusive and excluded from the score, never hidden, and any failing name "
+    "is reported but never sinks the panel.",
+    [
+        {"name": "resolve_universe", "description": "Expand an explicit list or a sector into the set of tickers to validate.", "expectedOutput": "A list of tickers."},
+        {"name": "fan_out", "description": "Run the walk-forward overfitting check per ticker concurrently, isolating per-name failures.", "expectedOutput": "One per-name overfitting verdict per requested symbol."},
+        {"name": "aggregate", "description": "Combine the per-name verdicts into a robustness score and consistency read.", "expectedOutput": "An aggregate robustness verdict plus a per-name scoreboard."},
+    ],
+    build_walk_forward_compare, "Walk-Forward Robustness",
 ))
 _reg(SkillDef(
     "monte-carlo", "Monte Carlo Simulator", "monte_carlo",

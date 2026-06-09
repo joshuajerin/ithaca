@@ -25,6 +25,7 @@ import { CashFlowPanel } from "./panels/CashFlowPanel";
 import { PortfolioRiskPanel } from "./panels/PortfolioRiskPanel";
 import { BacktestPanel } from "./panels/BacktestPanel";
 import { WalkForwardPanel } from "./panels/WalkForwardPanel";
+import { WalkForwardComparePanel } from "./panels/WalkForwardComparePanel";
 import { MonteCarloPanel } from "./panels/MonteCarloPanel";
 import { CorrelationMatrixPanel } from "./panels/CorrelationMatrixPanel";
 import { FactorAnalysisPanel } from "./panels/FactorAnalysisPanel";
@@ -313,6 +314,7 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted, onBui
       case "portfolio_risk": return <PortfolioRiskPanel data={panel.data as any} onRefine={handleRefineParamsLive} pending={paramRefineMutation.isPending} />;
       case "backtest": return <BacktestPanel data={panel.data as any} onRefine={handleRefineParamsLive} pending={paramRefineMutation.isPending} />;
       case "walk_forward": return <WalkForwardPanel data={panel.data as any} onRefine={handleRefineParams} />;
+      case "walk_forward_compare": return <WalkForwardComparePanel data={panel.data as any} />;
       case "monte_carlo": return <MonteCarloPanel data={panel.data as any} />;
       case "correlation_matrix": return <CorrelationMatrixPanel data={panel.data as any} onRefine={handleRefineParamsLive} pending={paramRefineMutation.isPending} />;
       case "factor_analysis": return <FactorAnalysisPanel data={panel.data as any} onRefine={handleRefineParamsLive} pending={paramRefineMutation.isPending} />;
