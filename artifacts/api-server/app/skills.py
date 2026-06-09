@@ -12,6 +12,7 @@ from datetime import date, timedelta
 from typing import Callable, Dict, List, Optional
 
 from . import ai, cache, data, db, engine, factor_model, orderbook_store, quality, repo
+from .sources import fundamentals as fundamentals_src
 from .sources import holdings as h_src
 from .sources import iex_deep
 from .sources import prices as p_src
@@ -45,6 +46,44 @@ def topic_label(scope: Optional[str]) -> str:
 
 def _live_source() -> str:
     return "live" if db.db_available() else "mock"
+
+
+_CONSENSUS_LABELS = {
+    "strong_buy": "Strong Buy",
+    "buy": "Buy",
+    "moderate_buy": "Moderate Buy",
+    "outperform": "Outperform",
+    "overweight": "Overweight",
+    "hold": "Hold",
+    "neutral": "Hold",
+    "moderate_sell": "Moderate Sell",
+    "underperform": "Underperform",
+    "underweight": "Underweight",
+    "sell": "Sell",
+    "strong_sell": "Strong Sell",
+}
+
+
+def _consensus_label(key: Optional[str], mean: Optional[float]) -> Optional[str]:
+    """Human consensus label from Yahoo's recommendationKey or 1–5 mean.
+
+    Prefers the explicit key; otherwise bins the mean on Yahoo's scale where
+    1 = Strong Buy and 5 = Strong Sell."""
+    if key:
+        lab = _CONSENSUS_LABELS.get(str(key).strip().lower())
+        if lab:
+            return lab
+    if mean is None:
+        return None
+    if mean <= 1.5:
+        return "Strong Buy"
+    if mean <= 2.5:
+        return "Buy"
+    if mean <= 3.5:
+        return "Hold"
+    if mean <= 4.5:
+        return "Sell"
+    return "Strong Sell"
 
 
 # ----------------------------- formatting helpers -----------------------------
@@ -9274,6 +9313,84 @@ def _analyst_report_fallback(scope: str, scope_type: str, figures: List[dict],
     }
 
 
+def _fetch_consensus(symbol: str):
+    """Live-first analyst consensus fetch with a persisted-snapshot fallback.
+
+    Returns ``(consensus|None, asOf, source)``. Tries the live yfinance adapter
+    and marks it ``live`` with today's date; on any throttle/network failure
+    falls back to the last snapshot the worker persisted (with its stored
+    as-of). Returns ``(None, ...)`` only when neither path yields data."""
+    ysym = data.yahoo_symbol(symbol)
+    try:
+        cons = fundamentals_src.fetch_analyst_consensus(ysym)
+        cons["symbol"] = symbol
+        return cons, date.today().isoformat(), "live"
+    except Exception as exc:  # noqa: BLE001 — fall back to the persisted snapshot
+        log.info("live analyst consensus for %s unavailable (%s); using snapshot", symbol, exc)
+    snap = repo.get_analyst_ratings(symbol)
+    if snap:
+        return snap, snap.get("_asOf"), snap.get("_source") or "live"
+    return None, None, _live_source()
+
+
+def build_analyst_ratings(params: dict) -> dict:
+    """Real, grounded Wall Street analyst ratings & price targets for one ticker.
+
+    Returns the live consensus recommendation (label + 1–5 mean + analyst count),
+    the strong-buy..strong-sell rating distribution, the price-target band
+    (mean/high/low/median + current and implied upside vs current), and the most
+    recent upgrades/downgrades (firm + action + date) — all from Yahoo via
+    yfinance, marked ``live`` with an as-of. For tickers Yahoo doesn't cover this
+    returns an honest ``covered=False`` panel rather than fabricating any target.
+    Fetches live first and falls back to the last persisted snapshot when the
+    live source is throttled/unavailable.
+    """
+    symbol = (params.get("symbol") or "").upper().strip()
+    if not symbol:
+        raise ValueError("Analyst ratings need a ticker symbol.")
+    company = repo.get_company(symbol)
+    if not company:
+        raise ValueError(f"Unknown symbol: {symbol}")
+
+    cons, as_of, source = _fetch_consensus(symbol)
+    if cons is None:
+        raise ValueError(
+            f"Analyst ratings for {symbol} are temporarily unavailable — the data source "
+            "did not respond. Try again shortly."
+        )
+
+    name = cons.get("name") or company.get("name") or symbol
+    current = cons.get("currentPrice") or company.get("price")
+    target_mean = cons.get("targetMean")
+    implied = round((target_mean - current) / current * 100, 1) if (target_mean and current) else None
+    consensus_label = _consensus_label(cons.get("consensusKey"), cons.get("recommendationMean"))
+
+    return {
+        "symbol": symbol,
+        "name": name,
+        "covered": bool(cons.get("covered")),
+        "consensus": {
+            "key": cons.get("consensusKey"),
+            "label": consensus_label,
+            "mean": cons.get("recommendationMean"),
+            "numAnalysts": cons.get("numAnalysts"),
+            "distribution": cons.get("distribution"),
+        },
+        "priceTarget": {
+            "current": current,
+            "mean": target_mean,
+            "high": cons.get("targetHigh"),
+            "low": cons.get("targetLow"),
+            "median": cons.get("targetMedian"),
+            "impliedUpsidePct": implied,
+        },
+        "changes": (cons.get("changes") or [])[:10],
+        "note": None if cons.get("covered") else f"No analyst coverage found for {symbol}.",
+        "asOf": as_of,
+        "source": source,
+    }
+
+
 def build_analyst_report(params: dict) -> dict:
     """Deeper, structured analyst write-up grounded in the terminal's own data.
 
@@ -9342,6 +9459,30 @@ def build_analyst_report(params: dict) -> dict:
             "marketCapB": round(company["marketCap"] / 1_000_000_000, 1) if company.get("marketCap") else None,
             "revenueGrowthPct": rev_growth,
         }
+        # Ground the write-up in the REAL Street consensus & price targets (read
+        # from the persisted snapshot — no network on this path) instead of
+        # letting the model invent ratings or targets.
+        cons_snap = repo.get_analyst_ratings(symbol)
+        if cons_snap and cons_snap.get("covered"):
+            cur = cons_snap.get("currentPrice") or company.get("price")
+            tgt = cons_snap.get("targetMean")
+            implied = round((tgt - cur) / cur * 100, 1) if (tgt and cur) else None
+            clabel = _consensus_label(cons_snap.get("consensusKey"), cons_snap.get("recommendationMean"))
+            if clabel:
+                figures.append({"label": "Consensus", "value": clabel})
+            if tgt:
+                figures.append({"label": "Target", "value": f"${tgt:,.2f}"})
+            if implied is not None:
+                figures.append({"label": "Implied", "value": f"{implied:+.1f}%"})
+            ctx_extra["analystConsensus"] = {
+                "label": clabel,
+                "numAnalysts": cons_snap.get("numAnalysts"),
+                "targetMean": tgt,
+                "targetHigh": cons_snap.get("targetHigh"),
+                "targetLow": cons_snap.get("targetLow"),
+                "impliedUpsidePct": implied,
+                "distribution": cons_snap.get("distribution"),
+            }
     elif scope_type == "sector":
         scope = repo.sector_name(sector)
         syms = repo.symbols_in_sector(sector)[:6]
@@ -9424,6 +9565,12 @@ def build_analyst_report(params: dict) -> dict:
                 "dashboard; write the thesis, drivers, risks, catalysts and call about the "
                 "dashboard as a whole, not a single stock.\n" if scope_type == "dashboard" else ""
             )
+            cons_note = (
+                "The data includes analystConsensus — the REAL Wall Street consensus rating, "
+                "analyst count and price targets. Ground any rating or price-target discussion in "
+                "those figures; do NOT invent your own target.\n"
+                if ctx.get("analystConsensus") else ""
+            )
             prompt = (
                 "You are a buy-side equity analyst. Write a structured analyst take using ONLY "
                 "the data below. Do NOT invent precise figures beyond what is provided; you may "
@@ -9438,6 +9585,7 @@ def build_analyst_report(params: dict) -> dict:
                 '"valuation": string (1-3 sentences referencing the multiples provided), '
                 '"call": string (1-2 sentences, an explicit actionable view)}\n\n'
                 + scope_note
+                + cons_note
                 + "DATA:\n"
                 + json.dumps(ctx, default=str)
             )
@@ -9826,6 +9974,22 @@ def build_scenario(params: dict) -> dict:
     }
 
 
+_reg(SkillDef(
+    "analyst-ratings", "Analyst Ratings & Targets", "analyst_ratings",
+    "Surfaces the REAL Wall Street analyst ratings & price targets for ONE ticker: the consensus "
+    "rating (Strong Buy..Strong Sell) with the strong-buy/buy/hold/sell/strong-sell analyst count "
+    "distribution, the number of covering analysts, the mean/high/low/median price target with the "
+    "implied upside vs the current price, and the most recent upgrades/downgrades (firm + action + "
+    "date) — all real, marked live with an as-of. Honest ``covered=false`` for names with no Yahoo "
+    "coverage (no fabricated targets). Use for 'analyst ratings', 'price target(s)', 'consensus', "
+    "'what do analysts think', 'upgrades/downgrades' on a single name. This is the REAL consensus "
+    "data; prefer `analyst-report` for a qualitative bull/bear thesis.",
+    [
+        {"name": "fetch_consensus", "description": "Pull the live consensus, distribution and targets (snapshot fallback).", "expectedOutput": "A real consensus dict with coverage and provenance."},
+        {"name": "compute_implied", "description": "Derive the consensus label and implied upside vs the current price.", "expectedOutput": "Consensus label, target band and implied-upside figures."},
+    ],
+    build_analyst_ratings, "Analyst Ratings",
+))
 _reg(SkillDef(
     "analyst-report", "AI Analyst Report", "analyst_report",
     "Produces a deep, structured analyst write-up for a ticker (or sector): a headline, an explicit "

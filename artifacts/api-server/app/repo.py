@@ -8,6 +8,7 @@ keys on company records and an `as_of` helper for panels.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import date, datetime, timedelta, timezone
@@ -178,6 +179,67 @@ def companies_bulk(symbols: List[str]) -> Dict[str, dict]:
                 c["_source"] = "mock"
                 out[s] = c
     return out
+
+
+def get_analyst_ratings(symbol: str) -> Optional[dict]:
+    """Last persisted real analyst ratings/price-target snapshot for `symbol`.
+
+    Returns a camelCase dict with ``_asOf``/``_source`` provenance, or None when
+    the DB is unavailable, the table is unseeded, or the name has no snapshot.
+    Used as the persisted fallback when a live consensus fetch is throttled, and
+    as no-network grounding for the qualitative analyst-report/compare builders.
+    """
+    sym = (symbol or "").upper()
+    if not sym or not db.db_available():
+        return None
+    try:
+        row = db.query_one(
+            "SELECT * FROM analyst_ratings WHERE symbol = %s", (sym,)
+        )
+    except Exception as exc:  # noqa: BLE001 — table may be unseeded
+        log.warning("get_analyst_ratings DB error for %s: %s", sym, exc)
+        return None
+    if not row:
+        return None
+    return _analyst_ratings_from_row(row)
+
+
+def _analyst_ratings_from_row(row: dict) -> dict:
+    changes = row.get("changes")
+    if isinstance(changes, str):
+        try:
+            changes = json.loads(changes)
+        except (ValueError, TypeError):
+            changes = []
+    dist = {
+        "strongBuy": row.get("strong_buy") or 0,
+        "buy": row.get("buy") or 0,
+        "hold": row.get("hold") or 0,
+        "sell": row.get("sell") or 0,
+        "strongSell": row.get("strong_sell") or 0,
+    }
+    has_dist = sum(dist.values()) > 0
+
+    def _opt(v) -> Optional[float]:
+        return float(v) if v is not None else None
+
+    return {
+        "symbol": row["symbol"],
+        "name": row.get("name") or row["symbol"],
+        "covered": bool(row.get("covered")),
+        "consensusKey": row.get("consensus_key"),
+        "recommendationMean": _opt(row.get("recommendation_mean")),
+        "numAnalysts": row.get("num_analysts"),
+        "distribution": dist if has_dist else None,
+        "targetMean": _opt(row.get("target_mean")),
+        "targetHigh": _opt(row.get("target_high")),
+        "targetLow": _opt(row.get("target_low")),
+        "targetMedian": _opt(row.get("target_median")),
+        "currentPrice": _opt(row.get("current_price")),
+        "changes": changes or [],
+        "_asOf": _iso(row.get("updated_at")),
+        "_source": "live",
+    }
 
 
 def get_all_companies() -> Dict[str, dict]:

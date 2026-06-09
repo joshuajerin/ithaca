@@ -46,6 +46,7 @@ DATA_MODELS = {
     "ma_tracker": models.MAData,
     "signal_research": models.SignalResearchData,
     "signal_scorecard": models.SignalScorecardData,
+    "analyst_ratings": models.AnalystRatingsData,
 }
 
 

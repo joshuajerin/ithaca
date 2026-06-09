@@ -698,6 +698,22 @@ def _tools() -> list:
             }},
         }},
         {"type": "function", "function": {
+            "name": "add_analyst_ratings",
+            "description": (
+                "Add the REAL Wall Street analyst ratings & price targets for ONE ticker: the consensus "
+                "rating (Strong Buy..Strong Sell) with the strong-buy/buy/hold/sell analyst count "
+                "distribution, the number of covering analysts, the mean/high/low/median price target with "
+                f"implied upside vs the current price, and recent upgrades/downgrades (firm + action + date). {sizing} "
+                "Use for 'analyst ratings', 'price target(s)', 'consensus', 'what do analysts think', "
+                "'upgrades/downgrades' on a single name. This is REAL consensus data; prefer add_analyst_report "
+                "for a qualitative bull/bear thesis and add_analyst_compare to compare STANCES across names."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "symbol": {"type": "string", "description": f"Ticker for the analyst ratings. One of: {syms}"},
+                "width": {"type": "integer"}, "height": {"type": "integer"},
+            }, "required": ["symbol"]},
+        }},
+        {"type": "function", "function": {
             "name": "add_analyst_report",
             "description": (
                 "Add a DEEP, structured AI analyst write-up for a ticker (or sector): headline, an explicit "
@@ -931,6 +947,7 @@ _TOOL_TO_TYPE = {
     "add_data_universe": "data_universe",
     "add_intraday_chart": "intraday_chart",
     "add_data_quality": "data_quality",
+    "add_analyst_ratings": "analyst_ratings",
     "add_analyst_report": "analyst_report",
     "add_analyst_compare": "analyst_compare",
     "add_scenario": "scenario",
@@ -3592,6 +3609,12 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
         "investment thesis", "thesis on", "should i buy", "should i sell", "your view on",
         "your take on", "make the case",
     ])
+    wants_analyst_ratings = any(k in q for k in [
+        "analyst rating", "analyst ratings", "price target", "target price", "price targets",
+        "analyst consensus", "consensus rating", "street rating", "wall street rating",
+        "rating on", "ratings on", "upgrade", "downgrade", "how many analysts",
+        "what do analysts", "what analysts", "buy rating", "sell rating", "hold rating",
+    ])
     wants_analyst_compare = (
         len(symbols) >= 2
         and (
@@ -3665,6 +3688,16 @@ def _orchestrate_heuristic(query: str, cursor: Optional[dict] = None,
             else "a market-proxy basket"
         )
         return panels, f"What-if scenario for {label}: baseline vs scenario projection with reasoning and caveats."
+
+    if wants_analyst_ratings and symbols:
+        chosen = symbols[:3]
+        for s in chosen:
+            add("analyst_ratings", {"symbol": s}, 12 if len(chosen) == 1 else 6, 5)
+        names = ", ".join(data.get_company(s)["name"] for s in chosen)
+        return panels, (
+            f"Analyst ratings for {names}: consensus rating, the buy/hold/sell split, "
+            "price targets with implied upside, and recent upgrades/downgrades."
+        )
 
     if wants_analyst_compare:
         add("analyst_compare", {"symbols": symbols}, 12, 5)

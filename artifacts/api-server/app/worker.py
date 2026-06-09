@@ -14,6 +14,7 @@ idempotent upserts keyed by (symbol[, date]) / news id / (scope_type, scope).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from typing import List, Optional
@@ -137,6 +138,37 @@ def _seed_universe() -> None:
             source TEXT,
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             PRIMARY KEY (symbol, period_end)
+        )
+        """
+    )
+
+    # Real analyst ratings & price targets, one snapshot row per symbol. Kept in
+    # its own table so the consensus, distribution and recent upgrades/downgrades
+    # never collide with the single-snapshot `fundamentals` schema. ``covered``
+    # records whether Yahoo actually carries analyst coverage so the panel can be
+    # honest about uncovered names instead of fabricating targets.
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS analyst_ratings (
+            symbol TEXT PRIMARY KEY,
+            name TEXT,
+            covered BOOLEAN NOT NULL DEFAULT FALSE,
+            consensus_key TEXT,
+            recommendation_mean DOUBLE PRECISION,
+            num_analysts INTEGER,
+            strong_buy INTEGER,
+            buy INTEGER,
+            hold INTEGER,
+            sell INTEGER,
+            strong_sell INTEGER,
+            target_mean DOUBLE PRECISION,
+            target_high DOUBLE PRECISION,
+            target_low DOUBLE PRECISION,
+            target_median DOUBLE PRECISION,
+            current_price DOUBLE PRECISION,
+            changes JSONB,
+            source TEXT,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
         """
     )
@@ -380,6 +412,50 @@ def _upsert_calendar(c: dict) -> None:
     )
 
 
+def _upsert_analyst_ratings(d: dict) -> None:
+    """Persist a real analyst ratings/price-target snapshot for one symbol.
+
+    The whole snapshot is replaced on each refresh (analyst data is a current
+    consensus, not an accumulating history), including ``covered`` so a name that
+    loses coverage is honestly reflected. ``changes`` is the recent
+    upgrades/downgrades list, stored as JSONB."""
+    dist = d.get("distribution") or {}
+    db.execute(
+        """
+        INSERT INTO analyst_ratings (symbol, name, covered, consensus_key,
+            recommendation_mean, num_analysts, strong_buy, buy, hold, sell,
+            strong_sell, target_mean, target_high, target_low, target_median,
+            current_price, changes, source, updated_at)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s, now())
+        ON CONFLICT (symbol) DO UPDATE SET
+          name = COALESCE(EXCLUDED.name, analyst_ratings.name),
+          covered = EXCLUDED.covered,
+          consensus_key = EXCLUDED.consensus_key,
+          recommendation_mean = EXCLUDED.recommendation_mean,
+          num_analysts = EXCLUDED.num_analysts,
+          strong_buy = EXCLUDED.strong_buy,
+          buy = EXCLUDED.buy,
+          hold = EXCLUDED.hold,
+          sell = EXCLUDED.sell,
+          strong_sell = EXCLUDED.strong_sell,
+          target_mean = EXCLUDED.target_mean,
+          target_high = EXCLUDED.target_high,
+          target_low = EXCLUDED.target_low,
+          target_median = EXCLUDED.target_median,
+          current_price = EXCLUDED.current_price,
+          changes = EXCLUDED.changes,
+          source = EXCLUDED.source,
+          updated_at = now()
+        """,
+        (d.get("symbol"), d.get("name"), bool(d.get("covered")), d.get("consensusKey"),
+         d.get("recommendationMean"), d.get("numAnalysts"),
+         dist.get("strongBuy"), dist.get("buy"), dist.get("hold"), dist.get("sell"),
+         dist.get("strongSell"), d.get("targetMean"), d.get("targetHigh"),
+         d.get("targetLow"), d.get("targetMedian"), d.get("currentPrice"),
+         json.dumps(d.get("changes") or []), d.get("source")),
+    )
+
+
 def _update_market_cap(symbol: str, market_cap: float) -> None:
     """Refresh ONLY the market_cap of a mock breadth row.
 
@@ -570,6 +646,16 @@ async def _ingest_fundamentals(symbol: str) -> None:
         await asyncio.to_thread(_upsert_calendar, cal)
     except Exception as exc:  # noqa: BLE001
         log.warning("calendar ingest failed for %s: %s", symbol, exc)
+    # Real analyst ratings & price targets — best-effort on the same slow cadence
+    # so a throttle/missing-coverage never blocks the fundamentals snapshot.
+    try:
+        cons = await _net(f_src.fetch_analyst_consensus, ysym)
+        cons["symbol"] = symbol
+        await asyncio.to_thread(_upsert_analyst_ratings, cons)
+    except CircuitOpenError as exc:
+        log.debug("analyst ratings ingest skipped for %s: %s", symbol, exc)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("analyst ratings ingest failed for %s: %s", symbol, exc)
 
 
 async def _refresh_market_cap(symbol: str) -> None:

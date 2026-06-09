@@ -43,6 +43,7 @@ class PanelType(str, Enum):
     ma_tracker = "ma_tracker"
     signal_research = "signal_research"
     signal_scorecard = "signal_scorecard"
+    analyst_ratings = "analyst_ratings"
 
 
 class PanelStatus(str, Enum):
@@ -518,6 +519,50 @@ class CDSPricerData(BaseModel):
     survivalCurve: List[CDSSurvivalPoint]
     impliedPd1y: float
     impliedPd5y: float
+
+
+# --- analyst_ratings ---
+class AnalystRatingDistribution(BaseModel):
+    strongBuy: int = 0
+    buy: int = 0
+    hold: int = 0
+    sell: int = 0
+    strongSell: int = 0
+
+
+class AnalystConsensus(BaseModel):
+    key: Optional[str] = None
+    label: Optional[str] = None
+    mean: Optional[float] = None
+    numAnalysts: Optional[int] = None
+    distribution: Optional[AnalystRatingDistribution] = None
+
+
+class AnalystPriceTarget(BaseModel):
+    current: Optional[float] = None
+    mean: Optional[float] = None
+    high: Optional[float] = None
+    low: Optional[float] = None
+    median: Optional[float] = None
+    impliedUpsidePct: Optional[float] = None
+
+
+class AnalystRatingChange(BaseModel):
+    date: Optional[str] = None
+    firm: Optional[str] = None
+    action: Optional[str] = None
+    fromGrade: Optional[str] = None
+    toGrade: Optional[str] = None
+
+
+class AnalystRatingsData(BaseModel):
+    symbol: str
+    name: str
+    covered: bool
+    consensus: AnalystConsensus
+    priceTarget: AnalystPriceTarget
+    changes: List[AnalystRatingChange] = []
+    note: Optional[str] = None
 
 
 # --- cashflow_duration ---
