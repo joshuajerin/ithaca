@@ -231,12 +231,16 @@ def _extract_json(content: str) -> dict:
 
 
 def _call_ai(description: str) -> dict:
+    # This single call authors two complete source files, so it routinely needs
+    # more wall-clock than a normal chat turn. Give it the dedicated feature-build
+    # budget (still under the proxy ceiling) instead of the default 30s.
     msg = ai.chat(
         [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": f"Feature request: {description.strip()}"},
         ],
         response_format={"type": "json_object"},
+        timeout=ai.FEATURE_BUILD_TIMEOUT,
     )
     payload = _extract_json(msg.content or "")
     for key in ("panel_type", "feature_name", "python_code", "tsx_code"):
@@ -412,6 +416,13 @@ def remove_feature(panel_type: str) -> bool:
 
 
 # ----------------------------- SSE event stream -----------------------------
+# SSE comment line: ignored by the EventSource/fetch parser (no "data:" prefix)
+# but counts as bytes on the wire, keeping the proxy connection from idling out
+# while a long generation runs.
+_SSE_HEARTBEAT = ": keepalive\n\n"
+_PLANNING_HEARTBEAT_SECONDS = 5.0
+
+
 def _sse(event: dict) -> str:
     return f"data: {json.dumps(event)}\n\n"
 
@@ -439,7 +450,26 @@ def stream_feature_request(description: str) -> Iterator[str]:
 
     try:
         yield _sse({"stage": "planning", "message": "Interpreting your request…"})
-        payload = _call_ai(description)
+        # The planning call authors two full source files and can take tens of
+        # seconds. Run it off the generator thread and emit SSE heartbeats while
+        # it works so the preview proxy sees continuous bytes and doesn't 502.
+        holder: dict = {}
+
+        def _plan() -> None:
+            try:
+                holder["payload"] = _call_ai(description)
+            except BaseException as exc:  # noqa: BLE001 - re-raised on the main thread
+                holder["error"] = exc
+
+        worker = threading.Thread(target=_plan, daemon=True)
+        worker.start()
+        while worker.is_alive():
+            worker.join(timeout=_PLANNING_HEARTBEAT_SECONDS)
+            if worker.is_alive():
+                yield _SSE_HEARTBEAT
+        if "error" in holder:
+            raise holder["error"]
+        payload = holder["payload"]
 
         panel_type = _slugify_panel_type(payload["panel_type"])
         if panel_type in skills.SKILLS and not dynamic_skills.is_dynamic(panel_type):

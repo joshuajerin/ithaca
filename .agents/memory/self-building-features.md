@@ -64,6 +64,13 @@ A failure leaves zero partial files.
 - Endpoint `POST /api/feature-request` is SSE (StreamingResponse over a sync generator) with
   stages planning→generating_skill→generating_panel→activating→done|error. `FeatureRequestModal`
   reads it via `fetch` + `ReadableStream` (relative `/api/...`, proxy-routed; no base URL set).
+- **Planning call heartbeat:** the planning LLM call authors BOTH files at once and takes ~45-50s
+  (so the 30s default `CHAT_TIMEOUT` always killed it — fixed by passing `ai.FEATURE_BUILD_TIMEOUT`
+  =55s). To avoid the long blocking call tripping the proxy, `stream_feature_request` runs `_call_ai`
+  on a worker thread and `yield`s an SSE comment heartbeat (`: keepalive\n\n`, ignored by the
+  frontend parser which only acts on `data:` lines) every 5s while it runs; on completion it re-raises
+  any worker error so the existing outer except handlers still produce the clean error + zero partial
+  files.
 
 ## Provenance manifest (debuggability + feature management)
 - `dynamic_skills.py` owns `manifest.json` in `skills_generated/`: `read_manifest()` (resilient —

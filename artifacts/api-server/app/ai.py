@@ -30,6 +30,13 @@ _API_KEY = os.environ.get("AI_INTEGRATIONS_OPENAI_API_KEY")
 CHAT_TIMEOUT = 30.0
 AUDIO_TIMEOUT = 45.0
 TRANSCRIBE_TIMEOUT = 30.0
+# Heavy one-shot generation (the feature builder authors two full source files in
+# a single completion) needs more wall-clock than a normal chat turn — observed
+# completions sit around ~45-50s. Give headroom over that while staying under the
+# ~60s proxy ceiling so a genuinely stalled upstream still raises cleanly before a
+# 502. The feature-build stream emits SSE heartbeats while this call runs so the
+# connection stays warm.
+FEATURE_BUILD_TIMEOUT = 55.0
 
 _client: Optional[Any] = None
 
@@ -55,11 +62,18 @@ def get_client() -> Optional[Any]:
 
 
 def chat(messages: list, tools: Optional[list] = None, tool_choice: Optional[Any] = None,
-         response_format: Optional[dict] = None):
-    """Single chat-completions call. Returns the message object or raises."""
+         response_format: Optional[dict] = None, timeout: Optional[float] = None):
+    """Single chat-completions call. Returns the message object or raises.
+
+    ``timeout`` overrides the client's default ``CHAT_TIMEOUT`` for this one call
+    (used by heavy generations like the feature builder); it must stay under the
+    proxy ceiling.
+    """
     client = get_client()
     if client is None:
         raise RuntimeError("AI client unavailable")
+    if timeout is not None:
+        client = client.with_options(timeout=timeout)
     kwargs: dict = {
         "model": MODEL,
         "messages": messages,

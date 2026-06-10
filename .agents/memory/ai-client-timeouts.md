@@ -23,4 +23,12 @@ catch `Exception`, so a bounded timeout is enough to make them kick in.
   blow past the proxy window even with a per-attempt timeout.
 - Audio/narration (`speak`) can use a longer per-request budget via
   `client.with_options(timeout=...)` since it is heavier, but still bounded.
-- Keep both timeouts comfortably under ~60s (currently chat 30s, audio 45s).
+- Keep all timeouts comfortably under ~60s (currently chat 30s, audio 45s,
+  feature-build 55s).
+- **Feature-build is a special case:** its single planning call authors TWO full
+  source files and routinely takes ~45-50s, so the default 30s `CHAT_TIMEOUT`
+  ALWAYS timed it out. It now passes `timeout=ai.FEATURE_BUILD_TIMEOUT` (55s) to
+  `ai.chat` (which gained a per-request `timeout` param). Unlike orchestrate it has
+  NO fallback, so the budget must actually fit the work — and the stream emits SSE
+  heartbeats while the call runs (see self-building-features.md) so the long call
+  doesn't trip the proxy.
