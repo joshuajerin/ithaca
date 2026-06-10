@@ -8,6 +8,7 @@
 - [Panel layout collision resolution](panel-layout-collision.md) — dashboard overlap fix uses two-pass reserve-then-reflow (not single-pass greedy) so non-conflicting panels keep AI positions.
 - [Voice Mode push-to-talk](voice-mode-loop.md) — hold orb to listen / release to send (no auto re-arm); continuous=true + graceful stop() vs abort(); mic off during TTS; iframe blocks Web Speech; compact mobile layout.
 - [Backtesting & simulation engine](backtest-engine.md) — pure numpy engine in app/engine/; no-lookahead position lag, real OHLCV via price_series_meta (live/mock+asOf), Monte Carlo bootstrap/GBM.
+- [Stale Vite phantom export](stale-vite-phantom-export.md) — "no export named X" in browser when source has it = orphaned dev server stuck on ports + stale graph; fix is restart_workflow, not code.
 - [Stock universe breadth (US + SGX)](universe-breadth.md) — CORE tracked-live vs bulk mock-on-demand split; SGX base codes + .SI at fetch only; is_live provenance; prompt_symbols cap.
 - [Launch video layering & perf](launch-video-layering.md) — persistent layers by baseSceneKey; single rAF loop, no blur filters, scrims behind text fix lag+overlap.
 - [Period returns (day vs year)](period-returns.md) — changePct is 1D only; real returns from price series via returns.py; screener/heatmap use YTD not 1Y (live DB ~6mo).
