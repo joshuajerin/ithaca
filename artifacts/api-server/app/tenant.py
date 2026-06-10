@@ -35,6 +35,15 @@ _current_firm: contextvars.ContextVar[str] = contextvars.ContextVar(
     "current_firm_id", default=DEFAULT_FIRM_ID
 )
 
+# The acting user behind the current request, mirrored from the authenticated
+# identity. Like the firm var it is set once per request so deep audit calls
+# (e.g. the pre-trade gate) can attribute a write to a real user without
+# threading a user_id through every call site. ``None`` means no human actor —
+# the background worker and unauthenticated paths fall back to a system actor.
+_current_actor: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "current_actor", default=None
+)
+
 
 def set_current_firm(firm_id: Optional[str]) -> None:
     """Bind the active firm for the current request/context (identity dependency)."""
@@ -65,3 +74,40 @@ def firm_context(firm_id: Optional[str]) -> Iterator[str]:
         yield fid
     finally:
         _current_firm.reset(token)
+
+
+# ------------------------------- actor --------------------------------
+def set_current_actor(
+    user_id: Optional[str], name: Optional[str] = None, email: Optional[str] = None
+) -> None:
+    """Bind the acting user for the current request/context (identity dependency).
+
+    Passing ``user_id=None`` clears the actor so the call attributes to the
+    system (the worker and unauthenticated paths run this way).
+    """
+    if not user_id:
+        _current_actor.set(None)
+    else:
+        _current_actor.set({"userId": user_id, "name": name, "email": email})
+
+
+def current_actor() -> Optional[dict]:
+    """The user the current call is acting on behalf of, or ``None`` for system."""
+    return _current_actor.get()
+
+
+@contextmanager
+def actor_context(
+    user_id: Optional[str], name: Optional[str] = None, email: Optional[str] = None
+) -> Iterator[Optional[dict]]:
+    """Temporarily act as ``user_id`` within the block, restoring on exit.
+
+    Mirrors :func:`firm_context`; used where an actor must be attributed outside
+    the normal identity dependency (e.g. login/logout on the public router).
+    """
+    actor = {"userId": user_id, "name": name, "email": email} if user_id else None
+    token = _current_actor.set(actor)
+    try:
+        yield actor
+    finally:
+        _current_actor.reset(token)

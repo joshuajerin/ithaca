@@ -18,6 +18,7 @@ import { useConsoleConversation } from "@/hooks/useConsoleConversation";
 import { useAuth } from "@/hooks/useAuth";
 import { FeatureRequestModal } from "@/components/terminal/FeatureRequestModal";
 import { SavedDashboardsModal } from "@/components/terminal/SavedDashboardsModal";
+import { AuditLogModal } from "@/components/terminal/AuditLogModal";
 import { DotWaveCanvas } from "@/components/terminal/DotWaveCanvas";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile, useBreakpoint } from "@/hooks/use-mobile";
@@ -26,7 +27,7 @@ import {
   saveVoiceSettings,
   type VoiceSettings,
 } from "@/lib/voiceSettings";
-import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles, Compass, CalendarClock, Command, X, LayoutGrid, LogOut } from "lucide-react";
+import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles, Compass, CalendarClock, Command, X, LayoutGrid, LogOut, ShieldCheck } from "lucide-react";
 import {
   formatEarningsCountdown,
   type EarningsRow,
@@ -71,6 +72,7 @@ export default function Terminal() {
   const [mobileConsoleOpen, setMobileConsoleOpen] = useState(false);
   const [showFeatureModal, setShowFeatureModal] = useState(false);
   const [showDashboardsModal, setShowDashboardsModal] = useState(false);
+  const [showAuditModal, setShowAuditModal] = useState(false);
   // Voice synthesis preferences (which voice + speaking speed), persisted to
   // localStorage so the choice survives reloads.
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>(() => loadVoiceSettings());
@@ -597,6 +599,15 @@ export default function Terminal() {
               <LayoutGrid className="w-3.5 h-3.5 text-muted-foreground group-hover/btn:text-white transition-colors" strokeWidth={1.5} />
               Dashboards
             </button>
+            {identity?.user.role === "admin" && (
+              <button
+                onClick={() => setShowAuditModal(true)}
+                className="flex items-center gap-2 px-2.5 sm:px-3 py-2 editorial-label text-[9px] border border-border bg-black text-white hover:border-white transition-colors group/btn"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-muted-foreground group-hover/btn:text-white transition-colors" strokeWidth={1.5} />
+                <span className="hidden sm:inline">Audit</span>
+              </button>
+            )}
             <button
               onClick={() => setShowFeatureModal(true)}
               disabled={!can("feature.build")}
@@ -885,6 +896,8 @@ export default function Terminal() {
           pushReply(spec);
         }}
       />
+
+      <AuditLogModal open={showAuditModal} onClose={() => setShowAuditModal(false)} />
     </div>
   );
 }

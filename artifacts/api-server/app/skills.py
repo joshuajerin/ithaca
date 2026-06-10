@@ -1232,7 +1232,9 @@ def build_compliance(params: dict) -> dict:
         "killReason": cfg.get("killReason"),
         "strategyKills": cfg.get("strategyKills") or {},
         "strategies": roster,
-        "audit": compliance_store.list_audit(40),
+        # The audit table is now firm-wide; the compliance panel shows only the
+        # pre-trade gate decisions (the firm-wide log lives in the admin viewer).
+        "audit": compliance_store.list_audit(40, category="compliance"),
         "check": check,
     }
 

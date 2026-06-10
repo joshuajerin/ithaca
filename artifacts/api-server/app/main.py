@@ -82,6 +82,9 @@ async def require_identity(
     # scopes reads and stamps writes to this tenant. Set in an async dependency so
     # the value propagates into the threadpool that runs sync handlers.
     tenant.set_current_firm(user["firmId"])
+    # Bind the acting user too, so every audit write (including the deep pre-trade
+    # gate) attributes to a real person without threading the id through.
+    tenant.set_current_actor(user["id"], user.get("name"), user.get("email"))
     return auth.Identity(
         user_id=user["id"],
         firm_id=user["firmId"],
@@ -108,6 +111,16 @@ def require_role(*roles: str):
 
     def dependency(identity: auth.Identity = Depends(require_identity)) -> auth.Identity:
         if identity.role not in allowed:
+            # Record the denied attempt before refusing — it is exactly the kind of
+            # event the audit trail exists to capture. The firm + actor context is
+            # already bound by require_identity, so the entry is attributed.
+            from . import compliance_store
+            compliance_store.append_audit(
+                category="auth",
+                action="permission_denied",
+                summary=f"Denied: requires {', '.join(sorted(allowed))} (role: {identity.role})",
+                decision="blocked",
+            )
             raise HTTPException(
                 status_code=403,
                 detail="You do not have permission to perform this action.",
@@ -148,6 +161,17 @@ def require_permission(action: str):
 
     def _dep(identity: auth.Identity = Depends(require_identity)) -> auth.Identity:
         if not permissions.can(identity.role, action):
+            # Record the denied attempt before refusing — capturing permission
+            # denials is exactly what the audit trail exists for. The firm + actor
+            # context is already bound by require_identity, so it is attributed.
+            from . import compliance_store
+            compliance_store.append_audit(
+                category="auth",
+                action="permission_denied",
+                target=action,
+                summary=f"Denied: requires permission “{action}” (role: {identity.role})",
+                decision="blocked",
+            )
             raise HTTPException(
                 status_code=403,
                 detail=permissions.denial_message(identity.role, action),
@@ -244,11 +268,28 @@ def auth_signup(req: models.SignupRequest, response: Response):
     token = auth.new_session_token()
     auth_store.create_session(auth.hash_token(token), user["id"], auth.SESSION_TTL_SECONDS)
     _set_session_cookie(response, token)
+    _audit_auth(firm["id"], user, "signup", f"{user['name']} created firm “{firm['name']}”")
     return {
         "user": {"id": user["id"], "name": user["name"], "email": user["email"], "role": user["role"]},
         "firm": {"id": firm["id"], "name": firm["name"]},
         "permissions": permissions.allowed_actions(user["role"]),
     }
+
+
+def _audit_auth(firm_id: str, user: dict | None, action: str, summary: str, decision: str | None = None) -> None:
+    """Record an auth event on the public router, where no identity dependency has
+    bound the firm/actor context yet — so pass both explicitly."""
+    from . import compliance_store
+    compliance_store.append_audit(
+        firm_id=firm_id,
+        actor_user_id=(user or {}).get("id"),
+        actor_name=(user or {}).get("name"),
+        category="auth",
+        action=action,
+        summary=summary,
+        target=(user or {}).get("email"),
+        decision=decision,
+    )
 
 
 @public.post(
@@ -262,11 +303,17 @@ def auth_login(req: models.LoginRequest, response: Response):
     password = req.password or ""
     user = auth_store.get_user_by_email(email)
     if not user or not auth.verify_password(password, user["passwordHash"], user["passwordSalt"]):
+        # A failed login against a known account is auditable; an unknown email has
+        # no firm to scope the entry to, so it is not recorded.
+        if user:
+            _audit_auth(user["firmId"], user, "login_failed",
+                        f"Failed login for {user['name']}", decision="blocked")
         raise HTTPException(status_code=401, detail="Invalid email or password")
     firm = auth_store.get_firm(user["firmId"])
     token = auth.new_session_token()
     auth_store.create_session(auth.hash_token(token), user["id"], auth.SESSION_TTL_SECONDS)
     _set_session_cookie(response, token)
+    _audit_auth(user["firmId"], user, "login", f"{user['name']} signed in")
     return {
         "user": {"id": user["id"], "name": user["name"], "email": user["email"], "role": user["role"]},
         "firm": {"id": firm["id"], "name": firm["name"]} if firm else {"id": user["firmId"], "name": ""},
@@ -281,6 +328,12 @@ def auth_logout(
 ):
     """Invalidate the current session and clear the cookie."""
     if session:
+        # Resolve the user from the session before deleting it so the logout is
+        # attributed (the public router binds no identity context).
+        user_id = auth_store.get_session_user_id(auth.hash_token(session))
+        user = auth_store.get_user_by_id(user_id) if user_id else None
+        if user:
+            _audit_auth(user["firmId"], user, "logout", f"{user['name']} signed out")
         auth_store.delete_session(auth.hash_token(session))
     response.delete_cookie(key=auth.COOKIE_NAME, path="/")
     return {"ok": True}
@@ -393,6 +446,11 @@ def save_dashboard(req: models.SaveDashboardRequest):
         raise HTTPException(status_code=400, detail="cannot save an empty dashboard")
     panels = [p.model_dump() for p in req.panels]
     record = dashboard_store.save_dashboard(name, req.summary or "", panels)
+    from . import compliance_store
+    compliance_store.append_audit(
+        category="dashboard", action="dashboard.save", target=record["name"],
+        summary=f"Saved dashboard “{record['name']}” ({len(panels)} panels)",
+    )
     return {
         "id": record["id"],
         "name": record["name"],
@@ -429,7 +487,14 @@ def restore_dashboard(dashboard_id: str):
     dependencies=[Depends(require_permission("dashboard.delete"))],
 )
 def delete_saved_dashboard(dashboard_id: str):
+    record = dashboard_store.get_dashboard(dashboard_id)
     dashboard_store.delete_dashboard(dashboard_id)
+    from . import compliance_store
+    compliance_store.append_audit(
+        category="dashboard", action="dashboard.delete",
+        target=(record or {}).get("name") or dashboard_id,
+        summary=f"Deleted dashboard “{(record or {}).get('name') or dashboard_id}”",
+    )
     return {"dashboards": dashboard_store.list_dashboards()}
 
 
@@ -607,6 +672,12 @@ def create_strategy(req: StrategyCreateRequest):
                 "compliance": cb.result}
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"could not create strategy: {exc}")
+    from . import compliance_store
+    compliance_store.append_audit(
+        category="strategy", action="strategy.create",
+        target=view.get("name"), strategy_id=view.get("id"), strategy_name=view.get("name"),
+        summary=f"Created strategy “{view.get('name')}” in {view.get('stage')}",
+    )
     return view
 
 
@@ -628,6 +699,14 @@ def transition_strategy(strategy_id: str, req: StrategyTransitionRequest):
     except strategy.ComplianceBlock as cb:
         return {"ok": False, "blocked": True, "message": cb.result.get("reason"),
                 "compliance": cb.result, "strategy": view}
+    if ok:
+        from . import compliance_store
+        compliance_store.append_audit(
+            category="strategy", action="strategy.transition",
+            target=updated.get("name"), strategy_id=updated.get("id"),
+            strategy_name=updated.get("name"), summary=message,
+            detail={"toStage": updated.get("stage"), "force": req.force},
+        )
     return {"ok": ok, "message": message, "strategy": updated}
 
 
@@ -642,7 +721,19 @@ def rebalance_strategy(strategy_id: str, req: StrategyRebalanceRequest | None = 
         raise HTTPException(status_code=404, detail="strategy not found")
     cost_bps = (req.costBps if req and req.costBps is not None else strategy.DEFAULT_COST_BPS)
     updated, info = strategy.rebalance(view, cost_bps=cost_bps)
-    return {"ok": bool(info.get("applied")), "rebalance": info, "strategy": updated}
+    from . import compliance_store
+    applied = bool(info.get("applied"))
+    compliance_store.append_audit(
+        category="trade", action="strategy.rebalance",
+        target=updated.get("name"), strategy_id=updated.get("id"),
+        strategy_name=updated.get("name"),
+        summary=(f"Rebalanced “{updated.get('name')}”: {info.get('trades')} trades, "
+                 f"{info.get('turnoverPct')}% turnover" if applied
+                 else f"Rebalance of “{updated.get('name')}” made no changes"),
+        detail={"trades": info.get("trades"), "turnoverPct": info.get("turnoverPct"),
+                "costUsd": info.get("costUsd"), "applied": applied},
+    )
+    return {"ok": applied, "rebalance": info, "strategy": updated}
 
 
 # ------------------------------ strategy templates marketplace ----------------
@@ -761,6 +852,11 @@ def delete_feature(
     removed = feature_builder.remove_feature(panel_type)
     if not removed:
         raise HTTPException(status_code=404, detail=f"Unknown feature: {panel_type}")
+    from . import compliance_store
+    compliance_store.append_audit(
+        category="feature", action="feature.delete", target=panel_type,
+        summary=f"Removed generated feature “{panel_type}”",
+    )
     return {"ok": True, "panelType": panel_type}
 
 
@@ -787,6 +883,11 @@ def update_firm_settings(
 ):
     """Admin-only: toggle the AI code-execution (feature-building) kill-switch."""
     settings = firm_settings.set_codegen_enabled(identity.firm_id, req.codegenEnabled)
+    from . import compliance_store
+    compliance_store.append_audit(
+        category="admin", action="firm.codegen_toggle",
+        summary=f"AI feature-building {'enabled' if req.codegenEnabled else 'disabled'} firm-wide",
+    )
     return {**settings, "canManage": True}
 
 
@@ -818,6 +919,12 @@ def feature_request(
     description = (req.description or "").strip()
     if len(description) > 2000:
         raise HTTPException(status_code=400, detail="description is too long")
+    from . import compliance_store
+    compliance_store.append_audit(
+        category="feature", action="feature.build",
+        target=(description[:60] + "…") if len(description) > 60 else description,
+        summary=f"Requested AI feature build: {description[:140]}",
+    )
     return StreamingResponse(
         feature_builder.stream_feature_request(description),
         media_type="text/event-stream",
@@ -942,6 +1049,12 @@ def create_alert(req: AlertRuleInput):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     state.add_alert_rule(sid, rule)
+    from . import compliance_store
+    compliance_store.append_audit(
+        category="alert", action="alert.create", target=rule.get("symbol"),
+        summary=f"Created alert: {rule.get('symbol')} {rule.get('metric')} ≥ {rule.get('threshold')}",
+        detail={"rule": rule},
+    )
     # Evaluate immediately against the current trade-flow panels so a matching
     # rule fires right away rather than waiting for the next build.
     alerts.evaluate_dashboard(sid, state.get_dashboard(sid))
@@ -971,7 +1084,15 @@ def delete_alert(rule_id: str, sessionId: str):
     sid = (sessionId or "").strip()
     if not sid:
         raise HTTPException(status_code=400, detail="sessionId is required")
+    rule = next((r for r in state.get_alert_rules(sid) if r.get("id") == rule_id), None)
     state.remove_alert_rule(sid, rule_id)
+    from . import compliance_store
+    compliance_store.append_audit(
+        category="alert", action="alert.delete",
+        target=(rule or {}).get("symbol") or rule_id,
+        summary=(f"Deleted alert: {rule['symbol']} {rule['metric']} ≥ {rule['threshold']}"
+                 if rule else f"Deleted alert {rule_id}"),
+    )
     return _alerts_payload(sid)
 
 
@@ -1007,6 +1128,10 @@ def add_restricted(req: ComplianceSymbolInput):
     if not sym:
         raise HTTPException(status_code=400, detail="symbol is required")
     compliance_store.add_restricted(sym)
+    compliance_store.append_audit(
+        category="config", action="compliance.restrict_add", target=sym,
+        summary=f"Added {sym} to the restricted list",
+    )
     return _compliance_payload()
 
 
@@ -1017,6 +1142,10 @@ def add_watch(req: ComplianceSymbolInput):
     if not sym:
         raise HTTPException(status_code=400, detail="symbol is required")
     compliance_store.add_watch(sym)
+    compliance_store.append_audit(
+        category="config", action="compliance.watch_add", target=sym,
+        summary=f"Added {sym} to the watch list",
+    )
     return _compliance_payload()
 
 
@@ -1024,6 +1153,11 @@ def add_watch(req: ComplianceSymbolInput):
 def set_limits(req: ComplianceLimitsInput):
     from . import compliance_store
     compliance_store.set_limits(req.limits or {})
+    compliance_store.append_audit(
+        category="config", action="compliance.set_limits",
+        summary=f"Updated position limits: {req.limits or {}}",
+        detail={"limits": req.limits or {}},
+    )
     return _compliance_payload()
 
 
@@ -1031,6 +1165,13 @@ def set_limits(req: ComplianceLimitsInput):
 def set_kill_switch(req: ComplianceKillSwitchInput):
     from . import compliance_store
     compliance_store.set_kill_switch(bool(req.on), reason=req.reason, strategy_id=req.strategyId)
+    scope = f"strategy {req.strategyId}" if req.strategyId else "firm-wide"
+    compliance_store.append_audit(
+        category="config", action="compliance.kill_switch",
+        target=req.strategyId, decision="blocked" if req.on else None,
+        summary=(f"Kill-switch {'ENGAGED' if req.on else 'released'} ({scope})"
+                 + (f": {req.reason}" if req.reason else "")),
+    )
     return _compliance_payload()
 
 
@@ -1043,11 +1184,42 @@ def check_compliance(req: ComplianceSymbolInput):
     return _compliance_payload(sel)
 
 
-@api.delete("/compliance/audit", dependencies=[Depends(require_permission("compliance.config"))])
-def clear_compliance_audit():
+# NOTE: there is deliberately no endpoint to clear or edit the audit trail. The
+# log is append-only by contract; ``compliance_store.clear_audit`` exists only for
+# test setup and is never exposed over HTTP.
+
+
+# ------------------------------ firm-wide audit log ---------------------------
+@api.get("/audit")
+def get_audit_log(
+    user: str | None = None,
+    category: str | None = None,
+    action: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = 200,
+    _identity: auth.Identity = Depends(require_permission("compliance.config")),
+):
+    """Admin-only firm-wide audit trail with filters.
+
+    Gated through the authoritative permission matrix (``compliance.config`` is
+    admin-only) so it is server-enforced and consistent with the rest of the
+    privileged surface. Scoped to the admin's firm via the request context (set
+    in require_identity); ``user`` is an actor user id, ``category``/``action``
+    exact matches, and ``since``/``until`` bound the ISO timestamp. Also returns
+    the distinct actors and categories present so the viewer can populate its
+    filter dropdowns.
+    """
     from . import compliance_store
-    n = compliance_store.clear_audit()
-    return {"cleared": n}
+    entries = compliance_store.list_audit(
+        limit=limit, category=category, actor_user_id=user,
+        action=action, since=since, until=until,
+    )
+    return {
+        "entries": entries,
+        "actors": compliance_store.audit_actors(),
+        "categories": compliance_store.audit_categories(),
+    }
 
 
 # NOTE: the parametrized "/compliance/{list}/{symbol}" DELETE routes are declared

@@ -95,8 +95,23 @@ def _ensure_schema() -> None:
                 "ALTER TABLE compliance_audit ADD COLUMN IF NOT EXISTS firm_id text NOT NULL DEFAULT 'default'"
             )
             db.execute("UPDATE compliance_audit SET firm_id = 'default' WHERE firm_id IS NULL")
+            # Firm-wide, user-attributed audit trail: the compliance gate is just
+            # one category of recorded action now. These columns widen the same
+            # append-only table into a unified audit log without a new table.
+            db.execute("ALTER TABLE compliance_audit ADD COLUMN IF NOT EXISTS category text")
+            db.execute("ALTER TABLE compliance_audit ADD COLUMN IF NOT EXISTS target text")
+            db.execute("ALTER TABLE compliance_audit ADD COLUMN IF NOT EXISTS actor_user_id text")
+            db.execute("ALTER TABLE compliance_audit ADD COLUMN IF NOT EXISTS actor_name text")
+            # Existing rows predate categories — they are all gate decisions.
+            db.execute("UPDATE compliance_audit SET category = 'compliance' WHERE category IS NULL")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS compliance_audit_firm_idx ON compliance_audit (firm_id, at DESC)"
+            )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS compliance_audit_cat_idx ON compliance_audit (firm_id, category, at DESC)"
+            )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS compliance_audit_actor_idx ON compliance_audit (firm_id, actor_user_id, at DESC)"
             )
             _schema_ready = True
         except Exception as exc:  # noqa: BLE001
@@ -266,24 +281,51 @@ def is_killed(strategy_id: Optional[str] = None) -> tuple:
 def append_audit(
     *,
     action: str,
-    decision: str,
     summary: str,
+    decision: Optional[str] = None,
+    category: str = "compliance",
+    target: Optional[str] = None,
     strategy_id: Optional[str] = None,
     strategy_name: Optional[str] = None,
     detail: Optional[dict] = None,
+    actor_user_id: Optional[str] = None,
+    actor_name: Optional[str] = None,
     firm_id: Optional[str] = None,
 ) -> dict:
-    """Append one gate decision to the caller's firm audit trail. Best-effort:
-    never raises."""
+    """Append one entry to the caller's firm audit trail. Best-effort: never raises.
+
+    The acting user is taken from explicit ``actor_*`` args when given, else from
+    the request-scoped :func:`tenant.current_actor` (so a deep gate call is still
+    attributed), else recorded as the system. ``category`` groups entries (e.g.
+    ``compliance``, ``trade``, ``strategy``, ``auth``); ``target`` is the subject
+    the action acted on. The table is append-only — there is no update path."""
     fid = tenant.resolve_firm(firm_id)
+    if actor_user_id is None:
+        actor = tenant.current_actor()
+        if actor:
+            actor_user_id = actor.get("userId")
+            actor_name = actor_name or actor.get("name")
+    # A human action with no resolvable actor still gets a stable system label so
+    # the trail never has unattributed rows.
+    if not actor_user_id:
+        actor_user_id = "system"
+        actor_name = actor_name or "System"
+    # The compliance gate uses strategy as its subject; carry it into target so
+    # the unified viewer has a subject for every row regardless of category.
+    if target is None and strategy_name:
+        target = strategy_name
     entry = {
         "id": uuid.uuid4().hex[:12],
         "at": _now_iso(),
+        "category": category,
         "action": action,
+        "target": target,
         "strategyId": strategy_id,
         "strategyName": strategy_name,
         "decision": decision,
         "summary": summary,
+        "actorUserId": actor_user_id,
+        "actorName": actor_name,
         "detail": detail or {},
     }
     _ensure_schema()
@@ -292,12 +334,14 @@ def append_audit(
             db.execute(
                 """
                 INSERT INTO compliance_audit
-                    (id, firm_id, at, action, strategy_id, strategy_name, decision, summary, detail)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                    (id, firm_id, at, category, action, target, strategy_id,
+                     strategy_name, decision, summary, actor_user_id, actor_name, detail)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
                 """,
                 (
-                    entry["id"], fid, entry["at"], action, strategy_id, strategy_name,
-                    decision, summary, json.dumps(entry["detail"]),
+                    entry["id"], fid, entry["at"], category, action, target, strategy_id,
+                    strategy_name, decision, summary, actor_user_id, actor_name,
+                    json.dumps(entry["detail"]),
                 ),
             )
             return entry
@@ -306,38 +350,137 @@ def append_audit(
     with _mem_lock:
         trail = _mem_audit.setdefault(fid, [])
         trail.insert(0, entry)
-        del trail[200:]
+        del trail[500:]
     return entry
 
 
-def list_audit(limit: int = 50, firm_id: Optional[str] = None) -> List[dict]:
+def list_audit(
+    limit: int = 50,
+    firm_id: Optional[str] = None,
+    category: Optional[str] = None,
+    actor_user_id: Optional[str] = None,
+    action: Optional[str] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> List[dict]:
+    """Return the firm's audit entries, newest first, with optional filters.
+
+    ``category``/``actor_user_id``/``action`` are exact matches; ``since``/
+    ``until`` bound the ISO timestamp (inclusive)."""
     _ensure_schema()
     fid = tenant.resolve_firm(firm_id)
-    limit = max(1, min(int(limit or 50), 200))
+    limit = max(1, min(int(limit or 50), 500))
     if db.db_available():
         try:
+            clauses = ["firm_id = %s"]
+            args: List = [fid]
+            if category:
+                clauses.append("category = %s")
+                args.append(category)
+            if actor_user_id:
+                clauses.append("actor_user_id = %s")
+                args.append(actor_user_id)
+            if action:
+                clauses.append("action = %s")
+                args.append(action)
+            if since:
+                clauses.append("at >= %s")
+                args.append(since)
+            if until:
+                clauses.append("at <= %s")
+                args.append(until)
+            args.append(limit)
             rows = db.query(
-                "SELECT * FROM compliance_audit WHERE firm_id = %s ORDER BY at DESC LIMIT %s",
-                (fid, limit),
+                f"SELECT * FROM compliance_audit WHERE {' AND '.join(clauses)} "
+                "ORDER BY at DESC LIMIT %s",
+                tuple(args),
             )
-            out: List[dict] = []
-            for r in rows:
-                at = r.get("at")
-                out.append({
-                    "id": r.get("id"),
-                    "at": at.isoformat() if hasattr(at, "isoformat") else str(at),
-                    "action": r.get("action"),
-                    "strategyId": r.get("strategy_id"),
-                    "strategyName": r.get("strategy_name"),
-                    "decision": r.get("decision"),
-                    "summary": r.get("summary"),
-                    "detail": r.get("detail") or {},
-                })
-            return out
+            return [_row_to_entry(r) for r in rows]
         except Exception as exc:  # noqa: BLE001
             log.warning("list_audit DB error: %s", exc)
     with _mem_lock:
-        return [dict(e) for e in _mem_audit.get(fid, [])[:limit]]
+        out: List[dict] = []
+        for e in _mem_audit.get(fid, []):
+            if category and e.get("category") != category:
+                continue
+            if actor_user_id and e.get("actorUserId") != actor_user_id:
+                continue
+            if action and e.get("action") != action:
+                continue
+            if since and (e.get("at") or "") < since:
+                continue
+            if until and (e.get("at") or "") > until:
+                continue
+            out.append(dict(e))
+            if len(out) >= limit:
+                break
+        return out
+
+
+def _row_to_entry(r: dict) -> dict:
+    at = r.get("at")
+    return {
+        "id": r.get("id"),
+        "at": at.isoformat() if hasattr(at, "isoformat") else str(at),
+        "category": r.get("category") or "compliance",
+        "action": r.get("action"),
+        "target": r.get("target") or r.get("strategy_name"),
+        "strategyId": r.get("strategy_id"),
+        "strategyName": r.get("strategy_name"),
+        "decision": r.get("decision"),
+        "summary": r.get("summary"),
+        "actorUserId": r.get("actor_user_id") or "system",
+        "actorName": r.get("actor_name") or "System",
+        "detail": r.get("detail") or {},
+    }
+
+
+def audit_actors(firm_id: Optional[str] = None) -> List[dict]:
+    """Distinct (userId, name) pairs that appear in the firm's audit trail —
+    used to populate the viewer's user filter."""
+    _ensure_schema()
+    fid = tenant.resolve_firm(firm_id)
+    if db.db_available():
+        try:
+            rows = db.query(
+                "SELECT actor_user_id, MAX(actor_name) AS actor_name "
+                "FROM compliance_audit WHERE firm_id = %s AND actor_user_id IS NOT NULL "
+                "GROUP BY actor_user_id ORDER BY MAX(actor_name)",
+                (fid,),
+            )
+            return [
+                {"userId": r.get("actor_user_id"), "name": r.get("actor_name") or r.get("actor_user_id")}
+                for r in rows
+            ]
+        except Exception as exc:  # noqa: BLE001
+            log.warning("audit_actors DB error: %s", exc)
+    with _mem_lock:
+        seen: Dict[str, str] = {}
+        for e in _mem_audit.get(fid, []):
+            uid = e.get("actorUserId")
+            if uid and uid not in seen:
+                seen[uid] = e.get("actorName") or uid
+        return [{"userId": k, "name": v} for k, v in sorted(seen.items(), key=lambda kv: kv[1])]
+
+
+def audit_categories(firm_id: Optional[str] = None) -> List[str]:
+    """Distinct categories present in the firm's audit trail — for the viewer's
+    action-type filter."""
+    _ensure_schema()
+    fid = tenant.resolve_firm(firm_id)
+    if db.db_available():
+        try:
+            rows = db.query(
+                "SELECT DISTINCT category FROM compliance_audit "
+                "WHERE firm_id = %s AND category IS NOT NULL ORDER BY category",
+                (fid,),
+            )
+            return [r.get("category") for r in rows if r.get("category")]
+        except Exception as exc:  # noqa: BLE001
+            log.warning("audit_categories DB error: %s", exc)
+    with _mem_lock:
+        cats = {e.get("category") for e in _mem_audit.get(fid, []) if e.get("category")}
+        return sorted(cats)
 
 
 def clear_audit(firm_id: Optional[str] = None) -> int:
