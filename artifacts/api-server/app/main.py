@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, Cookie, Depends, FastAPI, Header, HTTPException, Response
@@ -10,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import agent, alerts, auth, auth_store, dashboard_store, db, dynamic_skills, feature_builder, firm_settings, harness, models, permissions, repo, security, skills, state, tenant, worker
+from . import agent, alerts, auth, auth_store, cache, dashboard_store, db, dynamic_skills, feature_builder, firm_settings, harness, models, permissions, repo, security, skills, state, tenant, worker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -411,9 +412,26 @@ def _build_default_dashboard() -> dict:
     }
 
 
+# The default dashboard is identical for every user (no params, no user/firm
+# scoping) yet each build fires several live upstream fetches (heatmap, news,
+# sentiment) and emits a ~240KB payload, so it costs ~1s of work per request.
+# Under concurrency it saturates the single worker and drags every other
+# endpoint down. Because the result is the same for everyone, we serve it from a
+# short-TTL process cache so the live fetches happen at most once per window
+# instead of once per request. TTL is env-tunable (0 disables caching).
+_DEFAULT_DASHBOARD_TTL = float(os.environ.get("DASHBOARD_DEFAULT_TTL", "60"))
+
+
 @api.get("/dashboard/default", response_model=models.DashboardSpec)
 def default_dashboard():
-    return _build_default_dashboard()
+    if _DEFAULT_DASHBOARD_TTL <= 0:
+        return _build_default_dashboard()
+    # Single-flight: when the TTL lapses, only one request rebuilds (with its
+    # live upstream fetches) while concurrent callers wait and read the fresh
+    # value, instead of a thundering herd of simultaneous expensive builds.
+    return cache.cached_singleflight(
+        "dashboard:default", _DEFAULT_DASHBOARD_TTL, _build_default_dashboard
+    )
 
 
 @api.post(

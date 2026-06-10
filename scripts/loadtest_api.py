@@ -40,8 +40,48 @@ BASE = os.environ.get("BASE", "http://127.0.0.1:8137").rstrip("/")
 FIRMS = int(os.environ.get("LOAD_FIRMS", "8"))
 ROUNDS = int(os.environ.get("LOAD_ROUNDS", "10"))
 CONCURRENCY = int(os.environ.get("LOAD_CONCURRENCY", "24"))
-LATENCY_BUDGET_MS = float(os.environ.get("LOAD_LATENCY_BUDGET_MS", "2500"))
 TIMEOUT = float(os.environ.get("LOAD_TIMEOUT", "30"))
+
+# Per-endpoint p95 latency budgets (ms). These are calibrated against a *loopback*
+# baseline (BASE pointing at 127.0.0.1, not the public TLS proxy) at the default
+# fan-out (8 firms x 10 rounds, 24 concurrent) with the default-dashboard cache
+# warm. Observed loopback p95 sits comfortably under 1s for every hot path once
+# /api/dashboard/default is served from its short-TTL cache, so the budgets below
+# carry ~1.5-2x headroom to absorb a cold cache build and scheduling jitter while
+# still catching a real regression (i.e. a path slipping back into multi-second
+# territory). The default fallback applies to any endpoint without an explicit
+# entry. Override any value with LOAD_BUDGET_<LABEL>_MS, e.g.
+# LOAD_BUDGET_DASHBOARD_DEFAULT_MS=2500, or the fallback with LOAD_LATENCY_BUDGET_MS.
+DEFAULT_LATENCY_BUDGET_MS = float(os.environ.get("LOAD_LATENCY_BUDGET_MS", "1500"))
+ENDPOINT_BUDGET_MS: Dict[str, float] = {
+    # Heaviest hot path: 6 panels + (on a cache miss) several live upstream
+    # fetches and a ~240KB payload. Cached, so steady-state p95 is small; the
+    # extra headroom absorbs the periodic cold rebuild when the TTL lapses.
+    "dashboard_default": 2000.0,
+    "watchlist": 1500.0,
+    "skills": 1500.0,
+    "dashboards_list": 1500.0,
+    "dcf_save": 1500.0,
+    "dcf_list": 1500.0,
+}
+
+# When LOAD_GATE_LATENCY is truthy, a p95 over budget FAILS the run (a real
+# regression gate). Otherwise it is reported as a warning only — absolute latency
+# depends on where the driver runs (loopback vs. public TLS proxy) and on the
+# instance count, so a blanket hard gate would be flaky in those environments.
+GATE_LATENCY = os.environ.get("LOAD_GATE_LATENCY", "0").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+
+
+def budget_for(label: str) -> float:
+    override = os.environ.get(f"LOAD_BUDGET_{label.upper()}_MS")
+    if override:
+        try:
+            return float(override)
+        except ValueError:
+            pass
+    return ENDPOINT_BUDGET_MS.get(label, DEFAULT_LATENCY_BUDGET_MS)
 
 
 def _req(method: str, path: str, token: Optional[str] = None,
@@ -191,14 +231,19 @@ def main() -> int:
 
     total_reqs = sum(len(v) for v in lat.values())
     print("\n--- latency by endpoint (ms) ---")
-    print(f"{'endpoint':<20}{'n':>6}{'p50':>10}{'p95':>10}{'p99':>10}{'max':>10}")
+    print(f"{'endpoint':<20}{'n':>6}{'p50':>10}{'p95':>10}{'p99':>10}{'max':>10}{'budget':>10}")
     over_budget = []
     for label in sorted(lat):
         vals = lat[label]
         p50, p95, p99, mx = pct(vals, 50), pct(vals, 95), pct(vals, 99), max(vals)
-        print(f"{label:<20}{len(vals):>6}{p50:>10.1f}{p95:>10.1f}{p99:>10.1f}{mx:>10.1f}")
-        if p95 > LATENCY_BUDGET_MS:
-            over_budget.append(f"{label} p95={p95:.0f}ms > {LATENCY_BUDGET_MS:.0f}ms")
+        budget = budget_for(label)
+        flag = "  OVER" if p95 > budget else ""
+        print(
+            f"{label:<20}{len(vals):>6}{p50:>10.1f}{p95:>10.1f}{p99:>10.1f}"
+            f"{mx:>10.1f}{budget:>10.0f}{flag}"
+        )
+        if p95 > budget:
+            over_budget.append(f"{label} p95={p95:.0f}ms > budget {budget:.0f}ms")
 
     print(
         f"\n{total_reqs} requests across {FIRMS} firms in {wall:.2f}s "
@@ -218,14 +263,24 @@ def main() -> int:
         for b in breaches[:10]:
             print(f"  - {b}")
     if over_budget:
-        # Warning only — latency depends on where this runs (loopback vs. the
-        # public TLS proxy) and instance count, so it does not gate the result.
-        print(f"\nWARNING: latency over budget ({LATENCY_BUDGET_MS:.0f}ms p95):")
+        gate_note = "FAILING (LOAD_GATE_LATENCY)" if GATE_LATENCY else "warning only"
+        print(f"\nLATENCY OVER PER-ENDPOINT BUDGET (p95) — {gate_note}:")
         for o in over_budget:
             print(f"  - {o}")
+        if GATE_LATENCY:
+            # Opt-in regression gate. Off by default because absolute latency
+            # depends on where this runs (loopback vs. public TLS proxy) and on
+            # the instance count, so a blanket hard gate would be flaky there.
+            ok = False
+        else:
+            print(
+                "  (set LOAD_GATE_LATENCY=1 to make this a hard gate; only do so "
+                "when driving over loopback, not the public proxy)"
+            )
 
-    # The hard gate is correctness under concurrency: no request errors and no
-    # cross-firm isolation/durability breaches.
+    # Correctness under concurrency (no request errors, no cross-firm isolation /
+    # durability breaches) always gates. Latency gates only when LOAD_GATE_LATENCY
+    # is set.
     print("\nRESULT:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 

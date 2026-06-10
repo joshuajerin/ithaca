@@ -6,7 +6,10 @@
 # firms against the hot paths. Establishes a latency baseline and asserts the
 # externalized session state is durable and firm-isolated under concurrency.
 #
-# Tunables (env): LOAD_FIRMS, LOAD_ROUNDS, LOAD_CONCURRENCY, LOAD_LATENCY_BUDGET_MS.
+# Tunables (env): LOAD_FIRMS, LOAD_ROUNDS, LOAD_CONCURRENCY. Latency: per-endpoint
+# p95 budgets default sensibly and are overridable via LOAD_BUDGET_<LABEL>_MS (or
+# the fallback LOAD_LATENCY_BUDGET_MS); set LOAD_GATE_LATENCY=1 to turn the latency
+# report into a hard gate (only when driving over loopback, as this script does).
 set -uo pipefail
 
 PORT="${LOAD_PORT:-8138}"
