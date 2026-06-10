@@ -161,9 +161,9 @@ export const GetDefaultDashboardResponse = zod.object({
   "symbol": zod.string(),
   "name": zod.string(),
   "currency": zod.string(),
-  "last": zod.number(),
-  "change": zod.number(),
-  "changePct": zod.number(),
+  "last": zod.number().nullable(),
+  "change": zod.number().nullable(),
+  "changePct": zod.number().nullable(),
   "range": zod.string(),
   "ranges": zod.array(zod.string()).optional(),
   "points": zod.array(zod.object({
@@ -173,7 +173,10 @@ export const GetDefaultDashboardResponse = zod.object({
   "l": zod.number(),
   "c": zod.number(),
   "v": zod.number()
-}))
+})),
+  "available": zod.boolean().optional(),
+  "reason": zod.string().nullish(),
+  "pending": zod.boolean().optional()
 }),zod.object({
   "scope": zod.string(),
   "items": zod.array(zod.object({
@@ -551,9 +554,9 @@ export const OrchestrateResponse = zod.object({
   "symbol": zod.string(),
   "name": zod.string(),
   "currency": zod.string(),
-  "last": zod.number(),
-  "change": zod.number(),
-  "changePct": zod.number(),
+  "last": zod.number().nullable(),
+  "change": zod.number().nullable(),
+  "changePct": zod.number().nullable(),
   "range": zod.string(),
   "ranges": zod.array(zod.string()).optional(),
   "points": zod.array(zod.object({
@@ -563,7 +566,10 @@ export const OrchestrateResponse = zod.object({
   "l": zod.number(),
   "c": zod.number(),
   "v": zod.number()
-}))
+})),
+  "available": zod.boolean().optional(),
+  "reason": zod.string().nullish(),
+  "pending": zod.boolean().optional()
 }),zod.object({
   "scope": zod.string(),
   "items": zod.array(zod.object({
@@ -951,9 +957,9 @@ export const SaveDashboardBody = zod.object({
   "symbol": zod.string(),
   "name": zod.string(),
   "currency": zod.string(),
-  "last": zod.number(),
-  "change": zod.number(),
-  "changePct": zod.number(),
+  "last": zod.number().nullable(),
+  "change": zod.number().nullable(),
+  "changePct": zod.number().nullable(),
   "range": zod.string(),
   "ranges": zod.array(zod.string()).optional(),
   "points": zod.array(zod.object({
@@ -963,7 +969,10 @@ export const SaveDashboardBody = zod.object({
   "l": zod.number(),
   "c": zod.number(),
   "v": zod.number()
-}))
+})),
+  "available": zod.boolean().optional(),
+  "reason": zod.string().nullish(),
+  "pending": zod.boolean().optional()
 }),zod.object({
   "scope": zod.string(),
   "items": zod.array(zod.object({
@@ -1340,9 +1349,9 @@ export const RestoreDashboardResponse = zod.object({
   "symbol": zod.string(),
   "name": zod.string(),
   "currency": zod.string(),
-  "last": zod.number(),
-  "change": zod.number(),
-  "changePct": zod.number(),
+  "last": zod.number().nullable(),
+  "change": zod.number().nullable(),
+  "changePct": zod.number().nullable(),
   "range": zod.string(),
   "ranges": zod.array(zod.string()).optional(),
   "points": zod.array(zod.object({
@@ -1352,7 +1361,10 @@ export const RestoreDashboardResponse = zod.object({
   "l": zod.number(),
   "c": zod.number(),
   "v": zod.number()
-}))
+})),
+  "available": zod.boolean().optional(),
+  "reason": zod.string().nullish(),
+  "pending": zod.boolean().optional()
 }),zod.object({
   "scope": zod.string(),
   "items": zod.array(zod.object({
@@ -1796,9 +1808,9 @@ export const RefinePanelResponse = zod.object({
   "symbol": zod.string(),
   "name": zod.string(),
   "currency": zod.string(),
-  "last": zod.number(),
-  "change": zod.number(),
-  "changePct": zod.number(),
+  "last": zod.number().nullable(),
+  "change": zod.number().nullable(),
+  "changePct": zod.number().nullable(),
   "range": zod.string(),
   "ranges": zod.array(zod.string()).optional(),
   "points": zod.array(zod.object({
@@ -1808,7 +1820,10 @@ export const RefinePanelResponse = zod.object({
   "l": zod.number(),
   "c": zod.number(),
   "v": zod.number()
-}))
+})),
+  "available": zod.boolean().optional(),
+  "reason": zod.string().nullish(),
+  "pending": zod.boolean().optional()
 }),zod.object({
   "scope": zod.string(),
   "items": zod.array(zod.object({

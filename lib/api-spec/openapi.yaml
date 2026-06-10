@@ -538,11 +538,11 @@ components:
         currency:
           type: string
         last:
-          type: number
+          type: ["number", "null"]
         change:
-          type: number
+          type: ["number", "null"]
         changePct:
-          type: number
+          type: ["number", "null"]
         range:
           type: string
         ranges:
@@ -553,6 +553,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PricePoint"
+        available:
+          type: boolean
+        reason:
+          type: ["string", "null"]
+        pending:
+          type: boolean
     NewsItem:
       type: object
       required: [id, headline, source, summary, publishedAt, sentiment, tickers]

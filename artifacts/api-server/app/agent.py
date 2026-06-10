@@ -5100,7 +5100,9 @@ def _refine_params_heuristic(panel_type: str, panel: dict, instruction: str) -> 
             params = {"symbol": sym}
             # Range round-trips even when the instruction is just a window
             # (e.g. the chart's "1Y" picker) — keep the current symbol, swap range.
-            for r in ["1M", "3M", "6M", "1Y", "YTD"]:
+            # Short intraday windows (1D/1W) are checked first; they only apply to
+            # the price chart (other panels ignore an unknown range token).
+            for r in ["1D", "1W", "1M", "3M", "6M", "1Y", "YTD"]:
                 if r.lower() in instruction.lower():
                     params["range"] = r
             return params

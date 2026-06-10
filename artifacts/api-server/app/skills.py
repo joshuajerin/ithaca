@@ -23,6 +23,17 @@ log = logging.getLogger(__name__)
 
 RANGE_DAYS = {"1M": 30, "3M": 90, "6M": 180, "1Y": 250, "YTD": 120}
 
+# Short ranges served from the intraday fetch path (daily OHLCV can't render an
+# intraday day). Each maps to (interval, window) tokens the Yahoo chart endpoint
+# honors: a 5-minute line for the latest session, half-hourly bars over ~a week.
+PRICE_CHART_INTRADAY = {
+    "1D": ("5m", "1d"),
+    "1W": ("30m", "5d"),
+}
+
+# Range buttons the price chart advertises, short intraday ones first.
+PRICE_CHART_RANGES = list(PRICE_CHART_INTRADAY.keys()) + list(RANGE_DAYS.keys())
+
 # Common acronyms that should stay upper-cased in free-text topic labels so a
 # query like "ai chip shortage" reads as "AI Chip Shortage" rather than the
 # default title-case "Ai Chip Shortage". Display-only — never affects matching.
@@ -181,8 +192,71 @@ def _pending_chart(symbol: str, rng: str) -> dict:
     return {
         "symbol": symbol, "name": symbol, "currency": "USD",
         "last": 0.0, "change": 0.0, "changePct": 0.0,
-        "range": rng, "points": [], "pending": True,
+        "range": rng, "ranges": PRICE_CHART_RANGES, "points": [], "pending": True,
         "asOf": None, "source": "pending",
+    }
+
+
+def _unavailable_chart(symbol: str, name: str, rng: str, reason: str) -> dict:
+    """Clean 'no intraday data' envelope for a short range (1D/1W).
+
+    Returned when the upstream intraday feed has nothing usable for this
+    symbol/window. Never substitutes daily or synthetic bars — the panel keeps
+    its range buttons so the user can switch back to a supported window."""
+    return {
+        "symbol": symbol, "name": name, "currency": "USD",
+        "last": None, "change": None, "changePct": None,
+        "range": rng, "ranges": PRICE_CHART_RANGES, "points": [],
+        "available": False, "reason": reason,
+        "asOf": None, "source": "unavailable",
+    }
+
+
+def _intraday_price_chart(symbol: str, company: Optional[dict], rng: str) -> dict:
+    """Serve a short range (1D/1W) from the live intraday fetch path.
+
+    Reuses the same source/cache the intraday chart uses, normalizes the bars to
+    the price chart's point shape ({t,o,h,l,c,v}), and computes last/change/
+    changePct over the served window. Returns a clean unavailable state — never
+    daily/synthetic bars — when no real intraday data is available."""
+    interval, window = PRICE_CHART_INTRADAY[rng]
+    name = company["name"] if company else symbol
+    ysym = data.yahoo_symbol(symbol)
+    cache_key = f"intraday:{ysym}:{interval}:{window}"
+    try:
+        res = cache.cached(
+            cache_key, 60.0,
+            lambda: p_src.fetch_intraday(ysym, interval, window),
+        )
+    except p_src.IntradayUnavailable as exc:
+        return _unavailable_chart(symbol, name, rng, str(exc))
+    except Exception as exc:  # noqa: BLE001 - any upstream failure -> clean state
+        return _unavailable_chart(symbol, name, rng, f"Upstream fetch failed: {exc}")
+
+    points = res.get("points") or []
+    if not points:
+        return _unavailable_chart(symbol, name, rng, "No intraday bars available")
+
+    first = points[0]["o"]
+    last = res.get("price")
+    if last is None:
+        last = points[-1]["c"]
+    change = round(last - first, 2) if first is not None else None
+    change_pct = round(change / first * 100, 2) if (change is not None and first) else None
+    return {
+        "symbol": symbol,
+        "name": res.get("name") or name,
+        "currency": res.get("currency") or "USD",
+        "last": last,
+        "change": change,
+        "changePct": change_pct,
+        "range": rng,
+        "ranges": PRICE_CHART_RANGES,
+        "points": points,
+        "available": True,
+        "reason": None,
+        "asOf": res.get("asOf"),
+        "source": "live",
     }
 
 
@@ -191,6 +265,11 @@ def build_price_chart(params: dict) -> dict:
     repo.note_symbol(symbol)  # request live data on demand for this symbol
     company = repo.get_company(symbol)
     rng = (params.get("range") or "3M").upper()
+    # Short ranges (1D/1W) draw from the intraday fetch path rather than daily
+    # OHLCV bars; serve them even before the symbol is fully ingested since the
+    # intraday feed is fetched live on demand.
+    if rng in PRICE_CHART_INTRADAY:
+        return _intraday_price_chart(symbol, company, rng)
     if not company:
         return _pending_chart(symbol, rng)
     if rng not in RANGE_DAYS:
@@ -210,8 +289,10 @@ def build_price_chart(params: dict) -> dict:
         "change": change,
         "changePct": change_pct,
         "range": rng,
-        "ranges": list(RANGE_DAYS.keys()),
+        "ranges": PRICE_CHART_RANGES,
         "points": points,
+        "available": True,
+        "reason": None,
         "asOf": company.get("_asOf"),
         "source": company.get("_source"),
     }

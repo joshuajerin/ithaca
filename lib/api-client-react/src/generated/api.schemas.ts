@@ -111,12 +111,19 @@ export interface PriceChartData {
   symbol: string;
   name: string;
   currency: string;
-  last: number;
-  change: number;
-  changePct: number;
+  /** @nullable */
+  last: number | null;
+  /** @nullable */
+  change: number | null;
+  /** @nullable */
+  changePct: number | null;
   range: string;
   ranges?: string[];
   points: PricePoint[];
+  available?: boolean;
+  /** @nullable */
+  reason?: string | null;
+  pending?: boolean;
 }
 
 export type NewsItemSentiment = typeof NewsItemSentiment[keyof typeof NewsItemSentiment];

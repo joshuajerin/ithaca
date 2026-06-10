@@ -77,12 +77,14 @@ class PriceChartData(BaseModel):
     symbol: str
     name: str
     currency: str
-    last: float
-    change: float
-    changePct: float
+    last: Optional[float] = None
+    change: Optional[float] = None
+    changePct: Optional[float] = None
     range: str
     ranges: List[str] = []
     points: List[PricePoint]
+    available: Optional[bool] = True
+    reason: Optional[str] = None
     pending: Optional[bool] = False
 
 
