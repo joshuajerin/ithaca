@@ -95,6 +95,9 @@ SNAPSHOT_INTERVAL = 3600
 # How often to check for due scheduled rebalances. The check itself is cheap and
 # per-strategy cadence is enforced in days by ``strategy.is_due``.
 REBALANCE_INTERVAL = 3600
+# Postgres advisory-lock key electing the single instance that runs the
+# money-moving rebalance pass under horizontal scale (arbitrary stable bigint).
+REBALANCE_LOCK_KEY = 723104821
 
 # ETF holdings refresh: fund compositions change slowly, so a gentle round-robin
 # over the common ETF set keeps the holdings cache warm for instant panels and
@@ -1098,14 +1101,24 @@ async def _rebalance_loop():
     cost model, then refreshes their daily snapshot so the applied trades show up
     in the audited NAV series immediately. ``run_scheduled_rebalances`` skips
     weekends and isolates per-strategy failures, so this loop is safe to run
-    hourly across restarts (cadence is enforced in days)."""
+    hourly across restarts (cadence is enforced in days).
+
+    Rebalancing is the one non-idempotent, money-moving path, so under
+    horizontal scale it must run on exactly one instance per tick. A Postgres
+    advisory lock elects that instance: whichever acquires it does the pass; the
+    others skip this tick. (With no DB there is only one instance, so it always
+    runs.)"""
     while True:
         try:
-            res = await asyncio.to_thread(strategy.run_scheduled_rebalances)
-            if res.get("rebalanced"):
-                log.info("rebalance cycle: %s", res)
-                # Re-snapshot so the just-applied trades land in the audited curve.
-                await asyncio.to_thread(strategy.record_daily_snapshots)
+            with db.advisory_lock(REBALANCE_LOCK_KEY) as got_lock:
+                if got_lock:
+                    res = await asyncio.to_thread(strategy.run_scheduled_rebalances)
+                    if res.get("rebalanced"):
+                        log.info("rebalance cycle: %s", res)
+                        # Re-snapshot so just-applied trades land in the audited curve.
+                        await asyncio.to_thread(strategy.record_daily_snapshots)
+                else:
+                    log.debug("rebalance tick skipped (another instance holds the lock)")
         except Exception as exc:  # noqa: BLE001
             log.warning("rebalance loop error: %s", exc)
         await asyncio.sleep(REBALANCE_INTERVAL)

@@ -7,7 +7,8 @@
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
-    "smoke:api": "bash scripts/smoke-api.sh"
+    "smoke:api": "bash scripts/smoke-api.sh",
+    "loadtest:api": "bash scripts/loadtest-api.sh"
   },
   "private": true,
   "devDependencies": {

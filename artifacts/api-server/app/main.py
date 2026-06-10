@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import agent, alerts, auth, auth_store, dashboard_store, dynamic_skills, feature_builder, firm_settings, harness, models, permissions, repo, security, skills, state, tenant, worker
+from . import agent, alerts, auth, auth_store, dashboard_store, db, dynamic_skills, feature_builder, firm_settings, harness, models, permissions, repo, security, skills, state, tenant, worker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -171,6 +171,31 @@ api = APIRouter(prefix="/api", dependencies=[Depends(require_identity)])
 def healthz():
     from . import ai
     return {"status": "ok", "aiAvailable": ai.ai_available()}
+
+
+@public.get("/readyz")
+def readyz(response: Response):
+    """Readiness probe for horizontal scale.
+
+    Reports whether this instance can serve durable, shared state: when a
+    database is configured we ping it (and surface pool telemetry). If the DB is
+    configured but unreachable the instance is *not* ready for the durability
+    promise, so we return 503 so the platform can route around it. When no DB is
+    configured the app runs in its in-memory fallback mode and is considered
+    ready (it serves, it just isn't durable).
+    """
+    from . import ai
+
+    db_configured = db.db_available()
+    db_ok = db.ping() if db_configured else False
+    ready = db_ok or not db_configured
+    if not ready:
+        response.status_code = 503
+    return {
+        "status": "ready" if ready else "degraded",
+        "db": {"configured": db_configured, "ok": db_ok, "pool": db.pool_stats()},
+        "aiAvailable": ai.ai_available(),
+    }
 
 
 def _set_session_cookie(response: Response, token: str) -> None:
