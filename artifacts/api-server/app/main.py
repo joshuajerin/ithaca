@@ -77,6 +77,11 @@ async def require_identity(
     user = auth_store.get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    # A deactivated user keeps their account & history but may not authenticate.
+    # Their sessions are normally revoked at deactivation; this is the durable
+    # backstop so any lingering token is rejected too.
+    if not user.get("active", True):
+        raise HTTPException(status_code=401, detail="Your account has been deactivated.")
     firm = auth_store.get_firm(user["firmId"])
     # Bind the firm for the rest of this request so every store call (however deep)
     # scopes reads and stamps writes to this tenant. Set in an async dependency so
@@ -309,6 +314,8 @@ def auth_login(req: models.LoginRequest, response: Response):
             _audit_auth(user["firmId"], user, "login_failed",
                         f"Failed login for {user['name']}", decision="blocked")
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not user.get("active", True):
+        raise HTTPException(status_code=403, detail="Your account has been deactivated.")
     firm = auth_store.get_firm(user["firmId"])
     token = auth.new_session_token()
     auth_store.create_session(auth.hash_token(token), user["id"], auth.SESSION_TTL_SECONDS)
@@ -1237,6 +1244,380 @@ def remove_watch(symbol: str):
     from . import compliance_store
     compliance_store.remove_watch(symbol.upper())
     return _compliance_payload()
+
+
+# ============================ firm admin console =============================
+# Admin-only, firm-scoped self-service: manage team members & roles, firm risk
+# limits & kill-switch, the firm profile, and a read-only billing view. Every
+# route below is gated by ``require_role("admin")`` (server-authoritative — the
+# UI hiding the console is convenience only) and every mutation is written to the
+# firm's compliance audit trail (reusing ``compliance_store.append_audit`` with a
+# benign ``decision="ok"``). All reads/writes are already firm-scoped because
+# ``require_identity`` binds the tenant for the request.
+
+ADMIN_ROLES = ("admin", "trader", "analyst", "read-only")
+
+
+def _admin_audit(identity: auth.Identity, action: str, summary: str, detail: dict | None = None) -> None:
+    """Record one admin-console action in the firm audit trail (best-effort)."""
+    from . import compliance_store
+    try:
+        compliance_store.append_audit(
+            action=action,
+            decision="ok",
+            summary=summary,
+            detail={"actorId": identity.user_id, "actorEmail": identity.email, **(detail or {})},
+            firm_id=identity.firm_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("admin audit failed (%s): %s", action, exc)
+
+
+class AdminInviteInput(BaseModel):
+    email: str
+    name: str | None = None
+    role: str | None = "trader"
+
+
+class AdminRoleInput(BaseModel):
+    role: str
+
+
+class AdminActiveInput(BaseModel):
+    active: bool
+
+
+class AdminFirmInput(BaseModel):
+    name: str
+
+
+class AdminLimitsInput(BaseModel):
+    limits: dict
+
+
+class AdminKillSwitchInput(BaseModel):
+    on: bool
+    reason: str | None = None
+
+
+class AcceptInviteInput(BaseModel):
+    token: str
+    name: str | None = None
+    password: str
+
+
+def _members_payload(identity: auth.Identity) -> dict:
+    """The whole Team tab in one read: members, pending invites, billing/seats."""
+    firm = auth_store.get_firm(identity.firm_id) or {"id": identity.firm_id, "name": "", "plan": "starter", "seats": 5}
+    members = auth_store.list_users(identity.firm_id)
+    invites = auth_store.list_invitations(identity.firm_id, status="pending")
+    active_members = [m for m in members if m.get("active")]
+    return {
+        "firm": firm,
+        "members": members,
+        "invitations": invites,
+        "roles": list(ADMIN_ROLES),
+        "billing": {
+            "plan": firm.get("plan", "starter"),
+            "seats": firm.get("seats", 5),
+            "seatsUsed": len(active_members),
+            "seatsAvailable": max(0, int(firm.get("seats", 5)) - len(active_members)),
+            "pendingInvites": len(invites),
+        },
+        "selfId": identity.user_id,
+    }
+
+
+@api.get("/admin/members")
+def admin_list_members(identity: auth.Identity = Depends(require_role("admin"))):
+    """List all firm members, pending invitations and the billing/seat view."""
+    return _members_payload(identity)
+
+
+@api.post("/admin/invitations")
+def admin_create_invitation(
+    req: AdminInviteInput,
+    identity: auth.Identity = Depends(require_role("admin")),
+):
+    """Invite a teammate. Returns a one-time invite link the admin can share.
+
+    The raw token is shown exactly once (only its hash is stored), so the link is
+    the single way to accept. Re-inviting an email replaces the pending invite.
+    """
+    email = auth.normalize_email(req.email)
+    name = (req.name or "").strip()
+    role = auth.valid_role(req.role)
+    if "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(status_code=400, detail="Enter a valid email address")
+    if auth_store.email_exists(email):
+        raise HTTPException(status_code=409, detail="A user with this email is already on your team")
+    # Replace any existing pending invite for the same email so a fresh link is issued.
+    existing = auth_store.get_pending_invitation_by_email(identity.firm_id, email)
+    if existing:
+        auth_store.revoke_invitation(existing["id"], identity.firm_id)
+    token = auth.new_session_token()
+    invite = auth_store.create_invitation(
+        firm_id=identity.firm_id,
+        email=email,
+        name=name,
+        role=role,
+        token_hash=auth.hash_token(token),
+    )
+    _admin_audit(
+        identity, "admin.invite",
+        f"Invited {email} as {role}",
+        {"inviteId": invite["id"], "email": email, "role": role},
+    )
+    return {"invitation": invite, "inviteToken": token, "members": _members_payload(identity)}
+
+
+@api.delete("/admin/invitations/{invite_id}")
+def admin_revoke_invitation(
+    invite_id: str,
+    identity: auth.Identity = Depends(require_role("admin")),
+):
+    """Revoke a pending invitation (firm-scoped)."""
+    ok = auth_store.revoke_invitation(invite_id, identity.firm_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="No pending invitation with that id")
+    _admin_audit(identity, "admin.invite.revoke", "Revoked an invitation", {"inviteId": invite_id})
+    return _members_payload(identity)
+
+
+def _require_member(identity: auth.Identity, user_id: str) -> dict:
+    """Load a target user and assert it belongs to the admin's firm."""
+    target = auth_store.get_user_by_id(user_id)
+    if not target or target.get("firmId") != identity.firm_id:
+        raise HTTPException(status_code=404, detail="No such member in your firm")
+    return target
+
+
+@api.post("/admin/users/{user_id}/role")
+def admin_set_user_role(
+    user_id: str,
+    req: AdminRoleInput,
+    identity: auth.Identity = Depends(require_role("admin")),
+):
+    """Change a member's role. Protects against demoting the last active admin."""
+    target = _require_member(identity, user_id)
+    new_role = auth.valid_role(req.role)
+    # Guard: never leave a firm with zero active admins.
+    if target["role"] == "admin" and new_role != "admin":
+        if auth_store.count_active_admins(identity.firm_id) <= 1:
+            raise HTTPException(status_code=400, detail="Your firm must keep at least one admin")
+    updated = auth_store.update_user_role(user_id, new_role)
+    _admin_audit(
+        identity, "admin.user.role",
+        f"Changed {target['email']} role {target['role']} → {new_role}",
+        {"userId": user_id, "from": target["role"], "to": new_role},
+    )
+    return {"member": auth_store._user_public(updated) if updated else None, "members": _members_payload(identity)}
+
+
+@api.post("/admin/users/{user_id}/active")
+def admin_set_user_active(
+    user_id: str,
+    req: AdminActiveInput,
+    identity: auth.Identity = Depends(require_role("admin")),
+):
+    """Activate or deactivate a member. Deactivation also revokes their sessions.
+
+    Guards: an admin cannot deactivate themselves, and the firm's last active
+    admin cannot be deactivated.
+    """
+    target = _require_member(identity, user_id)
+    active = bool(req.active)
+    if not active:
+        if user_id == identity.user_id:
+            raise HTTPException(status_code=400, detail="You cannot deactivate your own account")
+        if target["role"] == "admin" and auth_store.count_active_admins(identity.firm_id) <= 1:
+            raise HTTPException(status_code=400, detail="Your firm must keep at least one active admin")
+    updated = auth_store.set_user_active(user_id, active)
+    if not active:
+        # Kick the user out immediately; require_identity also rejects them going forward.
+        auth_store.delete_user_sessions(user_id)
+    _admin_audit(
+        identity, "admin.user.active",
+        f"{'Reactivated' if active else 'Deactivated'} {target['email']}",
+        {"userId": user_id, "active": active},
+    )
+    return {"member": auth_store._user_public(updated) if updated else None, "members": _members_payload(identity)}
+
+
+@api.delete("/admin/users/{user_id}")
+def admin_remove_user(
+    user_id: str,
+    identity: auth.Identity = Depends(require_role("admin")),
+):
+    """Permanently remove a member from the firm.
+
+    Guards: an admin cannot remove themselves, and the last active admin cannot
+    be removed.
+    """
+    target = _require_member(identity, user_id)
+    if user_id == identity.user_id:
+        raise HTTPException(status_code=400, detail="You cannot remove your own account")
+    if target["role"] == "admin" and target.get("active") and auth_store.count_active_admins(identity.firm_id) <= 1:
+        raise HTTPException(status_code=400, detail="Your firm must keep at least one active admin")
+    auth_store.delete_user(user_id)
+    _admin_audit(
+        identity, "admin.user.remove",
+        f"Removed {target['email']} from the firm",
+        {"userId": user_id, "email": target["email"]},
+    )
+    return _members_payload(identity)
+
+
+@api.post("/admin/firm")
+def admin_update_firm(
+    req: AdminFirmInput,
+    identity: auth.Identity = Depends(require_role("admin")),
+):
+    """Edit the firm profile (currently the display name)."""
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Firm name is required")
+    firm = auth_store.update_firm(identity.firm_id, name)
+    _admin_audit(identity, "admin.firm.update", f"Renamed firm to “{name}”", {"name": name})
+    return {"firm": firm}
+
+
+@api.get("/admin/limits")
+def admin_get_limits(identity: auth.Identity = Depends(require_role("admin"))):
+    """Return the firm's risk limits + editor metadata and kill-switch state."""
+    from . import compliance_store
+    from .engine import compliance as comp
+    cfg = compliance_store.get_config(identity.firm_id)
+    return {
+        "limits": cfg.get("limits", {}),
+        "defs": comp.LIMIT_DEFS,
+        "defaults": comp.DEFAULT_LIMITS,
+        "killSwitch": bool(cfg.get("killSwitch")),
+        "killReason": cfg.get("killReason"),
+    }
+
+
+@api.post("/admin/limits")
+def admin_set_limits(
+    req: AdminLimitsInput,
+    identity: auth.Identity = Depends(require_role("admin")),
+):
+    """Update one or more firm-wide risk limits."""
+    from . import compliance_store
+    from .engine import compliance as comp
+    cfg = compliance_store.set_limits(req.limits or {})
+    _admin_audit(identity, "admin.limits.update", "Updated firm risk limits", {"limits": req.limits or {}})
+    return {
+        "limits": cfg.get("limits", {}),
+        "defs": comp.LIMIT_DEFS,
+        "defaults": comp.DEFAULT_LIMITS,
+        "killSwitch": bool(cfg.get("killSwitch")),
+        "killReason": cfg.get("killReason"),
+    }
+
+
+@api.post("/admin/kill-switch")
+def admin_set_kill_switch(
+    req: AdminKillSwitchInput,
+    identity: auth.Identity = Depends(require_role("admin")),
+):
+    """Engage or release the firm-wide trading kill switch."""
+    from . import compliance_store
+    cfg = compliance_store.set_kill_switch(bool(req.on), reason=req.reason)
+    _admin_audit(
+        identity, "admin.kill_switch",
+        f"Kill switch {'ENGAGED' if req.on else 'released'}",
+        {"on": bool(req.on), "reason": req.reason},
+    )
+    return {"killSwitch": bool(cfg.get("killSwitch")), "killReason": cfg.get("killReason")}
+
+
+@api.get("/admin/audit")
+def admin_get_audit(
+    limit: int = 50,
+    identity: auth.Identity = Depends(require_role("admin")),
+):
+    """Return the firm's audit trail (admin actions + compliance gate decisions)."""
+    from . import compliance_store
+    return {"entries": compliance_store.list_audit(limit=limit, firm_id=identity.firm_id)}
+
+
+# ---------------------- public: accept an invitation -------------------------
+@public.get("/auth/invitation")
+def auth_invitation_preview(token: str):
+    """Preview a pending invitation by its raw token (for the accept screen).
+
+    Returns the firm name, invited email and role so the joining user sees what
+    they're accepting. Lapsed/used/revoked tokens read as invalid.
+    """
+    invite = auth_store.get_invitation_by_token_hash(auth.hash_token(token or ""))
+    if not invite or invite.get("status") != "pending":
+        raise HTTPException(status_code=404, detail="This invitation is no longer valid")
+    expires = invite.get("expiresAt")
+    if expires and str(expires) < auth_store._iso(auth_store._now()):
+        raise HTTPException(status_code=410, detail="This invitation has expired")
+    firm = auth_store.get_firm(invite["firmId"])
+    return {
+        "email": invite["email"],
+        "name": invite.get("name"),
+        "role": invite["role"],
+        "firmName": firm["name"] if firm else "",
+    }
+
+
+@public.post(
+    "/auth/accept-invite",
+    response_model=models.AuthIdentity,
+    dependencies=[Depends(security.rate_limit("auth", 10, 60))],
+)
+def auth_accept_invite(req: AcceptInviteInput, response: Response):
+    """Accept an invitation: create the user in the inviting firm and sign them in."""
+    invite = auth_store.get_invitation_by_token_hash(auth.hash_token(req.token or ""))
+    if not invite or invite.get("status") != "pending":
+        raise HTTPException(status_code=404, detail="This invitation is no longer valid")
+    expires = invite.get("expiresAt")
+    if expires and str(expires) < auth_store._iso(auth_store._now()):
+        raise HTTPException(status_code=410, detail="This invitation has expired")
+    password = req.password or ""
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    email = invite["email"]
+    if auth_store.email_exists(email):
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+    name = (req.name or invite.get("name") or "").strip() or email.split("@")[0]
+    pw_hash, pw_salt = auth.hash_password(password)
+    user = auth_store.create_user(
+        firm_id=invite["firmId"],
+        email=email,
+        name=name,
+        role=auth.valid_role(invite["role"]),
+        password_hash=pw_hash,
+        password_salt=pw_salt,
+    )
+    auth_store.accept_invitation(invite["id"])
+    firm = auth_store.get_firm(invite["firmId"])
+    token = auth.new_session_token()
+    auth_store.create_session(auth.hash_token(token), user["id"], auth.SESSION_TTL_SECONDS)
+    _set_session_cookie(response, token)
+    _admin_audit_system(invite["firmId"], "admin.invite.accept", f"{email} joined as {user['role']}",
+                        {"userId": user["id"], "email": email, "role": user["role"]})
+    return {
+        "user": {"id": user["id"], "name": user["name"], "email": user["email"], "role": user["role"]},
+        "firm": {"id": firm["id"], "name": firm["name"]} if firm else {"id": invite["firmId"], "name": ""},
+        "permissions": permissions.allowed_actions(user["role"]),
+    }
+
+
+def _admin_audit_system(firm_id: str, action: str, summary: str, detail: dict | None = None) -> None:
+    """Audit an action with no admin actor (e.g. a user self-accepting an invite)."""
+    from . import compliance_store
+    try:
+        compliance_store.append_audit(
+            action=action, decision="ok", summary=summary,
+            detail=detail or {}, firm_id=firm_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("system audit failed (%s): %s", action, exc)
 
 
 app.include_router(public)

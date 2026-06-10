@@ -20,11 +20,18 @@ import type {
 
 type AuthStatus = "loading" | "authenticated" | "anonymous";
 
+interface AcceptInviteInput {
+  token: string;
+  name?: string;
+  password: string;
+}
+
 interface AuthContextValue {
   status: AuthStatus;
   identity: AuthIdentity | null;
   login: (req: LoginRequest) => Promise<void>;
   signup: (req: SignupRequest) => Promise<void>;
+  acceptInvite: (req: AcceptInviteInput) => Promise<void>;
   logout: () => Promise<void>;
   // True when the current user's role is allowed to perform `action`. This is a
   // UI convenience only — the server enforces the same matrix authoritatively
@@ -75,6 +82,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStatus("authenticated");
   }, []);
 
+  // Accept a teammate invitation: creates the user inside the inviting firm and
+  // starts a session. Not in the generated client, so it posts directly to the
+  // public accept-invite endpoint and reuses the same AuthIdentity shape.
+  const acceptInvite = useCallback(async (req: AcceptInviteInput) => {
+    const res = await fetch("/api/auth/accept-invite", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const detail = (data as { detail?: string } | null)?.detail;
+      throw new Error(detail || `Request failed (${res.status})`);
+    }
+    setIdentity(data as AuthIdentity);
+    setStatus("authenticated");
+  }, []);
+
   const logout = useCallback(async () => {
     try {
       await logoutRequest();
@@ -90,7 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <AuthContext.Provider value={{ status, identity, login, signup, logout, can }}>
+    <AuthContext.Provider value={{ status, identity, login, signup, acceptInvite, logout, can }}>
       {children}
     </AuthContext.Provider>
   );

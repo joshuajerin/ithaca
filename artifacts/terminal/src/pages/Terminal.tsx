@@ -17,6 +17,7 @@ import { useNavigator } from "@/hooks/useNavigator";
 import { useConsoleConversation } from "@/hooks/useConsoleConversation";
 import { useAuth } from "@/hooks/useAuth";
 import { FeatureRequestModal } from "@/components/terminal/FeatureRequestModal";
+import { AdminConsoleModal } from "@/components/terminal/AdminConsoleModal";
 import { SavedDashboardsModal } from "@/components/terminal/SavedDashboardsModal";
 import { AuditLogModal } from "@/components/terminal/AuditLogModal";
 import { DotWaveCanvas } from "@/components/terminal/DotWaveCanvas";
@@ -27,7 +28,7 @@ import {
   saveVoiceSettings,
   type VoiceSettings,
 } from "@/lib/voiceSettings";
-import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles, Compass, CalendarClock, Command, X, LayoutGrid, LogOut, ShieldCheck } from "lucide-react";
+import { Mic, MicOff, ChevronLeft, ChevronRight, Sparkles, Compass, CalendarClock, Command, X, LayoutGrid, LogOut, ShieldCheck, Shield } from "lucide-react";
 import {
   formatEarningsCountdown,
   type EarningsRow,
@@ -73,6 +74,7 @@ export default function Terminal() {
   const [showFeatureModal, setShowFeatureModal] = useState(false);
   const [showDashboardsModal, setShowDashboardsModal] = useState(false);
   const [showAuditModal, setShowAuditModal] = useState(false);
+  const [showAdminModal, setShowAdminModal] = useState(false);
   // Voice synthesis preferences (which voice + speaking speed), persisted to
   // localStorage so the choice survives reloads.
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>(() => loadVoiceSettings());
@@ -617,6 +619,16 @@ export default function Terminal() {
               <Sparkles className="w-3.5 h-3.5 text-muted-foreground group-hover/btn:text-white transition-colors" strokeWidth={1.5} />
               <span className="hidden sm:inline">Build Feature</span>
             </button>
+            {can("user.manage") && (
+              <button
+                onClick={() => setShowAdminModal(true)}
+                title="Firm admin console"
+                className="flex items-center gap-2 px-2.5 sm:px-3 py-2 editorial-label text-[9px] border border-border bg-black text-white hover:border-white transition-colors group/btn"
+              >
+                <Shield className="w-3.5 h-3.5 text-muted-foreground group-hover/btn:text-white transition-colors" strokeWidth={1.5} />
+                <span className="hidden sm:inline">Admin</span>
+              </button>
+            )}
             <button
               onClick={() => setVoiceMode((v) => !v)}
               aria-pressed={voiceMode}
@@ -886,6 +898,8 @@ export default function Terminal() {
       />
 
       <FeatureRequestModal open={showFeatureModal} onClose={() => setShowFeatureModal(false)} />
+
+      <AdminConsoleModal open={showAdminModal} onClose={() => setShowAdminModal(false)} />
 
       <SavedDashboardsModal
         open={showDashboardsModal}

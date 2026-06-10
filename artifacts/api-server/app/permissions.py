@@ -52,6 +52,8 @@ ACTIONS: Dict[str, Tuple[str, str]] = {
     # --- admin: firm settings, compliance config & platform changes ---
     "compliance.config": ("admin", "change compliance limits or settings"),
     "feature.build": ("admin", "build or remove platform features"),
+    "user.manage": ("admin", "manage team members, roles & invitations"),
+    "firm.manage": ("admin", "edit firm profile & view billing"),
 }
 
 
