@@ -1,0 +1,22 @@
+{
+  "created_at": "2026-06-16T00:43:28.427934Z",
+  "task": "kural-doomberg-consolidate",
+  "repo": "/root/doomberg",
+  "git": {
+    "is_git": true,
+    "root": "/root/doomberg",
+    "commit": "a568006ad61220c05498891d80098e95083fd2f6",
+    "branch": "main",
+    "status_short": "M package.json\n M pnpm-workspace.yaml\n?? .env.example\n?? .verification/\n?? HOSTING.md\n?? api/\n?? artifacts/api-server/app/__pycache__/\n?? artifacts/api-server/app/engine/__pycache__/\n?? artifacts/api-server/app/skills_generated/__pycache__/\n?? artifacts/api-server/app/sources/__pycache__/\n?? scripts/smoke-ai-proxy.mjs\n?? supabase/\n?? vercel.json"
+  },
+  "results": [
+    {
+      "cmd": "node scripts/smoke-ai-proxy.mjs",
+      "exit_code": 0,
+      "elapsed_seconds": 0.041,
+      "stdout": "ok   - healthz reports doomberg tenant\nok   - healthz reports kural tenant\nok   - orchestrate uses per-tenant kural endpoint + key\nok   - orchestrate uses per-tenant doomberg endpoint + key\nok   - legacy fallback when per-tenant key absent\nok   - unknown route returns 404\n\nAll catch-all API smoke tests passed.\n",
+      "stderr": "(node:2125009) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///root/doomberg/api/%5B...path%5D.js is not specified and it doesn't parse as CommonJS.\nReparsing as ES module because module syntax was detected. This incurs a performance overhead.\nTo eliminate this warning, add \"type\": \"module\" to /root/doomberg/package.json.\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+    }
+  ],
+  "overall_exit_code": 0
+}

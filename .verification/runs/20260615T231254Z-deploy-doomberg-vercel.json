@@ -1,0 +1,29 @@
+{
+  "created_at": "2026-06-15T23:12:54.099310Z",
+  "task": "deploy-doomberg-vercel",
+  "repo": "/root/doomberg",
+  "git": {
+    "is_git": true,
+    "root": "/root/doomberg",
+    "commit": "a568006ad61220c05498891d80098e95083fd2f6",
+    "branch": "main",
+    "status_short": "?? .verification/\n?? artifacts/api-server/app/__pycache__/\n?? artifacts/api-server/app/engine/__pycache__/\n?? artifacts/api-server/app/sources/__pycache__/"
+  },
+  "results": [
+    {
+      "cmd": "vercel whoami",
+      "exit_code": 1,
+      "elapsed_seconds": 1.289,
+      "stdout": "",
+      "stderr": "Vercel CLI 54.14.0 (Node.js 22.22.1)\nError: No existing credentials found. Please run `vercel login` or pass \"--token\"\nLearn More: https://err.sh/vercel/no-credentials-found\n"
+    },
+    {
+      "cmd": "vercel deploy --prod --yes",
+      "exit_code": 1,
+      "elapsed_seconds": 1.251,
+      "stdout": "",
+      "stderr": "Vercel CLI 54.14.0 (Node.js 22.22.1)\nError: No existing credentials found. Please run `vercel login` or pass \"--token\"\nLearn More: https://err.sh/vercel/no-credentials-found\n"
+    }
+  ],
+  "overall_exit_code": 1
+}
