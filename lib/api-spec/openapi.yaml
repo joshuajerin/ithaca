@@ -492,6 +492,55 @@ components:
         - structured_product
         - signal_research
         - signal_scorecard
+        - alerts
+        - analyst_compare
+        - analyst_ratings
+        - analyst_report
+        - brinson_attribution
+        - combined_alpha
+        - company_analytics
+        - company_analytics_compare
+        - compliance
+        - congress_trades
+        - credit_stress
+        - data_quality
+        - data_universe
+        - dcf_model
+        - earnings_calendar
+        - earnings_transcript
+        - economic_releases
+        - etf_exposure
+        - etf_holdings
+        - factor_attribution
+        - factor_performance
+        - filings_browser
+        - insider_activity
+        - institutional_flows
+        - institutional_holders
+        - intraday_chart
+        - ma_tracker
+        - multi_strategy
+        - options_chain
+        - options_screener
+        - performance_pnl
+        - polymarket_market
+        - polymarket_markets
+        - polymarket_wallet
+        - portfolio_optimizer
+        - rebalance_plan
+        - risk_comparison
+        - risk_monitor
+        - scenario
+        - series_revisions
+        - shorting_desk
+        - signal_portfolio
+        - strategy_desk
+        - strategy_marketplace
+        - stress_test
+        - supply_chain
+        - tear_sheet
+        - walk_forward
+        - walk_forward_compare
     PanelStatus:
       type: string
       enum:
