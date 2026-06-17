@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 SOURCE = "doomberg-v1-archive"
+COMPUTED = "computed"
 
 # Columns that carry a row's freshness timestamp, in priority order.
 _FRESHNESS_KEYS = ("updated_at", "fetched_at", "filing_date", "as_of", "report_date")
@@ -53,6 +54,28 @@ def envelope(
         "provenance": {"source": SOURCE, "freshness": freshness, "pit": pit},
         "warnings": warnings or [],
     }
+
+
+def computed_envelope(
+    data: Any,
+    *,
+    freshness: str | None = None,
+    inputs: str | None = None,
+    warnings: list[dict] | None = None,
+) -> dict:
+    """Wrap a pure-math (COMPUTED) skill payload.
+
+    ``source`` is ``"computed"`` — the math is real but no archive row is being
+    presented as live market data. ``pit`` is always False. ``inputs`` documents where
+    the numbers came from (``"agent"`` for agent-supplied S/K/sigma/etc., or
+    ``"doomberg-v1-archive"`` when the computation ran on real archive series). When a
+    computation reads archive series, pass that table's ``freshness`` through so the
+    provenance still carries the data's age.
+    """
+    prov = {"source": COMPUTED, "freshness": freshness, "pit": False}
+    if inputs:
+        prov["inputs"] = inputs
+    return {"data": data, "provenance": prov, "warnings": warnings or []}
 
 
 def warn(code: str, *, scope: str | None = None, detail: str | None = None) -> dict:
@@ -101,6 +124,6 @@ def consensus_label(key: str | None, mean: float | None) -> str | None:
 
 
 __all__ = [
-    "SOURCE", "ARCHIVE_UNAVAILABLE", "freshness_of", "envelope", "warn",
-    "fmt_usd", "consensus_label",
+    "SOURCE", "COMPUTED", "ARCHIVE_UNAVAILABLE", "freshness_of", "envelope",
+    "computed_envelope", "warn", "fmt_usd", "consensus_label",
 ]

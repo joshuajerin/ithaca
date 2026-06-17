@@ -11,13 +11,19 @@ clear ``ARCHIVE_UNAVAILABLE`` warning with ``data=None`` rather than crashing.
 """
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from datetime import date
 from typing import Any
 
+import numpy as np
+
+from .. import engine
+from . import compute
 from .archive import ArchiveGateway
 from .envelope import (
     ARCHIVE_UNAVAILABLE,
+    computed_envelope,
     consensus_label,
     envelope,
     fmt_usd,
@@ -26,6 +32,15 @@ from .envelope import (
 )
 
 __all__ = ["SkillSet", "SKILLS"]
+
+# Default style-factor descriptors for the multi-factor risk/optimizer skills, derived
+# from archive fundamentals. Market = beta; Size = -log(mcap); Value = earnings yield
+# (eps/price); Momentum = trailing return; Quality = net margin.
+_FACTOR_NAMES = ["Market", "Size", "Value", "Momentum", "Quality"]
+
+# When a COMPUTED skill runs its math over REAL archive series (not agent-supplied scalars),
+# its provenance records where the numbers came from so the result stays honest.
+ARCHIVE_INPUTS = "doomberg-v1-archive"
 
 # Open-market discretionary insider codes: P = buy, S = sell. Option exercises (M/X) and grants
 # are reported but excluded from the directional net-buy/sell signal.
@@ -55,6 +70,15 @@ def _i(v: Any, default: int, lo: int, hi: int) -> int:
     return max(lo, min(n, hi))
 
 
+def _req_float(params: dict, *names: str) -> float:
+    """Required positive-or-any float from the first present key in ``names``."""
+    for n in names:
+        v = _f(params.get(n))
+        if v is not None:
+            return v
+    raise ValueError(f"missing required numeric parameter (one of {names!r}).")
+
+
 class SkillSet:
     """Declarative, archive-backed skills. ``archive`` is duck-typed to ``ArchiveGateway``."""
 
@@ -64,6 +88,11 @@ class SkillSet:
     # ----------------------------- gate -----------------------------
     def _unavailable(self) -> dict:
         return envelope(None, freshness=None, pit=False, warnings=[dict(ARCHIVE_UNAVAILABLE)])
+
+    def _computed_unavailable(self) -> dict:
+        """ARCHIVE_UNAVAILABLE gate for a COMPUTED skill that reads archive series."""
+        return computed_envelope(None, freshness=None, inputs=ARCHIVE_INPUTS,
+                                 warnings=[dict(ARCHIVE_UNAVAILABLE)])
 
     @property
     def available(self) -> bool:
@@ -186,6 +215,501 @@ class SkillSet:
             else:
                 out[sym] = None
         return out
+
+    # ---- shared archive-series helpers used by the COMPUTED skills ----
+    def _closes(self, symbol: str, start: str | None = None) -> list[float]:
+        bars = self.archive.ohlcv(symbol, start=start)
+        return [_f(b.get("c")) for b in bars if _f(b.get("c")) is not None]
+
+    def _points(self, symbol: str, start: str | None = None) -> list[dict]:
+        """Archive ohlcv as {t, c} points (the shape the engine signal/portfolio code expects)."""
+        bars = self.archive.ohlcv(symbol, start=start)
+        return [{"t": b.get("d"), "c": _f(b.get("c"))}
+                for b in bars if _f(b.get("c")) is not None]
+
+    def _returns_by_symbol(self, symbols: list[str]) -> tuple[dict[str, np.ndarray], list[str]]:
+        """Per-symbol simple-return arrays from real archive closes; drops empties."""
+        out: dict[str, np.ndarray] = {}
+        missing: list[str] = []
+        for s in symbols:
+            r = compute.simple_returns(self._closes(s))
+            if r.size >= 2:
+                out[s] = r
+            else:
+                missing.append(s)
+        return out, missing
+
+    def _resolve_universe(self, params: dict, default_min: int = 2) -> list[str]:
+        """Symbols from explicit ``symbols``, a ``sector``, or the tracked universe."""
+        syms = [s.upper().strip().lstrip("$") for s in (params.get("symbols") or []) if s]
+        if syms:
+            return syms
+        sector = (params.get("sector") or "").strip() or None
+        uni = self.archive.universe(tracked_only=True)
+        if sector:
+            sl = sector.lower()
+            uni = [u for u in uni if (u.get("sector") or "").lower() == sl]
+        return [(u.get("symbol") or "").upper() for u in uni if u.get("symbol")]
+
+    def _factor_exposures(self, symbols: list[str]) -> tuple[list[str], np.ndarray, list[dict]]:
+        """Build a (N,K) standardized style-exposure matrix from archive fundamentals.
+
+        Columns: Market (beta), Size (-log mcap), Value (eps/price), Momentum (trailing
+        return), Quality (net margin). Names missing every descriptor are dropped and
+        reported. Returns ``(resolved_symbols, exposures, used_rows)``.
+        """
+        rows = self.archive.fundamentals(symbols)
+        by = {(r.get("symbol") or "").upper(): r for r in rows}
+        rets = self._trailing_returns(symbols)
+        beta, size, value, mom, qual, resolved = [], [], [], [], [], []
+        for s in symbols:
+            r = by.get(s)
+            if not r:
+                continue
+            price = _f(r.get("price"))
+            mcap = _f(r.get("market_cap"))
+            eps = _f(r.get("eps"))
+            beta.append(_f(r.get("beta")) if _f(r.get("beta")) is not None else np.nan)
+            size.append(-np.log(mcap) if (mcap and mcap > 0) else np.nan)
+            value.append((eps / price) if (eps is not None and price) else np.nan)
+            mom.append(rets.get(s) if rets.get(s) is not None else np.nan)
+            qual.append(_f(r.get("net_margin")) if _f(r.get("net_margin")) is not None else np.nan)
+            resolved.append(s)
+        if not resolved:
+            return [], np.zeros((0, len(_FACTOR_NAMES))), []
+        cols = []
+        for raw in (beta, size, value, mom, qual):
+            z, _, _ = engine.riskmodel.standardize(np.asarray(raw, dtype=float))
+            cols.append(z)
+        exposures = np.column_stack(cols)
+        used = [by[s] for s in resolved]
+        return resolved, exposures, used
+
+    # ============================== COMPUTED: options.* ==============================
+    def options_greeks(self, params: dict) -> dict:
+        """Black-Scholes price + greeks for ONE European option on agent-supplied inputs.
+
+        Pure math (``compute.bs_price`` + ``compute.bs_greeks``) — every input (S, K, T, r,
+        sigma, type) is supplied by the agent, so ``source=computed``/``inputs=agent``. No archive
+        is read and no market data is fabricated. ``T`` is in years, ``r``/``sigma`` are decimals
+        (e.g. 0.05, 0.2)."""
+        S = _req_float(params, "S", "spot")
+        K = _req_float(params, "K", "strike")
+        T = _req_float(params, "T", "tenor", "years")
+        r = _f(params.get("r"))
+        if r is None:
+            r = _f(params.get("rate")) or 0.0
+        sigma = _req_float(params, "sigma", "vol", "volatility")
+        opt = (params.get("type") or params.get("option_type") or "call").lower()
+        if opt not in ("call", "put"):
+            raise ValueError("options.greeks 'type' must be 'call' or 'put'.")
+        price = compute.bs_price(S, K, T, r, sigma, opt)
+        greeks = compute.bs_greeks(S, K, T, r, sigma, opt)
+        data = {
+            "type": opt,
+            "inputs": {"S": S, "K": K, "T": T, "r": r, "sigma": sigma},
+            "price": round(price, 6),
+            "greeks": greeks,
+        }
+        return computed_envelope(data, inputs="agent")
+
+    def options_implied_vol(self, params: dict) -> dict:
+        """Implied volatility from an observed option PRICE via BS bisection (agent inputs).
+
+        Returns ``impliedVol=None`` with a NO_SOLUTION warning when the price is outside the
+        model's arbitrage-free band (e.g. below intrinsic) rather than fabricating a number."""
+        price = _req_float(params, "price", "premium")
+        S = _req_float(params, "S", "spot")
+        K = _req_float(params, "K", "strike")
+        T = _req_float(params, "T", "tenor", "years")
+        r = _f(params.get("r"))
+        if r is None:
+            r = _f(params.get("rate")) or 0.0
+        opt = (params.get("type") or params.get("option_type") or "call").lower()
+        if opt not in ("call", "put"):
+            raise ValueError("options.implied_vol 'type' must be 'call' or 'put'.")
+        iv = compute.bs_implied_vol(price, S, K, T, r, opt)
+        data = {
+            "type": opt,
+            "inputs": {"price": price, "S": S, "K": K, "T": T, "r": r},
+            "impliedVol": iv,
+        }
+        warnings = None if iv is not None else [
+            warn("NO_SOLUTION", scope=opt,
+                 detail="price is outside the model's arbitrage-free band (e.g. below intrinsic)")]
+        return computed_envelope(data, inputs="agent", warnings=warnings)
+
+    # ============================== COMPUTED: vol.* ==============================
+    def vol_realized(self, params: dict) -> dict:
+        """Annualized realized (close-to-close log-return) vol over real archive closes.
+
+        The math is computed, but it runs on REAL archive prices, so ``inputs=doomberg-v1-archive``
+        and the archive's freshness rides along on the envelope."""
+        if not self.available:
+            return self._computed_unavailable()
+        symbol = (params.get("symbol") or params.get("ticker") or "").upper().strip().lstrip("$")
+        if not symbol:
+            raise ValueError("vol.realized needs a 'symbol'.")
+        lookback = _i(params.get("lookback"), 0, 0, 100_000)
+        bars = self.archive.ohlcv(symbol)
+        closes = [_f(b.get("c")) for b in bars if _f(b.get("c")) is not None]
+        if lookback and len(closes) > lookback + 1:
+            closes = closes[-(lookback + 1):]
+        rv = compute.realized_vol(closes)
+        data = {"symbol": symbol, "lookback": lookback or None, "observations": max(len(closes) - 1, 0),
+                "realizedVol": rv}
+        warnings = None if rv is not None else [
+            warn("PARTIAL_COVERAGE", scope=symbol, detail="fewer than 2 usable closes")]
+        return computed_envelope(data, freshness=freshness_of(bars), inputs=ARCHIVE_INPUTS,
+                                 warnings=warnings)
+
+    def vol_term_structure(self, params: dict) -> dict:
+        """Realized-vol term structure: annualized realized vol at several trailing windows.
+
+        Windows default to [20, 60, 120, 252] trading days; each point uses the trailing
+        ``window`` closes. Windows longer than the available history are reported as ``None``."""
+        if not self.available:
+            return self._computed_unavailable()
+        symbol = (params.get("symbol") or params.get("ticker") or "").upper().strip().lstrip("$")
+        if not symbol:
+            raise ValueError("vol.term_structure needs a 'symbol'.")
+        windows = params.get("windows") or [20, 60, 120, 252]
+        windows = sorted({_i(w, 20, 2, 100_000) for w in windows})
+        bars = self.archive.ohlcv(symbol)
+        closes = [_f(b.get("c")) for b in bars if _f(b.get("c")) is not None]
+        points = []
+        for w in windows:
+            tail = closes[-(w + 1):] if len(closes) >= 2 else closes
+            rv = compute.realized_vol(tail) if len(tail) >= w + 1 else None
+            points.append({"window": w, "realizedVol": rv,
+                           "observations": max(len(tail) - 1, 0) if rv is not None else 0})
+        slope = None
+        solved = [p for p in points if p["realizedVol"] is not None]
+        if len(solved) >= 2:
+            slope = round(solved[-1]["realizedVol"] - solved[0]["realizedVol"], 6)
+        data = {"symbol": symbol, "points": points, "slope": slope,
+                "availableCloses": len(closes)}
+        warnings = None if solved else [
+            warn("PARTIAL_COVERAGE", scope=symbol, detail="not enough history for any window")]
+        return computed_envelope(data, freshness=freshness_of(bars), inputs=ARCHIVE_INPUTS,
+                                 warnings=warnings)
+
+    # ============================== COMPUTED: correlation.* / factor.* ==============================
+    def correlation_matrix(self, params: dict) -> dict:
+        """Pearson correlation matrix of daily returns across symbols, on real archive closes.
+
+        Each cell is computed from the per-symbol simple-return series (aligned to the common
+        tail). The matrix is symmetric with a 1.0 diagonal; symbols with too little history are
+        dropped and reported."""
+        if not self.available:
+            return self._computed_unavailable()
+        symbols = self._resolve_universe(params)
+        if len(symbols) < 2:
+            raise ValueError("correlation.matrix needs at least 2 symbols.")
+        lookback = _i(params.get("lookback"), 0, 0, 100_000)
+        rets, missing = self._returns_by_symbol(symbols)
+        if lookback:
+            rets = {s: (r[-lookback:] if r.size > lookback else r) for s, r in rets.items()}
+        syms, cm = compute.correlation_matrix(rets)
+        # round for transport; keep exact 1.0 diagonal
+        matrix = [[round(float(cm[i][j]), 6) for j in range(len(syms))] for i in range(len(syms))]
+        data = {
+            "symbols": syms,
+            "matrix": matrix,
+            "lookback": lookback or None,
+            "pairs": [
+                {"a": syms[i], "b": syms[j], "corr": matrix[i][j]}
+                for i in range(len(syms)) for j in range(i + 1, len(syms))
+            ],
+        }
+        warnings = ([warn("PARTIAL_COVERAGE", scope=",".join(missing), detail="insufficient history")]
+                    if missing else None)
+        bars = [b for s in syms for b in self.archive.ohlcv(s)]
+        return computed_envelope(data, freshness=freshness_of(bars), inputs=ARCHIVE_INPUTS,
+                                 warnings=warnings)
+
+    def factor_exposures(self, params: dict) -> dict:
+        """Standardized style-factor exposure matrix (Market/Size/Value/Momentum/Quality).
+
+        Built from archive fundamentals via ``engine.riskmodel.standardize`` (cross-sectional
+        z-scores). The numbers are computed transforms of real archive descriptors, so
+        ``inputs=doomberg-v1-archive``."""
+        if not self.available:
+            return self._computed_unavailable()
+        symbols = self._resolve_universe(params)
+        if len(symbols) < 2:
+            raise ValueError("factor.exposures needs at least 2 symbols (cross-sectional z-scores).")
+        resolved, exposures, used = self._factor_exposures(symbols)
+        missing = [s for s in symbols if s not in resolved]
+        rows = []
+        for i, s in enumerate(resolved):
+            rows.append({"symbol": s,
+                         "exposures": {name: round(float(exposures[i][k]), 6)
+                                       for k, name in enumerate(_FACTOR_NAMES)}})
+        data = {"factors": list(_FACTOR_NAMES), "symbols": resolved, "rows": rows}
+        warnings = ([warn("PARTIAL_COVERAGE", scope=",".join(missing), detail="no fundamentals row")]
+                    if missing else None)
+        return computed_envelope(data, freshness=freshness_of(used), inputs=ARCHIVE_INPUTS,
+                                 warnings=warnings)
+
+    # ============================== COMPUTED: dcf.* ==============================
+    def dcf_value(self, params: dict) -> dict:
+        """5-year DCF valuation seeded from a symbol's archive fundamentals.
+
+        ``base_revenue``/``shares``(=mcap/price)/``net_debt`` come from the archive fundamentals
+        row; the agent may override any DCF assumption (revenueGrowth/ebitdaMargin/wacc/...). The
+        valuation arithmetic is ``compute.dcf_value`` — deterministic, no randomness."""
+        if not self.available:
+            return self._computed_unavailable()
+        symbol = (params.get("symbol") or "").upper().strip().lstrip("$")
+        if not symbol:
+            raise ValueError("dcf.value needs a 'symbol'.")
+        rows = self.archive.fundamentals([symbol])
+        if not rows:
+            return computed_envelope(
+                {"symbol": symbol, "valuation": None}, freshness=None, inputs=ARCHIVE_INPUTS,
+                warnings=[warn("PARTIAL_COVERAGE", scope=symbol, detail="no fundamentals row")])
+        c = rows[0]
+        price = _f(c.get("price"))
+        mcap = _f(c.get("market_cap"))
+        revenue = _f(c.get("revenue"))
+        if revenue is None or revenue <= 0:
+            return computed_envelope(
+                {"symbol": symbol, "valuation": None}, freshness=freshness_of(rows),
+                inputs=ARCHIVE_INPUTS,
+                warnings=[warn("PARTIAL_COVERAGE", scope=symbol, detail="no revenue to seed DCF")])
+        shares = (mcap / price) if (mcap and price) else None
+        if not shares or shares <= 0:
+            return computed_envelope(
+                {"symbol": symbol, "valuation": None}, freshness=freshness_of(rows),
+                inputs=ARCHIVE_INPUTS,
+                warnings=[warn("PARTIAL_COVERAGE", scope=symbol,
+                               detail="cannot derive share count (need market_cap and price)")])
+        net_debt = _f(c.get("net_debt")) or 0.0
+        # Seed the long-run growth from the archive's revenue_growth when present (it's a fraction).
+        assumptions = dict(params.get("assumptions") or {})
+        rg = _f(c.get("revenue_growth"))
+        if rg is not None and "revenueGrowth" not in assumptions:
+            assumptions["revenueGrowth"] = round(rg * 100.0, 2)
+        valuation = compute.dcf_value(revenue, shares, net_debt, assumptions)
+        upside = (round((valuation["impliedPrice"] - price) / price * 100.0, 2)
+                  if (price and valuation["impliedPrice"]) else None)
+        data = {
+            "symbol": symbol,
+            "name": c.get("name") or symbol,
+            "inputs": {"baseRevenue": revenue, "shares": round(shares, 0), "netDebt": net_debt,
+                       "currentPrice": price, "assumptions": assumptions},
+            "valuation": valuation,
+            "impliedUpsidePct": upside,
+        }
+        return computed_envelope(data, freshness=freshness_of(rows), inputs=ARCHIVE_INPUTS)
+
+    # ============================== COMPUTED: portfolio.* ==============================
+    def portfolio_optimize(self, params: dict) -> dict:
+        """Mean-variance optimal weights over real archive returns (long-only by default).
+
+        Builds the annualized covariance + mean-return vector from real archive return series,
+        then runs ``engine.optimize.mean_variance`` (constrained projection). ``mode`` is one of
+        ``max_sharpe`` (default), ``min_variance``, ``target_vol``. Weights are long-only and sum
+        to ~1.0 (the constraint's ``net``)."""
+        if not self.available:
+            return self._computed_unavailable()
+        symbols = self._resolve_universe(params)
+        if len(symbols) < 2:
+            raise ValueError("portfolio.optimize needs at least 2 symbols.")
+        rets, missing = self._returns_by_symbol(symbols)
+        syms = list(rets)
+        if len(syms) < 2:
+            return computed_envelope(
+                {"weights": [], "symbols": syms}, freshness=None, inputs=ARCHIVE_INPUTS,
+                warnings=[warn("PARTIAL_COVERAGE", scope=",".join(missing),
+                               detail="need >=2 symbols with usable history")])
+        cov_syms, cov = compute.covariance_matrix({s: rets[s] for s in syms})
+        # Annualized mean return per symbol (aligned to cov_syms order).
+        mu = np.array([float(np.mean(rets[s])) * compute.TRADING_DAYS for s in cov_syms])
+        mode = (params.get("mode") or "max_sharpe").lower()
+        if mode not in ("max_sharpe", "min_variance", "target_vol"):
+            mode = "max_sharpe"
+        cons = engine.optimize.Constraints(long_only=True, net=1.0)
+        result = engine.optimize.mean_variance(mu, cov, mode=mode, cons=cons)
+        w = np.asarray(result.weights, dtype=float)
+        stats = engine.optimize.portfolio_stats(w, mu, cov)
+        weights = [{"symbol": cov_syms[i], "weight": round(float(w[i]), 6)} for i in range(len(cov_syms))]
+        weights.sort(key=lambda x: x["weight"], reverse=True)
+        data = {
+            "mode": mode,
+            "symbols": cov_syms,
+            "weights": weights,
+            "sumWeights": round(float(w.sum()), 6),
+            "longOnly": True,
+            "stats": {"expReturn": round(stats["expReturn"], 6), "vol": round(stats["vol"], 6),
+                      "sharpe": round(stats["sharpe"], 6), "gross": round(stats["gross"], 6),
+                      "net": round(stats["net"], 6)},
+            "binding": result.binding,
+        }
+        warnings = ([warn("PARTIAL_COVERAGE", scope=",".join(missing), detail="dropped (no history)")]
+                    if missing else None)
+        bars = [b for s in cov_syms for b in self.archive.ohlcv(s)]
+        return computed_envelope(data, freshness=freshness_of(bars), inputs=ARCHIVE_INPUTS,
+                                 warnings=warnings)
+
+    # ============================== COMPUTED: montecarlo.* / scenario.* ==============================
+    def montecarlo_simulate(self, params: dict) -> dict:
+        """GBM (or bootstrap) terminal-price distribution via ``engine.montecarlo.monte_carlo``.
+
+        Deterministic: the RNG ``seed`` is supplied in params (default 12345). Drives the
+        simulation from a real archive symbol's return history when ``symbol`` is given, else from
+        agent-supplied ``sigma``/``drift`` (a synthetic normal return sample built from those)."""
+        horizon = _i(params.get("horizon"), 252, 1, 5000)
+        n_paths = _i(params.get("paths") or params.get("n_paths"), 1000, 100, 100_000)
+        seed = _i(params.get("seed"), 12345, 0, 2**31 - 1)
+        method = (params.get("method") or "gbm").lower()
+        if method not in ("gbm", "bootstrap"):
+            method = "gbm"
+        symbol = (params.get("symbol") or "").upper().strip().lstrip("$")
+        if symbol:
+            if not self.available:
+                return self._computed_unavailable()
+            closes = self._closes(symbol)
+            returns = compute.simple_returns(closes)
+            if returns.size < 5:
+                return computed_envelope(
+                    {"symbol": symbol, "fan": [], "summary": None}, freshness=None,
+                    inputs=ARCHIVE_INPUTS,
+                    warnings=[warn("PARTIAL_COVERAGE", scope=symbol,
+                                   detail="insufficient history for simulation")])
+            start_value = _f(params.get("S")) or _f(params.get("start_value")) or (
+                float(closes[-1]) if closes else 100.0)
+            sim = engine.montecarlo.monte_carlo(returns, start_value=start_value, horizon=horizon,
+                                                n_paths=n_paths, method=method, seed=seed)
+            data = {"symbol": symbol, **sim}
+            bars = self.archive.ohlcv(symbol)
+            return computed_envelope(data, freshness=freshness_of(bars), inputs=ARCHIVE_INPUTS)
+        # Agent-supplied GBM: build a deterministic synthetic daily-return sample from drift+sigma.
+        sigma = _req_float(params, "sigma", "vol", "volatility")  # ANNUAL vol
+        drift = _f(params.get("drift"))
+        if drift is None:
+            drift = _f(params.get("mu")) or 0.0  # ANNUAL drift
+        start_value = _f(params.get("S")) or _f(params.get("start_value")) or 100.0
+        daily_mu = drift / compute.TRADING_DAYS
+        daily_sigma = sigma / math.sqrt(compute.TRADING_DAYS)
+        rng = np.random.default_rng(seed)
+        sample = daily_mu + daily_sigma * rng.standard_normal(max(60, compute.TRADING_DAYS))
+        sim = engine.montecarlo.monte_carlo(sample, start_value=start_value, horizon=horizon,
+                                            n_paths=n_paths, method=method, seed=seed)
+        data = {"symbol": None, "inputs": {"S": start_value, "sigma": sigma, "drift": drift,
+                                           "seed": seed}, **sim}
+        return computed_envelope(data, inputs="agent")
+
+    def scenario_project(self, params: dict) -> dict:
+        """Baseline-vs-scenario forward projection (``engine.scenario.project_scenario``).
+
+        Baseline is Monte-Carlo over a real symbol's return history; the scenario layers an
+        explicit incremental annualized drift (``scenarioDriftPct``) on top — clearly labeled, not
+        silently mixed in. Deterministic via a fixed ``seed``."""
+        if not self.available:
+            return self._computed_unavailable()
+        symbol = (params.get("symbol") or "").upper().strip().lstrip("$")
+        if not symbol:
+            raise ValueError("scenario.project needs a 'symbol'.")
+        closes = self._closes(symbol)
+        returns = compute.simple_returns(closes)
+        if returns.size < 5:
+            return computed_envelope(
+                {"symbol": symbol, "path": [], "baseline": None, "scenario": None}, freshness=None,
+                inputs=ARCHIVE_INPUTS,
+                warnings=[warn("PARTIAL_COVERAGE", scope=symbol,
+                               detail="insufficient history for a scenario projection")])
+        drift_pct = _f(params.get("scenarioDriftPct"))
+        if drift_pct is None:
+            drift_pct = _f(params.get("driftPct")) or 0.0
+        horizon = _i(params.get("horizon"), 252, 1, 5000)
+        n_paths = _i(params.get("paths") or params.get("n_paths"), 1000, 100, 100_000)
+        seed = _i(params.get("seed"), 4242, 0, 2**31 - 1)
+        start_value = _f(params.get("start_value")) or (float(closes[-1]) if closes else 100.0)
+        proj = engine.scenario.project_scenario(returns, drift_pct, horizon=horizon,
+                                                n_paths=n_paths, start_value=start_value, seed=seed)
+        data = {"symbol": symbol, "scenarioDriftPct": drift_pct, **proj}
+        bars = self.archive.ohlcv(symbol)
+        return computed_envelope(data, freshness=freshness_of(bars), inputs=ARCHIVE_INPUTS)
+
+    # ============================== COMPUTED: risk.* ==============================
+    def risk_stress(self, params: dict) -> dict:
+        """Estimate a book's P&L under agent-supplied shocks (``engine.stress``).
+
+        Two shock kinds (both grounded in agent-supplied inputs, source=computed):
+        - factor shocks: ``exposures`` (factor -> portfolio exposure) x ``shocks`` (factor -> %)
+        - asset shocks: ``weights`` (symbol -> NAV fraction) x ``shocks`` (symbol -> %).
+        Pure arithmetic — nothing is imputed or fetched."""
+        shocks = params.get("shocks") or {}
+        if not isinstance(shocks, dict) or not shocks:
+            raise ValueError("risk.stress needs a non-empty 'shocks' map.")
+        exposures = params.get("exposures")
+        weights = params.get("weights")
+        if exposures:
+            kind = "factor"
+            result = engine.stress.factor_shock_pnl(
+                {str(k): _f(v) for k, v in exposures.items() if _f(v) is not None},
+                {str(k): _f(v) for k, v in shocks.items() if _f(v) is not None})
+        elif weights:
+            kind = "asset"
+            result = engine.stress.asset_shock_pnl(
+                {str(k): _f(v) for k, v in weights.items() if _f(v) is not None},
+                {str(k): _f(v) for k, v in shocks.items() if _f(v) is not None})
+        else:
+            raise ValueError("risk.stress needs either 'exposures' (factor) or 'weights' (asset).")
+        data = {"kind": kind, **result}
+        return computed_envelope(data, inputs="agent")
+
+    # ============================== COMPUTED: backtest tearsheet / walk-forward ==============================
+    def tearsheet(self, params: dict) -> dict:
+        """Single-strategy backtest tearsheet over a symbol's REAL archive closes.
+
+        Wraps ``engine.backtest.run_backtest`` (curve, drawdown, trade log, full stat block) on
+        the archive ohlcv points. The math is computed but the price series is real archive data,
+        so ``inputs=doomberg-v1-archive``."""
+        if not self.available:
+            return self._computed_unavailable()
+        symbol = (params.get("symbol") or "").upper().strip().lstrip("$")
+        if not symbol:
+            raise ValueError("tearsheet needs a 'symbol'.")
+        points = self._points(symbol)
+        if len([p for p in points if p.get("c")]) < 3:
+            return computed_envelope(
+                {"symbol": symbol, "tearsheet": None}, freshness=None, inputs=ARCHIVE_INPUTS,
+                warnings=[warn("PARTIAL_COVERAGE", scope=symbol,
+                               detail="insufficient price history for a backtest")])
+        strategy = (params.get("strategy") or "momentum").strip()
+        result = engine.backtest.run_backtest(
+            points, strategy=strategy, params=params.get("params") or {},
+            cost_bps=_f(params.get("cost_bps")) if _f(params.get("cost_bps")) is not None else 5.0)
+        data = {"symbol": symbol, **result}
+        bars = self.archive.ohlcv(symbol)
+        return computed_envelope(data, freshness=freshness_of(bars), inputs=ARCHIVE_INPUTS)
+
+    def walkforward_run(self, params: dict) -> dict:
+        """Anchored walk-forward validation + overfitting diagnostics on real archive closes.
+
+        Wraps ``engine.backtest.run_walk_forward``. Always carries a ``coverage`` block; when the
+        real history is too short for >=2 out-of-sample folds it sets ``coverage.usable=False`` and
+        explains why rather than fabricating folds."""
+        if not self.available:
+            return self._computed_unavailable()
+        symbol = (params.get("symbol") or "").upper().strip().lstrip("$")
+        if not symbol:
+            raise ValueError("walkforward.run needs a 'symbol'.")
+        points = self._points(symbol)
+        if len([p for p in points if p.get("c")]) < 3:
+            return computed_envelope(
+                {"symbol": symbol, "walkforward": None}, freshness=None, inputs=ARCHIVE_INPUTS,
+                warnings=[warn("PARTIAL_COVERAGE", scope=symbol,
+                               detail="insufficient price history for walk-forward validation")])
+        strategy = (params.get("strategy") or "momentum").strip()
+        n_splits = _i(params.get("n_splits"), 5, 2, 50)
+        result = engine.backtest.run_walk_forward(points, strategy=strategy, n_splits=n_splits)
+        data = {"symbol": symbol, **result}
+        bars = self.archive.ohlcv(symbol)
+        return computed_envelope(data, freshness=freshness_of(bars), inputs=ARCHIVE_INPUTS)
 
     # ============================== fundamentals.* ==============================
     def fundamentals_get(self, params: dict) -> dict:
@@ -953,4 +1477,18 @@ SKILLS: dict[str, str] = {
     "sentiment.get": "sentiment_get",
     "macro.dashboard": "macro_dashboard",
     "universe.list": "universe_list",
+    # ---- COMPUTED skills (source="computed"): pure math on agent inputs or real archive series ----
+    "options.greeks": "options_greeks",
+    "options.implied_vol": "options_implied_vol",
+    "vol.realized": "vol_realized",
+    "vol.term_structure": "vol_term_structure",
+    "correlation.matrix": "correlation_matrix",
+    "factor.exposures": "factor_exposures",
+    "dcf.value": "dcf_value",
+    "portfolio.optimize": "portfolio_optimize",
+    "montecarlo.simulate": "montecarlo_simulate",
+    "scenario.project": "scenario_project",
+    "risk.stress": "risk_stress",
+    "tearsheet": "tearsheet",
+    "walkforward.run": "walkforward_run",
 }

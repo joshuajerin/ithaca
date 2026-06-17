@@ -217,10 +217,45 @@ synthetic v1 skills: order_book, iv_surface/options_*, cds_pricer, trade_flow, s
 Reuse v1 logic from `history/v1/artifacts/api-server/app/skills.py` for shaping, but the data
 comes from `ArchiveGateway`, never the v1 HTTP sources, and never synthetic generators.
 
+### COMPUTED skills (`source: "computed"`)
+
+Pure, deterministic math (numpy + stdlib only) over either agent-supplied scalars or REAL archive
+series — never fabricated market data. The provenance `source` is `"computed"` and an `inputs`
+field records the origin: `"agent"` (scalars the agent passed in) or `"doomberg-v1-archive"` (the
+math ran on real archive prices/fundamentals, whose freshness rides along on the envelope). `pit`
+is always `false`. The math library is `doomberg_core.skills.compute`; archive-derived risk/
+optimizer/backtest skills reuse the real `doomberg_core.engine` (`riskmodel`, `optimize`,
+`montecarlo`, `scenario`, `stress`, `backtest`).
+
+| MCP tool | category | computes | inputs |
+|---|---|---|---|
+| `options.greeks` | options | Black-Scholes price + delta/gamma/theta/vega/rho (`compute.bs_price`+`bs_greeks`) | agent (S,K,T,r,sigma,type) |
+| `options.implied_vol` | options | implied vol by bisection (`compute.bs_implied_vol`); None outside arb band | agent (price,S,K,T,r,type) |
+| `vol.realized` | volatility | annualized realized (log-return) vol (`compute.realized_vol`) | archive closes |
+| `vol.term_structure` | volatility | realized vol at trailing windows [20,60,120,252] + slope | archive closes |
+| `correlation.matrix` | risk | symmetric return-correlation matrix (`compute.correlation_matrix`) | archive returns |
+| `factor.exposures` | risk | z-scored style exposures Market/Size/Value/Momentum/Quality (`engine.riskmodel.standardize`) | archive fundamentals |
+| `portfolio.optimize` | portfolio | mean-variance long-only weights (`engine.optimize.mean_variance`) | archive returns |
+| `montecarlo.simulate` | simulation | GBM/bootstrap terminal-price fan + summary (`engine.montecarlo.monte_carlo`), seeded | archive returns or agent (sigma,drift,S) |
+| `scenario.project` | simulation | baseline-vs-scenario forward fan (`engine.scenario.project_scenario`), seeded | archive returns + agent drift |
+| `dcf.value` | valuation | 5y DCF implied price + sensitivity grid (`compute.dcf_value`) | archive fundamentals + agent assumptions |
+| `risk.stress` | risk | factor/asset shock P&L (`engine.stress.factor_shock_pnl`/`asset_shock_pnl`) | agent (exposures/weights + shocks) |
+| `tearsheet` | backtest | single-strategy backtest tearsheet (`engine.backtest.run_backtest`) | archive closes + agent strategy |
+| `walkforward.run` | backtest | anchored walk-forward + overfitting diagnostics (`engine.backtest.run_walk_forward`) | archive closes + agent strategy |
+
+Final catalog: **29 skills** (16 archive-backed + 13 computed) over `SKILLS`, each with a
+`SkillSet` method, an MCP `@mcp.tool` wrapper, and a test. The MCP server advertises **32 tools**
+total (the 29 skills + the 3 base tools `market.get_ohlcv` / `backtest.run` / `propose_strategy`).
+No target skill was skipped — the engine (`riskmodel`/`optimize`/`montecarlo`/`scenario`/`stress`/
+`backtest`) supports the tearsheet, walk-forward, stress and scenario skills cleanly.
+
 ## Provenance + PIT
-Every skill result wraps the v2 provenance envelope: `source: "doomberg-v1-archive"`,
+Archive-backed skill results wrap the v2 provenance envelope: `source: "doomberg-v1-archive"`,
 `freshness` = max(updated_at/fetched_at) of the rows used, `pit: true` ONLY for
 `fundamentals.pit` / `fundamentals_pit`-backed results (real point-in-time), else `pit: false`.
+COMPUTED skill results use `source: "computed"`, `pit: false`, and an `inputs` field
+(`"agent"` or `"doomberg-v1-archive"`); when they read archive series the data freshness still
+rides along. Computed skills NEVER present a calculated number as a live market quote.
 
 ## INFRASTRUCTURE GUARDRAIL (Stream 2 — hard constraint)
 DigitalOcean services we may use: **Droplets / DOKS (CPU node pools only), Managed Postgres,

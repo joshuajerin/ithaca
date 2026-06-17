@@ -119,6 +119,20 @@ def test_call_skill_traces_like_ohlcv(archive_toolset):
     assert events[0]["data"]["name"] == "market.news"  # canonical tool name the read-model pairs on
 
 
+def test_computed_skill_traces_with_computed_source(archive_toolset):
+    # A pure-math (agent-input) computed skill needs no archive and is sourced "computed".
+    out = archive_toolset.call_skill(
+        "options.greeks", {"S": 100, "K": 100, "T": 1.0, "r": 0.05, "sigma": 0.2, "type": "call"},
+        _ctx={"run_id": R, "agent_id": AGENT})
+    assert out["provenance"]["source"] == "computed"
+    assert out["provenance"]["inputs"] == "agent"
+    assert out["data"]["price"] > 0
+    events = archive_toolset.sink.events(R)
+    assert [e["type"] for e in events] == ["tool_call", "tool_result"]
+    assert events[0]["data"]["name"] == "options.greeks"
+    assert events[1]["data"]["summary"]["source"] == "computed"
+
+
 def test_pit_skill_marks_pit_true_in_summary(archive_toolset):
     out = archive_toolset.call_skill("fundamentals.pit", {"symbol": "NVDA", "as_of": "2024-05-01"},
                                      _ctx={"run_id": R})

@@ -18,6 +18,29 @@ def _ohlcv(symbol: str, closes: list[float], start_day: int = 1) -> list[dict]:
     return rows
 
 
+def _long_series(symbol: str, n: int = 300, start: float = 100.0, drift: float = 0.0004,
+                 amp: float = 0.02, seed: int = 7) -> list[dict]:
+    """A deterministic ~n-day close series (sinusoid + drift) with real day-over-day moves.
+
+    Long enough to exercise the COMPUTED skills that need history (realized vol over 252-day
+    windows, GBM monte-carlo's >=5 returns, backtests / walk-forward folds). Fully deterministic
+    — no RNG — so numeric assertions are stable across runs.
+    """
+    import datetime as _dt
+
+    base = _dt.date(2022, 1, 3)
+    rows = []
+    price = start
+    for i in range(n):
+        # smooth, mean-reverting wiggle + slight upward drift; strictly positive closes
+        step = drift + amp * np.sin(i / 9.0 + seed) * 0.5
+        price = max(1.0, price * (1.0 + step))
+        d = (base + _dt.timedelta(days=i)).isoformat()
+        rows.append({"symbol": symbol, "d": d, "o": price, "h": price * 1.01, "l": price * 0.99,
+                     "c": round(price, 4), "v": 2_000_000.0, "updated_at": "2024-06-01T00:00:00Z"})
+    return rows
+
+
 class FakeArchive:
     """Tiny deterministic fixtures covering every skill the catalog exposes."""
 
@@ -26,6 +49,9 @@ class FakeArchive:
             "NVDA": _ohlcv("NVDA", [100.0, 110.0, 120.0, 150.0]),
             "AMD": _ohlcv("AMD", [80.0, 82.0, 78.0, 90.0]),
             "TSM": _ohlcv("TSM", [60.0, 61.0, 62.0, 66.0]),
+            # Long deterministic series for the COMPUTED skills that need real history.
+            "LONG": _long_series("LONG", n=300, seed=3),
+            "LONG2": _long_series("LONG2", n=300, seed=11, start=50.0, amp=0.03),
         }
         self._universe = [
             {"symbol": "NVDA", "name": "NVIDIA Corp", "sector": "semiconductors", "tracked": True,
@@ -41,6 +67,8 @@ class FakeArchive:
              "pending": False, "country": "US", "exchange": "NYSE", "industry": "Misc",
              "status": "delisted", "updated_at": "2020-06-01T00:00:00Z"},
         ]
+        # LONG / LONG2 carry long ohlcv + fundamentals fixtures for the COMPUTED skills but are
+        # intentionally kept OUT of the universe so the universe.list counts stay unchanged.
         self._sectors = [
             {"id": "semiconductors", "name": "Semiconductors", "updated_at": "2024-06-01T00:00:00Z"},
             {"id": "industrials", "name": "Industrials", "updated_at": "2024-06-01T00:00:00Z"},
@@ -63,7 +91,19 @@ class FakeArchive:
                     "revenue": 7e10, "net_margin": 38.0, "eps": 5.2, "dividend_yield": 1.8,
                     "beta": 1.1, "week52_high": 70.0, "week52_low": 50.0, "description": "Fab.",
                     "is_live": True, "revenue_growth": 0.2, "earnings_date": "2024-04-18",
-                    "updated_at": "2024-06-01T00:00:00Z"},
+                    "net_debt": -5e9, "updated_at": "2024-06-01T00:00:00Z"},
+            "LONG": {"symbol": "LONG", "name": "Long Co", "price": 120.0, "change_pct": 0.3,
+                     "market_cap": 1.2e11, "pe_ratio": 30.0, "volume": 2e6, "revenue": 4e10,
+                     "net_margin": 20.0, "eps": 4.0, "dividend_yield": 0.5, "beta": 1.2,
+                     "week52_high": 130.0, "week52_low": 90.0, "description": "Long series.",
+                     "is_live": True, "revenue_growth": 0.12, "earnings_date": "2024-05-01",
+                     "net_debt": 1e10, "updated_at": "2024-06-01T00:00:00Z"},
+            "LONG2": {"symbol": "LONG2", "name": "Long Two Co", "price": 60.0, "change_pct": -0.2,
+                      "market_cap": 3e10, "pe_ratio": 18.0, "volume": 1e6, "revenue": 1.5e10,
+                      "net_margin": 14.0, "eps": 3.3, "dividend_yield": 1.2, "beta": 0.9,
+                      "week52_high": 70.0, "week52_low": 45.0, "description": "Long series two.",
+                      "is_live": True, "revenue_growth": 0.06, "earnings_date": "2024-05-02",
+                      "net_debt": 2e9, "updated_at": "2024-06-01T00:00:00Z"},
         }
         self._pit = {
             "NVDA": [

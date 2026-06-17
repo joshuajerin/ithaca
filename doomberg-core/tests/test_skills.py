@@ -32,14 +32,26 @@ def test_fake_archive_satisfies_protocol():
     assert isinstance(FakeArchive(), ArchiveGateway)
 
 
+# The 16 archive-backed skills (source="doomberg-v1-archive"); the rest are COMPUTED.
+_ARCHIVE_SKILLS = {
+    "market.news", "market.screener", "market.movers", "fundamentals.get", "fundamentals.compare",
+    "fundamentals.pit", "analyst.ratings", "congress.trades", "insider.activity",
+    "institutional.holdings", "institutional.flows", "etf.holdings", "etf.exposure",
+    "sentiment.get", "macro.dashboard", "universe.list",
+}
+
+
 def test_registry_maps_every_skill_to_a_real_method(skills):
-    assert len(SKILLS) == 16
+    assert len(_ARCHIVE_SKILLS) == 16
+    assert _ARCHIVE_SKILLS <= set(SKILLS)
     for tool, method in SKILLS.items():
         assert hasattr(skills, method), f"{tool} -> {method} missing"
 
 
 def test_every_skill_returns_a_valid_envelope(skills):
-    """Smoke: call each skill with a reasonable arg set and assert the envelope shape."""
+    """Smoke: call each ARCHIVE skill with a reasonable arg set and assert the envelope shape.
+
+    COMPUTED skills (source="computed") are covered in test_computed_skills.py."""
     args = {
         "market.news": {"ticker": "NVDA"},
         "market.screener": {},
@@ -58,9 +70,9 @@ def test_every_skill_returns_a_valid_envelope(skills):
         "macro.dashboard": {},
         "universe.list": {},
     }
-    assert set(args) == set(SKILLS)
-    for tool, method in SKILLS.items():
-        out = getattr(skills, method)(args[tool])
+    assert set(args) == _ARCHIVE_SKILLS
+    for tool in _ARCHIVE_SKILLS:
+        out = getattr(skills, SKILLS[tool])(args[tool])
         _assert_envelope(out, pit=(tool == "fundamentals.pit"))
 
 
@@ -214,9 +226,9 @@ def test_universe_list_includes_untracked_when_asked(skills):
 # ----------------------------- archive-absent degradation -----------------------------
 def test_skillset_without_archive_warns_not_crashes():
     skills = SkillSet(None)
-    for tool, method in SKILLS.items():
-        out = getattr(skills, method)({"symbol": "NVDA", "etf": "SOXX", "scope": "NVDA",
-                                       "symbols": ["NVDA", "AMD"]})
+    for tool in _ARCHIVE_SKILLS:
+        out = getattr(skills, SKILLS[tool])({"symbol": "NVDA", "etf": "SOXX", "scope": "NVDA",
+                                             "symbols": ["NVDA", "AMD"]})
         assert out["data"] is None
         assert out["warnings"][0]["code"] == "ARCHIVE_UNAVAILABLE"
         assert out["provenance"]["source"] == "doomberg-v1-archive"

@@ -277,6 +277,106 @@ def create_server(toolset: Toolset | None = None):
     def universe_list(sector: str | None = None, limit: int = 150) -> dict:
         return ts.call_skill("universe.list", {"sector": sector, "limit": limit})
 
+    # ---- COMPUTED skills (source="computed"): pure math on agent inputs / real archive series ----
+    @mcp.tool(name="options_greeks",
+              description="Black-Scholes price + greeks for one European option (agent-supplied "
+                          "S, K, T-years, r, sigma, type=call|put). Computed, no market data.")
+    def options_greeks(S: float, K: float, T: float, sigma: float, r: float = 0.0,
+                       type: str = "call") -> dict:
+        return ts.call_skill("options.greeks",
+                             {"S": S, "K": K, "T": T, "r": r, "sigma": sigma, "type": type})
+
+    @mcp.tool(name="options_implied_vol",
+              description="Black-Scholes implied volatility from an observed option price "
+                          "(agent-supplied price, S, K, T-years, r, type). Computed.")
+    def options_implied_vol(price: float, S: float, K: float, T: float, r: float = 0.0,
+                           type: str = "call") -> dict:
+        return ts.call_skill("options.implied_vol",
+                             {"price": price, "S": S, "K": K, "T": T, "r": r, "type": type})
+
+    @mcp.tool(name="vol_realized",
+              description="Annualized realized (close-to-close log-return) volatility computed over "
+                          "real archive closes for a symbol.")
+    def vol_realized(symbol: str, lookback: int = 0) -> dict:
+        return ts.call_skill("vol.realized", {"symbol": symbol, "lookback": lookback})
+
+    @mcp.tool(name="vol_term_structure",
+              description="Realized-vol term structure at trailing windows (default 20/60/120/252) "
+                          "computed over real archive closes.")
+    def vol_term_structure(symbol: str, windows: list[int] | None = None) -> dict:
+        return ts.call_skill("vol.term_structure", {"symbol": symbol, "windows": windows})
+
+    @mcp.tool(name="correlation_matrix",
+              description="Pearson correlation matrix of daily returns across symbols, computed on "
+                          "real archive closes (symmetric, 1.0 diagonal).")
+    def correlation_matrix(symbols: list[str], lookback: int = 0) -> dict:
+        return ts.call_skill("correlation.matrix", {"symbols": symbols, "lookback": lookback})
+
+    @mcp.tool(name="factor_exposures",
+              description="Standardized style-factor exposures (Market/Size/Value/Momentum/Quality) "
+                          "cross-sectionally z-scored from real archive fundamentals.")
+    def factor_exposures(symbols: list[str] | None = None, sector: str | None = None) -> dict:
+        return ts.call_skill("factor.exposures", {"symbols": symbols, "sector": sector})
+
+    @mcp.tool(name="dcf_value",
+              description="5-year discounted-cash-flow valuation seeded from a symbol's archive "
+                          "fundamentals; agent may override DCF assumptions. Deterministic.")
+    def dcf_value(symbol: str, assumptions: dict | None = None) -> dict:
+        return ts.call_skill("dcf.value", {"symbol": symbol, "assumptions": assumptions})
+
+    @mcp.tool(name="portfolio_optimize",
+              description="Mean-variance optimal long-only weights over real archive returns "
+                          "(mode=max_sharpe|min_variance|target_vol). Weights sum to ~1.")
+    def portfolio_optimize(symbols: list[str] | None = None, sector: str | None = None,
+                          mode: str = "max_sharpe") -> dict:
+        return ts.call_skill("portfolio.optimize",
+                             {"symbols": symbols, "sector": sector, "mode": mode})
+
+    @mcp.tool(name="montecarlo_simulate",
+              description="GBM/bootstrap terminal-price distribution (percentile fan + summary). "
+                          "Deterministic via 'seed'. Drives from a symbol's archive history, or "
+                          "agent-supplied sigma/drift/S.")
+    def montecarlo_simulate(symbol: str | None = None, sigma: float | None = None,
+                           drift: float = 0.0, S: float | None = None, horizon: int = 252,
+                           paths: int = 1000, seed: int = 12345, method: str = "gbm") -> dict:
+        return ts.call_skill("montecarlo.simulate",
+                             {"symbol": symbol, "sigma": sigma, "drift": drift, "S": S,
+                              "horizon": horizon, "paths": paths, "seed": seed, "method": method})
+
+    @mcp.tool(name="scenario_project",
+              description="Baseline-vs-scenario forward projection: Monte-Carlo baseline on a "
+                          "symbol's real history plus an explicit incremental annualized drift. "
+                          "Deterministic via 'seed'.")
+    def scenario_project(symbol: str, scenarioDriftPct: float = 0.0, horizon: int = 252,
+                        paths: int = 1000, seed: int = 4242) -> dict:
+        return ts.call_skill("scenario.project",
+                             {"symbol": symbol, "scenarioDriftPct": scenarioDriftPct,
+                              "horizon": horizon, "paths": paths, "seed": seed})
+
+    @mcp.tool(name="risk_stress",
+              description="Estimate book P&L under agent-supplied shocks: factor shocks "
+                          "(exposures x shocks) or asset shocks (weights x shocks). Computed.")
+    def risk_stress(shocks: dict, exposures: dict | None = None,
+                   weights: dict | None = None) -> dict:
+        return ts.call_skill("risk.stress",
+                             {"shocks": shocks, "exposures": exposures, "weights": weights})
+
+    @mcp.tool(name="tearsheet",
+              description="Single-strategy backtest tearsheet (curve, drawdown, trade log, stats) "
+                          "over a symbol's real archive closes.")
+    def tearsheet(symbol: str, strategy: str = "momentum", params: dict | None = None,
+                 cost_bps: float = 5.0) -> dict:
+        return ts.call_skill("tearsheet",
+                             {"symbol": symbol, "strategy": strategy, "params": params,
+                              "cost_bps": cost_bps})
+
+    @mcp.tool(name="walkforward_run",
+              description="Anchored walk-forward validation + overfitting diagnostics over a "
+                          "symbol's real archive closes (honest coverage block, no fabricated folds).")
+    def walkforward_run(symbol: str, strategy: str = "momentum", n_splits: int = 5) -> dict:
+        return ts.call_skill("walkforward.run",
+                             {"symbol": symbol, "strategy": strategy, "n_splits": n_splits})
+
     return mcp, ts
 
 
