@@ -7,3 +7,9 @@ export const API_BASE: string = (import.meta.env.VITE_API_BASE as string | undef
 export const TENANT_ID: string =
   (import.meta.env.VITE_TENANT_ID as string | undefined) ??
   "00000000-0000-0000-0000-000000000001";
+
+// Production API key (dmbg_<env>_<keyid>_<secret>). When set, the UI authenticates with
+// `Authorization: Bearer <key>` and the gateway derives the tenant from the key — the
+// X-Tenant-Id header is only used as the local-dev fallback when no key is configured.
+export const API_KEY: string | undefined =
+  (import.meta.env.VITE_API_KEY as string | undefined) || undefined;

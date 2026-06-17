@@ -78,10 +78,24 @@ def _require_human(platform: Any, ctx: Ctx, run_id: str, action: str) -> None:
         raise ActionError(403, f"{action} requires a human actor (X-Actor-Kind: human)")
 
 
+def _require_scope(platform: Any, ctx: Ctx, run_id: str, action: str, scope: str) -> None:
+    """Capability gate: the principal's credential must carry ``scope``.
+
+    Independent of the human-actor rule — a credential may *request* (e.g. ``deploy:paper``)
+    yet still be unable to *promote* because it is not a human actor. Audited denial + 403.
+    """
+    if not ctx.has_scope(scope):
+        _emit(platform, ctx=ctx, run_id=run_id, event_type="denial",
+              data={"action": action, "reason": f"missing required scope: {scope}",
+                    "required_scope": scope, "scopes": sorted(ctx.scopes)})
+        raise ActionError(403, f"{action} requires the {scope} scope")
+
+
 # ----------------------------------------------------------------------------------------
 # propose / create
 # ----------------------------------------------------------------------------------------
 def propose_strategy(platform: Any, ctx: Ctx, core: Any, spec: dict[str, Any]) -> dict[str, Any]:
+    _require_scope(platform, ctx, str(uuid.uuid4()), "propose_strategy", "strategy:author")
     try:
         validated = core.validate_spec(spec)
     except PydanticValidationError as exc:
@@ -102,8 +116,17 @@ def propose_strategy(platform: Any, ctx: Ctx, core: Any, spec: dict[str, Any]) -
             "trace": {"run_id": proposal_run_id, "seq": seq}}
 
 
+_CREATE_SCOPE = {"backtest": "deploy:backtest", "paper": "deploy:paper"}
+
+
 def create_run(platform: Any, ctx: Ctx, *, strategy_id: str, kind: str,
                range_: str = "1y") -> dict[str, Any]:
+    # Authoring a backtest needs deploy:backtest; requesting a paper deployment needs
+    # deploy:paper (which is "may REQUEST" — promotion still requires a human).
+    required = _CREATE_SCOPE.get(kind)
+    if required is not None:
+        _require_scope(platform, ctx, str(uuid.uuid4()), f"create_run:{kind}", required)
+
     strategy = platform.strategies.get(ctx.tenant_id, strategy_id)
     if strategy is None:
         raise ActionError(404, "strategy not found")
@@ -127,6 +150,9 @@ def promote_run(platform: Any, ctx: Ctx, run_id: str) -> dict[str, Any]:
     if run is None:
         raise ActionError(404, "run not found")
 
+    # The money path needs BOTH: a human actor (no agent may self-promote) AND the
+    # deploy:paper capability on the credential.
+    _require_scope(platform, ctx, run_id, "promote", "deploy:paper")
     _require_human(platform, ctx, run_id, "promote")
 
     if run["kind"] != "paper":
@@ -177,6 +203,7 @@ def _lifecycle(platform: Any, ctx: Ctx, run_id: str, *, action: str, to_state: s
     run = platform.runs.get(ctx.tenant_id, run_id)
     if run is None:
         raise ActionError(404, "run not found")
+    _require_scope(platform, ctx, run_id, action, "deploy:paper")
     _require_human(platform, ctx, run_id, action)
     if run["kind"] != "paper":
         raise ActionError(409, f"{action} applies only to paper deployments")

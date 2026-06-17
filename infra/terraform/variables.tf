@@ -7,6 +7,17 @@ variable "project_name" {
   default     = "doomberg"
 }
 
+# Applying user-defined tags requires the DO API `tag:create` scope. This deploy's
+# token does not carry it, so tagging defaults OFF. With tags off the public LB
+# targets the always-on pool via the DOKS-auto-applied `k8s:<cluster-id>` tag
+# instead of a custom pool tag. Set true with a tag-capable token to restore the
+# descriptive resource tags + the dedicated gateway pool tag.
+variable "apply_resource_tags" {
+  description = "If true, apply descriptive user tags + the dedicated gateway pool tag (needs the DO `tag:create` scope). Default false: rely on the DOKS-auto `k8s:<cluster-id>` tag for LB targeting."
+  type        = bool
+  default     = false
+}
+
 variable "environment" {
   description = "Deployment environment (dev|staging|prod). Used in resource names + tags."
   type        = string
@@ -107,6 +118,18 @@ variable "paper_node_count" {
 # Managed Postgres 16
 # ---------------------------------------------------------------------------
 
+# Whether Terraform OWNS (creates/manages) the Managed Postgres cluster. In this
+# deployment the dev + prod Managed Postgres already exist (created out of band
+# via doctl and seeded with the 240k-row archive.* data), so this defaults to
+# FALSE: Terraform must NOT create a duplicate DB. The workload reads the existing
+# prod DB via the DOOMBERG_PROD_URL secret instead. Flip to true only to let
+# Terraform stand up a brand-new managed cluster.
+variable "manage_postgres" {
+  description = "If true, Terraform creates + manages the Managed Postgres cluster/db/user/firewall and the archive-load Job + PG-DSN outputs. Default false: the prod DB already exists and is read via the DOOMBERG_PROD_URL secret; never let TF create a duplicate."
+  type        = bool
+  default     = false
+}
+
 variable "postgres_version" {
   description = "Managed Postgres major version."
   type        = string
@@ -159,6 +182,16 @@ variable "spaces_bucket_name" {
   description = "Spaces bucket for backtest artifacts. Must be globally unique; suffixed in code."
   type        = string
   default     = "doomberg-artifacts"
+}
+
+# Whether to create the Spaces bucket. Requires SPACES_ACCESS_KEY_ID /
+# SPACES_SECRET_ACCESS_KEY in the environment. Default false: this deploy has no
+# Spaces keys and the archive is already seeded, so no artifact bucket is needed
+# to bring the platform up. Flip to true (with keys) when artifact storage lands.
+variable "manage_spaces" {
+  description = "If true, create the private Spaces artifacts bucket (needs SPACES_* keys). Default false."
+  type        = bool
+  default     = false
 }
 
 # ---------------------------------------------------------------------------

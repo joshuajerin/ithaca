@@ -25,6 +25,22 @@ $EDITOR infra/terraform/.env        # set DIGITALOCEAN_TOKEN + SPACES_* keys
 
 `infra/terraform/.env` is gitignored. Never commit it; never paste the token in chat.
 
+> **REQUIRED SCOPE — `tag:create`.** DOKS cluster creation makes DigitalOcean
+> auto-apply a `k8s:<cluster-id>` tag to the cluster + its worker droplets. If the
+> token lacks the **`tag:create`** scope, `terraform apply` fails at the cluster
+> with `401 tagging requires tag:create permission` — even with NO user tags. A
+> read/databases/kubernetes/registry/vpc token is **not enough**; the token must
+> also carry `tag:create` (a full-access token is simplest). Verify before apply:
+> `doctl compute tag create scope-probe && doctl compute tag delete scope-probe`.
+
+> **Pre-existing Postgres + no Spaces keys (this deployment).** The dev + prod
+> Managed Postgres already exist and are seeded, so Terraform must NOT create a DB.
+> `infra/terraform/terraform.auto.tfvars` sets `manage_postgres=false` (workload
+> reads the prod DB via the `DOOMBERG_PROD_URL` secret), `manage_spaces=false` (no
+> Spaces keys; bucket not needed), `enable_archive_load_job=false` (already loaded),
+> and `apply_resource_tags=false` (the LB targets the auto `k8s:<cluster-id>` tag
+> instead of a custom pool tag). Flip any of these on with the right credentials.
+
 ---
 
 ## 1. Build + push the image

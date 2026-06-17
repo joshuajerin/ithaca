@@ -12,6 +12,13 @@
 # target them without referencing ephemeral node ids.
 locals {
   gateway_pool_tag = "${local.name_prefix}-gateway"
+
+  # When custom tags are disabled (no `tag:create` scope), target the always-on
+  # pool via the tag DOKS applies to every worker droplet automatically:
+  # `k8s:<cluster-id>`. Both paper and backtest nodes carry it, but the rest-/mcp-
+  # gateway NodePort Services only have endpoints on the paper pool (the app pods
+  # are pinned there), so the LB healthcheck keeps only those nodes in rotation.
+  lb_droplet_tag = var.apply_resource_tags ? local.gateway_pool_tag : "k8s:${digitalocean_kubernetes_cluster.doomberg.id}"
 }
 
 resource "digitalocean_loadbalancer" "gateways" {
@@ -20,8 +27,8 @@ resource "digitalocean_loadbalancer" "gateways" {
   size_unit = var.lb_size_unit
   vpc_uuid  = digitalocean_vpc.doomberg.id
 
-  # Target the always-on gateway pool by tag (set on the node pool in main.tf).
-  droplet_tag = local.gateway_pool_tag
+  # Target the always-on gateway pool by tag.
+  droplet_tag = local.lb_droplet_tag
 
   redirect_http_to_https = false
 

@@ -6,6 +6,7 @@ with a ``.traces`` alias (the name the control plane used) so neither has to cha
 """
 from __future__ import annotations
 
+from .auth_store import AuthStore
 from .book_store import BookStore
 from .db import Db, open_db
 from .run_store import RunStore
@@ -22,6 +23,7 @@ class Platform:
         self.strategies = StrategyStore(self.db)
         self.trace = TraceStore(self.db)
         self.books = BookStore(self.db)
+        self.auth = AuthStore(self.db)
 
     # the control plane referred to this store as `.traces`; keep both names valid.
     @property

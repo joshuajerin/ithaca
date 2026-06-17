@@ -1,0 +1,28 @@
+# NodePort Service for the always-on app pod. The Terraform Load Balancer
+# (loadbalancer.tf) forwards:
+#   LB :80   → NodePort 30080 → rest-gateway :8000   (healthcheck /healthz on 30080)
+#   LB :8080 → NodePort 30808 → control-plane :8001
+# The LB targets every cluster node via the k8s:<cluster-id> tag; kube-proxy
+# routes the NodePort to the single app pod on the paper pool.
+apiVersion: v1
+kind: Service
+metadata:
+  name: doomberg-app
+  namespace: doomberg-gateway
+  labels:
+    doomberg/component: app
+spec:
+  type: NodePort
+  selector:
+    doomberg/component: app
+  ports:
+    - name: rest
+      port: 8000
+      targetPort: 8000
+      nodePort: 30080
+      protocol: TCP
+    - name: control
+      port: 8001
+      targetPort: 8001
+      nodePort: 30808
+      protocol: TCP

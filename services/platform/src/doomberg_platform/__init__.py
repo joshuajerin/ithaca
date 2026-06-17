@@ -10,6 +10,7 @@ See ``docs/plans/doomberg-v2/INTERFACES.md`` for the seam this package conforms 
 
 from __future__ import annotations
 
+from .auth_store import VALID_SCOPES, AuthStore, hash_secret
 from .book_store import BookConflict, BookNotFound, BookStore
 from .db import Db, open_db
 from .platform import Platform
@@ -30,6 +31,9 @@ __all__ = [
     "RunStore",
     "StrategyStore",
     "BookStore",
+    "AuthStore",
+    "VALID_SCOPES",
+    "hash_secret",
     "TransitionError",
     "TransitionConflict",
     "RunNotFound",

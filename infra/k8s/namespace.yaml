@@ -1,0 +1,10 @@
+# doomberg-gateway namespace. Terraform (network_policy.tf) also creates this with
+# the doomberg/role=data-gateway label; this manifest is idempotent so the deploy
+# script can apply it standalone. The label lets the workers' egress NetworkPolicy
+# select this namespace as the single allowed destination.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: doomberg-gateway
+  labels:
+    doomberg/role: data-gateway

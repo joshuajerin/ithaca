@@ -219,7 +219,10 @@ resource "kubernetes_cron_job_v1" "paper_tick" {
 # gateway namespace on the always-on pool.
 # ---------------------------------------------------------------------------
 resource "kubernetes_job" "archive_load" {
-  count = var.enable_archive_load_job ? 1 : 0
+  # Gated behind manage_postgres too: the prod DB is ALREADY seeded with the
+  # archive (240k rows), so the one-shot loader must NOT run against it. Only
+  # render when Terraform owns a fresh DB AND the loader is explicitly enabled.
+  count = (var.manage_postgres && var.enable_archive_load_job) ? 1 : 0
 
   metadata {
     name      = "archive-load"

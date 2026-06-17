@@ -27,38 +27,41 @@ output "vpc_id" {
 }
 
 # Private host/port — the workers reach Postgres over the VPC, never the public host.
+# Null when Terraform does not manage Postgres (the prod DB is read via the
+# DOOMBERG_PROD_URL secret instead; see var.manage_postgres).
 output "postgres_private_host" {
-  description = "Private (VPC) host for Managed Postgres."
-  value       = digitalocean_database_cluster.postgres.private_host
+  description = "Private (VPC) host for Managed Postgres. Null when manage_postgres=false."
+  value       = try(one(digitalocean_database_cluster.postgres[*].private_host), null)
 }
 
 output "postgres_port" {
-  description = "Managed Postgres port."
-  value       = digitalocean_database_cluster.postgres.port
+  description = "Managed Postgres port. Null when manage_postgres=false."
+  value       = try(one(digitalocean_database_cluster.postgres[*].port), null)
 }
 
 # Full app DSN over the private network. Composed from the provisioned app user.
+# Null when Terraform does not manage Postgres.
 output "postgres_app_uri" {
-  description = "Application Postgres connection URI (private network, sensitive)."
-  value = format(
+  description = "Application Postgres connection URI (private network, sensitive). Null when manage_postgres=false."
+  value = var.manage_postgres ? format(
     "postgresql://%s:%s@%s:%d/%s?sslmode=require",
-    digitalocean_database_user.app.name,
-    digitalocean_database_user.app.password,
-    digitalocean_database_cluster.postgres.private_host,
-    digitalocean_database_cluster.postgres.port,
-    digitalocean_database_db.app.name,
-  )
+    digitalocean_database_user.app[0].name,
+    digitalocean_database_user.app[0].password,
+    digitalocean_database_cluster.postgres[0].private_host,
+    digitalocean_database_cluster.postgres[0].port,
+    digitalocean_database_db.app[0].name,
+  ) : null
   sensitive = true
 }
 
 output "spaces_bucket_name" {
-  description = "Resolved (globally-unique) Spaces bucket name for artifacts."
-  value       = digitalocean_spaces_bucket.artifacts.name
+  description = "Resolved (globally-unique) Spaces bucket name for artifacts. Null when manage_spaces=false."
+  value       = try(one(digitalocean_spaces_bucket.artifacts[*].name), null)
 }
 
 output "spaces_bucket_domain" {
-  description = "Spaces bucket endpoint domain."
-  value       = digitalocean_spaces_bucket.artifacts.bucket_domain_name
+  description = "Spaces bucket endpoint domain. Null when manage_spaces=false."
+  value       = try(one(digitalocean_spaces_bucket.artifacts[*].bucket_domain_name), null)
 }
 
 output "worker_namespace" {
@@ -102,14 +105,14 @@ output "load_balancer_id" {
 # the loader + ArchiveGateway read (DOOMBERG_ARCHIVE_URL). Sensitive.
 # ---------------------------------------------------------------------------
 output "archive_url" {
-  description = "Archive Postgres DSN for DOOMBERG_ARCHIVE_URL (same private app DSN). Sensitive."
-  value = format(
+  description = "Archive Postgres DSN for DOOMBERG_ARCHIVE_URL (same private app DSN). Sensitive. Null when manage_postgres=false (the prod DB DSN comes from the DOOMBERG_PROD_URL secret instead)."
+  value = var.manage_postgres ? format(
     "postgresql://%s:%s@%s:%d/%s?sslmode=require",
-    digitalocean_database_user.app.name,
-    digitalocean_database_user.app.password,
-    digitalocean_database_cluster.postgres.private_host,
-    digitalocean_database_cluster.postgres.port,
-    digitalocean_database_db.app.name,
-  )
+    digitalocean_database_user.app[0].name,
+    digitalocean_database_user.app[0].password,
+    digitalocean_database_cluster.postgres[0].private_host,
+    digitalocean_database_cluster.postgres[0].port,
+    digitalocean_database_db.app[0].name,
+  ) : null
   sensitive = true
 }

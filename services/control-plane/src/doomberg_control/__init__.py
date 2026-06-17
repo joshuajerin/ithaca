@@ -8,7 +8,15 @@ write passes ``tenant_id`` first; no agent/LLM code is executed; audited failure
 from __future__ import annotations
 
 from .app import app, create_app
-from .deps import Ctx, HUMAN_ACTOR_KINDS, Platform, get_ctx, get_platform
+from .deps import (
+    HUMAN_ACTOR_KINDS,
+    Ctx,
+    Platform,
+    get_ctx,
+    get_platform,
+    require_scope,
+    resolve_ctx,
+)
 from .gate import DEFAULT_RESTRICTED, GateDecision, evaluate_spec_gate
 
 __all__ = [
@@ -19,6 +27,8 @@ __all__ = [
     "HUMAN_ACTOR_KINDS",
     "get_ctx",
     "get_platform",
+    "require_scope",
+    "resolve_ctx",
     "GateDecision",
     "evaluate_spec_gate",
     "DEFAULT_RESTRICTED",

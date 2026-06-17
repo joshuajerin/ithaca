@@ -1,14 +1,20 @@
-import { API_BASE, TENANT_ID } from "./config";
+import { API_BASE, API_KEY, TENANT_ID } from "./config";
 import type { RunRow, StrategyRow } from "./types";
 
-// Thin REST client over the rest-gateway. Every request carries X-Tenant-Id — the hard
-// isolation key. The browser NEVER speaks MCP; this is the only backend it knows.
+// Thin REST client over the rest-gateway. The browser NEVER speaks MCP; this is the only
+// backend it knows. Two auth modes, resolved at the gateway's single front door:
+//   - Prod:  VITE_API_KEY set -> `Authorization: Bearer <key>`; the gateway derives the
+//            tenant from the key (the authoritative isolation source).
+//   - Dev:   no key -> the X-Tenant-Id header carries the tenant (local-dev fallback).
 
 function headers(): HeadersInit {
-  return {
-    "Content-Type": "application/json",
-    "X-Tenant-Id": TENANT_ID,
-  };
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  if (API_KEY) {
+    h.Authorization = `Bearer ${API_KEY}`;
+  } else {
+    h["X-Tenant-Id"] = TENANT_ID;
+  }
+  return h;
 }
 
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {

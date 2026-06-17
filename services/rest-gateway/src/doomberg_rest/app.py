@@ -21,18 +21,27 @@ is required and threaded into every store call as the first arg. No unscoped rea
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from doomberg_control import actions
 from doomberg_control.actions import ActionError
 from doomberg_control.deps import Ctx
 from doomberg_core import Core
-from doomberg_platform import BookStore, RunStore, StrategyStore, TraceStore, open_db
+from doomberg_platform import (
+    AuthStore,
+    BookStore,
+    RunStore,
+    StrategyStore,
+    TraceStore,
+    open_db,
+)
 
 from .readmodel import shape_run, shape_run_row
 from .sse import event_stream, parse_last_event_id
@@ -52,6 +61,7 @@ class Stores:
         self.strategies = StrategyStore(db)
         self.trace = TraceStore(db)
         self.books = BookStore(db)
+        self.auth = AuthStore(db)
         self.core = Core()
 
 
@@ -65,14 +75,45 @@ class CreateRunBody(BaseModel):
     range: str = "1y"
 
 
+def _bearer_key(authorization: str | None) -> str | None:
+    """Extract the ``dmbg_...`` token from an ``Authorization: Bearer <key>`` header."""
+    if not authorization:
+        return None
+    parts = authorization.split(None, 1)
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return parts[1].strip() or None
+    return None
+
+
+def _verify_bearer(request: Request, authorization: str | None) -> dict[str, Any] | None:
+    """Verify a bearer key against the app's AuthStore. 401 on a bad/revoked key.
+
+    Returns the resolved principal, or ``None`` if no bearer key was presented (dev path).
+    """
+    key = _bearer_key(authorization)
+    if key is None:
+        return None
+    principal = request.app.state.stores.auth.verify(key)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="invalid or revoked API key")
+    return principal
+
+
 def require_tenant(
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
     tenant_id: str | None = Query(default=None),
 ) -> str:
-    """Tenant from the ``X-Tenant-Id`` header, or the ``?tenant_id=`` query (EventSource).
+    """Tenant from a bearer key (prod) or the ``X-Tenant-Id`` header / ``?tenant_id=`` query.
 
-    No tenant => 400. We never fall back to an unscoped query (the hard isolation rule).
+    A bearer key's tenant takes precedence and is authoritative. Otherwise the dev path uses
+    the header or the EventSource query param. No tenant => 400. We never fall back to an
+    unscoped query (the hard isolation rule).
     """
+    principal = _verify_bearer(request, authorization)
+    if principal is not None:
+        return principal["tenant_id"]
     resolved = x_tenant_id or tenant_id
     if not resolved:
         raise HTTPException(status_code=400, detail="X-Tenant-Id header (or ?tenant_id=) is required")
@@ -80,13 +121,33 @@ def require_tenant(
 
 
 def _ctx(
-    tenant_id: str = Depends(require_tenant),
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    tenant_id: str | None = Query(default=None),
     x_actor_kind: str | None = Header(default=None, alias="X-Actor-Kind"),
     x_actor_id: str | None = Header(default=None, alias="X-Actor-Id"),
 ) -> Ctx:
-    """The UI acts on behalf of a human, so the actor defaults to ``user`` (may promote)."""
+    """Resolve the write-action context.
+
+    - **Bearer key (a BYO agent):** an *agent* actor carrying exactly the key's scopes — it
+      may author/request but the human-actor rule still blocks self-promotion.
+    - **Dev / UI (no bearer key):** a *user* actor (the human at the keyboard) with the full
+      dev scope set, so the UI's buttons behave as before.
+    """
+    principal = _verify_bearer(request, authorization)
+    if principal is not None:
+        return Ctx(
+            tenant_id=principal["tenant_id"],
+            actor_kind=(x_actor_kind or "agent").strip().lower(),
+            actor_id=(x_actor_id or "").strip() or principal["key_id"],
+            scopes=frozenset(principal["scopes"]),
+        )
+    resolved = x_tenant_id or tenant_id
+    if not resolved:
+        raise HTTPException(status_code=400, detail="X-Tenant-Id header (or ?tenant_id=) is required")
     return Ctx(
-        tenant_id=tenant_id,
+        tenant_id=resolved,
         actor_kind=(x_actor_kind or "user").strip().lower(),
         actor_id=(x_actor_id or "ui").strip() or "ui",
     )
@@ -97,6 +158,22 @@ def _do(fn, *args) -> dict[str, Any]:
         return fn(*args)
     except ActionError as err:
         raise HTTPException(status_code=err.status, detail=err.detail) from err
+
+
+def _web_dist_dir() -> Path | None:
+    """Locate the built web app (``web/dist``), or ``None`` if it has not been built.
+
+    Override with ``DOOMBERG_WEB_DIST`` (an absolute path) in prod images; otherwise we fall
+    back to the repo-relative ``web/dist``. Returning ``None`` keeps tests/dev (no build)
+    working — the static mount is simply skipped.
+    """
+    override = os.environ.get("DOOMBERG_WEB_DIST")
+    if override:
+        p = Path(override)
+        return p if p.is_dir() else None
+    # services/rest-gateway/src/doomberg_rest/app.py -> repo root is 4 parents up.
+    candidate = Path(__file__).resolve().parents[4] / "web" / "dist"
+    return candidate if candidate.is_dir() else None
 
 
 def create_app(db: Any | None = None) -> FastAPI:
@@ -234,6 +311,15 @@ def create_app(db: Any | None = None) -> FastAPI:
                 "X-Accel-Buffering": "no",
             },
         )
+
+    # ---- serve the built web UI from the SAME backend (one LB for UI + API) -------------
+    # Mounted LAST, so the explicit ``/api/*`` + ``/healthz`` routes above always win; the
+    # SPA mount only catches everything else. ``html=True`` serves index.html for unknown
+    # client-side routes. Skipped entirely when there is no build (tests / dev), so the
+    # gateway still starts without a compiled UI.
+    dist = _web_dist_dir()
+    if dist is not None:
+        app.mount("/", StaticFiles(directory=str(dist), html=True), name="web")
 
     return app
 

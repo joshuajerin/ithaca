@@ -89,6 +89,28 @@ CREATE TABLE IF NOT EXISTS books (
     updated_at TEXT NOT NULL,
     PRIMARY KEY (tenant_id, run_id)
 );
+
+-- The front-door account model: a tenant owns API keys. Only the salted sha256 of the
+-- secret is ever stored; the plaintext key (dmbg_<env>_<keyid>_<secret>) is shown ONCE at
+-- mint time and is unrecoverable thereafter. Revocation is a soft flag (audit-preserving).
+CREATE TABLE IF NOT EXISTS tenants (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+    key_id      TEXT PRIMARY KEY,
+    tenant_id   TEXT NOT NULL,
+    secret_hash TEXT NOT NULL,
+    salt        TEXT NOT NULL,
+    scopes      TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    revoked     INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_tenant
+    ON api_keys (tenant_id);
 """
 
 

@@ -15,11 +15,16 @@
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
 
-  common_tags = [
+  # User-defined resource tags require the DO API `tag:create` scope. This deploy's
+  # token does not carry that scope, so we apply NO custom tags (set
+  # apply_resource_tags=true with a tag-capable token to restore them). DOKS still
+  # auto-applies the `k8s:<cluster-id>` tag to every worker droplet, which the LB
+  # targets (see loadbalancer.tf) — so dropping custom tags costs nothing here.
+  common_tags = var.apply_resource_tags ? [
     "doomberg",
     var.environment,
     "managed-by:terraform",
-  ]
+  ] : []
 }
 
 # ---------------------------------------------------------------------------
@@ -117,9 +122,11 @@ resource "digitalocean_kubernetes_node_pool" "paper" {
     workload = "paper"
   }
 
-  # The always-on pool carries the gateway tag so the public LB targets these
-  # droplets by tag (see loadbalancer.tf), independent of ephemeral node ids.
-  tags = concat(local.common_tags, [local.gateway_pool_tag])
+  # The always-on pool would carry the gateway tag so the public LB targets these
+  # droplets by tag — but user tags need the `tag:create` scope this token lacks.
+  # When apply_resource_tags=false the LB instead targets the DOKS-auto-applied
+  # `k8s:<cluster-id>` tag (see loadbalancer.tf), which DO maintains for free.
+  tags = var.apply_resource_tags ? concat(local.common_tags, [local.gateway_pool_tag]) : []
 }
 
 # ---------------------------------------------------------------------------
@@ -134,6 +141,11 @@ resource "digitalocean_kubernetes_node_pool" "paper" {
 # Restore-from-backup is operator-driven via `backup_restore` (see RUNBOOK.md).
 # ---------------------------------------------------------------------------
 resource "digitalocean_database_cluster" "postgres" {
+  # Gated: default OFF. The prod Managed Postgres already exists (seeded with the
+  # archive). Never create a duplicate. The workload reads the existing DB via the
+  # DOOMBERG_PROD_URL secret. Set manage_postgres=true only for a fresh cluster.
+  count = var.manage_postgres ? 1 : 0
+
   name       = "${local.name_prefix}-pg"
   engine     = "pg"
   version    = var.postgres_version
@@ -166,20 +178,25 @@ resource "digitalocean_database_cluster" "postgres" {
 
 # Application database (distinct from the engine `defaultdb`).
 resource "digitalocean_database_db" "app" {
-  cluster_id = digitalocean_database_cluster.postgres.id
+  count      = var.manage_postgres ? 1 : 0
+  cluster_id = digitalocean_database_cluster.postgres[0].id
   name       = var.postgres_app_db_name
 }
 
 # Non-owner application role. RLS + FORCE ROW LEVEL SECURITY are applied to this
 # role in the schema migration (out of band); the role itself is provisioned here.
 resource "digitalocean_database_user" "app" {
-  cluster_id = digitalocean_database_cluster.postgres.id
+  count      = var.manage_postgres ? 1 : 0
+  cluster_id = digitalocean_database_cluster.postgres[0].id
   name       = var.postgres_app_user
 }
 
 # Lock the DB firewall to the cluster only. No public ingress to Postgres.
+# Only managed when Terraform owns the cluster; for the pre-existing prod DB the
+# cluster is added as a trusted source out of band (doctl databases firewalls).
 resource "digitalocean_database_firewall" "postgres" {
-  cluster_id = digitalocean_database_cluster.postgres.id
+  count      = var.manage_postgres ? 1 : 0
+  cluster_id = digitalocean_database_cluster.postgres[0].id
 
   rule {
     type  = "k8s"
@@ -196,6 +213,7 @@ resource "random_id" "bucket_suffix" {
 }
 
 resource "digitalocean_spaces_bucket" "artifacts" {
+  count  = var.manage_spaces ? 1 : 0
   name   = "${var.spaces_bucket_name}-${var.environment}-${random_id.bucket_suffix.hex}"
   region = var.region
   acl    = "private"

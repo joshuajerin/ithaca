@@ -18,9 +18,10 @@ Endpoints (all require ``X-Tenant-Id`` → :class:`Ctx`):
 """
 from __future__ import annotations
 
+import os
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from . import actions
@@ -41,6 +42,28 @@ class CreateRunBody(BaseModel):
     strategy_id: str
     kind: Literal["backtest", "paper"]
     range: str = Field(default="1y")
+
+
+class CreateTenantBody(BaseModel):
+    name: str
+
+
+class MintKeyBody(BaseModel):
+    scopes: list[str]
+
+
+def _require_admin(x_admin_token: str | None) -> None:
+    """Gate the operator-only admin endpoints behind ``DOOMBERG_ADMIN_TOKEN``.
+
+    If the env var is unset the endpoints are INERT: any call returns 404, so they do not
+    exist for tests / dev and cannot be reached without an operator deliberately enabling
+    them. If set, the request must present the matching ``X-Admin-Token``.
+    """
+    expected = os.environ.get("DOOMBERG_ADMIN_TOKEN")
+    if not expected:
+        raise HTTPException(status_code=404, detail="not found")
+    if not x_admin_token or x_admin_token != expected:
+        raise HTTPException(status_code=401, detail="admin token required")
 
 
 def _raise(err: ActionError) -> None:
@@ -140,6 +163,36 @@ def create_app() -> FastAPI:
         if run is None:
             raise HTTPException(status_code=404, detail="run not found")
         return run
+
+    # ---- admin (operator-only; inert unless DOOMBERG_ADMIN_TOKEN is set) ----------------
+    @app.post("/admin/tenants", status_code=201)
+    def create_tenant(
+        body: CreateTenantBody,
+        platform: Platform = Depends(get_platform),
+        x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+    ) -> dict[str, Any]:
+        _require_admin(x_admin_token)
+        try:
+            tenant_id = platform.auth.create_tenant(body.name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"tenant_id": tenant_id, "name": body.name}
+
+    @app.post("/admin/tenants/{tenant_id}/keys", status_code=201)
+    def mint_key(
+        tenant_id: str,
+        body: MintKeyBody,
+        platform: Platform = Depends(get_platform),
+        x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+    ) -> dict[str, Any]:
+        _require_admin(x_admin_token)
+        try:
+            plaintext, key_id = platform.auth.mint_key(tenant_id, body.scopes)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # The plaintext is returned exactly ONCE — it is unrecoverable thereafter.
+        return {"key_id": key_id, "api_key": plaintext, "scopes": body.scopes,
+                "tenant_id": tenant_id}
 
     return app
 
