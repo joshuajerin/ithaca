@@ -1,9 +1,10 @@
 # NodePort Service for the always-on app pod. The Terraform Load Balancer
 # (loadbalancer.tf) forwards:
 #   LB :80   → NodePort 30080 → rest-gateway :8000   (healthcheck /healthz on 30080)
-#   LB :8080 → NodePort 30808 → control-plane :8001
-# The LB targets every cluster node via the k8s:<cluster-id> tag; kube-proxy
-# routes the NodePort to the single app pod on the paper pool.
+#   LB :8080 → NodePort 30808 → mcp-gateway  :8080   (hosted MCP for remote agents)
+# The control-plane (:8001) is intentionally NOT exposed publicly — the rest-gateway
+# invokes its money-path actions in-process, and admin (key minting) is done via
+# kubectl exec/port-forward. The LB targets every node via the k8s:<cluster-id> tag.
 apiVersion: v1
 kind: Service
 metadata:
@@ -21,8 +22,8 @@ spec:
       targetPort: 8000
       nodePort: 30080
       protocol: TCP
-    - name: control
-      port: 8001
-      targetPort: 8001
+    - name: mcp
+      port: 8080
+      targetPort: 8080
       nodePort: 30808
       protocol: TCP

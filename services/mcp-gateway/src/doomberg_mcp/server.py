@@ -152,12 +152,16 @@ def _build_archive():
     import os
 
     url = os.environ.get("DOOMBERG_ARCHIVE_URL") or os.environ.get("DOOMBERG_DB")
+    if not url:
+        return None
     try:
-        from doomberg_archive import ArchiveGateway as _Gateway  # type: ignore
+        # PgArchiveGateway is the CONCRETE psycopg gateway; ArchiveGateway is just the
+        # Protocol (not constructible). Construct the concrete one against the archive DSN.
+        from doomberg_archive import PgArchiveGateway as _Gateway  # type: ignore
     except Exception:
         return None
     try:
-        return _Gateway(url) if url else _Gateway()
+        return _Gateway(url)
     except Exception:
         return None
 
