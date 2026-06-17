@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 
-from doomberg_core import Core
+from doomberg_core import SKILLS, Core, SkillSet
 
 from .trace import InMemoryTrace, PlatformTraceSink, Tracer
 
@@ -21,13 +21,19 @@ _DEFAULT_TENANT = "00000000-0000-0000-0000-000000000000"
 
 def _provenance_summary(envelope: dict) -> dict:
     prov = envelope.get("provenance") or {}
-    return {
+    summary = {
         "source": prov.get("source"),
         "freshness": prov.get("freshness"),
         "pit": prov.get("pit"),
         "coverage": prov.get("coverage"),
         "partial": envelope.get("partial"),
     }
+    # Skill envelopes carry warning codes (e.g. ARCHIVE_UNAVAILABLE / PARTIAL_COVERAGE) but no
+    # coverage block; surface the codes so the timeline can show "what came back".
+    warnings = envelope.get("warnings") or []
+    if warnings:
+        summary["warnings"] = [w.get("code") for w in warnings if isinstance(w, dict)]
+    return summary
 
 
 class Toolset:
@@ -40,10 +46,13 @@ class Toolset:
     run_id. Without ``runs`` (unit tests), behavior is unchanged — an ephemeral per-call run.
     """
 
-    def __init__(self, core: Core | None = None, sink=None, runs=None):
+    def __init__(self, core: Core | None = None, sink=None, runs=None, archive=None):
         self.core = core or Core()
         self.sink = sink or InMemoryTrace()
         self.runs = runs  # optional RunStore-like; enables persistent research sessions
+        # The archive-backed Skill catalog. ``archive`` is duck-typed to ArchiveGateway; None is
+        # fine (skills then return an ARCHIVE_UNAVAILABLE warning instead of crashing).
+        self.skills = SkillSet(archive)
         self._proc_session = uuid.uuid4().hex  # groups a stdio process's calls when ctx has none
         self._sessions: dict[tuple[str, str], str] = {}  # (tenant, session) -> research run_id
 
@@ -112,6 +121,42 @@ class Toolset:
         tr.event("strategy_proposed", {"strategy_id": strategy_id, "name": validated.get("name")})
         return {"strategy_id": strategy_id, "status": "draft", "spec": validated}
 
+    def call_skill(self, tool: str, params: dict, _ctx: dict | None = None) -> dict:
+        """Run an archive-backed Skill catalog tool, traced exactly like market_get_ohlcv.
+
+        ``tool`` is the canonical SKILLS name (e.g. ``market.news``). Declarative args only — the
+        skill never executes agent code. tool_call / tool_result events are emitted on the same
+        gap-free, research-session-aware tracer the existing tools use.
+        """
+        method = SKILLS.get(tool)
+        if method is None:
+            raise ValueError(f"unknown skill: {tool!r} (have {sorted(SKILLS)})")
+        tr = self._tracer(_ctx)
+        span = tr.tool_call(tool, params)
+        out = getattr(self.skills, method)(params)
+        tr.tool_result(tool, span, _provenance_summary(out))
+        return out
+
+
+def _build_archive():
+    """Lazily build the real archive gateway from ``DOOMBERG_ARCHIVE_URL``.
+
+    Stream 1's ``doomberg_archive`` package may not be synced yet, so this is best-effort: if the
+    package is importable it constructs the gateway, otherwise it returns None and the archive-backed
+    skills degrade to a clear ARCHIVE_UNAVAILABLE warning. Never raises at import time.
+    """
+    import os
+
+    url = os.environ.get("DOOMBERG_ARCHIVE_URL") or os.environ.get("DOOMBERG_DB")
+    try:
+        from doomberg_archive import ArchiveGateway as _Gateway  # type: ignore
+    except Exception:
+        return None
+    try:
+        return _Gateway(url) if url else _Gateway()
+    except Exception:
+        return None
+
 
 def _platform_backed_toolset() -> Toolset:
     """A Toolset whose trace persists to the shared platform store (``DOOMBERG_DB``).
@@ -124,7 +169,12 @@ def _platform_backed_toolset() -> Toolset:
     from doomberg_platform import Platform
 
     platform = Platform(os.environ.get("DOOMBERG_DB", ":memory:"))
-    return Toolset(core=Core(), sink=PlatformTraceSink(platform.trace), runs=platform.runs)
+    return Toolset(
+        core=Core(),
+        sink=PlatformTraceSink(platform.trace),
+        runs=platform.runs,
+        archive=_build_archive(),
+    )
 
 
 def create_server(toolset: Toolset | None = None):
@@ -145,6 +195,87 @@ def create_server(toolset: Toolset | None = None):
     @mcp.tool(description="Validate and register a StrategySpec as a draft (no deploy, no money).")
     def propose_strategy(spec: dict) -> dict:
         return ts.propose_strategy(spec)
+
+    # ---- archive-backed Skill catalog (declarative args only, traced like market.get_ohlcv) ----
+    @mcp.tool(name="market_news",
+              description="Recent news headlines for a ticker or sector, from the v1 archive.")
+    def market_news(ticker: str | None = None, sector: str | None = None, limit: int = 50) -> dict:
+        return ts.call_skill("market.news", {"ticker": ticker, "sector": sector, "limit": limit})
+
+    @mcp.tool(name="market_screener",
+              description="Ranked equity screen over the tracked universe (fundamentals + 1Y return).")
+    def market_screener(sector: str | None = None, limit: int = 100) -> dict:
+        return ts.call_skill("market.screener", {"sector": sector, "limit": limit})
+
+    @mcp.tool(name="market_movers",
+              description="Heatmap-style market movers with 1D moves and trailing returns.")
+    def market_movers(sector: str | None = None, limit: int = 100) -> dict:
+        return ts.call_skill("market.movers", {"sector": sector, "limit": limit})
+
+    @mcp.tool(name="fundamentals_get",
+              description="Single-name fundamentals metric cards from the archive.")
+    def fundamentals_get(symbol: str) -> dict:
+        return ts.call_skill("fundamentals.get", {"symbol": symbol})
+
+    @mcp.tool(name="fundamentals_compare",
+              description="Peer comparison table across two or more symbols.")
+    def fundamentals_compare(symbols: list[str]) -> dict:
+        return ts.call_skill("fundamentals.compare", {"symbols": symbols})
+
+    @mcp.tool(name="fundamentals_pit",
+              description="Point-in-time fundamentals: the latest report known on/before as_of (pit=true).")
+    def fundamentals_pit(symbol: str, as_of: str | None = None) -> dict:
+        return ts.call_skill("fundamentals.pit", {"symbol": symbol, "as_of": as_of})
+
+    @mcp.tool(name="analyst_ratings",
+              description="Wall Street consensus, price-target band and recent changes for a ticker.")
+    def analyst_ratings(symbol: str) -> dict:
+        return ts.call_skill("analyst.ratings", {"symbol": symbol})
+
+    @mcp.tool(name="congress_trades",
+              description="STOCK Act congressional trading disclosures, with notable highlights.")
+    def congress_trades(ticker: str | None = None, member: str | None = None, limit: int = 60) -> dict:
+        return ts.call_skill("congress.trades", {"ticker": ticker, "member": member, "limit": limit})
+
+    @mcp.tool(name="insider_activity",
+              description="SEC Form 4/5 insider transactions for one ticker with a net buy/sell summary.")
+    def insider_activity(symbol: str, limit: int = 100) -> dict:
+        return ts.call_skill("insider.activity", {"symbol": symbol, "limit": limit})
+
+    @mcp.tool(name="institutional_holdings",
+              description="Top 13F institutional holders of one ticker with QoQ change.")
+    def institutional_holdings(symbol: str) -> dict:
+        return ts.call_skill("institutional.holdings", {"symbol": symbol})
+
+    @mcp.tool(name="institutional_flows",
+              description="QoQ institutional fund flows (biggest buyers/sellers) in one ticker.")
+    def institutional_flows(symbol: str) -> dict:
+        return ts.call_skill("institutional.flows", {"symbol": symbol})
+
+    @mcp.tool(name="etf_holdings",
+              description="Ranked constituents of an ETF with top-N concentration.")
+    def etf_holdings(etf: str) -> dict:
+        return ts.call_skill("etf.holdings", {"etf": etf})
+
+    @mcp.tool(name="etf_exposure",
+              description="Reverse lookup: which ETFs hold a given stock, and at what weight.")
+    def etf_exposure(symbol: str) -> dict:
+        return ts.call_skill("etf.exposure", {"symbol": symbol})
+
+    @mcp.tool(name="sentiment_get",
+              description="Persisted sentiment snapshot for a symbol, sector or topic.")
+    def sentiment_get(scope: str, scope_type: str | None = None) -> dict:
+        return ts.call_skill("sentiment.get", {"scope": scope, "scope_type": scope_type})
+
+    @mcp.tool(name="macro_dashboard",
+              description="Macro tiles grouped by asset class with a rule-based regime read.")
+    def macro_dashboard() -> dict:
+        return ts.call_skill("macro.dashboard", {})
+
+    @mcp.tool(name="universe_list",
+              description="Investable-universe overview: symbols, sectors and coverage.")
+    def universe_list(sector: str | None = None, limit: int = 150) -> dict:
+        return ts.call_skill("universe.list", {"sector": sector, "limit": limit})
 
     return mcp, ts
 

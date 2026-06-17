@@ -1,0 +1,58 @@
+# Keep the build context (and image) lean. The Dockerfile only needs the Python
+# workspace + scripts; everything below is irrelevant or large.
+
+# Large local data dumps — the v1 archive export (~92 MB) is loaded into Postgres
+# by the archive-load Job from Spaces, NOT baked into the image.
+data/
+
+# Python
+**/__pycache__/
+**/*.pyc
+.venv/
+**/.venv/
+.pytest_cache/
+**/.pytest_cache/
+.ruff_cache/
+**/.ruff_cache/
+**/*.egg-info/
+dist/
+build/
+
+# Node / web / marketing site — not part of the service image.
+node_modules/
+**/node_modules/
+web/
+site/
+packages/contracts/ts/
+**/.vite/
+coverage/
+pnpm-lock.yaml
+pnpm-workspace.yaml
+package.json
+
+# Local SQLite system-of-record + WAL (dev only).
+*.db
+*.db-shm
+*.db-wal
+
+# Infra / deploy / CI / docs / VCS — not needed at run time.
+infra/
+.github/
+docs/
+history/
+.git/
+.gitignore
+.mcp.json
+
+# Env / secrets — never copy into an image.
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+.gstack/
+.claude/

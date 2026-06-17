@@ -38,10 +38,10 @@ resource "kubernetes_job" "backtest_template" {
 
   spec {
     # AGGREGATE wall-clock deadline for the whole Job. SIGKILL on breach.
-    active_deadline_seconds = var.backtest_active_deadline_seconds
-    backoff_limit           = 0 # restartPolicy Never + no retries (idempotent on (run_id, seq) is the control plane's job)
-    completions             = 1
-    parallelism             = 1
+    active_deadline_seconds    = var.backtest_active_deadline_seconds
+    backoff_limit              = 0 # restartPolicy Never + no retries (idempotent on (run_id, seq) is the control plane's job)
+    completions                = 1
+    parallelism                = 1
     ttl_seconds_after_finished = 3600
 
     template {
@@ -139,8 +139,8 @@ resource "kubernetes_cron_job_v1" "paper_tick" {
       }
 
       spec {
-        active_deadline_seconds = var.paper_tick_active_deadline_seconds
-        backoff_limit           = 0
+        active_deadline_seconds    = var.paper_tick_active_deadline_seconds
+        backoff_limit              = 0
         ttl_seconds_after_finished = 600
 
         template {
@@ -205,4 +205,103 @@ resource "kubernetes_cron_job_v1" "paper_tick" {
       }
     }
   }
+}
+
+# ---------------------------------------------------------------------------
+# archive-load Job — ONE-SHOT loader that seeds the read-only `archive.*` schema
+# on first deploy (DATA-LAYER-INTERFACES.md). Runs Stream 1's loader image with
+# `python scripts/import_v1_archive.py` against the Managed Postgres. Gated by
+# `enable_archive_load_job` (set false once the archive is loaded). The raw YAML
+# equivalent lives in ./manifests/archive-load-job.yaml.
+#
+# Unlike the worker pods this is NOT a deny-all egress pod: it needs DB + Spaces
+# reachability, so it has no doomberg/component=worker label and lands in the
+# gateway namespace on the always-on pool.
+# ---------------------------------------------------------------------------
+resource "kubernetes_job" "archive_load" {
+  count = var.enable_archive_load_job ? 1 : 0
+
+  metadata {
+    name      = "archive-load"
+    namespace = kubernetes_namespace.gateway.metadata[0].name
+    labels = {
+      "doomberg/component" = "archive-loader"
+      "doomberg/kind"      = "archive-load"
+    }
+  }
+
+  spec {
+    active_deadline_seconds    = var.archive_loader_active_deadline_seconds
+    backoff_limit              = 0
+    completions                = 1
+    parallelism                = 1
+    ttl_seconds_after_finished = 86400
+
+    template {
+      metadata {
+        labels = {
+          "doomberg/component" = "archive-loader"
+          "doomberg/kind"      = "archive-load"
+        }
+      }
+
+      spec {
+        restart_policy = "Never"
+
+        node_selector = {
+          workload = "paper"
+        }
+
+        toleration {
+          key      = "workload"
+          operator = "Equal"
+          value    = "paper"
+          effect   = "NoSchedule"
+        }
+
+        automount_service_account_token = false
+
+        container {
+          name              = "archive-load"
+          image             = var.archive_loader_image
+          image_pull_policy = "IfNotPresent"
+          command           = ["python", "scripts/import_v1_archive.py"]
+
+          # Managed-Postgres app DSN from the operator-created Secret.
+          env {
+            name = "DOOMBERG_ARCHIVE_URL"
+            value_from {
+              secret_key_ref {
+                name = "doomberg-db"
+                key  = "archive_url"
+              }
+            }
+          }
+
+          resources {
+            requests = {
+              cpu    = "1"
+              memory = "1Gi"
+            }
+            limits = {
+              cpu    = "2"
+              memory = "4Gi"
+            }
+          }
+
+          security_context {
+            run_as_non_root            = true
+            read_only_root_filesystem  = true
+            allow_privilege_escalation = false
+
+            capabilities {
+              drop = ["ALL"]
+            }
+          }
+        }
+      }
+    }
+  }
+
+  wait_for_completion = false
 }

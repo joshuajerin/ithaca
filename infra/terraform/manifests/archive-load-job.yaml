@@ -1,0 +1,84 @@
+# archive-load Job — ONE-SHOT loader that seeds the read-only `archive.*` schema
+# on first deploy (DATA-LAYER-INTERFACES.md). Runs Stream 1's loader
+# (`python scripts/import_v1_archive.py`), which creates `archive.*` from
+# services/data-archive/.../schema.sql and bulk-loads the ~240k v1 records.
+#
+# Stream 1 OWNS the loader script + its source/format. This manifest only
+# references the image + command and wires the two inputs the loader needs:
+#   - DOOMBERG_ARCHIVE_URL  : the Managed-Postgres app DSN (from a Secret)
+#   - DOOMBERG_ARCHIVE_SRC  : where the loader reads v1_archive.json (~92 MB)
+#                             — an operator uploads it to Spaces once (see RUNBOOK)
+#
+# Placeholders ${...} are substituted at apply time (or rendered by Terraform's
+# kubernetes_job shape in jobs.tf). One run, restartPolicy: Never, idempotent on
+# re-run (the loader is expected to TRUNCATE+reload or CREATE IF NOT EXISTS).
+#
+# Invariants:
+#   - restartPolicy: Never, backoffLimit: 0   (a half-load is re-run, not retried)
+#   - runs on the always-on (paper/gateway) pool — it needs DB + Spaces egress,
+#     so it is NOT a deny-all worker pod (no doomberg/component=worker label).
+#   - activeDeadlineSeconds bounds the bulk load.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: archive-load
+  namespace: doomberg-gateway
+  labels:
+    doomberg/component: archive-loader
+    doomberg/kind: archive-load
+spec:
+  activeDeadlineSeconds: ${ARCHIVE_LOADER_ACTIVE_DEADLINE_SECONDS}
+  backoffLimit: 0
+  completions: 1
+  parallelism: 1
+  ttlSecondsAfterFinished: 86400 # keep logs for a day after a load
+  template:
+    metadata:
+      labels:
+        doomberg/component: archive-loader
+        doomberg/kind: archive-load
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      # Land on the always-on pool (DB + Spaces reachable); not a worker pod.
+      nodeSelector:
+        workload: paper
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: paper
+          effect: NoSchedule
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: archive-load
+          image: ${ARCHIVE_LOADER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          command: ["python", "scripts/import_v1_archive.py"]
+          env:
+            # The Managed-Postgres app DSN, from the Secret the operator creates
+            # out of the Terraform `postgres_app_uri` output (see RUNBOOK).
+            - name: DOOMBERG_ARCHIVE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: doomberg-db
+                  key: archive_url
+            # Where the loader reads the ~92 MB v1_archive.json export. Operator
+            # uploads it to the Spaces artifacts bucket once before first deploy.
+            - name: DOOMBERG_ARCHIVE_SRC
+              value: "${ARCHIVE_SRC}"
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi # the bulk JSON parse + COPY is memory-hungry
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]

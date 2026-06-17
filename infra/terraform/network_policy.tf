@@ -14,7 +14,7 @@ resource "kubernetes_namespace" "workers" {
     name = var.worker_namespace
 
     labels = {
-      "doomberg/role"      = "workers"
+      "doomberg/role"                      = "workers"
       "pod-security.kubernetes.io/enforce" = "restricted"
     }
   }

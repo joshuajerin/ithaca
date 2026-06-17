@@ -4,6 +4,7 @@
 members = [
     "packages/contracts/py",
     "doomberg-core",
+    "services/data-archive",
     "services/platform",
     "services/mcp-gateway",
     "services/control-plane",

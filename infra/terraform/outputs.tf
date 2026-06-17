@@ -65,3 +65,51 @@ output "worker_namespace" {
   description = "Namespace the worker pods run in (NetworkPolicy-scoped)."
   value       = kubernetes_namespace.workers.metadata[0].name
 }
+
+# ---------------------------------------------------------------------------
+# Container Registry — the image build_and_push.sh tags + pushes to.
+# ---------------------------------------------------------------------------
+output "registry_name" {
+  description = "DigitalOcean Container Registry name."
+  value       = digitalocean_container_registry.doomberg.name
+}
+
+output "registry_endpoint" {
+  description = "DOCR endpoint (registry host) — prefix for image refs, e.g. <endpoint>/doomberg:<tag>."
+  value       = digitalocean_container_registry.doomberg.endpoint
+}
+
+output "registry_server_url" {
+  description = "DOCR server URL (for `docker login` / `doctl registry login`)."
+  value       = digitalocean_container_registry.doomberg.server_url
+}
+
+# ---------------------------------------------------------------------------
+# Load Balancer — public ingress to the always-on gateways.
+# ---------------------------------------------------------------------------
+output "load_balancer_ip" {
+  description = "Public IPv4 of the gateways Load Balancer (point DNS here)."
+  value       = digitalocean_loadbalancer.gateways.ip
+}
+
+output "load_balancer_id" {
+  description = "Load Balancer id."
+  value       = digitalocean_loadbalancer.gateways.id
+}
+
+# ---------------------------------------------------------------------------
+# Archive DSN — same Managed-Postgres app DSN, surfaced under the env var name
+# the loader + ArchiveGateway read (DOOMBERG_ARCHIVE_URL). Sensitive.
+# ---------------------------------------------------------------------------
+output "archive_url" {
+  description = "Archive Postgres DSN for DOOMBERG_ARCHIVE_URL (same private app DSN). Sensitive."
+  value = format(
+    "postgresql://%s:%s@%s:%d/%s?sslmode=require",
+    digitalocean_database_user.app.name,
+    digitalocean_database_user.app.password,
+    digitalocean_database_cluster.postgres.private_host,
+    digitalocean_database_cluster.postgres.port,
+    digitalocean_database_db.app.name,
+  )
+  sensitive = true
+}

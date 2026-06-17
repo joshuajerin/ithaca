@@ -10,18 +10,32 @@ region       = "nyc3"
 
 kubernetes_version = "1.31"
 
-# Backtest pool: scale-to-zero (min 0) is the cost-control story.
-backtest_node_size = "c-4"
-backtest_node_min  = 0
-backtest_node_max  = 5
+# RELIABILITY-FIRST, HA, CPU-only. Budget is generous; optimize for uptime.
 
-# Paper pool: small, stable, NOT scale-to-zero (scheduler must persist).
-paper_node_size  = "s-2vcpu-4gb"
+# Backtest pool: WARM floor (min 1, no cold start) bursting to max under load.
+# MUST be a CPU slug — GPU slugs (gpu-*/p-*) fail the plan (CPU-ONLY GUARDRAIL).
+backtest_node_size = "c-4"
+backtest_node_min  = 1
+backtest_node_max  = 8
+
+# Always-on HA pool: gateways + scheduler. >=2 nodes (node-failover safe).
+paper_node_size  = "s-4vcpu-8gb"
 paper_node_count = 2
 
+# Managed Postgres HA: node_count 2 = primary + standby (automatic failover).
 postgres_version    = "16"
-postgres_size       = "db-s-1vcpu-2gb"
-postgres_node_count = 1
+postgres_size       = "db-s-2vcpu-4gb"
+postgres_node_count = 2
+
+# Container Registry (DOCR) — the single multi-service image.
+registry_name              = "doomberg"
+registry_subscription_tier = "professional"
+
+# Public HA Load Balancer -> always-on gateways.
+lb_size_unit = 2
+
+# One-shot archive loader (seeds archive.* on first deploy; set false after).
+enable_archive_load_job = true
 
 spaces_bucket_name = "doomberg-artifacts"
 

@@ -1,0 +1,75 @@
+name: deploy-checks
+
+# Gates for the deploy layer (Stream 2): the container image builds, and the
+# Terraform is fmt-clean + valid. No push, no apply, no cloud credentials —
+# these run on every PR to keep the deploy path from rotting.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image-build:
+    name: docker image • build (no push)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the multi-service image (CPU-only, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: doomberg:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke-test the service roles boot
+        run: |
+          set -euo pipefail
+          # imports resolve for every service in the single image
+          docker run --rm doomberg:ci shell -c \
+            'python -c "import doomberg_core, doomberg_platform, doomberg_runtime, doomberg_rest, doomberg_control, doomberg_mcp; print(\"imports OK\")"'
+          # the conductor role starts (prints its banner) then we stop it
+          cid="$(docker run -d -e DOOMBERG_DB=:memory: doomberg:ci conductor)"
+          sleep 5
+          docker logs "$cid" | grep -q "doomberg conductor up" && echo "conductor role OK"
+          docker rm -f "$cid"
+
+  terraform-check:
+    name: terraform • fmt + validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.6"
+      - name: terraform fmt -check (recursive)
+        run: terraform fmt -check -recursive
+      - name: terraform init (no backend, providers only)
+        run: terraform init -backend=false -input=false
+      - name: terraform validate
+        run: terraform validate -no-color
+      - name: CPU-ONLY GUARDRAIL • a GPU node slug must FAIL the plan
+        # The variable validation rejects gpu-* before any API call, so this
+        # proves the guardrail without a DO token. We assert the plan errors AND
+        # that the error names the guardrail.
+        run: |
+          set -euo pipefail
+          if out="$(terraform plan -input=false -var='backtest_node_size=gpu-h100x1-80gb' 2>&1)"; then
+            echo "FAIL: plan accepted a GPU node slug"; echo "$out"; exit 1
+          fi
+          echo "$out" | grep -qi "CPU-ONLY GUARDRAIL" \
+            && echo "PASS: GPU node slug rejected by the CPU-ONLY GUARDRAIL"
