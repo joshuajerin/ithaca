@@ -75,6 +75,21 @@ spec:
                   key: archive_url
             - name: DOOMBERG_REST_PORT
               value: "8000"
+            - name: DOOMBERG_SESSION_SECRET
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: session_secret, optional: true }
+            - name: GOOGLE_CLIENT_ID
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: google_client_id, optional: true }
+            - name: GOOGLE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: google_client_secret, optional: true }
+            - name: GITHUB_CLIENT_ID
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: github_client_id, optional: true }
+            - name: GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: github_client_secret, optional: true }
           readinessProbe:
             httpGet:
               path: /healthz

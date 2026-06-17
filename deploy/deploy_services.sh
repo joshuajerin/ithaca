@@ -41,11 +41,16 @@ kubectl apply -f infra/k8s/pvc.yaml
 # (the app uses the SQLite path), archive_url is what the ArchiveGateway reads.
 TENANT_API_KEY="${DOOMBERG_TENANT_API_KEY:-dmbg_prod_$(openssl rand -hex 16)}"
 
-echo "==> Secret doomberg-db (prod DSN + tenant key)"
+echo "==> Secret doomberg-db (prod DSN + tenant key + OAuth + session)"
 kubectl -n "${NS}" create secret generic doomberg-db \
   --from-literal=db_url="${DOOMBERG_PROD_URL}" \
   --from-literal=archive_url="${DOOMBERG_PROD_URL}" \
   --from-literal=tenant_api_key="${TENANT_API_KEY}" \
+  --from-literal=session_secret="${DOOMBERG_SESSION_SECRET:-}" \
+  --from-literal=google_client_id="${GOOGLE_CLIENT_ID:-}" \
+  --from-literal=google_client_secret="${GOOGLE_CLIENT_SECRET:-}" \
+  --from-literal=github_client_id="${GITHUB_CLIENT_ID:-}" \
+  --from-literal=github_client_secret="${GITHUB_CLIENT_SECRET:-}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 echo "==> applying manifests with image ${WORKER_IMAGE}"
