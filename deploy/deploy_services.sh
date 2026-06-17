@@ -33,6 +33,9 @@ NS="doomberg-gateway"
 echo "==> namespace ${NS}"
 kubectl apply -f infra/k8s/namespace.yaml
 
+echo "==> PersistentVolumeClaim doomberg-state (durable SQLite system-of-record)"
+kubectl apply -f infra/k8s/pvc.yaml
+
 # The platform system-of-record is SQLite (pod-local); the prod Postgres holds the
 # read-only archive.*. Both Secret keys carry the prod DSN: db_url is informational
 # (the app uses the SQLite path), archive_url is what the ArchiveGateway reads.

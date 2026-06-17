@@ -46,8 +46,12 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       volumes:
+        # Durable block storage for the SQLite system-of-record — survives pod
+        # restarts/reschedules (emptyDir would lose all runs/strategies/trace/books).
+        # Single-replica by design (SQLite single-writer); RWO is correct.
         - name: state
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: doomberg-state
         - name: tmp
           emptyDir: {}
       containers:

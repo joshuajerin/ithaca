@@ -3,7 +3,11 @@
 The agent can READ (market.get_ohlcv, backtest.run) and PROPOSE (propose_strategy) only —
 it can never promote or move money (that's a human action in the web UI). Every call wraps
 ``doomberg_core.Core`` (so the MCP path and the UI path share one core) and emits a trace
-event the observability UI replays. Run: ``python -m doomberg_mcp`` (stdio transport).
+event the observability UI replays.
+
+Run: ``python -m doomberg_mcp``. Transport is env-selected — ``DOOMBERG_MCP_TRANSPORT=stdio``
+(default; locally-trusted, no auth) or ``=http`` (hosted streamable-HTTP for REMOTE BYO
+agents, per-tenant bearer auth + scopes; see :mod:`doomberg_mcp.http`).
 """
 from __future__ import annotations
 
@@ -177,105 +181,150 @@ def _platform_backed_toolset() -> Toolset:
     )
 
 
-def create_server(toolset: Toolset | None = None):
-    """Build the FastMCP server. Imported lazily so the toolset is testable without the SDK."""
+def _transport_security():
+    """DNS-rebinding host policy for the hosted HTTP app.
+
+    The SDK defaults to protection ON with a localhost-only allowlist, which 421s every
+    request whose ``Host`` is the public hostname — i.e. anything behind a load balancer. In
+    the hosted topology the real network boundary is the auth middleware + the k8s
+    Service/NetworkPolicy the lead adds, and the Host arriving at the pod is the LB's choosing,
+    so we make the allowlist explicit:
+
+    * ``DOOMBERG_MCP_ALLOWED_HOSTS`` unset → protection OFF (trust the proxy + bearer auth).
+    * set (comma-separated, e.g. ``mcp.doomberg.ai,mcp.doomberg.ai:443``) → protection ON,
+      restricted to exactly those hosts (``host:*`` wildcard-port patterns supported by the SDK).
+    """
+    import os
+
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    raw = (os.environ.get("DOOMBERG_MCP_ALLOWED_HOSTS") or "").strip()
+    if not raw:
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    hosts = [h.strip() for h in raw.split(",") if h.strip()]
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True, allowed_hosts=hosts
+    )
+
+
+def create_server(toolset: Toolset | None = None, *, http: bool = False):
+    """Build the FastMCP server. Imported lazily so the toolset is testable without the SDK.
+
+    ``http=True`` (the hosted path) makes every tool wrapper resolve the per-request
+    authenticated principal and pass it into the Toolset as ``_ctx`` — so each remote call is
+    tenant-scoped and traced under the verified tenant. ``http=False`` (stdio / unit tests) is
+    the existing locally-trusted behavior: no ``_ctx`` is injected (an ephemeral/dev session).
+    """
     from mcp.server.fastmcp import FastMCP
 
     ts = toolset or _platform_backed_toolset()
-    mcp = FastMCP("doomberg")
+    mcp = FastMCP("doomberg", transport_security=_transport_security() if http else None)
+
+    def _ctx() -> dict | None:
+        """The per-request tenant ``_ctx`` in HTTP mode; None in stdio mode."""
+        if not http:
+            return None
+        from .http import current_principal
+
+        principal = current_principal()
+        return principal.ctx() if principal is not None else None
+
+    def call_skill(tool: str, params: dict) -> dict:
+        """Skill-catalog dispatch that injects the per-request tenant ``_ctx`` (HTTP mode)."""
+        return ts.call_skill(tool, params, _ctx=_ctx())
 
     @mcp.tool(description="Fetch OHLCV price history for one symbol, with a provenance envelope.")
     def market_get_ohlcv(symbol: str, range: str = "6mo", interval: str = "1d") -> dict:
-        return ts.market_get_ohlcv(symbol, range, interval)
+        return ts.market_get_ohlcv(symbol, range, interval, _ctx=_ctx())
 
     @mcp.tool(description="Run a price/technical backtest from a declarative StrategySpec.")
     def backtest_run(spec: dict, range: str = "1y") -> dict:
-        return ts.backtest_run(spec, range)
+        return ts.backtest_run(spec, range, _ctx=_ctx())
 
     @mcp.tool(description="Validate and register a StrategySpec as a draft (no deploy, no money).")
     def propose_strategy(spec: dict) -> dict:
-        return ts.propose_strategy(spec)
+        return ts.propose_strategy(spec, _ctx=_ctx())
 
     # ---- archive-backed Skill catalog (declarative args only, traced like market.get_ohlcv) ----
     @mcp.tool(name="market_news",
               description="Recent news headlines for a ticker or sector, from the v1 archive.")
     def market_news(ticker: str | None = None, sector: str | None = None, limit: int = 50) -> dict:
-        return ts.call_skill("market.news", {"ticker": ticker, "sector": sector, "limit": limit})
+        return call_skill("market.news", {"ticker": ticker, "sector": sector, "limit": limit})
 
     @mcp.tool(name="market_screener",
               description="Ranked equity screen over the tracked universe (fundamentals + 1Y return).")
     def market_screener(sector: str | None = None, limit: int = 100) -> dict:
-        return ts.call_skill("market.screener", {"sector": sector, "limit": limit})
+        return call_skill("market.screener", {"sector": sector, "limit": limit})
 
     @mcp.tool(name="market_movers",
               description="Heatmap-style market movers with 1D moves and trailing returns.")
     def market_movers(sector: str | None = None, limit: int = 100) -> dict:
-        return ts.call_skill("market.movers", {"sector": sector, "limit": limit})
+        return call_skill("market.movers", {"sector": sector, "limit": limit})
 
     @mcp.tool(name="fundamentals_get",
               description="Single-name fundamentals metric cards from the archive.")
     def fundamentals_get(symbol: str) -> dict:
-        return ts.call_skill("fundamentals.get", {"symbol": symbol})
+        return call_skill("fundamentals.get", {"symbol": symbol})
 
     @mcp.tool(name="fundamentals_compare",
               description="Peer comparison table across two or more symbols.")
     def fundamentals_compare(symbols: list[str]) -> dict:
-        return ts.call_skill("fundamentals.compare", {"symbols": symbols})
+        return call_skill("fundamentals.compare", {"symbols": symbols})
 
     @mcp.tool(name="fundamentals_pit",
               description="Point-in-time fundamentals: the latest report known on/before as_of (pit=true).")
     def fundamentals_pit(symbol: str, as_of: str | None = None) -> dict:
-        return ts.call_skill("fundamentals.pit", {"symbol": symbol, "as_of": as_of})
+        return call_skill("fundamentals.pit", {"symbol": symbol, "as_of": as_of})
 
     @mcp.tool(name="analyst_ratings",
               description="Wall Street consensus, price-target band and recent changes for a ticker.")
     def analyst_ratings(symbol: str) -> dict:
-        return ts.call_skill("analyst.ratings", {"symbol": symbol})
+        return call_skill("analyst.ratings", {"symbol": symbol})
 
     @mcp.tool(name="congress_trades",
               description="STOCK Act congressional trading disclosures, with notable highlights.")
     def congress_trades(ticker: str | None = None, member: str | None = None, limit: int = 60) -> dict:
-        return ts.call_skill("congress.trades", {"ticker": ticker, "member": member, "limit": limit})
+        return call_skill("congress.trades", {"ticker": ticker, "member": member, "limit": limit})
 
     @mcp.tool(name="insider_activity",
               description="SEC Form 4/5 insider transactions for one ticker with a net buy/sell summary.")
     def insider_activity(symbol: str, limit: int = 100) -> dict:
-        return ts.call_skill("insider.activity", {"symbol": symbol, "limit": limit})
+        return call_skill("insider.activity", {"symbol": symbol, "limit": limit})
 
     @mcp.tool(name="institutional_holdings",
               description="Top 13F institutional holders of one ticker with QoQ change.")
     def institutional_holdings(symbol: str) -> dict:
-        return ts.call_skill("institutional.holdings", {"symbol": symbol})
+        return call_skill("institutional.holdings", {"symbol": symbol})
 
     @mcp.tool(name="institutional_flows",
               description="QoQ institutional fund flows (biggest buyers/sellers) in one ticker.")
     def institutional_flows(symbol: str) -> dict:
-        return ts.call_skill("institutional.flows", {"symbol": symbol})
+        return call_skill("institutional.flows", {"symbol": symbol})
 
     @mcp.tool(name="etf_holdings",
               description="Ranked constituents of an ETF with top-N concentration.")
     def etf_holdings(etf: str) -> dict:
-        return ts.call_skill("etf.holdings", {"etf": etf})
+        return call_skill("etf.holdings", {"etf": etf})
 
     @mcp.tool(name="etf_exposure",
               description="Reverse lookup: which ETFs hold a given stock, and at what weight.")
     def etf_exposure(symbol: str) -> dict:
-        return ts.call_skill("etf.exposure", {"symbol": symbol})
+        return call_skill("etf.exposure", {"symbol": symbol})
 
     @mcp.tool(name="sentiment_get",
               description="Persisted sentiment snapshot for a symbol, sector or topic.")
     def sentiment_get(scope: str, scope_type: str | None = None) -> dict:
-        return ts.call_skill("sentiment.get", {"scope": scope, "scope_type": scope_type})
+        return call_skill("sentiment.get", {"scope": scope, "scope_type": scope_type})
 
     @mcp.tool(name="macro_dashboard",
               description="Macro tiles grouped by asset class with a rule-based regime read.")
     def macro_dashboard() -> dict:
-        return ts.call_skill("macro.dashboard", {})
+        return call_skill("macro.dashboard", {})
 
     @mcp.tool(name="universe_list",
               description="Investable-universe overview: symbols, sectors and coverage.")
     def universe_list(sector: str | None = None, limit: int = 150) -> dict:
-        return ts.call_skill("universe.list", {"sector": sector, "limit": limit})
+        return call_skill("universe.list", {"sector": sector, "limit": limit})
 
     # ---- COMPUTED skills (source="computed"): pure math on agent inputs / real archive series ----
     @mcp.tool(name="options_greeks",
@@ -283,7 +332,7 @@ def create_server(toolset: Toolset | None = None):
                           "S, K, T-years, r, sigma, type=call|put). Computed, no market data.")
     def options_greeks(S: float, K: float, T: float, sigma: float, r: float = 0.0,
                        type: str = "call") -> dict:
-        return ts.call_skill("options.greeks",
+        return call_skill("options.greeks",
                              {"S": S, "K": K, "T": T, "r": r, "sigma": sigma, "type": type})
 
     @mcp.tool(name="options_implied_vol",
@@ -291,45 +340,45 @@ def create_server(toolset: Toolset | None = None):
                           "(agent-supplied price, S, K, T-years, r, type). Computed.")
     def options_implied_vol(price: float, S: float, K: float, T: float, r: float = 0.0,
                            type: str = "call") -> dict:
-        return ts.call_skill("options.implied_vol",
+        return call_skill("options.implied_vol",
                              {"price": price, "S": S, "K": K, "T": T, "r": r, "type": type})
 
     @mcp.tool(name="vol_realized",
               description="Annualized realized (close-to-close log-return) volatility computed over "
                           "real archive closes for a symbol.")
     def vol_realized(symbol: str, lookback: int = 0) -> dict:
-        return ts.call_skill("vol.realized", {"symbol": symbol, "lookback": lookback})
+        return call_skill("vol.realized", {"symbol": symbol, "lookback": lookback})
 
     @mcp.tool(name="vol_term_structure",
               description="Realized-vol term structure at trailing windows (default 20/60/120/252) "
                           "computed over real archive closes.")
     def vol_term_structure(symbol: str, windows: list[int] | None = None) -> dict:
-        return ts.call_skill("vol.term_structure", {"symbol": symbol, "windows": windows})
+        return call_skill("vol.term_structure", {"symbol": symbol, "windows": windows})
 
     @mcp.tool(name="correlation_matrix",
               description="Pearson correlation matrix of daily returns across symbols, computed on "
                           "real archive closes (symmetric, 1.0 diagonal).")
     def correlation_matrix(symbols: list[str], lookback: int = 0) -> dict:
-        return ts.call_skill("correlation.matrix", {"symbols": symbols, "lookback": lookback})
+        return call_skill("correlation.matrix", {"symbols": symbols, "lookback": lookback})
 
     @mcp.tool(name="factor_exposures",
               description="Standardized style-factor exposures (Market/Size/Value/Momentum/Quality) "
                           "cross-sectionally z-scored from real archive fundamentals.")
     def factor_exposures(symbols: list[str] | None = None, sector: str | None = None) -> dict:
-        return ts.call_skill("factor.exposures", {"symbols": symbols, "sector": sector})
+        return call_skill("factor.exposures", {"symbols": symbols, "sector": sector})
 
     @mcp.tool(name="dcf_value",
               description="5-year discounted-cash-flow valuation seeded from a symbol's archive "
                           "fundamentals; agent may override DCF assumptions. Deterministic.")
     def dcf_value(symbol: str, assumptions: dict | None = None) -> dict:
-        return ts.call_skill("dcf.value", {"symbol": symbol, "assumptions": assumptions})
+        return call_skill("dcf.value", {"symbol": symbol, "assumptions": assumptions})
 
     @mcp.tool(name="portfolio_optimize",
               description="Mean-variance optimal long-only weights over real archive returns "
                           "(mode=max_sharpe|min_variance|target_vol). Weights sum to ~1.")
     def portfolio_optimize(symbols: list[str] | None = None, sector: str | None = None,
                           mode: str = "max_sharpe") -> dict:
-        return ts.call_skill("portfolio.optimize",
+        return call_skill("portfolio.optimize",
                              {"symbols": symbols, "sector": sector, "mode": mode})
 
     @mcp.tool(name="montecarlo_simulate",
@@ -339,7 +388,7 @@ def create_server(toolset: Toolset | None = None):
     def montecarlo_simulate(symbol: str | None = None, sigma: float | None = None,
                            drift: float = 0.0, S: float | None = None, horizon: int = 252,
                            paths: int = 1000, seed: int = 12345, method: str = "gbm") -> dict:
-        return ts.call_skill("montecarlo.simulate",
+        return call_skill("montecarlo.simulate",
                              {"symbol": symbol, "sigma": sigma, "drift": drift, "S": S,
                               "horizon": horizon, "paths": paths, "seed": seed, "method": method})
 
@@ -349,7 +398,7 @@ def create_server(toolset: Toolset | None = None):
                           "Deterministic via 'seed'.")
     def scenario_project(symbol: str, scenarioDriftPct: float = 0.0, horizon: int = 252,
                         paths: int = 1000, seed: int = 4242) -> dict:
-        return ts.call_skill("scenario.project",
+        return call_skill("scenario.project",
                              {"symbol": symbol, "scenarioDriftPct": scenarioDriftPct,
                               "horizon": horizon, "paths": paths, "seed": seed})
 
@@ -358,7 +407,7 @@ def create_server(toolset: Toolset | None = None):
                           "(exposures x shocks) or asset shocks (weights x shocks). Computed.")
     def risk_stress(shocks: dict, exposures: dict | None = None,
                    weights: dict | None = None) -> dict:
-        return ts.call_skill("risk.stress",
+        return call_skill("risk.stress",
                              {"shocks": shocks, "exposures": exposures, "weights": weights})
 
     @mcp.tool(name="tearsheet",
@@ -366,7 +415,7 @@ def create_server(toolset: Toolset | None = None):
                           "over a symbol's real archive closes.")
     def tearsheet(symbol: str, strategy: str = "momentum", params: dict | None = None,
                  cost_bps: float = 5.0) -> dict:
-        return ts.call_skill("tearsheet",
+        return call_skill("tearsheet",
                              {"symbol": symbol, "strategy": strategy, "params": params,
                               "cost_bps": cost_bps})
 
@@ -374,15 +423,34 @@ def create_server(toolset: Toolset | None = None):
               description="Anchored walk-forward validation + overfitting diagnostics over a "
                           "symbol's real archive closes (honest coverage block, no fabricated folds).")
     def walkforward_run(symbol: str, strategy: str = "momentum", n_splits: int = 5) -> dict:
-        return ts.call_skill("walkforward.run",
+        return call_skill("walkforward.run",
                              {"symbol": symbol, "strategy": strategy, "n_splits": n_splits})
 
     return mcp, ts
 
 
 def main() -> None:
+    """Entry point for ``python -m doomberg_mcp``.
+
+    Transport is selected by env (so the same image serves both modes):
+
+    * ``DOOMBERG_MCP_TRANSPORT=stdio`` (default) — a locally-launched, locally-trusted agent;
+      no auth, the existing dev behavior.
+    * ``DOOMBERG_MCP_TRANSPORT=http`` — hosted streamable-HTTP for REMOTE BYO agents, served
+      by uvicorn on ``DOOMBERG_MCP_PORT`` (default 8080, bind 0.0.0.0), with per-tenant bearer
+      auth + scope enforcement (see :mod:`doomberg_mcp.http`).
+    """
+    import os
+
+    transport = (os.environ.get("DOOMBERG_MCP_TRANSPORT") or "stdio").strip().lower()
+    if transport == "http":
+        from .http import serve_http
+
+        port = int(os.environ.get("DOOMBERG_MCP_PORT", "8080"))
+        serve_http(host="0.0.0.0", port=port)
+        return
     mcp, _ = create_server()
-    mcp.run()  # stdio transport
+    mcp.run()  # stdio transport (default; local trust, no auth)
 
 
 if __name__ == "__main__":
