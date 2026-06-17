@@ -1,27 +1,54 @@
 import { useState } from "react";
 import { useAuth } from "../auth/AuthContext";
-import { beginOAuth, providerConfigured, type Provider } from "../auth/oauth";
+import { beginOAuth, providerConfigured, type Provider, type SessionUser } from "../auth/oauth";
 import { DoombergMark, GoogleIcon, GithubIcon } from "../auth/icons";
+import { api } from "../api";
 
-// The sign-in / create-account gate. Renders before the dashboard whenever
-// there is no session. Google + GitHub start the OAuth redirect when configured,
-// otherwise fall back to a labelled demo session so the flow is testable.
 export function AuthPage() {
-  const { signInDemo } = useAuth();
+  const { signInDemo, setSession } = useAuth();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
-  const [busy, setBusy] = useState<Provider | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   function onProvider(p: Provider) {
     if (providerConfigured(p)) {
       setBusy(p);
       beginOAuth(p, mode);
     } else {
-      // No client id configured → demo sign-in so the app is usable now.
       signInDemo(p);
     }
   }
 
-  const anyConfigured = providerConfigured("google") || providerConfigured("github");
+  async function onEmailSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setBusy("email");
+    try {
+      const result = mode === "signup"
+        ? await api.signUp(email, name, password)
+        : await api.signIn(email, password);
+      const u = result.user as Record<string, unknown>;
+      setSession(
+        {
+          id: String(u.id ?? ""),
+          name: String(u.name ?? email),
+          email: String(u.email ?? email),
+          avatarUrl: u.avatarUrl ? String(u.avatarUrl) : undefined,
+          provider: "email",
+        } as SessionUser,
+        result.token,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sign-in failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const anyOAuthConfigured = providerConfigured("google") || providerConfigured("github");
 
   return (
     <div className="auth">
@@ -44,34 +71,68 @@ export function AuthPage() {
             : "Spin up a tenant and point your agent at Doomberg over MCP."}
         </p>
 
+        {/* OAuth buttons */}
         <div className="auth-providers">
-          <button
-            className="oauth-btn"
-            onClick={() => onProvider("google")}
-            disabled={busy !== null}
-          >
+          <button className="oauth-btn" onClick={() => onProvider("google")} disabled={busy !== null}>
             <GoogleIcon />
             <span>{mode === "signin" ? "Continue with Google" : "Sign up with Google"}</span>
             {busy === "google" && <span className="oauth-spin">…</span>}
           </button>
-          <button
-            className="oauth-btn"
-            onClick={() => onProvider("github")}
-            disabled={busy !== null}
-          >
+          <button className="oauth-btn" onClick={() => onProvider("github")} disabled={busy !== null}>
             <GithubIcon />
             <span>{mode === "signin" ? "Continue with GitHub" : "Sign up with GitHub"}</span>
             {busy === "github" && <span className="oauth-spin">…</span>}
           </button>
         </div>
 
-        {!anyConfigured && (
+        {!anyOAuthConfigured && (
           <div className="auth-note">
-            OAuth client ids not set — buttons use a <strong>demo session</strong>.
-            Add <code>VITE_GOOGLE_CLIENT_ID</code> / <code>VITE_GITHUB_CLIENT_ID</code>{" "}
-            and a backend exchange to enable real sign-in.
+            OAuth client ids not configured — buttons use a <strong>demo session</strong>.
+            Set <code>VITE_GOOGLE_CLIENT_ID</code> / <code>VITE_GITHUB_CLIENT_ID</code> to enable real OAuth.
           </div>
         )}
+
+        <div className="auth-divider"><span>or</span></div>
+
+        {/* Email + password form */}
+        <form className="auth-form" onSubmit={onEmailSubmit}>
+          {mode === "signup" && (
+            <input
+              className="auth-input"
+              type="text"
+              placeholder="Full name"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              required
+              autoComplete="name"
+            />
+          )}
+          <input
+            className="auth-input"
+            type="email"
+            placeholder="Email address"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            required
+            autoComplete="email"
+          />
+          <input
+            className="auth-input"
+            type="password"
+            placeholder="Password"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            required
+            minLength={8}
+            autoComplete={mode === "signup" ? "new-password" : "current-password"}
+          />
+          {error && <div className="auth-error">{error}</div>}
+          <button className="btn primary auth-submit" type="submit" disabled={busy !== null}>
+            {busy === "email"
+              ? (mode === "signup" ? "Creating account…" : "Signing in…")
+              : (mode === "signup" ? "Create account" : "Sign in")}
+          </button>
+        </form>
 
         <div className="auth-divider"><span>or</span></div>
 
@@ -81,16 +142,14 @@ export function AuthPage() {
 
         <div className="auth-switch">
           {mode === "signin" ? (
-            <>
-              New to Doomberg?{" "}
-              <button className="link-btn" onClick={() => setMode("signup")}>
+            <>New to Doomberg?{" "}
+              <button className="link-btn" onClick={() => { setMode("signup"); setError(null); }}>
                 Create an account
               </button>
             </>
           ) : (
-            <>
-              Already have an account?{" "}
-              <button className="link-btn" onClick={() => setMode("signin")}>
+            <>Already have an account?{" "}
+              <button className="link-btn" onClick={() => { setMode("signin"); setError(null); }}>
                 Sign in
               </button>
             </>

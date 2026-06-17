@@ -22,6 +22,7 @@ from .run_store import (
 )
 from .strategy_store import StrategyStore
 from .trace_store import TraceStore
+from .user_store import SessionError, UserStore
 
 __all__ = [
     "open_db",
@@ -39,4 +40,6 @@ __all__ = [
     "RunNotFound",
     "BookConflict",
     "BookNotFound",
+    "UserStore",
+    "SessionError",
 ]

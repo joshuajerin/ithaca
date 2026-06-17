@@ -12,6 +12,7 @@ from .db import Db, open_db
 from .run_store import RunStore
 from .strategy_store import StrategyStore
 from .trace_store import TraceStore
+from .user_store import UserStore
 
 __all__ = ["Platform"]
 
@@ -24,6 +25,7 @@ class Platform:
         self.trace = TraceStore(self.db)
         self.books = BookStore(self.db)
         self.auth = AuthStore(self.db)
+        self.users = UserStore(self.db)
 
     # the control plane referred to this store as `.traces`; keep both names valid.
     @property

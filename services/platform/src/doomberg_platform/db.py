@@ -111,6 +111,52 @@ CREATE TABLE IF NOT EXISTS api_keys (
 
 CREATE INDEX IF NOT EXISTS idx_api_keys_tenant
     ON api_keys (tenant_id);
+
+-- Human user accounts (email/password + OAuth). One row per real person.
+-- Password auth: pbkdf2_hmac sha256, only password_hash+password_salt stored.
+-- OAuth auth: linked via oauth_accounts; password_hash/salt are NULL for OAuth-only users.
+CREATE TABLE IF NOT EXISTS users (
+    id            TEXT PRIMARY KEY,
+    email         TEXT NOT NULL UNIQUE,
+    name          TEXT NOT NULL,
+    avatar_url    TEXT,
+    tenant_id     TEXT NOT NULL,
+    password_hash TEXT,
+    password_salt TEXT,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
+CREATE INDEX IF NOT EXISTS idx_users_tenant ON users (tenant_id);
+
+-- OAuth provider links: one row per (user_id, provider). Lets a user connect
+-- multiple providers to the same account.
+CREATE TABLE IF NOT EXISTS oauth_accounts (
+    user_id     TEXT NOT NULL,
+    provider    TEXT NOT NULL,
+    provider_id TEXT NOT NULL,
+    email       TEXT,
+    name        TEXT,
+    avatar_url  TEXT,
+    linked_at   TEXT NOT NULL,
+    PRIMARY KEY (provider, provider_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_user ON oauth_accounts (user_id);
+
+-- Short-lived session tokens (JWT-ish: signed with HMAC-SHA256).
+-- The token value in the token column is already hashed; the signed JWT is
+-- handed to the browser and never stored raw.
+CREATE TABLE IF NOT EXISTS user_sessions (
+    session_id TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    revoked    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions (user_id);
 """
 
 

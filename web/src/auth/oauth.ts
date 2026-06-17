@@ -20,7 +20,7 @@ export interface SessionUser {
   name: string;
   email: string;
   avatarUrl?: string;
-  provider: Provider | "demo";
+  provider: Provider | "demo" | "email";
 }
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
@@ -77,7 +77,10 @@ export function beginOAuth(provider: Provider, intent: "signin" | "signup" | "li
 }
 
 // Exchange the returned auth code for a session via the backend.
-export async function exchangeCode(provider: Provider, code: string): Promise<SessionUser> {
+export async function exchangeCode(
+  provider: Provider,
+  code: string,
+): Promise<{ user: SessionUser; token: string }> {
   const res = await fetch(`${API_BASE}/auth/${provider}/exchange`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -87,6 +90,6 @@ export async function exchangeCode(provider: Provider, code: string): Promise<Se
     const body = await res.text().catch(() => "");
     throw new Error(`Token exchange failed (${res.status})${body ? `: ${body}` : ""}`);
   }
-  const data = (await res.json()) as { user: SessionUser };
-  return data.user;
+  const data = (await res.json()) as { user: SessionUser; token: string };
+  return { user: data.user, token: data.token };
 }

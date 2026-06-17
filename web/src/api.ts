@@ -9,7 +9,10 @@ import type { RunRow, StrategyRow } from "./types";
 
 function headers(): HeadersInit {
   const h: Record<string, string> = { "Content-Type": "application/json" };
-  if (API_KEY) {
+  const oauthToken = localStorage.getItem("doomberg.token");
+  if (oauthToken) {
+    h.Authorization = `Bearer ${oauthToken}`;
+  } else if (API_KEY) {
     h.Authorization = `Bearer ${API_KEY}`;
   } else {
     h["X-Tenant-Id"] = TENANT_ID;
@@ -107,5 +110,28 @@ export const api = {
     signal?: AbortSignal,
   ): Promise<RunRow> {
     return postJson<RunRow>(`/runs/${encodeURIComponent(id)}/${action}`, {}, signal);
+  },
+
+  // ---- auth ------------------------------------------------------------------
+  async signUp(email: string, name: string, password: string) {
+    return postJson<{ user: Record<string, unknown>; token: string }>(
+      `/auth/signup`,
+      { email, name, password },
+    );
+  },
+
+  async signIn(email: string, password: string) {
+    return postJson<{ user: Record<string, unknown>; token: string }>(
+      `/auth/signin`,
+      { email, password },
+    );
+  },
+
+  async signOut() {
+    await postJson(`/auth/signout`, {}).catch(() => null);
+  },
+
+  async me() {
+    return getJson<Record<string, unknown>>(`/auth/me`);
   },
 };
