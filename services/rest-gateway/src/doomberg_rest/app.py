@@ -83,6 +83,27 @@ class CreateRunBody(BaseModel):
     range: str = "1y"
 
 
+class GoogleExchangeBody(BaseModel):
+    code: str
+    redirect_uri: str
+
+
+class GitHubExchangeBody(BaseModel):
+    code: str
+    redirect_uri: str
+
+
+class SignupBody(BaseModel):
+    email: str
+    name: str
+    password: str
+
+
+class SigninBody(BaseModel):
+    email: str
+    password: str
+
+
 def _bearer_key(authorization: str | None) -> str | None:
     """Extract the ``dmbg_...`` token from an ``Authorization: Bearer <key>`` header."""
     if not authorization:
@@ -303,10 +324,6 @@ def create_app(db: Any | None = None) -> FastAPI:
 
     # ---- auth: Google exchange ---------------------------------------------------------
 
-    class GoogleExchangeBody(BaseModel):
-        code: str
-        redirect_uri: str
-
     @app.post("/api/auth/google/exchange")
     def google_exchange(body: GoogleExchangeBody) -> dict[str, Any]:
         client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
@@ -347,10 +364,6 @@ def create_app(db: Any | None = None) -> FastAPI:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     # ---- auth: GitHub exchange ---------------------------------------------------------
-
-    class GitHubExchangeBody(BaseModel):
-        code: str
-        redirect_uri: str
 
     @app.post("/api/auth/github/exchange")
     def github_exchange(body: GitHubExchangeBody) -> dict[str, Any]:
@@ -420,15 +433,6 @@ def create_app(db: Any | None = None) -> FastAPI:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     # ---- auth: email+password ----------------------------------------------------------
-
-    class SignupBody(BaseModel):
-        email: str
-        name: str
-        password: str
-
-    class SigninBody(BaseModel):
-        email: str
-        password: str
 
     @app.post("/api/auth/signup", status_code=201)
     def signup(body: SignupBody, stores: Stores = Depends(get_stores)) -> dict[str, Any]:
