@@ -1,0 +1,32 @@
+# Copy to terraform.auto.tfvars (gitignored) and adjust. NO secrets here —
+# the DO API token + Spaces keys come from environment variables:
+#   export DIGITALOCEAN_TOKEN=...
+#   export SPACES_ACCESS_KEY_ID=...
+#   export SPACES_SECRET_ACCESS_KEY=...
+
+project_name = "doomberg"
+environment  = "dev"
+region       = "nyc3"
+
+kubernetes_version = "1.31"
+
+# Backtest pool: scale-to-zero (min 0) is the cost-control story.
+backtest_node_size = "c-4"
+backtest_node_min  = 0
+backtest_node_max  = 5
+
+# Paper pool: small, stable, NOT scale-to-zero (scheduler must persist).
+paper_node_size  = "s-2vcpu-4gb"
+paper_node_count = 2
+
+postgres_version    = "16"
+postgres_size       = "db-s-1vcpu-2gb"
+postgres_node_count = 1
+
+spaces_bucket_name = "doomberg-artifacts"
+
+vpc_ip_range = "10.20.0.0/20"
+
+backtest_active_deadline_seconds   = 1800
+paper_tick_active_deadline_seconds = 120
+paper_tick_schedule                = "*/5 13-21 * * 1-5"

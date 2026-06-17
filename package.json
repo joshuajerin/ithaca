@@ -1,18 +1,15 @@
 {
-  "name": "workspace",
+  "name": "doomberg-v2",
   "version": "0.0.0",
-  "license": "MIT",
-  "scripts": {
-    "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
-    "build": "pnpm run typecheck && pnpm -r --if-present run build",
-    "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
-    "smoke:api": "bash scripts/smoke-api.sh",
-    "loadtest:api": "bash scripts/loadtest-api.sh"
-  },
   "private": true,
+  "description": "Doomberg v2 — a financial tool-platform external agents call via MCP, with a paper-trading deploy layer and an observability UI.",
+  "scripts": {
+    "test:ts": "pnpm -r --if-present run test",
+    "typecheck:ts": "pnpm -r --if-present run typecheck",
+    "contracts:codegen": "bash packages/contracts/scripts/codegen.sh",
+    "contracts:check": "bash packages/contracts/scripts/check_drift.sh"
+  },
   "devDependencies": {
-    "prettier": "^3.8.3",
     "typescript": "~5.9.3"
   }
 }

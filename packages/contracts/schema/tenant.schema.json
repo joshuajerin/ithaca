@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://doomberg.dev/contracts/tenant.schema.json",
+  "title": "TenantContext",
+  "description": "The canonical request-scoped tenant + actor context. tenant_id is THE single isolation key (the v1 firmId/firm_id aliases are banned). Resolved at the two front doors only and bound into ctx; the data layer + Postgres RLS is the single enforcement point.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tenant_id", "actor"],
+  "properties": {
+    "tenant_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Canonical tenant isolation key. Every persisted row, deploy job, and artifact carries this; checked centrally via RLS."
+    },
+    "actor": { "$ref": "#/$defs/Actor" },
+    "session_id": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "The research session this context belongs to, if any."
+    },
+    "deadline_ms": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Wall-clock budget remaining for the whole request/session. Per-call timeouts derive as min(default, remaining). v1 had per-call timeouts but no aggregate budget."
+    }
+  },
+  "$defs": {
+    "Actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["agent", "user", "system"],
+          "description": "agent = a BYO external agent calling MCP; user = a human in the web UI; system = the platform itself (scheduler, worker)."
+        },
+        "id": {
+          "type": "string",
+          "description": "Stable principal id (agent_id or user_id). Stable across credential rotation."
+        },
+        "display_name": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

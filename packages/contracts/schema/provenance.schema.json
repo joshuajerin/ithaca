@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://doomberg.dev/contracts/provenance.schema.json",
+  "title": "ProvenanceEnvelope",
+  "description": "The mandatory wrapper around EVERY data-layer tool payload. Honesty contract: data is never imputed to hide gaps, mock is never dressed as live, asOf is the data's timestamp not the fetch time. Directly answers the v1 review lesson that silent mock-for-real substitution destroyed trust.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data", "provenance", "partial"],
+  "properties": {
+    "data": {
+      "description": "The actual tool result payload. Shape is tool-specific; validated by the tool's own output schema.",
+      "type": ["object", "array", "null"]
+    },
+    "provenance": { "$ref": "#/$defs/Provenance" },
+    "partial": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when some requested data could not be resolved (see provenance.coverage)."
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Warning" },
+      "default": []
+    }
+  },
+  "$defs": {
+    "Provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "as_of", "freshness", "pit"],
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "Concrete upstream identifier, e.g. 'yahoo-chart', 'edgar', 'fred', 'databento-itch'."
+        },
+        "as_of": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp OF THE DATA, not of the fetch."
+        },
+        "freshness": {
+          "type": "string",
+          "enum": ["live", "stale", "mock"],
+          "description": "live = fresh real; stale = real but past TTL (served via stale-while-revalidate, labeled honestly); mock = synthetic fallback, never dressed as live."
+        },
+        "stale_age_sec": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "How old the data is past its TTL when freshness=stale."
+        },
+        "pit": {
+          "type": "string",
+          "enum": ["true", "false", "estimated"],
+          "description": "Point-in-time capability of THIS source. A per-source capability flag, NOT something the gateway can manufacture. Free sources (Yahoo) are 'false' or 'estimated'; EDGAR/news are 'true'. Backtests may only use pit=true sources."
+        },
+        "coverage": { "$ref": "#/$defs/Coverage" },
+        "cost": { "$ref": "#/$defs/Cost" },
+        "cache_hit": { "type": "boolean", "default": false }
+      }
+    },
+    "Coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested", "resolved"],
+      "properties": {
+        "requested": { "type": "integer", "minimum": 0 },
+        "resolved": { "type": "integer", "minimum": 0 },
+        "missing": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Identifiers that could not be resolved. Reported, never imputed."
+        }
+      }
+    },
+    "Cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["class", "credits"],
+      "properties": {
+        "class": {
+          "type": "string",
+          "enum": ["cheap", "network", "heavy"]
+        },
+        "credits": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "Warning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Stable warning code, e.g. MOCK_FALLBACK, PARTIAL_COVERAGE, STALE_SERVED."
+        },
+        "scope": {
+          "type": ["string", "null"],
+          "description": "What the warning applies to, e.g. a symbol."
+        },
+        "detail": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

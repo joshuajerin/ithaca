@@ -1,0 +1,10 @@
+{
+  "data": { "symbol": "AAPL" },
+  "provenance": {
+    "source": "yahoo-chart",
+    "as_of": "2026-06-16T20:00:00Z",
+    "freshness": "realtime",
+    "pit": "false"
+  },
+  "partial": false
+}

@@ -1,0 +1,171 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ *
+ * Doomberg design system
+ * Warm editorial palette: cream paper, warm ink, olive accent, gold +
+ * earthy tans. DM Sans display, JetBrains Mono for eyebrow labels.
+ * ------------------------------------------------------------------ */
+@theme {
+  --color-cream: #fef8f0;
+  --color-cream-2: #fdf5e8;
+  --color-paper: #ffffff;
+  --color-sand: #f0e3ce;
+  --color-sand-2: #f7eede;
+
+  --color-ink: #18170f;
+  --color-ink-soft: #3a3a34;
+  --color-muted: #5f6265;
+  --color-faint: #8d8a82;
+
+  --color-olive: #485c11;
+  --color-olive-600: #3a4b0e;
+  --color-olive-700: #2c3a0a;
+  --color-olive-bright: #6f8f1a;
+  --color-leaf: #e8efd7;
+  --color-leaf-2: #dde8c4;
+
+  --color-gold: #daa139;
+  --color-gold-deep: #5b4b24;
+  --color-tan: #9b8564;
+
+  --color-line: #ece2d4;
+  --color-line-strong: #e1d5d0;
+
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  --radius-pill: 999px;
+
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv01";
+    overflow-x: hidden;
+  }
+  ::selection {
+    background: var(--color-leaf);
+    color: var(--color-olive-700);
+  }
+  h1, h2, h3 {
+    font-weight: 400;
+    letter-spacing: -0.03em;
+    line-height: 1.04;
+  }
+}
+
+@layer utilities {
+  /* Giant light-weight display headline (gokite-style 80px / -2.4px tracking) */
+  .display {
+    font-weight: 400;
+    letter-spacing: -0.035em;
+    line-height: 1.02;
+  }
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+  /* Subtle paper grain + grid layers reused across sections */
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, rgba(24, 23, 15, 0.045) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(24, 23, 15, 0.045) 1px, transparent 1px);
+    background-size: 64px 64px;
+  }
+  .bg-dotgrid {
+    background-image: radial-gradient(rgba(24, 23, 15, 0.10) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+  .mask-fade-y {
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 12%, #000 88%, transparent);
+    mask-image: linear-gradient(to bottom, transparent, #000 12%, #000 88%, transparent);
+  }
+  .mask-fade-x {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent);
+    mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent);
+  }
+}
+
+/* Marquee keyframes for the data-source ticker */
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.animate-marquee {
+  animation: marquee 38s linear infinite;
+}
+
+/* Slow aurora drift for hero background orbs */
+@keyframes drift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(2.5rem, -1.5rem, 0) scale(1.08); }
+}
+.animate-drift { animation: drift 16s var(--ease-out-soft) infinite; }
+.animate-drift-slow { animation: drift 24s var(--ease-out-soft) infinite; }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.animate-pulse-dot { animation: pulse-dot 1.8s ease-in-out infinite; }
+
+/* ---- 3D isometric layered stack (the "Three Layers" centerpiece) -------- */
+.preserve-3d { transform-style: preserve-3d; }
+.backface-hidden { backface-visibility: hidden; }
+
+/* Gentle vertical bob for each floating slab. translateZ carries the stack
+   offset AND the bob, so motion reads as a clean vertical float in iso space. */
+@keyframes bob-top {
+  0%, 100% { transform: translateZ(132px); }
+  50% { transform: translateZ(152px); }
+}
+@keyframes bob-mid {
+  0%, 100% { transform: translateZ(0px); }
+  50% { transform: translateZ(11px); }
+}
+@keyframes bob-bot {
+  0%, 100% { transform: translateZ(-132px); }
+  50% { transform: translateZ(-120px); }
+}
+.bob-top { transform: translateZ(132px); animation: bob-top 7.5s var(--ease-out-soft) infinite; }
+.bob-mid { transform: translateZ(0px); animation: bob-mid 7.5s var(--ease-out-soft) infinite 0.5s; }
+.bob-bot { transform: translateZ(-132px); animation: bob-bot 7.5s var(--ease-out-soft) infinite 1s; }
+
+/* Soft pulsing glow for the central orb. */
+@keyframes orb-glow {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50% { opacity: 0.9; transform: scale(1.08); }
+}
+.animate-orb-glow { animation: orb-glow 4.5s ease-in-out infinite; }
+
+/* Slow dot-matrix shimmer for the settlement/observability plane. */
+@keyframes matrix-pan {
+  from { background-position: 0 0; }
+  to { background-position: 0 -240px; }
+}
+.animate-matrix { animation: matrix-pan 9s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-marquee,
+  .animate-drift,
+  .animate-drift-slow,
+  .animate-pulse-dot,
+  .bob-top, .bob-mid, .bob-bot,
+  .animate-orb-glow, .animate-matrix { animation: none; }
+  html { scroll-behavior: auto; }
+}

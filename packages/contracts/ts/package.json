@@ -1,0 +1,23 @@
+{
+  "name": "@doomberg/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Doomberg v2 shared contracts (generated zod schemas). Source of truth: ../schema/*.schema.json",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./generated": "./src/generated/index.ts"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vitest": "^2.1.9"
+  }
+}

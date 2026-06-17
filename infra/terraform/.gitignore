@@ -1,0 +1,16 @@
+# Terraform state + local-only material. NEVER commit state (it contains the
+# rendered DB URI + kubeconfig).
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+
+# Local var files (may carry environment-specific values). The .example is tracked.
+*.auto.tfvars
+terraform.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

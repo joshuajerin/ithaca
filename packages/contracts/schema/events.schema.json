@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://doomberg.dev/contracts/events.schema.json",
+  "title": "TraceEvent",
+  "description": "One append-only event in a run's trace. Single 'type' enum (the v1 kind/type split is reconciled to 'type'). seq is gap-free PER run_id, owned by a single writer per run; runs are stitched into a lineage by origin_session_id + parent_span. This is both the observability stream and the audit trail.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id", "seq", "ts", "type", "tenant_id", "data"],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "The run this event belongs to (a research session, a backtest, or a paper-live deployment)."
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic, gap-free sequence within run_id. Used as SSE Last-Event-ID for replay-from-seq."
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "type": { "$ref": "#/$defs/EventType" },
+    "tenant_id": { "type": "string", "format": "uuid" },
+    "session_id": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "origin_session_id": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Stitches the research -> propose -> backtest -> paper lineage across independently-writing services."
+    },
+    "span_id": {
+      "type": ["string", "null"],
+      "description": "Span this event belongs to (e.g. a single tool call)."
+    },
+    "parent_span_id": {
+      "type": ["string", "null"]
+    },
+    "actor": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["agent", "user", "system"] },
+        "id": { "type": "string" }
+      }
+    },
+    "data": {
+      "type": "object",
+      "description": "Type-specific payload (tool name + args, result summary + provenance, reasoning text, transition from/to, fill details, etc.). Validated per-type downstream.",
+      "default": {}
+    }
+  },
+  "$defs": {
+    "EventType": {
+      "type": "string",
+      "enum": [
+        "session_open",
+        "session_close",
+        "tool_call",
+        "tool_result",
+        "reasoning",
+        "strategy_proposed",
+        "run_progress",
+        "run_transition",
+        "mark",
+        "fill",
+        "denial",
+        "error",
+        "keepalive"
+      ],
+      "description": "denial = a refused action (e.g. risk gate rejection); keepalive = SSE heartbeat so idle proxies don't kill the stream (the v1 idle-kill lesson)."
+    }
+  }
+}
