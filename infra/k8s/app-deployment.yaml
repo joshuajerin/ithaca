@@ -42,6 +42,8 @@ spec:
           effect: NoSchedule
       securityContext:
         runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
         fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
@@ -86,7 +88,7 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 10
           resources:
-            requests: { cpu: "250m", memory: 512Mi }
+            requests: { cpu: "200m", memory: 320Mi }
             limits: { cpu: "1", memory: 1Gi }
           volumeMounts:
             - { name: state, mountPath: /data }
@@ -123,7 +125,7 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 10
           resources:
-            requests: { cpu: "250m", memory: 512Mi }
+            requests: { cpu: "200m", memory: 320Mi }
             limits: { cpu: "1", memory: 1Gi }
           volumeMounts:
             - { name: state, mountPath: /data }
@@ -152,7 +154,7 @@ spec:
             - name: DOOMBERG_PAPER_INTERVAL_S
               value: "60"
           resources:
-            requests: { cpu: "250m", memory: 512Mi }
+            requests: { cpu: "200m", memory: 320Mi }
             limits: { cpu: "2", memory: 2Gi }
           volumeMounts:
             - { name: state, mountPath: /data }

@@ -111,11 +111,9 @@ resource "digitalocean_kubernetes_node_pool" "paper" {
   node_count = var.paper_node_count
   auto_scale = false
 
-  taint {
-    key    = "workload"
-    value  = "paper"
-    effect = "NoSchedule"
-  }
+  # NOT tainted: this is the always-on GENERAL pool, so kube-system (coredns etc.)
+  # and the app pod schedule here. The backtest pool stays tainted + dedicated; the
+  # app pod targets this pool via its pool=paper nodeSelector, so no taint is needed.
 
   labels = {
     pool     = "paper"
