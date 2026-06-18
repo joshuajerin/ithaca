@@ -2,6 +2,7 @@
   "name": "doomberg-v2",
   "version": "0.0.0",
   "private": true,
+  "packageManager": "pnpm@10.30.1",
   "description": "Doomberg v2 — a financial tool-platform external agents call via MCP, with a paper-trading deploy layer and an observability UI.",
   "scripts": {
     "test:ts": "pnpm -r --if-present run test",

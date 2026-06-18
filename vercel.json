@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "PORT=4173 BASE_PATH=/ pnpm --filter @workspace/terminal run build",
-  "outputDirectory": "artifacts/terminal/dist/public",
-  "installCommand": "pnpm install --frozen-lockfile=false --config.strictDepBuilds=false"
+  "installCommand": "pnpm install --frozen-lockfile=false --config.strictDepBuilds=false",
+  "buildCommand": "pnpm --filter @doomberg/site run build",
+  "outputDirectory": "site/dist"
 }
