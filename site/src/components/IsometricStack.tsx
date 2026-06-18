@@ -329,23 +329,3 @@ function EdgeLabel({
     </motion.div>
   );
 }
-
-/* The glowing centerpiece orb — Doomberg's mark, counter-rotated to face the
-   camera so it "pops" cleanly above the top plane. */
-function Orb() {
-  return (
-    <div
-      className="absolute left-1/2 top-1/2"
-      style={{ transform: "translate(-50%, -50%) translateZ(70px) rotateZ(45deg) rotateX(-54deg)" }}
-    >
-      <div className="relative grid place-items-center">
-        <div className="animate-orb-glow absolute h-24 w-24 rounded-full bg-[radial-gradient(circle,rgba(218,161,57,0.6),transparent_66%)] blur-md" />
-        <div className="relative grid h-[72px] w-[72px] place-items-center rounded-[24px] bg-gradient-to-br from-gold to-olive shadow-[0_16px_36px_-10px_rgba(91,75,36,0.85),inset_0_2px_6px_rgba(255,255,255,0.45)]">
-          <span className="grid h-8 w-8 rotate-45 place-items-center rounded-[7px] bg-cream/95">
-            <span className="h-3 w-3 rotate-45 rounded-[3px] bg-olive" />
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
