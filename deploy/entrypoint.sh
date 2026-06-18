@@ -33,6 +33,8 @@ case "${ROLE}" in
     exec python -m doomberg_mcp "$@"
     ;;
   rest-gateway)
+    # Tell the gateway where the baked-in web dist lives (serves the React UI at /).
+    export DOOMBERG_WEB_DIST="${DOOMBERG_WEB_DIST:-/app/web/dist}"
     exec uvicorn doomberg_rest.app:app --host "${HOST}" --port "${REST_PORT}" "$@"
     ;;
   control-plane)

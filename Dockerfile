@@ -59,7 +59,44 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --all-packages
 
 # ---------------------------------------------------------------------------
-# Stage 2 — runtime: copy the venv + the app source onto a clean slim base.
+# Stage 2 — web builder: build the React/Vite observability UI.
+# The built dist is copied into the runtime image; the rest-gateway serves it
+# as static files at / so the UI and the API share one LB endpoint.
+# VITE_* vars are baked into the JS bundle at build time (they are PUBLIC —
+# client IDs, not secrets). Pass them as build-args: --build-arg VITE_GOOGLE_CLIENT_ID=...
+# ---------------------------------------------------------------------------
+FROM node:24-slim AS web-builder
+
+ARG VITE_GOOGLE_CLIENT_ID=""
+ARG VITE_GITHUB_CLIENT_ID=""
+ARG VITE_OAUTH_REDIRECT="https://doomberg.me/auth/callback"
+ARG VITE_API_BASE="/api"
+
+ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID \
+    VITE_GITHUB_CLIENT_ID=$VITE_GITHUB_CLIENT_ID \
+    VITE_OAUTH_REDIRECT=$VITE_OAUTH_REDIRECT \
+    VITE_API_BASE=$VITE_API_BASE
+
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+WORKDIR /app
+
+# Copy workspace manifests for dependency caching
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY packages/contracts/ts/package.json packages/contracts/ts/
+COPY web/package.json web/
+
+RUN pnpm install --frozen-lockfile
+
+# Copy source and build
+COPY packages/contracts/ packages/contracts/
+COPY web/ web/
+
+RUN pnpm --filter @doomberg/web run build
+
+# ---------------------------------------------------------------------------
+# Stage 3 — runtime: copy the venv + the app source onto a clean slim base.
 # No build tooling, no uv, no caches. Non-root.
 # ---------------------------------------------------------------------------
 FROM python:3.12-slim AS runtime
@@ -85,6 +122,10 @@ COPY --from=builder /app/scripts /app/scripts
 COPY --from=builder /app/doomberg-core /app/doomberg-core
 COPY --from=builder /app/services /app/services
 COPY --from=builder /app/packages /app/packages
+
+# Built web UI — the rest-gateway serves this at / via StaticFiles.
+# DOOMBERG_WEB_DIST env var points the gateway here; it's set in entrypoint.sh.
+COPY --from=web-builder /app/web/dist /app/web/dist
 
 COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
