@@ -1,10 +1,9 @@
 import Nav from "./components/Nav";
 import Hero from "./components/Hero";
 import Marquee from "./components/Marquee";
-import HowItWorks from "./components/HowItWorks";
+// import HowItWorks from "./components/HowItWorks"; // layers moved into Hero (right side)
 import FeatureSections from "./components/FeatureSections";
 import Trust from "./components/Trust";
-import BackedBy from "./components/BackedBy";
 import CTA from "./components/CTA";
 import Footer from "./components/Footer";
 
@@ -15,10 +14,9 @@ export default function App() {
       <main>
         <Hero />
         <Marquee />
-        <HowItWorks />
+        {/* <HowItWorks /> — layers animation moved into the Hero (right side) */}
         <FeatureSections />
         <Trust />
-        <BackedBy />
         <CTA />
       </main>
       <Footer />

@@ -37,10 +37,11 @@ const PILLARS = [
 export default function Trust() {
   return (
     <section id="trust" className="relative overflow-hidden bg-olive-700 py-24 text-cream lg:py-32">
-      {/* layered tonal depth */}
+      {/* layered tonal depth + subtle film grain (reads well on dark) */}
       <div className="bg-grid pointer-events-none absolute inset-0 opacity-[0.07]" />
+      <div className="bg-grain pointer-events-none absolute inset-0 mix-blend-overlay" />
       <div className="pointer-events-none absolute -left-40 top-0 h-[36rem] w-[36rem] rounded-full bg-[radial-gradient(circle,rgba(111,143,26,0.5),transparent_60%)] blur-3xl" />
-      <div className="pointer-events-none absolute -right-40 bottom-0 h-[34rem] w-[34rem] rounded-full bg-[radial-gradient(circle,rgba(218,161,57,0.25),transparent_60%)] blur-3xl" />
+      <div className="pointer-events-none absolute -right-40 bottom-0 h-[34rem] w-[34rem] rounded-full bg-[radial-gradient(circle,rgba(239,159,42,0.3),transparent_60%)] blur-3xl" />
 
       <div className="relative mx-auto max-w-[1200px] px-5">
         <div className="max-w-[34rem]">

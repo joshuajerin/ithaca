@@ -80,13 +80,14 @@ export function Eyebrow({
 
 /* -------------------------------------------------------------------------- */
 /* Badge — the small status pill (e.g. "Real exchange data is live").         */
+/* Green is the small "live" status accent.                                   */
 /* -------------------------------------------------------------------------- */
 export function Badge({ children }: { children: ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-2 rounded-pill border border-leaf-2 bg-leaf px-3.5 py-1.5 text-[0.78rem] font-medium text-olive-700">
+    <span className="inline-flex items-center gap-2 rounded-pill border border-leaf-2 bg-leaf/80 px-3.5 py-1.5 text-[0.78rem] font-medium text-olive-700 backdrop-blur-sm">
       <span className="relative flex h-2 w-2">
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-olive-bright opacity-60" />
-        <span className="relative inline-flex h-2 w-2 rounded-full bg-olive" />
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-live opacity-60" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-live" />
       </span>
       {children}
     </span>
@@ -94,7 +95,8 @@ export function Badge({ children }: { children: ReactNode }) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* PillButton — primary (olive) + secondary (outline) CTAs.                   */
+/* PillButton — primary (amber/orange), secondary (blue outline), outline,    */
+/* ghost CTAs. Amber is the warm signature accent; olive stays for brand.     */
 /* -------------------------------------------------------------------------- */
 export function PillButton({
   children,
@@ -104,7 +106,7 @@ export function PillButton({
 }: {
   children: ReactNode;
   href?: string;
-  variant?: "primary" | "secondary" | "ghost";
+  variant?: "primary" | "secondary" | "outline" | "ghost";
   size?: "md" | "lg";
 }) {
   const base =
@@ -112,9 +114,11 @@ export function PillButton({
   const sizes = size === "lg" ? "px-7 py-3.5 text-[0.95rem]" : "px-5 py-2.5 text-sm";
   const variants = {
     primary:
-      "bg-olive text-cream shadow-[0_1px_0_0_rgba(255,255,255,0.15)_inset,0_8px_24px_-12px_rgba(72,92,17,0.7)] hover:bg-olive-600 hover:-translate-y-0.5",
+      "bg-amber text-ink shadow-[0_1px_0_0_rgba(255,255,255,0.25)_inset,0_8px_24px_-12px_rgba(201,121,26,0.8)] hover:bg-amber-deep hover:text-cream hover:-translate-y-0.5",
     secondary:
-      "bg-leaf text-olive-700 hover:bg-leaf-2 hover:-translate-y-0.5",
+      "border border-blueprint/40 bg-paper/50 text-blueprint hover:border-blueprint hover:bg-blueprint/5 hover:-translate-y-0.5",
+    outline:
+      "border border-blueprint/40 bg-paper/50 text-blueprint hover:border-blueprint hover:bg-blueprint/5 hover:-translate-y-0.5",
     ghost:
       "border border-line-strong bg-paper/60 text-ink hover:border-olive/40 hover:bg-cream",
   };

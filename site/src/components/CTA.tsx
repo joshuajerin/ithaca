@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { rise, inView } from "../lib/motion";
+import { APP_URL } from "../lib/links";
 
 export default function CTA() {
   return (
@@ -11,9 +12,10 @@ export default function CTA() {
         viewport={inView}
         className="relative mx-auto max-w-[1100px] overflow-hidden rounded-[28px] bg-olive px-6 py-16 text-center text-cream sm:px-12 lg:py-24"
       >
-        {/* layered glow + grain */}
+        {/* layered glow + film grain (subtle, on the dark olive band) */}
         <div className="bg-grid pointer-events-none absolute inset-0 opacity-[0.08]" />
-        <div className="animate-drift-slow pointer-events-none absolute -right-24 -top-24 h-80 w-80 rounded-full bg-[radial-gradient(circle,rgba(218,161,57,0.45),transparent_60%)] blur-2xl" />
+        <div className="bg-grain pointer-events-none absolute inset-0 mix-blend-overlay" />
+        <div className="animate-drift-slow pointer-events-none absolute -right-24 -top-24 h-80 w-80 rounded-full bg-[radial-gradient(circle,rgba(239,159,42,0.5),transparent_60%)] blur-2xl" />
         <div className="animate-drift pointer-events-none absolute -bottom-24 -left-24 h-80 w-80 rounded-full bg-[radial-gradient(circle,rgba(232,239,215,0.4),transparent_60%)] blur-2xl" />
 
         <div className="relative">
@@ -28,7 +30,7 @@ export default function CTA() {
           </p>
           <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
             <a
-              href="#"
+              href={APP_URL}
               className="group inline-flex items-center gap-2 rounded-pill bg-cream px-7 py-3.5 text-[0.95rem] font-semibold text-olive-700 transition-all duration-300 hover:-translate-y-0.5 hover:bg-white"
             >
               Connect over MCP

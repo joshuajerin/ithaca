@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { EASE } from "../lib/motion";
+import { APP_URL } from "../lib/links";
 
 const LINKS = [
-  { label: "How it works", href: "#how" },
   { label: "Platform", href: "#features" },
   { label: "Security", href: "#trust" },
-  { label: "Built on", href: "#built" },
   { label: "Docs", href: "#" },
 ];
 
@@ -67,14 +66,14 @@ export default function Nav() {
 
         <div className="flex items-center gap-2">
           <a
-            href="#"
-            className="hidden rounded-pill px-3.5 py-2 text-[0.9rem] font-medium text-ink-soft transition-colors hover:text-ink sm:block"
+            href={APP_URL}
+            className="hidden rounded-pill px-3.5 py-2 text-[0.9rem] font-medium text-ink transition-colors hover:text-ink/70 sm:block"
           >
             Sign in
           </a>
           <a
-            href="#cta"
-            className="group inline-flex items-center gap-2 rounded-pill bg-olive px-4 py-2.5 text-[0.9rem] font-semibold text-cream shadow-[0_8px_24px_-12px_rgba(72,92,17,0.8)] transition-all duration-300 hover:bg-olive-600 hover:-translate-y-0.5"
+            href={APP_URL}
+            className="group inline-flex items-center gap-2 rounded-pill bg-amber px-4 py-2.5 text-[0.9rem] font-semibold text-ink shadow-[0_8px_24px_-12px_rgba(201,121,26,0.9)] transition-all duration-300 hover:bg-amber-deep hover:text-cream hover:-translate-y-0.5"
           >
             Connect your agent
             <span className="transition-transform duration-300 group-hover:translate-x-0.5">
