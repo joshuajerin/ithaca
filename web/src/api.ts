@@ -43,6 +43,15 @@ async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): P
   return (await res.json()) as T;
 }
 
+async function delJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, { method: "DELETE", headers: headers(), signal });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`DELETE ${path} -> ${res.status} ${res.statusText}${text ? `: ${text}` : ""}`);
+  }
+  return (await res.json()) as T;
+}
+
 // The gateway may return a bare array or { runs: [...] } / { items: [...] }; normalize.
 function unwrapList<T>(raw: unknown, key: string): T[] {
   if (Array.isArray(raw)) return raw as T[];
@@ -133,5 +142,24 @@ export const api = {
 
   async me() {
     return getJson<Record<string, unknown>>(`/auth/me`);
+  },
+
+  // ---- MCP / agent API keys (signed-in user mints for their own tenant) -------
+  async mintKey(scopes?: string[]) {
+    return postJson<{ api_key: string; key_id: string; scopes: string[]; tenant_id: string }>(
+      `/auth/keys`,
+      scopes && scopes.length ? { scopes } : {},
+    );
+  },
+
+  async listKeys() {
+    const raw = await getJson<{
+      keys: Array<{ key_id: string; scopes: string[]; created_at: string; revoked: boolean }>;
+    }>(`/auth/keys`);
+    return raw.keys ?? [];
+  },
+
+  async revokeKey(keyId: string) {
+    return delJson<{ key_id: string; revoked: boolean }>(`/auth/keys/${encodeURIComponent(keyId)}`);
   },
 };

@@ -220,4 +220,17 @@ input, select { font-family: inherit; }
 .set-actions { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
 .set-hint { font-size: 10.5px; color: var(--muted); line-height: 1.55; padding: 12px 16px; }
 .set-hint code { color: var(--fg); }
+.set-hint.err { color: #e5484d; padding: 0; }
 .set-row-end { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; }
+
+/* MCP key issuance */
+.scope-grid { display: flex; flex-direction: column; gap: 6px; }
+.scope-opt { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fg); cursor: pointer; }
+.scope-opt input { accent-color: var(--accent, #5b8def); }
+.scope-opt .scope-id { margin-left: auto; font-size: 10.5px; color: var(--muted-dim); }
+.key-fresh .key-plain { background: var(--panel-2, rgba(255,255,255,0.04)); border: 1px solid var(--border); padding: 8px 10px; }
+.key-list { display: flex; flex-direction: column; gap: 6px; }
+.key-row { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.key-row .key-id { color: var(--fg); }
+.key-row .key-scopes { color: var(--muted); font-size: 10.5px; flex: 1; word-break: break-word; }
+.key-row .key-date { color: var(--muted-dim); font-size: 10.5px; white-space: nowrap; }

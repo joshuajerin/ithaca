@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { beginOAuth, providerConfigured, type Provider } from "../auth/oauth";
 import { GoogleIcon, GithubIcon } from "../auth/icons";
@@ -9,35 +9,95 @@ const PROVIDERS: { id: Provider; label: string; icon: () => JSX.Element; blurb: 
   { id: "github", label: "GitHub", icon: GithubIcon, blurb: "Sign-in & repo-linked strategies" },
 ];
 
-function maskToken(t: string): string {
-  return `${t.slice(0, 7)}${"•".repeat(18)}${t.slice(-4)}`;
+// The issuable agent scopes. deploy:live is intentionally absent — the gateway refuses
+// to mint it, so live money movement is never reachable from an API key.
+const SCOPES: { id: string; label: string }[] = [
+  { id: "data:read", label: "Read market & research data" },
+  { id: "strategy:author", label: "Author / propose strategies" },
+  { id: "deploy:backtest", label: "Run backtests" },
+  { id: "deploy:paper", label: "Run paper trading" },
+];
+
+// The public MCP endpoint remote agents connect to (Caddy → in-cluster mcp-gateway).
+const MCP_URL = "https://mcp.doomberg.me/mcp";
+
+type KeyRow = { key_id: string; scopes: string[]; created_at: string; revoked: boolean };
+
+function fmtDate(v: string | number): string {
+  const d = new Date(typeof v === "number" ? v * 1000 : v);
+  return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString();
 }
 
 export function Settings() {
   const { user, integrations, setIntegration, signOut } = useAuth();
-  const [token] = useState<string>(
-    () => localStorage.getItem("doomberg.token") ?? "",
-  );
-  const [revealed, setRevealed] = useState(false);
+
+  const [keys, setKeys] = useState<KeyRow[]>([]);
+  const [loadingKeys, setLoadingKeys] = useState(true);
+  const [keysError, setKeysError] = useState<string | null>(null);
+  const [selectedScopes, setSelectedScopes] = useState<string[]>(() => SCOPES.map((s) => s.id));
+  const [minting, setMinting] = useState(false);
+  const [freshKey, setFreshKey] = useState<{ api_key: string; key_id: string } | null>(null);
   const [copied, setCopied] = useState(false);
 
-  function copyToken() {
-    navigator.clipboard?.writeText(token).then(() => {
+  async function loadKeys() {
+    setLoadingKeys(true);
+    setKeysError(null);
+    try {
+      setKeys(await api.listKeys());
+    } catch (e) {
+      setKeysError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoadingKeys(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadKeys();
+  }, []);
+
+  function toggleScope(id: string) {
+    setSelectedScopes((cur) =>
+      cur.includes(id) ? cur.filter((s) => s !== id) : [...cur, id],
+    );
+  }
+
+  async function generateKey() {
+    setMinting(true);
+    setKeysError(null);
+    setFreshKey(null);
+    try {
+      const res = await api.mintKey(selectedScopes);
+      setFreshKey({ api_key: res.api_key, key_id: res.key_id });
+      await loadKeys();
+    } catch (e) {
+      setKeysError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMinting(false);
+    }
+  }
+
+  async function revoke(keyId: string) {
+    setKeysError(null);
+    try {
+      await api.revokeKey(keyId);
+      if (freshKey?.key_id === keyId) setFreshKey(null);
+      await loadKeys();
+    } catch (e) {
+      setKeysError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  function copyFresh() {
+    if (!freshKey) return;
+    navigator.clipboard?.writeText(freshKey.api_key).then(() => {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     });
   }
 
-  function toggleProvider(p: Provider, connected: boolean) {
-    if (!connected && providerConfigured(p)) {
-      beginOAuth(p, "link"); // real link flow → returns through the callback
-      return;
-    }
-    setIntegration(p, !connected); // demo toggle when no client id is set
-  }
-
   if (!user) return null;
   const initials = user.name.split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
+  const activeKeys = keys.filter((k) => !k.revoked);
 
   return (
     <div className="page">
@@ -81,7 +141,13 @@ export function Settings() {
                 </span>
                 <button
                   className={`btn ${connected ? "" : "primary"}`}
-                  onClick={() => toggleProvider(id, connected)}
+                  onClick={() => {
+                    if (!connected && providerConfigured(id)) {
+                      beginOAuth(id, "link");
+                      return;
+                    }
+                    setIntegration(id, !connected);
+                  }}
                 >
                   {connected ? "Disconnect" : "Connect"}
                 </button>
@@ -91,7 +157,7 @@ export function Settings() {
         </div>
       </section>
 
-      {/* API / MCP access */}
+      {/* API / MCP access — mint bearer keys for BYO agents */}
       <section className="set-section">
         <div className="set-h">Agent access (MCP)</div>
         <div className="set-card">
@@ -99,34 +165,80 @@ export function Settings() {
             <label>Tenant</label>
             <code className="mono set-value">{api.tenantId}</code>
           </div>
-          {token ? (
-            <>
-              <div className="set-field">
-                <label>Key ID</label>
-                <code className="mono set-value">{token.split("_")[2] ?? "—"}</code>
+          <div className="set-field">
+            <label>Endpoint</label>
+            <code className="mono set-value">{MCP_URL}</code>
+          </div>
+
+          {/* Scope picker + generate */}
+          <div className="set-field">
+            <label>Scopes</label>
+            <div className="scope-grid">
+              {SCOPES.map((s) => (
+                <label key={s.id} className="scope-opt">
+                  <input
+                    type="checkbox"
+                    checked={selectedScopes.includes(s.id)}
+                    onChange={() => toggleScope(s.id)}
+                  />
+                  <span>{s.label}</span>
+                  <code className="mono scope-id">{s.id}</code>
+                </label>
+              ))}
+            </div>
+            <div className="set-actions">
+              <button
+                className="btn primary"
+                onClick={generateKey}
+                disabled={minting || selectedScopes.length === 0}
+              >
+                {minting ? "Generating…" : "Generate MCP key"}
+              </button>
+            </div>
+          </div>
+
+          {/* Freshly-minted plaintext — shown ONCE */}
+          {freshKey && (
+            <div className="set-field key-fresh">
+              <label>New key — copy it now, it won't be shown again</label>
+              <code className="mono set-value key-plain">{freshKey.api_key}</code>
+              <div className="set-actions">
+                <button className="btn primary" onClick={copyFresh}>
+                  {copied ? "Copied" : "Copy key"}
+                </button>
               </div>
-              <div className="set-field">
-                <label>Bearer token</label>
-                <code className="mono set-value">{revealed ? token : maskToken(token)}</code>
-                <div className="set-actions">
-                  <button className="btn" onClick={() => setRevealed((v) => !v)}>
-                    {revealed ? "Hide" : "Reveal"}
-                  </button>
-                  <button className="btn" onClick={copyToken}>
-                    {copied ? "Copied" : "Copy"}
-                  </button>
-                  <button className="btn" onClick={signOut}>
-                    Sign out and reconnect
-                  </button>
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="set-hint">No bearer token — sign in via OAuth to mint one.</div>
+            </div>
           )}
+
+          {keysError && <div className="set-hint err">{keysError}</div>}
+
+          {/* Existing keys */}
+          <div className="set-field">
+            <label>Active keys</label>
+            {loadingKeys ? (
+              <div className="set-hint">Loading…</div>
+            ) : activeKeys.length === 0 ? (
+              <div className="set-hint">No keys yet — generate one above for your agent.</div>
+            ) : (
+              <div className="key-list">
+                {activeKeys.map((k) => (
+                  <div key={k.key_id} className="key-row">
+                    <code className="mono key-id">{k.key_id}</code>
+                    <span className="key-scopes">{k.scopes.join(", ")}</span>
+                    <span className="key-date">{fmtDate(k.created_at)}</span>
+                    <button className="btn" onClick={() => revoke(k.key_id)}>
+                      Revoke
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="set-hint">
-            Point your agent at <code>{api.apiBase.replace("/api", "")}/mcp</code> with this token
-            as the bearer. Read + propose_strategy scopes only — it can never move money.
+            Hand this key to your agent as the <code>Authorization: Bearer</code> token against{" "}
+            <code>{MCP_URL}</code>. Keys can read data, author strategies, and run
+            backtests/paper — never move real money.
           </div>
         </div>
       </section>

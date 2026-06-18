@@ -104,6 +104,12 @@ class SigninBody(BaseModel):
     password: str
 
 
+class MintKeyBody(BaseModel):
+    # Optional scope selection; defaults to the full issuable agent set (deploy:live is
+    # unissuable by the AuthStore). The UI lets the user narrow it.
+    scopes: list[str] | None = None
+
+
 def _bearer_key(authorization: str | None) -> str | None:
     """Extract the ``dmbg_...`` token from an ``Authorization: Bearer <key>`` header."""
     if not authorization:
@@ -516,6 +522,60 @@ def create_app(db: Any | None = None) -> FastAPI:
                 "tenantId": principal["tenant_id"],
             }
         raise HTTPException(status_code=401, detail="invalid token")
+
+    # ---- MCP API keys (issued to the SIGNED-IN user's tenant) --------------------------
+    # The web sign-up/sign-in page is the issuance path: a logged-in human mints a bearer
+    # key for their own tenant here, then hands it to their BYO agent. A bare API key
+    # CANNOT mint more keys (only a session/human can) — key issuance requires sign-in.
+    def _session_user(authorization: str | None, stores: "Stores") -> dict[str, Any]:
+        key = _bearer_key(authorization)
+        if key:
+            try:
+                return stores.users.verify_session(key)
+            except SessionError:
+                pass
+        raise HTTPException(status_code=401, detail="sign in to manage API keys")
+
+    _DEFAULT_KEY_SCOPES = ["data:read", "strategy:author", "deploy:backtest", "deploy:paper"]
+
+    @app.post("/api/auth/keys", status_code=201)
+    def mint_api_key(
+        body: MintKeyBody,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        """Mint an MCP/agent API key for the signed-in user's tenant. Plaintext returned ONCE."""
+        user = _session_user(authorization, stores)
+        scopes = body.scopes if body.scopes else list(_DEFAULT_KEY_SCOPES)
+        try:
+            plaintext, key_id = stores.auth.mint_key(user["tenant_id"], scopes)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"api_key": plaintext, "key_id": key_id, "scopes": scopes,
+                "tenant_id": user["tenant_id"]}
+
+    @app.get("/api/auth/keys")
+    def list_api_keys(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        """List the signed-in user's tenant's keys (metadata only — secrets are never stored)."""
+        user = _session_user(authorization, stores)
+        return {"keys": stores.auth.list_keys(user["tenant_id"])}
+
+    @app.delete("/api/auth/keys/{key_id}")
+    def revoke_api_key(
+        key_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        """Revoke a key — only if it belongs to the signed-in user's tenant (no cross-tenant)."""
+        user = _session_user(authorization, stores)
+        owned = {k["key_id"] for k in stores.auth.list_keys(user["tenant_id"])}
+        if key_id not in owned:
+            raise HTTPException(status_code=404, detail="key not found")
+        stores.auth.revoke_key(key_id)
+        return {"key_id": key_id, "revoked": True}
 
     # ---- reads -------------------------------------------------------------------------
     @app.get("/api/runs")
