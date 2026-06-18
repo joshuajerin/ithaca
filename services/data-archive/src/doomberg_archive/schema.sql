@@ -113,3 +113,36 @@ CREATE TABLE IF NOT EXISTS archive.macro_prices (
 CREATE TABLE IF NOT EXISTS archive.macro_quotes (
   symbol text NOT NULL, price double precision, change_pct double precision,
   sparkline jsonb, is_live boolean NOT NULL, updated_at timestamptz NOT NULL);
+
+CREATE TABLE IF NOT EXISTS archive.short_interest (
+  symbol               text                NOT NULL,
+  short_interest_shares bigint,
+  float_shares         bigint,
+  short_float_pct      double precision,
+  days_to_cover        double precision,
+  updated_at           timestamptz         NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_short_interest_symbol
+  ON archive.short_interest(symbol);
+
+CREATE TABLE IF NOT EXISTS archive.short_volume (
+  symbol       text             NOT NULL,
+  d            date             NOT NULL,
+  short_volume bigint,
+  total_volume bigint,
+  short_ratio  double precision,
+  updated_at   timestamptz      NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_short_volume_symbol_d
+  ON archive.short_volume(symbol, d);
+
+CREATE TABLE IF NOT EXISTS archive.ftd (
+  symbol     text             NOT NULL,
+  d          date             NOT NULL,
+  quantity   bigint,
+  price      double precision,
+  amount     double precision,
+  updated_at timestamptz      NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_ftd_symbol_d
+  ON archive.ftd(symbol, d);

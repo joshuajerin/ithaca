@@ -430,6 +430,118 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
         return call_skill("walkforward.run",
                              {"symbol": symbol, "strategy": strategy, "n_splits": n_splits})
 
+    @mcp.tool(name="seasonality_monthly", description="Average monthly return + win rate for a symbol (Jan-Dec calendar seasonality).")
+    def seasonality_monthly(symbol: str, years: int = 10) -> dict:
+        return call_skill("seasonality.monthly", {"symbol": symbol, "years": years})
+
+    @mcp.tool(name="seasonality_heatmap", description="Month x year return heatmap showing historical seasonal patterns for a symbol.")
+    def seasonality_heatmap(symbol: str, years: int = 10) -> dict:
+        return call_skill("seasonality.heatmap", {"symbol": symbol, "years": years})
+
+    @mcp.tool(name="vol_iv_rank", description="IV rank and IV percentile from realized vol history for a symbol.")
+    def vol_iv_rank(symbol: str, lookback: int = 252) -> dict:
+        return call_skill("vol.iv_rank", {"symbol": symbol, "lookback": lookback})
+
+    @mcp.tool(name="vol_vrp", description="Variance risk premium (implied minus realized vol) — positive = expensive vol.")
+    def vol_vrp(symbol: str, window: int = 30) -> dict:
+        return call_skill("vol.vrp", {"symbol": symbol, "window": window})
+
+    @mcp.tool(name="vol_anomaly_score", description="Z-score of current realized vol vs trailing 1Y distribution — flags unusually high/low vol.")
+    def vol_anomaly_score(symbol: str, window: int = 252) -> dict:
+        return call_skill("vol.anomaly_score", {"symbol": symbol, "window": window})
+
+    @mcp.tool(name="vol_character", description="Hurst exponent analysis: is this symbol's vol trending, mean-reverting, or random-walk?")
+    def vol_character(symbol: str, window: int = 252) -> dict:
+        return call_skill("vol.character", {"symbol": symbol, "window": window})
+
+    @mcp.tool(name="technical_indicators", description="RSI, MACD, Bollinger Bands, and ATR computed from real archive OHLCV data.")
+    def technical_indicators(symbol: str, range: str = "6mo") -> dict:
+        return call_skill("technical.indicators", {"symbol": symbol, "range": range})
+
+    @mcp.tool(name="dividends", description="Historical dividend payments and trailing twelve-month yield for a symbol.")
+    def dividends(symbol: str, years: int = 5) -> dict:
+        return call_skill("dividends", {"symbol": symbol, "years": years})
+
+    @mcp.tool(name="short_interest", description="Current short interest, float %, days-to-cover, and squeeze score for a symbol.")
+    def short_interest(symbol: str) -> dict:
+        return call_skill("short.interest", {"symbol": symbol})
+
+    @mcp.tool(name="short_volume", description="Daily short volume and short ratio time series for a symbol.")
+    def short_volume(symbol: str, days: int = 30) -> dict:
+        return call_skill("short.volume", {"symbol": symbol, "days": days})
+
+    @mcp.tool(name="failures_to_deliver", description="SEC failures-to-deliver (FTD) records for a symbol — a short squeeze indicator.")
+    def failures_to_deliver(symbol: str, limit: int = 20) -> dict:
+        return call_skill("short.ftd", {"symbol": symbol, "limit": limit})
+
+    @mcp.tool(name="short_screener", description="Screen for highest short interest and squeeze candidates across the universe.")
+    def short_screener(min_si_pct: float = 15.0, limit: int = 50) -> dict:
+        return call_skill("short.screener", {"min_si_pct": min_si_pct, "limit": limit})
+
+    @mcp.tool(name="economic_calendar", description="Upcoming macro events: FOMC, CPI, NFP, PCE, GDP and other high-impact releases.")
+    def economic_calendar(days_ahead: int = 30) -> dict:
+        return call_skill("economic.calendar", {"days_ahead": days_ahead})
+
+    @mcp.tool(name="fda_calendar", description="Upcoming FDA PDUFA action dates and AdCom meetings for biotech catalysts.")
+    def fda_calendar(days_ahead: int = 90) -> dict:
+        return call_skill("fda.calendar", {"days_ahead": days_ahead})
+
+    @mcp.tool(name="commodity_prices", description="Current prices and recent changes for major commodities: oil, gold, natgas, silver, copper, wheat.")
+    def commodity_prices() -> dict:
+        return call_skill("commodity.prices", {})
+
+    @mcp.tool(name="forex_rates", description="Major FX pair rates and recent changes (EUR/USD, GBP/USD, USD/JPY, AUD/USD, etc.).")
+    def forex_rates(base: str = "USD") -> dict:
+        return call_skill("forex.rates", {"base": base})
+
+    @mcp.tool(name="crypto_prices", description="Top cryptocurrencies by market cap with price, 24h change, and volume.")
+    def crypto_prices(limit: int = 20) -> dict:
+        return call_skill("crypto.prices", {"limit": limit})
+
+    @mcp.tool(name="vix_term_structure", description="VIX spot and futures term structure — contango/backwardation signals market fear regime.")
+    def vix_term_structure() -> dict:
+        return call_skill("vix.term_structure", {})
+
+    @mcp.tool(name="market_tide", description="Market breadth: advancing vs declining stocks, volume ratio, pct above 50/200d MA.")
+    def market_tide(lookback: int = 20) -> dict:
+        return call_skill("market.tide", {"lookback": lookback})
+
+    @mcp.tool(name="financials_income", description="Quarterly income statements: revenue, gross profit, EBITDA, net income, EPS.")
+    def financials_income(symbol: str, periods: int = 8) -> dict:
+        return call_skill("financials.income", {"symbol": symbol, "periods": periods})
+
+    @mcp.tool(name="financials_balance", description="Quarterly balance sheets: assets, liabilities, equity, cash, debt, book value.")
+    def financials_balance(symbol: str, periods: int = 8) -> dict:
+        return call_skill("financials.balance", {"symbol": symbol, "periods": periods})
+
+    @mcp.tool(name="financials_cashflow", description="Quarterly cash flow statements: operating, investing, financing, and free cash flow.")
+    def financials_cashflow(symbol: str, periods: int = 8) -> dict:
+        return call_skill("financials.cashflow", {"symbol": symbol, "periods": periods})
+
+    @mcp.tool(name="earnings_transcript", description="Earnings call transcript text for a symbol and quarter (requires FMP_API_KEY).")
+    def earnings_transcript(symbol: str, year: int | None = None, quarter: int | None = None) -> dict:
+        return call_skill("earnings.transcript", {"symbol": symbol, "year": year, "quarter": quarter})
+
+    @mcp.tool(name="earnings_calendar", description="Upcoming earnings dates and EPS/revenue consensus estimates for tracked symbols.")
+    def earnings_calendar(days_ahead: int = 30) -> dict:
+        return call_skill("earnings.calendar", {"days_ahead": days_ahead})
+
+    @mcp.tool(name="stock_splits", description="Historical stock split history for a symbol.")
+    def stock_splits(symbol: str, years: int = 10) -> dict:
+        return call_skill("stock.splits", {"symbol": symbol, "years": years})
+
+    @mcp.tool(name="politician_portfolio", description="Estimated current portfolio of a US politician from STOCK Act trade disclosures.")
+    def politician_portfolio(name: str) -> dict:
+        return call_skill("politician.portfolio", {"name": name})
+
+    @mcp.tool(name="congress_late_filings", description="STOCK Act violations: trades filed more than 45 days after transaction date.")
+    def congress_late_filings(days: int = 365, limit: int = 50) -> dict:
+        return call_skill("congress.late_filings", {"days": days, "limit": limit})
+
+    @mcp.tool(name="congress_screener", description="Politicians ranked by trading activity and win rate based on STOCK Act disclosures.")
+    def congress_screener(min_trades: int = 5, limit: int = 50) -> dict:
+        return call_skill("congress.screener", {"min_trades": min_trades, "limit": limit})
+
     return mcp, ts
 
 

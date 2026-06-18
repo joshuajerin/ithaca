@@ -21,6 +21,11 @@ import numpy as np
 from .. import engine
 from . import compute
 from .archive import ArchiveGateway
+from .extended_skills import ExtendedSkills
+from .short_skills import ShortSkills
+from .macro_extended import MacroExtendedSkills
+from .financials_skills import FinancialsSkills
+from .congress_extended_skills import CongressExtendedSkills
 from .envelope import (
     ARCHIVE_UNAVAILABLE,
     computed_envelope,
@@ -84,6 +89,11 @@ class SkillSet:
 
     def __init__(self, archive: ArchiveGateway | None):
         self.archive = archive
+        self._ext = ExtendedSkills(archive)
+        self._short = ShortSkills(archive)
+        self._macro = MacroExtendedSkills(archive)
+        self._fin = FinancialsSkills(archive)
+        self._cong_ext = CongressExtendedSkills(archive)
 
     # ----------------------------- gate -----------------------------
     def _unavailable(self) -> dict:
@@ -1352,6 +1362,45 @@ class SkillSet:
         return envelope(data, freshness=freshness_of(uni))
 
 
+    # ============================== delegation: extended_skills ==============================
+    def seasonality_monthly(self, params): return self._ext.seasonality_monthly(params)
+    def seasonality_heatmap(self, params): return self._ext.seasonality_heatmap(params)
+    def vol_iv_rank(self, params): return self._ext.vol_iv_rank(params)
+    def vol_vrp(self, params): return self._ext.vol_vrp(params)
+    def vol_anomaly_score(self, params): return self._ext.vol_anomaly_score(params)
+    def vol_character(self, params): return self._ext.vol_character(params)
+    def technical_indicators(self, params): return self._ext.technical_indicators(params)
+    def dividends(self, params): return self._ext.dividends(params)
+
+    # ============================== delegation: short_skills ==============================
+    def short_interest(self, params): return self._short.short_interest(params)
+    def short_volume(self, params): return self._short.short_volume(params)
+    def failures_to_deliver(self, params): return self._short.failures_to_deliver(params)
+    def short_screener(self, params): return self._short.short_screener(params)
+
+    # ============================== delegation: macro_extended ==============================
+    def economic_calendar(self, params): return self._macro.economic_calendar(params)
+    def fda_calendar(self, params): return self._macro.fda_calendar(params)
+    def commodity_prices(self, params): return self._macro.commodity_prices(params)
+    def forex_rates(self, params): return self._macro.forex_rates(params)
+    def crypto_prices(self, params): return self._macro.crypto_prices(params)
+    def vix_term_structure(self, params): return self._macro.vix_term_structure(params)
+    def market_tide(self, params): return self._macro.market_tide(params)
+
+    # ============================== delegation: financials_skills ==============================
+    def financials_income(self, params): return self._fin.financials_income(params)
+    def financials_balance(self, params): return self._fin.financials_balance(params)
+    def financials_cashflow(self, params): return self._fin.financials_cashflow(params)
+    def earnings_transcript(self, params): return self._fin.earnings_transcript(params)
+    def earnings_calendar(self, params): return self._fin.earnings_calendar(params)
+    def stock_splits(self, params): return self._fin.stock_splits(params)
+
+    # ============================== delegation: congress_extended_skills ==============================
+    def politician_portfolio(self, params): return self._cong_ext.politician_portfolio(params)
+    def congress_late_filings(self, params): return self._cong_ext.congress_late_filings(params)
+    def congress_screener(self, params): return self._cong_ext.congress_screener(params)
+
+
 # ----------------------------- module-level helpers -----------------------------
 def _inst_symbol(params: dict) -> str:
     symbol = params.get("symbol") or (params.get("symbols") or [None])[0]
@@ -1491,4 +1540,37 @@ SKILLS: dict[str, str] = {
     "risk.stress": "risk_stress",
     "tearsheet": "tearsheet",
     "walkforward.run": "walkforward_run",
+    # ---- extended_skills ----
+    "seasonality.monthly": "seasonality_monthly",
+    "seasonality.heatmap": "seasonality_heatmap",
+    "vol.iv_rank": "vol_iv_rank",
+    "vol.vrp": "vol_vrp",
+    "vol.anomaly_score": "vol_anomaly_score",
+    "vol.character": "vol_character",
+    "technical.indicators": "technical_indicators",
+    "dividends": "dividends",
+    # ---- short_skills ----
+    "short.interest": "short_interest",
+    "short.volume": "short_volume",
+    "short.ftd": "failures_to_deliver",
+    "short.screener": "short_screener",
+    # ---- macro_extended ----
+    "economic.calendar": "economic_calendar",
+    "fda.calendar": "fda_calendar",
+    "commodity.prices": "commodity_prices",
+    "forex.rates": "forex_rates",
+    "crypto.prices": "crypto_prices",
+    "vix.term_structure": "vix_term_structure",
+    "market.tide": "market_tide",
+    # ---- financials_skills ----
+    "financials.income": "financials_income",
+    "financials.balance": "financials_balance",
+    "financials.cashflow": "financials_cashflow",
+    "earnings.transcript": "earnings_transcript",
+    "earnings.calendar": "earnings_calendar",
+    "stock.splits": "stock_splits",
+    # ---- congress_extended_skills ----
+    "politician.portfolio": "politician_portfolio",
+    "congress.late_filings": "congress_late_filings",
+    "congress.screener": "congress_screener",
 }
