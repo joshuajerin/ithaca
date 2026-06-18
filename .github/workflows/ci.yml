@@ -1,0 +1,92 @@
+name: ci
+
+# The gate. A breaking contract change, a failing suite, or a broken end-to-end pipeline
+# turns this red and locks merge. Wired from Phase 0 — v1's #1 process failure was tests
+# that never gated.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts-drift:
+    name: contracts • drift gate (schema ⇄ generated)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Regenerate from schema and fail on drift
+        run: bash packages/contracts/scripts/check_drift.sh
+
+  python-tests:
+    name: pytest • ${{ matrix.pkg }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg:
+          - packages/contracts/py
+          - doomberg-core
+          - services/platform
+          - services/mcp-gateway
+          - services/control-plane
+          - services/rest-gateway
+          - services/runtime
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: pytest
+        working-directory: ${{ matrix.pkg }}
+        run: uv run --extra dev pytest -q
+
+  demo-e2e:
+    name: end-to-end pipelines (pipeline + deploy-layer conductor)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-packages --extra dev
+      # research → propose → backtest → observe
+      - run: uv run python scripts/demo_e2e.py
+      # control plane enqueues → worker pulls the queue → paper money path applied
+      - run: uv run python scripts/demo_deploy.py
+
+  contracts-test-ts:
+    name: contracts • zod round-trip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: vitest
+        run: pnpm --filter @doomberg/contracts run test
+
+  web:
+    name: web • typecheck + build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @doomberg/web run test
+      - run: pnpm --filter @doomberg/web run build

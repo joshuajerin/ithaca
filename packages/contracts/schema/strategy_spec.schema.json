@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://doomberg.dev/contracts/strategy_spec.schema.json",
+  "title": "StrategySpec",
+  "description": "The ONE canonical, CLOSED, declarative strategy spec. CRITICAL SECURITY INVARIANT: there is NO free-form code field anywhere (no CustomPythonNode, no scripted escape hatch at launch). The agent proposes DATA we validate, never code we run. v2.0 ships parameterized primitives, not the operator-DAG. id/tenant_id are always server-stamped. additionalProperties:false everywhere enforces the closed schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["spec_version", "name", "universe", "strategy", "construction", "risk", "execution"],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "id": {
+      "type": ["string", "null"],
+      "description": "Server-stamped strategy id. Ignored if supplied by the agent."
+    },
+    "version": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Server-stamped immutable version. Each accepted edit mints a new version."
+    },
+    "tenant_id": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Server-stamped. Ignored if supplied by the agent."
+    },
+    "origin_session_id": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "The research session that produced this proposal (lineage)."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "universe": { "$ref": "#/$defs/Universe" },
+    "strategy": { "$ref": "#/$defs/Strategy" },
+    "construction": { "$ref": "#/$defs/Construction" },
+    "risk": { "$ref": "#/$defs/Risk" },
+    "execution": { "$ref": "#/$defs/Execution" },
+    "resources": { "$ref": "#/$defs/Resources" },
+    "seed": {
+      "type": "integer",
+      "default": 42,
+      "description": "Determinism: seed + pure numpy + fixed asOf window => identical artifact hash. 'Reproduce this run' is free."
+    }
+  },
+  "$defs": {
+    "Universe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["symbols", "source"],
+      "properties": {
+        "symbols": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "maxItems": 500
+        },
+        "source": {
+          "type": "string",
+          "enum": ["prices"],
+          "description": "Data source group for the universe. Only 'prices' (price/technical) at launch — fundamental-factor universes need a PIT source."
+        }
+      }
+    },
+    "Strategy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "params"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": ["momentum", "ma_cross", "mean_reversion", "rank_returns"],
+          "description": "A parameterized primitive: a pure (close_panel, params) -> per-symbol (score, selected) function (ported/extended from v1 engine/strategies.py). Cross-sectional weighting is then applied by 'construction'. The operator-DAG is a post-launch upgrade."
+        },
+        "params": {
+          "type": "object",
+          "description": "Primitive-specific parameters (e.g. lookback, top, threshold). Validated per-primitive by the registry.",
+          "default": {}
+        }
+      }
+    },
+    "Construction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scheme", "gross"],
+      "properties": {
+        "scheme": {
+          "type": "string",
+          "enum": ["equal_weight", "rank_weight", "vol_weight"]
+        },
+        "long_only": { "type": "boolean", "default": true },
+        "gross": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 4.0,
+          "description": "Target gross exposure (sum of |weights|). The risk gate re-checks sum|w| vs maxGross AFTER projection (closes the v1 311%-gross optimizer bug)."
+        }
+      }
+    },
+    "Risk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_gross", "max_net", "max_name_pct"],
+      "properties": {
+        "max_gross": { "type": "number", "exclusiveMinimum": 0, "maximum": 4.0 },
+        "max_net": { "type": "number", "minimum": 0, "maximum": 4.0 },
+        "max_name_pct": { "type": "number", "exclusiveMinimum": 0, "maximum": 1.0 }
+      }
+    },
+    "Execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cost_bps", "rebalance"],
+      "properties": {
+        "cost_bps": { "type": "number", "minimum": 0, "maximum": 1000 },
+        "algo": {
+          "type": "string",
+          "enum": ["market", "vwap", "twap"],
+          "default": "vwap"
+        },
+        "rebalance": {
+          "type": "string",
+          "enum": ["daily@close", "weekly@close", "monthly@close"]
+        }
+      }
+    },
+    "Resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tier": {
+          "type": "string",
+          "enum": ["standard", "large"],
+          "default": "standard"
+        }
+      }
+    }
+  }
+}

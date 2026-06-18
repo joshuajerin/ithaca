@@ -1,0 +1,75 @@
+# Backtest Job — TEMPLATE rendered per run_id by the control plane.
+#
+# Placeholders ${...} are substituted at enqueue time. One Job per run, one
+# container per Job, spawned fresh and killed at completion (MASTER-PLAN §5.2).
+#
+# Invariants:
+#   - activeDeadlineSeconds = the AGGREGATE wall-clock deadline (SIGKILL on breach)
+#   - restartPolicy: Never  (no silent retries; a re-run is a new run_id)
+#   - backoffLimit: 0
+#   - label doomberg/component=worker -> the default-deny egress NetworkPolicy
+#     binds; the only allowed destination is the Data Gateway facade.
+#   - nodeSelector + toleration pin it to the scale-to-zero backtest pool.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: backtest-${RUN_ID}
+  namespace: doomberg-workers
+  labels:
+    doomberg/component: worker
+    doomberg/kind: backtest
+    doomberg/run-id: "${RUN_ID}"
+    doomberg/tenant-id: "${TENANT_ID}"
+spec:
+  activeDeadlineSeconds: ${ACTIVE_DEADLINE_SECONDS} # aggregate wall-clock budget
+  backoffLimit: 0
+  completions: 1
+  parallelism: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        doomberg/component: worker
+        doomberg/kind: backtest
+        doomberg/run-id: "${RUN_ID}"
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      nodeSelector:
+        workload: backtest
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: backtest
+          effect: NoSchedule
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backtest
+          image: ${WORKER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "doomberg_runtime.backtest_runner"]
+          env:
+            - name: DOOMBERG_MODE
+              value: "backtest"
+            - name: DOOMBERG_RUN_ID
+              value: "${RUN_ID}"
+            - name: DOOMBERG_TENANT_ID
+              value: "${TENANT_ID}"
+            - name: DATA_GATEWAY_URL
+              value: "http://data-gateway.doomberg-gateway.svc.cluster.local:8080"
+          resources:
+            requests:
+              cpu: "2"
+              memory: 2Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]

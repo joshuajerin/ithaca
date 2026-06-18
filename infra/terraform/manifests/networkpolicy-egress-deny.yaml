@@ -1,0 +1,54 @@
+# Default-deny egress for worker pods + single allow to the Data Gateway.
+#
+# This is the same invariant Terraform applies via kubernetes_network_policy
+# (network_policy.tf); kept here as a reviewable standalone manifest. DOKS runs
+# Cilium and enforces NetworkPolicy. Apply order does not matter — deny-all and
+# the allow combine (NetworkPolicy is additive-allow over a deny baseline).
+---
+# 1) Deny ALL ingress + egress for every pod in the worker namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: doomberg-workers
+spec:
+  podSelector: {} # all pods
+  policyTypes:
+    - Ingress
+    - Egress
+  # no ingress / egress rules == deny everything
+---
+# 2) The ONLY egress exception: worker pods -> Data Gateway facade + cluster DNS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-data-gateway
+  namespace: doomberg-workers
+spec:
+  podSelector:
+    matchLabels:
+      doomberg/component: worker
+  policyTypes:
+    - Egress
+  egress:
+    # Data Gateway facade RPC.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              doomberg/role: data-gateway
+          podSelector:
+            matchLabels:
+              doomberg/component: data-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Cluster DNS so the Gateway Service name resolves.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

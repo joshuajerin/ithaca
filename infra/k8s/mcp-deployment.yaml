@@ -1,0 +1,67 @@
+# mcp-gateway — the MCP tool surface (`python -m doomberg_mcp`).
+#
+# HARDENING NOTE: the MCP server is **stdio transport today** (see
+# deploy/entrypoint.sh: `python -m doomberg_mcp` defaults to stdio). It therefore
+# has **no HTTP listener and no ingress** — remote BYO agents cannot reach it over
+# the network yet. This Deployment runs it so the role is live in-cluster, but
+# hosting it for remote agents requires an HTTP/SSE transport + auth (Phase 7
+# hardening). It reads the archive over Postgres like the rest of the plane.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doomberg-mcp
+  namespace: doomberg-gateway
+  labels:
+    doomberg/component: mcp-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      doomberg/component: mcp-gateway
+  template:
+    metadata:
+      labels:
+        doomberg/component: mcp-gateway
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        workload: paper
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: paper
+          effect: NoSchedule
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      containers:
+        - name: mcp-gateway
+          image: ${WORKER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args: ["mcp-gateway"]
+          # stdio transport — keep the process alive so the role is resident.
+          stdin: true
+          tty: false
+          env:
+            - name: DOOMBERG_ARCHIVE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: doomberg-db
+                  key: archive_url
+          resources:
+            requests: { cpu: "100m", memory: 256Mi }
+            limits: { cpu: "500m", memory: 512Mi }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }

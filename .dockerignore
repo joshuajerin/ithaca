@@ -1,0 +1,59 @@
+# Keep the build context (and image) lean. The Dockerfile only needs the Python
+# workspace + scripts; everything below is irrelevant or large.
+
+# Large local data dumps — the v1 archive export (~92 MB) is loaded into Postgres
+# by the archive-load Job from Spaces, NOT baked into the image.
+data/
+
+# Python
+**/__pycache__/
+**/*.pyc
+.venv/
+**/.venv/
+.pytest_cache/
+**/.pytest_cache/
+.ruff_cache/
+**/.ruff_cache/
+**/*.egg-info/
+dist/
+build/
+
+# Node deps + the marketing site aren't needed by the build. The web UI (web/) IS
+# built by the Dockerfile's web-builder stage and baked into the runtime image via
+# `COPY --from=web-builder /app/web/dist`, so web/ and the pnpm workspace manifests
+# (package.json / pnpm-workspace.yaml / pnpm-lock.yaml) + the TS contracts package
+# MUST stay in the build context. The final image stays lean because only web/dist
+# is copied into the runtime stage. node_modules is reinstalled fresh by pnpm.
+node_modules/
+**/node_modules/
+web/dist/
+site/
+**/.vite/
+coverage/
+
+# Local SQLite system-of-record + WAL (dev only).
+*.db
+*.db-shm
+*.db-wal
+
+# Infra / deploy / CI / docs / VCS — not needed at run time.
+infra/
+.github/
+docs/
+history/
+.git/
+.gitignore
+.mcp.json
+
+# Env / secrets — never copy into an image.
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+.gstack/
+.claude/

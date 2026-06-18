@@ -1,0 +1,12 @@
+{
+  "spec_version": "1.0",
+  "name": "dual-momentum-tech",
+  "origin_session_id": "8b1f0e2a-3c4d-4e5f-9a0b-1c2d3e4f5a6b",
+  "universe": { "symbols": ["AAPL", "MSFT", "NVDA"], "source": "prices" },
+  "strategy": { "id": "momentum", "params": { "lookback": 90, "top": 2 } },
+  "construction": { "scheme": "rank_weight", "long_only": true, "gross": 1.0 },
+  "risk": { "max_gross": 1.0, "max_net": 1.0, "max_name_pct": 0.25 },
+  "execution": { "cost_bps": 5, "algo": "vwap", "rebalance": "daily@close" },
+  "resources": { "tier": "standard" },
+  "seed": 42
+}

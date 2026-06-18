@@ -1,0 +1,84 @@
+# Paper-tick CronJob — TEMPLATE rendered per paper deployment by the scheduler.
+#
+# Stateless ticks on the stable paper pool: each tick loads the book ->
+# evaluates on REAL current data (with a hard max-staleness floor; skip-and-alert
+# if stale) -> proposes a delta -> exits. The control plane is the sole writer of
+# the book (MASTER-PLAN §5.4/§5.5). A crash loses one tick, not the book.
+#
+# Invariants:
+#   - concurrencyPolicy: Forbid  (never overlap ticks for one book)
+#   - activeDeadlineSeconds on the Job template = per-tick aggregate deadline
+#   - restartPolicy: Never, backoffLimit: 0
+#   - doomberg/component=worker -> default-deny egress; only the Data Gateway allowed
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: paper-tick-${DEPLOYMENT_ID}
+  namespace: doomberg-workers
+  labels:
+    doomberg/component: worker
+    doomberg/kind: paper
+    doomberg/deployment-id: "${DEPLOYMENT_ID}"
+    doomberg/tenant-id: "${TENANT_ID}"
+spec:
+  schedule: "${PAPER_TICK_SCHEDULE}"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        doomberg/component: worker
+        doomberg/kind: paper
+    spec:
+      activeDeadlineSeconds: ${PAPER_TICK_ACTIVE_DEADLINE_SECONDS}
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 600
+      template:
+        metadata:
+          labels:
+            doomberg/component: worker
+            doomberg/kind: paper
+            doomberg/deployment-id: "${DEPLOYMENT_ID}"
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          nodeSelector:
+            workload: paper
+          tolerations:
+            - key: workload
+              operator: Equal
+              value: paper
+              effect: NoSchedule
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: paper-tick
+              image: ${WORKER_IMAGE}
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-m", "doomberg_runtime.live_runner"]
+              env:
+                - name: DOOMBERG_MODE
+                  value: "paper"
+                - name: DOOMBERG_DEPLOYMENT_ID
+                  value: "${DEPLOYMENT_ID}"
+                - name: DOOMBERG_TENANT_ID
+                  value: "${TENANT_ID}"
+                - name: DATA_GATEWAY_URL
+                  value: "http://data-gateway.doomberg-gateway.svc.cluster.local:8080"
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 512Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                capabilities:
+                  drop: ["ALL"]

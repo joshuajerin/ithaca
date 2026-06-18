@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "doomberg": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "doomberg_mcp"],
+      "env": {
+        "DOOMBERG_DB": "./doomberg.db"
+      }
+    }
+  }
+}

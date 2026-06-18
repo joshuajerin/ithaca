@@ -1,0 +1,224 @@
+# Always-on app pod: rest-gateway + control-plane + conductor.
+#
+# These THREE roles of the single doomberg image share one pod so they share the
+# SQLite system-of-record (DOOMBERG_DB=/data/doomberg.db on an emptyDir). A run
+# created via the control-plane/rest-gateway is therefore visible to the
+# conductor's BacktestWorker, which executes it to `succeeded` (the Phase 6 smoke
+# test). The archive (read-only reference data) is read separately over Postgres
+# via DOOMBERG_ARCHIVE_URL.
+#
+# Single replica by design (SQLite single-writer + pod-local emptyDir). Pinned to
+# the always-on paper pool. ${WORKER_IMAGE} is substituted by deploy_services.sh.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doomberg-app
+  namespace: doomberg-gateway
+  labels:
+    doomberg/component: app
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # one writer at a time on the shared SQLite file
+  selector:
+    matchLabels:
+      doomberg/component: app
+  template:
+    metadata:
+      labels:
+        doomberg/component: app
+        # Mark this pod as the data-gateway target so the workers' egress
+        # NetworkPolicy allow-rule (pod_selector doomberg/component=data-gateway)
+        # can reach the rest/control surface in-cluster.
+        doomberg/role: data-gateway
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        workload: paper
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: paper
+          effect: NoSchedule
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        # Durable block storage for the SQLite system-of-record — survives pod
+        # restarts/reschedules (emptyDir would lose all runs/strategies/trace/books).
+        # Single-replica by design (SQLite single-writer); RWO is correct.
+        - name: state
+          persistentVolumeClaim:
+            claimName: doomberg-state
+        - name: tmp
+          emptyDir: {}
+      containers:
+        # --- rest-gateway: the UI/REST backend (LB entry :80 → NodePort 30080) ---
+        - name: rest-gateway
+          image: ${WORKER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args: ["rest-gateway"]
+          ports:
+            - name: rest
+              containerPort: 8000
+          env:
+            - name: DOOMBERG_DB
+              value: /data/doomberg.db
+            - name: DOOMBERG_ARCHIVE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: doomberg-db
+                  key: archive_url
+            - name: DOOMBERG_REST_PORT
+              value: "8000"
+            - name: DOOMBERG_SESSION_SECRET
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: session_secret, optional: true }
+            - name: GOOGLE_CLIENT_ID
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: google_client_id, optional: true }
+            - name: GOOGLE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: google_client_secret, optional: true }
+            - name: GITHUB_CLIENT_ID
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: github_client_id, optional: true }
+            - name: GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: github_client_secret, optional: true }
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "200m", memory: 320Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          volumeMounts:
+            - { name: state, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+        # --- control-plane: the money-path writer (LB entry :8080 → NodePort 30808) ---
+        - name: control-plane
+          image: ${WORKER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args: ["control-plane"]
+          ports:
+            - name: control
+              containerPort: 8001
+          env:
+            - name: DOOMBERG_DB
+              value: /data/doomberg.db
+            - name: DOOMBERG_ARCHIVE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: doomberg-db
+                  key: archive_url
+            - name: DOOMBERG_CONTROL_PORT
+              value: "8001"
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8001 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8001 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "200m", memory: 320Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          volumeMounts:
+            - { name: state, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+        # --- conductor: backtest worker + paper scheduler (no ingress) ---
+        - name: conductor
+          image: ${WORKER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args: ["conductor"]
+          env:
+            - name: DOOMBERG_DB
+              value: /data/doomberg.db
+            - name: DOOMBERG_ARCHIVE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: doomberg-db
+                  key: archive_url
+            # Tighter loops so a queued backtest is picked up quickly.
+            - name: DOOMBERG_BACKTEST_INTERVAL_S
+              value: "2"
+            - name: DOOMBERG_PAPER_INTERVAL_S
+              value: "60"
+          resources:
+            requests: { cpu: "200m", memory: 320Mi }
+            limits: { cpu: "2", memory: 2Gi }
+          volumeMounts:
+            - { name: state, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+        # --- mcp-gateway (HTTP): the hosted MCP endpoint for remote BYO agents.
+        # Co-located in this pod ON PURPOSE so it shares the /data SQLite auth store
+        # with the control-plane (where tenant API keys are minted) — a separate pod
+        # can't share the RWO PVC. Streamable-HTTP at POST /mcp, per-tenant bearer auth.
+        # LB :8080 → NodePort 30808 → this container :8080. ---
+        - name: mcp-gateway
+          image: ${WORKER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args: ["mcp-gateway"]
+          ports:
+            - name: mcp
+              containerPort: 8080
+          env:
+            - name: DOOMBERG_MCP_TRANSPORT
+              value: http
+            - name: DOOMBERG_MCP_PORT
+              value: "8080"
+            - name: DOOMBERG_DB
+              value: /data/doomberg.db
+            - name: DOOMBERG_ARCHIVE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: doomberg-db
+                  key: archive_url
+          readinessProbe:
+            tcpSocket: { port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "150m", memory: 256Mi }
+            limits: { cpu: "1", memory: 512Mi }
+          volumeMounts:
+            - { name: state, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }

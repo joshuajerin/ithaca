@@ -1,0 +1,19 @@
+# Durable storage for the SQLite system-of-record (runs / strategies / trace / books).
+# DO block storage (do-block-storage), ReadWriteOnce — matched to the single-replica
+# doomberg-app Deployment. The read-only v1 archive lives in Managed Postgres (separate),
+# so this only needs to hold the platform's own transactional state.
+#
+# NOTE: this makes the single-pod deployment DURABLE (not HA). True multi-replica HA is the
+# follow-on migration of the platform stores from SQLite onto Managed Postgres (RLS schema).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: doomberg-state
+  namespace: doomberg-gateway
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: do-block-storage
+  resources:
+    requests:
+      storage: 5Gi

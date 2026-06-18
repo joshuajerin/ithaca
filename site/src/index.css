@@ -1,0 +1,246 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ *
+ * Doomberg design system
+ * Warm, grainy "scratchpad" palette: ivory paper, warm ink, amber/orange
+ * warm accent, olive brand green, a blueprint blue secondary + tans.
+ * DM Sans display, JetBrains Mono for eyebrow labels.
+ * ------------------------------------------------------------------ */
+@theme {
+  --color-cream: #f6f1e4;
+  --color-cream-2: #f1e9d6;
+  --color-paper: #ffffff;
+  --color-sand: #ecdcbe;
+  --color-sand-2: #f3ead7;
+
+  --color-ink: #1a1a14;
+  --color-ink-soft: #3a3a32;
+  --color-muted: #5f5d52;
+  --color-faint: #8a8a7e;
+
+  --color-olive: #485c11;
+  --color-olive-600: #3a4b0e;
+  --color-olive-700: #2c3a0a;
+  --color-olive-bright: #6f8f1a;
+  --color-leaf: #e8efd7;
+  --color-leaf-2: #dde8c4;
+
+  /* Amber/orange = the warm CTA accent (replaces the old gold) */
+  --color-gold: #ef9f2a;
+  --color-gold-deep: #5b4b24;
+  --color-tan: #c9a878;
+
+  --color-amber: #ef9f2a;
+  --color-amber-deep: #c9791a;
+  --color-blueprint: #2f6be5;
+  --color-blue-soft: #a9bbd0;
+  --color-live: #3dae5a;
+
+  --color-line: #e7dcc7;
+  --color-line-strong: #ddd0b8;
+
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  --radius-pill: 999px;
+
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv01";
+    overflow-x: hidden;
+  }
+  ::selection {
+    background: var(--color-leaf);
+    color: var(--color-olive-700);
+  }
+  h1, h2, h3 {
+    font-weight: 400;
+    letter-spacing: -0.03em;
+    line-height: 1.04;
+  }
+}
+
+@layer utilities {
+  /* Giant light-weight display headline (gokite-style 80px / -2.4px tracking) */
+  .display {
+    font-weight: 400;
+    letter-spacing: -0.035em;
+    line-height: 1.02;
+  }
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+  /* Subtle paper grain + grid layers reused across sections */
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, rgba(24, 23, 15, 0.045) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(24, 23, 15, 0.045) 1px, transparent 1px);
+    background-size: 64px 64px;
+  }
+  .bg-dotgrid {
+    background-image: radial-gradient(rgba(24, 23, 15, 0.10) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+  /* Film-grain "scratchpad" texture — inline feTurbulence fractal noise.
+     Layered over content at low opacity; small tile keeps grain fine. */
+  .bg-grain {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 200px 200px;
+    opacity: 0.32;
+  }
+  /* Heavy film-grain "scratch" texture for the hero scratchpad surface. */
+  .bg-grain-strong {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n2'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.62' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n2)'/%3E%3C/svg%3E");
+    background-size: 220px 220px;
+    opacity: 0.85;
+  }
+  /* Full-strength warm "scratchpad" gradient — cool blue-grey → cream → amber →
+     burnt orange → deep olive. Every band reads. The hero signature surface. */
+  .bg-hero-warm {
+    background-image: linear-gradient(
+      180deg,
+      #aebfd4 0%,
+      #c4c5bb 16%,
+      #e6dcc4 33%,
+      #edca8e 50%,
+      #e0a04a 62%,
+      #b8863a 73%,
+      #6f6630 85%,
+      #2e3114 100%
+    );
+  }
+  .mask-fade-y {
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 12%, #000 88%, transparent);
+    mask-image: linear-gradient(to bottom, transparent, #000 12%, #000 88%, transparent);
+  }
+  .mask-fade-x {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent);
+    mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent);
+  }
+}
+
+/* Marquee keyframes for the data-source ticker */
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.animate-marquee {
+  animation: marquee 38s linear infinite;
+}
+
+/* Slow aurora drift for hero background orbs */
+@keyframes drift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(2.5rem, -1.5rem, 0) scale(1.08); }
+}
+.animate-drift { animation: drift 16s var(--ease-out-soft) infinite; }
+.animate-drift-slow { animation: drift 24s var(--ease-out-soft) infinite; }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.animate-pulse-dot { animation: pulse-dot 1.8s ease-in-out infinite; }
+
+/* ---- 3D isometric layered stack (the "Three Layers" centerpiece) -------- */
+.preserve-3d { transform-style: preserve-3d; }
+.backface-hidden { backface-visibility: hidden; }
+
+/* Gentle vertical bob for each floating slab. translateZ carries the stack
+   offset AND the bob, so motion reads as a clean vertical float in iso space. */
+@keyframes bob-top {
+  0%, 100% { transform: translateZ(132px); }
+  50% { transform: translateZ(152px); }
+}
+@keyframes bob-mid {
+  0%, 100% { transform: translateZ(0px); }
+  50% { transform: translateZ(11px); }
+}
+@keyframes bob-bot {
+  0%, 100% { transform: translateZ(-132px); }
+  50% { transform: translateZ(-120px); }
+}
+.bob-top { transform: translateZ(132px); animation: bob-top 7.5s var(--ease-out-soft) infinite; }
+.bob-mid { transform: translateZ(0px); animation: bob-mid 7.5s var(--ease-out-soft) infinite 0.5s; }
+.bob-bot { transform: translateZ(-132px); animation: bob-bot 7.5s var(--ease-out-soft) infinite 1s; }
+
+/* Soft pulsing glow for the central orb. */
+@keyframes orb-glow {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50% { opacity: 0.9; transform: scale(1.08); }
+}
+.animate-orb-glow { animation: orb-glow 4.5s ease-in-out infinite; }
+
+/* Slow dot-matrix shimmer for the settlement/observability plane. */
+@keyframes matrix-pan {
+  from { background-position: 0 0; }
+  to { background-position: 0 -240px; }
+}
+.animate-matrix { animation: matrix-pan 9s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-marquee,
+  .animate-drift,
+  .animate-drift-slow,
+  .animate-pulse-dot,
+  .bob-top, .bob-mid, .bob-bot,
+  .animate-orb-glow, .animate-matrix { animation: none; }
+  html { scroll-behavior: auto; }
+}
+
+/* ---- Layer slab animations ----------------------------------------------- */
+/* Observe: dot travelling along a path */
+@keyframes dot-travel {
+  0%   { offset-distance: 0%;   opacity: 0; }
+  8%   { opacity: 1; }
+  92%  { opacity: 1; }
+  100% { offset-distance: 100%; opacity: 0; }
+}
+.dot-travel {
+  position: absolute;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: #6f8f1a;
+  offset-rotate: 0deg;
+  animation: dot-travel 2.8s cubic-bezier(0.45,0,0.55,1) infinite;
+  box-shadow: 0 0 6px 2px rgba(111,143,26,0.7);
+}
+
+/* Deploy: live bar height animation */
+@keyframes bar-live {
+  0%, 100% { transform: scaleY(1); }
+  50%       { transform: scaleY(var(--peak)); }
+}
+.bar-live {
+  transform-origin: bottom;
+  animation: bar-live var(--dur, 1.8s) ease-in-out infinite;
+  animation-delay: var(--del, 0s);
+}
+
+/* Data: cell pulse */
+@keyframes cell-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%       { opacity: 1; }
+}
+.cell-pulse {
+  animation: cell-pulse var(--dur, 2.2s) ease-in-out infinite;
+  animation-delay: var(--del, 0s);
+}

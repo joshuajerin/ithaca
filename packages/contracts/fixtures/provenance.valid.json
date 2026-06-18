@@ -1,0 +1,15 @@
+{
+  "data": { "symbol": "AAPL", "close": 212.45 },
+  "provenance": {
+    "source": "yahoo-chart",
+    "as_of": "2026-06-16T20:00:00Z",
+    "freshness": "live",
+    "stale_age_sec": 0,
+    "pit": "false",
+    "coverage": { "requested": 1, "resolved": 1, "missing": [] },
+    "cost": { "class": "network", "credits": 1 },
+    "cache_hit": false
+  },
+  "partial": false,
+  "warnings": []
+}
