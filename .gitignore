@@ -12,6 +12,7 @@ build/
 node_modules/
 .vite/
 coverage/
+*.tsbuildinfo
 
 # Env / secrets
 .env

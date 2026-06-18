@@ -70,6 +70,9 @@ importers:
       '@doomberg/contracts':
         specifier: workspace:*
         version: link:../packages/contracts/ts
+      '@vercel/analytics':
+        specifier: ^2.0.1
+        version: 2.0.1(react@18.3.1)
       react:
         specifier: ^18.3.1
         version: 18.3.1

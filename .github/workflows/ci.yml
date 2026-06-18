@@ -26,7 +26,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
       - name: Regenerate from schema and fail on drift
         run: bash packages/contracts/scripts/check_drift.sh
 
