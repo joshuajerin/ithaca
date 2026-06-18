@@ -82,10 +82,14 @@ RUN corepack enable && corepack prepare pnpm@10.30.1 --activate
 
 WORKDIR /app
 
-# Copy workspace manifests for dependency caching
+# Copy workspace manifests for dependency caching.
+# All three workspace packages (web, site, packages/contracts/ts) must have their
+# package.json present so pnpm workspace resolution succeeds with --frozen-lockfile.
+# site/ is built by Vercel, not here — only its manifest is needed for pnpm.
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages/contracts/ts/package.json packages/contracts/ts/
 COPY web/package.json web/
+COPY site/package.json site/
 
 # Install with scripts disabled first, then rebuild esbuild explicitly
 # (pnpm's build-script security prompt blocks --frozen-lockfile in CI otherwise)

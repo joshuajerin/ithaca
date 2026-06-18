@@ -54,6 +54,16 @@ case "${ROLE}" in
     # Stream 1's one-shot archive loader (seeds archive.* on first deploy).
     exec python scripts/import_v1_archive.py "$@"
     ;;
+  archive-migrate)
+    # Idempotent DDL: applies schema.sql (CREATE TABLE/INDEX IF NOT EXISTS) to the
+    # live archive Postgres. Run as an init container before the app starts so new
+    # tables appear automatically on every deploy without manual intervention.
+    exec python scripts/migrate_archive.py "$@"
+    ;;
+  archive-load-short)
+    # Weekly CronJob: populate archive.short_interest from yfinance for the universe.
+    exec python scripts/load_short_interest.py "$@"
+    ;;
   shell)
     exec /bin/bash "$@"
     ;;

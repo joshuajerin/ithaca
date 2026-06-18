@@ -54,7 +54,8 @@ kubectl -n "${NS}" create secret generic doomberg-db \
   --dry-run=client -o yaml | kubectl apply -f -
 
 echo "==> applying manifests with image ${WORKER_IMAGE}"
-for f in infra/k8s/app-deployment.yaml infra/k8s/app-service.yaml infra/k8s/mcp-deployment.yaml; do
+for f in infra/k8s/app-deployment.yaml infra/k8s/app-service.yaml infra/k8s/mcp-deployment.yaml \
+         infra/k8s/short-loader.yaml; do
   sed "s|\${WORKER_IMAGE}|${WORKER_IMAGE}|g" "${f}" | kubectl apply -f -
 done
 

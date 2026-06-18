@@ -47,6 +47,29 @@ spec:
         fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        # Apply any new archive.* DDL before the app containers start.
+        # Uses IF NOT EXISTS throughout so it's safe to re-run on every pod start.
+        - name: archive-migrate
+          image: ${WORKER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args: ["archive-migrate"]
+          env:
+            - name: DOOMBERG_ARCHIVE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: doomberg-db
+                  key: archive_url
+          resources:
+            requests: { cpu: "100m", memory: 128Mi }
+            limits: { cpu: "500m", memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
       volumes:
         # Durable block storage for the SQLite system-of-record — survives pod
         # restarts/reschedules (emptyDir would lose all runs/strategies/trace/books).
