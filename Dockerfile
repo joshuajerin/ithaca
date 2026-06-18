@@ -78,7 +78,7 @@ ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID \
     VITE_API_BASE=$VITE_API_BASE
 
 # Install pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@10.30.1 --activate
 
 WORKDIR /app
 
@@ -87,7 +87,10 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages/contracts/ts/package.json packages/contracts/ts/
 COPY web/package.json web/
 
-RUN pnpm install --frozen-lockfile
+# Install with scripts disabled first, then rebuild esbuild explicitly
+# (pnpm's build-script security prompt blocks --frozen-lockfile in CI otherwise)
+RUN pnpm install --frozen-lockfile --ignore-scripts && \
+    pnpm rebuild esbuild
 
 # Copy source and build
 COPY packages/contracts/ packages/contracts/
