@@ -1,8 +1,16 @@
-const COLUMNS: { heading: string; links: string[] }[] = [
+import { Link } from "react-router-dom";
+
+const PLACEHOLDER_COLS: { heading: string; links: string[] }[] = [
   { heading: "Platform", links: ["MCP gateway", "Tools catalog", "Glass box", "Boards", "Pricing"] },
   { heading: "Build", links: ["Docs", "StrategySpec", "API reference", "Status", "Changelog"] },
   { heading: "Company", links: ["About", "Architecture", "Security", "Careers", "Blog"] },
-  { heading: "Legal", links: ["Terms", "Privacy", "Data sources", "Disclosures"] },
+];
+
+const LEGAL_LINKS: { label: string; href: string }[] = [
+  { label: "Terms", href: "/legal/terms" },
+  { label: "Privacy", href: "/legal/privacy" },
+  { label: "Data sources", href: "/legal/data-sources" },
+  { label: "Disclosures", href: "/legal/disclosures" },
 ];
 
 export default function Footer() {
@@ -38,7 +46,8 @@ export default function Footer() {
             </div>
           </div>
 
-          {COLUMNS.map((col) => (
+          {/* placeholder columns */}
+          {PLACEHOLDER_COLS.map((col) => (
             <div key={col.heading}>
               <h4 className="font-mono text-[0.72rem] uppercase tracking-[0.14em] text-faint">
                 {col.heading}
@@ -57,11 +66,32 @@ export default function Footer() {
               </ul>
             </div>
           ))}
+
+          {/* legal column — real links */}
+          <div>
+            <h4 className="font-mono text-[0.72rem] uppercase tracking-[0.14em] text-faint">
+              Legal
+            </h4>
+            <ul className="mt-4 space-y-2.5">
+              {LEGAL_LINKS.map((l) => (
+                <li key={l.href}>
+                  <Link
+                    to={l.href}
+                    className="text-[0.92rem] text-ink-soft transition-colors hover:text-olive"
+                  >
+                    {l.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
 
         <div className="mt-14 flex flex-col items-start justify-between gap-4 border-t border-line pt-7 sm:flex-row sm:items-center">
           <p className="text-[0.82rem] text-faint">
-            © {new Date().getFullYear()} Doomberg. Research & paper-trading platform — not investment advice.
+            © {new Date().getFullYear()} Doomberg. Research & paper-trading platform.{" "}
+            <Link to="/legal/disclosures" className="hover:text-olive">Not investment advice.</Link>
+            {" "}Not a registered broker-dealer or investment adviser.
           </p>
           <p className="font-mono text-[0.72rem] uppercase tracking-[0.14em] text-faint">
             Never runs your agent · Never executes agent code

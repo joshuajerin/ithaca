@@ -244,3 +244,29 @@
   animation: cell-pulse var(--dur, 2.2s) ease-in-out infinite;
   animation-delay: var(--del, 0s);
 }
+
+/* ------------------------------------------------------------------ *
+ * Legal pages — prose content styles
+ * ------------------------------------------------------------------ */
+.prose-legal p {
+  color: var(--color-ink-soft, #4a4133);
+  font-size: 0.95rem;
+  line-height: 1.75;
+}
+.prose-legal ul {
+  color: var(--color-ink-soft, #4a4133);
+  font-size: 0.95rem;
+  line-height: 1.75;
+}
+.prose-legal strong {
+  color: var(--color-ink, #1a1208);
+  font-weight: 600;
+}
+.prose-legal a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-legal code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.85em;
+}

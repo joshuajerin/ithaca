@@ -71,6 +71,10 @@ export function App() {
           api {api.apiBase}
           <br />
           tenant {api.tenantId.slice(0, 8)}…
+          <br />
+          <a href="https://doomberg.me/legal/terms" target="_blank" rel="noopener noreferrer" className="link-btn">Terms</a>
+          {" · "}
+          <a href="https://doomberg.me/legal/privacy" target="_blank" rel="noopener noreferrer" className="link-btn">Privacy</a>
         </div>
       </aside>
       <main className="main">
