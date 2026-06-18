@@ -42,8 +42,8 @@ export function AuthCallback() {
     sessionStorage.removeItem("oauth_state");
 
     exchangeCode(provider, code)
-      .then((user) => {
-        setSession(user);
+      .then(({ user, token }) => {
+        setSession(user, token);
         backToAuth();
       })
       .catch((e: unknown) => {

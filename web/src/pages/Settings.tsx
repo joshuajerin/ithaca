@@ -15,18 +15,11 @@ function maskToken(t: string): string {
 
 export function Settings() {
   const { user, integrations, setIntegration, signOut } = useAuth();
-  const [token, setToken] = useState<string>(
-    () => localStorage.getItem("doomberg.mcp_token") ?? "dmb_live_3f9c2a7e8b14d05f6a2c",
+  const [token] = useState<string>(
+    () => localStorage.getItem("doomberg.token") ?? "",
   );
   const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState(false);
-
-  function regenerate() {
-    const t = `dmb_live_${Math.random().toString(36).slice(2, 12)}${Math.random().toString(36).slice(2, 12)}`;
-    localStorage.setItem("doomberg.mcp_token", t);
-    setToken(t);
-    setRevealed(true);
-  }
 
   function copyToken() {
     navigator.clipboard?.writeText(token).then(() => {
@@ -106,21 +99,31 @@ export function Settings() {
             <label>Tenant</label>
             <code className="mono set-value">{api.tenantId}</code>
           </div>
-          <div className="set-field">
-            <label>MCP token</label>
-            <code className="mono set-value">{revealed ? token : maskToken(token)}</code>
-            <div className="set-actions">
-              <button className="btn" onClick={() => setRevealed((v) => !v)}>
-                {revealed ? "Hide" : "Reveal"}
-              </button>
-              <button className="btn" onClick={copyToken}>
-                {copied ? "Copied" : "Copy"}
-              </button>
-              <button className="btn" onClick={regenerate}>
-                Regenerate
-              </button>
-            </div>
-          </div>
+          {token ? (
+            <>
+              <div className="set-field">
+                <label>Key ID</label>
+                <code className="mono set-value">{token.split("_")[2] ?? "—"}</code>
+              </div>
+              <div className="set-field">
+                <label>Bearer token</label>
+                <code className="mono set-value">{revealed ? token : maskToken(token)}</code>
+                <div className="set-actions">
+                  <button className="btn" onClick={() => setRevealed((v) => !v)}>
+                    {revealed ? "Hide" : "Reveal"}
+                  </button>
+                  <button className="btn" onClick={copyToken}>
+                    {copied ? "Copied" : "Copy"}
+                  </button>
+                  <button className="btn" onClick={signOut}>
+                    Sign out and reconnect
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="set-hint">No bearer token — sign in via OAuth to mint one.</div>
+          )}
           <div className="set-hint">
             Point your agent at <code>{api.apiBase.replace("/api", "")}/mcp</code> with this token
             as the bearer. Read + propose_strategy scopes only — it can never move money.
