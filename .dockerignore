@@ -18,17 +18,18 @@ data/
 dist/
 build/
 
-# Node / web / marketing site — not part of the service image.
+# Node deps + the marketing site aren't needed by the build. The web UI (web/) IS
+# built by the Dockerfile's web-builder stage and baked into the runtime image via
+# `COPY --from=web-builder /app/web/dist`, so web/ and the pnpm workspace manifests
+# (package.json / pnpm-workspace.yaml / pnpm-lock.yaml) + the TS contracts package
+# MUST stay in the build context. The final image stays lean because only web/dist
+# is copied into the runtime stage. node_modules is reinstalled fresh by pnpm.
 node_modules/
 **/node_modules/
-web/
+web/dist/
 site/
-packages/contracts/ts/
 **/.vite/
 coverage/
-pnpm-lock.yaml
-pnpm-workspace.yaml
-package.json
 
 # Local SQLite system-of-record + WAL (dev only).
 *.db
