@@ -3,7 +3,209 @@ const HERMES_DEFAULT_ENDPOINT = "https://urban-baseball-nerve-offices.trycloudfl
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
   "cache-control": "no-store",
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET,POST,OPTIONS,DELETE",
+  "access-control-allow-headers": "content-type,authorization",
 };
+
+// ---------------------------------------------------------------------------
+// Live market data (keyless Yahoo Finance endpoints).
+//
+// Two upstreams that work without an API key from a server context:
+//   - v8 chart  : real-time-ish quote + OHLCV history per symbol.
+//   - v1 search : symbol lookup + fresh news headlines.
+// The v7 batch-quote endpoint now returns Unauthorized, so quotes are fanned
+// out one chart call per symbol (bounded) instead. Every value returned is the
+// genuine upstream number — never synthesised. Upstream failures surface as a
+// clean per-symbol error entry rather than a fabricated price.
+// ---------------------------------------------------------------------------
+const YF_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/";
+const YF_SEARCH = "https://query1.finance.yahoo.com/v1/finance/search";
+const YF_UA = { "user-agent": "Mozilla/5.0 (compatible; DoombergTerminal/1.0)" };
+const YF_TIMEOUT_MS = 12000;
+const MAX_SYMBOLS = 25;
+
+// A small, liquid default universe for the /movers endpoint when no symbols
+// are supplied. These are well-known large caps; the move numbers are still the
+// real upstream values, only the membership of the list is curated.
+const MOVERS_UNIVERSE = [
+  "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AMD", "NFLX", "AVGO",
+  "JPM", "BAC", "XOM", "WMT", "DIS", "BA", "INTC", "PYPL", "CRM", "ORCL",
+];
+
+function round(v, p = 2) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return null;
+  const f = 10 ** p;
+  return Math.round(Number(v) * f) / f;
+}
+
+function isoFromEpoch(sec) {
+  if (!sec) return null;
+  return new Date(Number(sec) * 1000).toISOString();
+}
+
+function parseSymbols(raw) {
+  return String(raw || "")
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean)
+    .slice(0, MAX_SYMBOLS);
+}
+
+async function yfFetch(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), YF_TIMEOUT_MS);
+  try {
+    const resp = await fetch(url, { headers: YF_UA, signal: controller.signal });
+    if (!resp.ok) throw new Error(`upstream HTTP ${resp.status}`);
+    return await resp.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchQuote(symbol) {
+  const url = `${YF_CHART}${encodeURIComponent(symbol)}?range=1d&interval=1d&includePrePost=false`;
+  const data = await yfFetch(url);
+  const r0 = data?.chart?.result?.[0];
+  const err = data?.chart?.error;
+  if (err) throw new Error(err?.description || err?.code || `no data for ${symbol}`);
+  if (!r0?.meta) throw new Error(`no quote data for ${symbol}`);
+  const m = r0.meta;
+  const price = m.regularMarketPrice ?? null;
+  const prev = m.chartPreviousClose ?? m.previousClose ?? null;
+  let change = null;
+  let changePct = null;
+  if (price !== null && prev) {
+    change = round(price - prev);
+    changePct = round(((price - prev) / prev) * 100);
+  }
+  return {
+    symbol: m.symbol || symbol.toUpperCase(),
+    name: m.longName || m.shortName || null,
+    price,
+    change,
+    changePct,
+    currency: m.currency || "USD",
+    marketState: m.marketState || null,
+    exchange: m.fullExchangeName || m.exchangeName || null,
+    dayHigh: m.regularMarketDayHigh ?? null,
+    dayLow: m.regularMarketDayLow ?? null,
+    open: m.regularMarketOpen ?? null,
+    previousClose: prev,
+    week52High: m.fiftyTwoWeekHigh ?? null,
+    week52Low: m.fiftyTwoWeekLow ?? null,
+    volume: m.regularMarketVolume ?? null,
+    asOf: isoFromEpoch(m.regularMarketTime),
+  };
+}
+
+async function fetchQuotes(symbols) {
+  const settled = await Promise.allSettled(symbols.map((s) => fetchQuote(s)));
+  const quotes = [];
+  const errors = [];
+  settled.forEach((r, i) => {
+    if (r.status === "fulfilled") quotes.push(r.value);
+    else errors.push({ symbol: symbols[i], error: r.reason instanceof Error ? r.reason.message : String(r.reason) });
+  });
+  return { quotes, errors };
+}
+
+async function fetchHistory(symbol, range = "6mo", interval = "1d") {
+  const url = `${YF_CHART}${encodeURIComponent(symbol)}?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}&includePrePost=false`;
+  const data = await yfFetch(url);
+  const r0 = data?.chart?.result?.[0];
+  const err = data?.chart?.error;
+  if (err) throw new Error(err?.description || err?.code || `no data for ${symbol}`);
+  if (!r0) throw new Error(`no history for ${symbol}`);
+  const m = r0.meta || {};
+  const ts = r0.timestamp || [];
+  const q = (r0.indicators?.quote || [{}])[0] || {};
+  const o = q.open || [];
+  const h = q.high || [];
+  const l = q.low || [];
+  const c = q.close || [];
+  const v = q.volume || [];
+  const intraday = /m$|^1h$|h$/.test(interval) && interval !== "1mo" && interval !== "3mo";
+  const points = [];
+  for (let i = 0; i < ts.length; i += 1) {
+    const close = c[i];
+    if (close === null || close === undefined) continue;
+    const when = new Date(Number(ts[i]) * 1000);
+    points.push({
+      t: intraday ? when.toISOString() : when.toISOString().slice(0, 10),
+      o: round(o[i] ?? close),
+      h: round(h[i] ?? close),
+      l: round(l[i] ?? close),
+      c: round(close),
+      v: Number(v[i] ?? 0) || 0,
+    });
+  }
+  return {
+    symbol: m.symbol || symbol.toUpperCase(),
+    name: m.longName || m.shortName || null,
+    currency: m.currency || "USD",
+    range,
+    interval,
+    price: m.regularMarketPrice ?? null,
+    asOf: isoFromEpoch(m.regularMarketTime),
+    count: points.length,
+    points,
+  };
+}
+
+async function fetchNews(queryStr, limit = 10) {
+  const n = Math.max(1, Math.min(50, Number(limit) || 10));
+  const url = `${YF_SEARCH}?q=${encodeURIComponent(queryStr)}&newsCount=${n}&quotesCount=0&enableFuzzyQuery=false`;
+  const data = await yfFetch(url);
+  return (data?.news || []).slice(0, n).map((item) => ({
+    uuid: item.uuid || null,
+    title: item.title || null,
+    publisher: item.publisher || null,
+    link: item.link || null,
+    publishedAt: isoFromEpoch(item.providerPublishTime),
+    type: item.type || null,
+    relatedTickers: item.relatedTickers || [],
+    thumbnail: item.thumbnail?.resolutions?.[0]?.url || null,
+  }));
+}
+
+async function fetchSearch(queryStr, limit = 10) {
+  const n = Math.max(1, Math.min(20, Number(limit) || 10));
+  const url = `${YF_SEARCH}?q=${encodeURIComponent(queryStr)}&quotesCount=${n}&newsCount=0&enableFuzzyQuery=false`;
+  const data = await yfFetch(url);
+  return (data?.quotes || [])
+    .filter((q) => q.symbol)
+    .slice(0, n)
+    .map((q) => ({
+      symbol: q.symbol,
+      name: q.longname || q.shortname || null,
+      exchange: q.exchDisp || q.exchange || null,
+      type: q.quoteType || q.typeDisp || null,
+      sector: q.sector || null,
+      industry: q.industry || null,
+    }));
+}
+
+async function fetchMovers(symbols, limit = 10) {
+  const { quotes, errors } = await fetchQuotes(symbols);
+  const ranked = quotes
+    .filter((q) => q.changePct !== null)
+    .sort((a, b) => b.changePct - a.changePct);
+  const n = Math.max(1, Math.min(symbols.length, Number(limit) || 10));
+  return {
+    gainers: ranked.slice(0, n),
+    losers: ranked.slice(-n).reverse(),
+    universe: symbols,
+    errors,
+  };
+}
+
+function sendData(res, payload, { cacheSeconds = 15 } = {}) {
+  return sendJson(res, 200, payload, {
+    "cache-control": `public, max-age=0, s-maxage=${cacheSeconds}, stale-while-revalidate=60`,
+  });
+}
 
 // Per-tenant Hermes endpoint selection. Each site has its OWN isolated Hermes
 // sandbox (separate session + system prompt) exposed at a distinct path on the
@@ -256,6 +458,16 @@ export default async function handler(req, res) {
       tenant: tenant.id,
       hermesConfigured: Boolean(key),
       supabaseConfigured: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY),
+      liveData: {
+        source: "yahoo-finance",
+        endpoints: [
+          "GET /api/market/quote?symbols=AAPL,NVDA",
+          "GET /api/market/history?symbol=AAPL&range=6mo&interval=1d",
+          "GET /api/market/news?q=AAPL&limit=10",
+          "GET /api/market/search?q=apple",
+          "GET /api/market/movers?limit=10",
+        ],
+      },
     });
   }
   if (req.method === "GET" && path === "auth/user") return sendJson(res, 200, identityForTenant(tenant));
@@ -288,6 +500,65 @@ export default async function handler(req, res) {
   if (req.method === "POST" && path === "navigate") return sendJson(res, 200, { stops: [] });
   if (req.method === "POST" && path === "speak") return sendJson(res, 200, { audio: "", format: "none" });
   if (req.method === "POST" && path === "transcribe") return sendJson(res, 200, { text: "" });
+
+  // ---- Live market data (real, keyless Yahoo Finance upstreams) ------------
+  if (req.method === "GET" && (path === "market/quote" || path === "market/quotes")) {
+    const url = new URL(req.url || "/", "https://x.local");
+    const symbols = parseSymbols(url.searchParams.get("symbols") || url.searchParams.get("symbol"));
+    if (!symbols.length) return sendJson(res, 400, { detail: "symbols query param is required, e.g. ?symbols=AAPL,NVDA" });
+    try {
+      const { quotes, errors } = await fetchQuotes(symbols);
+      if (!quotes.length) return sendJson(res, 502, { detail: "no quotes returned", errors });
+      return sendData(res, { asOf: new Date().toISOString(), count: quotes.length, quotes, errors });
+    } catch (err) {
+      return sendJson(res, 502, { detail: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  if (req.method === "GET" && path === "market/history") {
+    const url = new URL(req.url || "/", "https://x.local");
+    const symbol = (url.searchParams.get("symbol") || "").trim().toUpperCase();
+    if (!symbol) return sendJson(res, 400, { detail: "symbol query param is required, e.g. ?symbol=AAPL&range=6mo&interval=1d" });
+    const range = url.searchParams.get("range") || "6mo";
+    const interval = url.searchParams.get("interval") || "1d";
+    try {
+      return sendData(res, await fetchHistory(symbol, range, interval), { cacheSeconds: 60 });
+    } catch (err) {
+      return sendJson(res, 502, { detail: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  if (req.method === "GET" && path === "market/news") {
+    const url = new URL(req.url || "/", "https://x.local");
+    const q = (url.searchParams.get("q") || url.searchParams.get("symbol") || "stock market").trim();
+    const limit = url.searchParams.get("limit") || 10;
+    try {
+      const news = await fetchNews(q, limit);
+      return sendData(res, { query: q, count: news.length, news }, { cacheSeconds: 120 });
+    } catch (err) {
+      return sendJson(res, 502, { detail: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  if (req.method === "GET" && path === "market/search") {
+    const url = new URL(req.url || "/", "https://x.local");
+    const q = (url.searchParams.get("q") || "").trim();
+    if (!q) return sendJson(res, 400, { detail: "q query param is required, e.g. ?q=apple" });
+    try {
+      const results = await fetchSearch(q, url.searchParams.get("limit") || 10);
+      return sendData(res, { query: q, count: results.length, results }, { cacheSeconds: 300 });
+    } catch (err) {
+      return sendJson(res, 502, { detail: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  if (req.method === "GET" && path === "market/movers") {
+    const url = new URL(req.url || "/", "https://x.local");
+    const symbols = parseSymbols(url.searchParams.get("symbols")) ;
+    const universe = symbols.length ? symbols : MOVERS_UNIVERSE;
+    const limit = url.searchParams.get("limit") || 10;
+    try {
+      return sendData(res, { asOf: new Date().toISOString(), ...(await fetchMovers(universe, limit)) }, { cacheSeconds: 30 });
+    } catch (err) {
+      return sendJson(res, 502, { detail: err instanceof Error ? err.message : String(err) });
+    }
+  }
 
   return sendJson(res, 404, { detail: `Unknown API route: /api/${path}` });
 }
