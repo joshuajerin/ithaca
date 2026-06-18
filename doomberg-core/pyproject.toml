@@ -8,6 +8,9 @@ dependencies = [
     "pydantic>=2.7",
     "httpx>=0.28",
     "doomberg-contracts",
+    "requests>=2.32",
+    "yfinance>=0.2",
+    "pandas>=2.0",
 ]
 
 [project.optional-dependencies]
