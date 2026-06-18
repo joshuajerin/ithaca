@@ -197,10 +197,17 @@ def _transport_security():
     * ``DOOMBERG_MCP_ALLOWED_HOSTS`` unset → protection OFF (trust the proxy + bearer auth).
     * set (comma-separated, e.g. ``mcp.doomberg.ai,mcp.doomberg.ai:443``) → protection ON,
       restricted to exactly those hosts (``host:*`` wildcard-port patterns supported by the SDK).
+
+    Falls back to ``None`` when the SDK version does not expose
+    ``mcp.server.transport_security`` (mcp < 1.10).
     """
     import os
 
-    from mcp.server.transport_security import TransportSecuritySettings
+    try:
+        from mcp.server.transport_security import TransportSecuritySettings
+    except ImportError:
+        # mcp < 1.10 — transport_security module not available; pass None (SDK default).
+        return None
 
     raw = (os.environ.get("DOOMBERG_MCP_ALLOWED_HOSTS") or "").strip()
     if not raw:
@@ -470,7 +477,7 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     def short_volume(symbol: str, days: int = 30) -> dict:
         return call_skill("short.volume", {"symbol": symbol, "days": days})
 
-    @mcp.tool(name="failures_to_deliver", description="SEC failures-to-deliver (FTD) records for a symbol — a short squeeze indicator.")
+    @mcp.tool(name="short_ftd", description="SEC failures-to-deliver (FTD) records for a symbol — a short squeeze indicator.")
     def failures_to_deliver(symbol: str, limit: int = 20) -> dict:
         return call_skill("short.ftd", {"symbol": symbol, "limit": limit})
 
