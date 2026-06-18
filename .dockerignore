@@ -27,7 +27,10 @@ build/
 node_modules/
 **/node_modules/
 web/dist/
+# site/ is built by Vercel, not Docker. Exclude source but allow package.json so
+# the pnpm workspace resolver can find it during `pnpm install --frozen-lockfile`.
 site/
+!site/package.json
 **/.vite/
 coverage/
 
