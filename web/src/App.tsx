@@ -1,6 +1,10 @@
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { Dashboard } from "./pages/Dashboard";
+import { SessionsList } from "./pages/SessionsList";
+import { SessionDetail } from "./pages/SessionDetail";
+import { NewSession } from "./pages/NewSession";
+import { Docs } from "./pages/Docs";
 import { RunsList } from "./pages/RunsList";
-import { RunDetail } from "./pages/RunDetail";
 import { Deploys } from "./pages/Deploys";
 import { Trades } from "./pages/Trades";
 import { Ideas } from "./pages/Ideas";
@@ -9,11 +13,11 @@ import { AuthPage } from "./pages/AuthPage";
 import { useAuth } from "./auth/AuthContext";
 import { api } from "./api";
 
-const NAV: { to: string; label: string }[] = [
-  { to: "/runs", label: "Runs" },
-  { to: "/deploys", label: "Deploys" },
-  { to: "/trades", label: "Trades" },
-  { to: "/ideas", label: "Ideas" },
+const NAV: { to: string; label: string; cta?: boolean }[] = [
+  { to: "/new-session", label: "New Session", cta: true },
+  { to: "/dashboard", label: "Dashboard" },
+  { to: "/sessions", label: "Sessions" },
+  { to: "/docs", label: "Docs" },
   { to: "/settings", label: "Settings" },
 ];
 
@@ -48,7 +52,11 @@ export function App() {
         </div>
         <nav className="rail-nav">
           {NAV.map((n) => (
-            <NavLink key={n.to} to={n.to} className={({ isActive }) => `rail-link ${isActive ? "active" : ""}`}>
+            <NavLink
+              key={n.to}
+              to={n.to}
+              className={({ isActive }) => `rail-link ${n.cta ? "rail-cta" : ""} ${isActive ? "active" : ""}`}
+            >
               {n.label}
             </NavLink>
           ))}
@@ -75,9 +83,14 @@ export function App() {
       </aside>
       <main className="main">
         <Routes>
-          <Route path="/" element={<Navigate to="/runs" replace />} />
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/new-session" element={<NewSession />} />
+          <Route path="/sessions" element={<SessionsList />} />
+          <Route path="/sessions/:id" element={<SessionDetail />} />
+          <Route path="/docs" element={<Docs />} />
           <Route path="/runs" element={<RunsList />} />
-          <Route path="/runs/:id" element={<RunDetail />} />
+          <Route path="/runs/:id" element={<SessionDetail />} />
           <Route path="/deploys" element={<Deploys />} />
           <Route path="/trades" element={<Trades />} />
           <Route path="/ideas" element={<Ideas />} />

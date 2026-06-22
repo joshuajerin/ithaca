@@ -32,11 +32,19 @@ class _FakeRuns:
 
     def __init__(self) -> None:
         self.created: list[str] = []
+        self.rows: dict[tuple[str, str], dict] = {}
 
     def create_research(self, tenant_id: str) -> str:
         run_id = str(uuid.uuid4())
         self.created.append(run_id)
+        self.rows[(tenant_id, run_id)] = {"tenant_id": tenant_id, "run_id": run_id, "kind": "research"}
         return run_id
+
+    def get(self, tenant_id: str, run_id: str) -> dict | None:
+        return self.rows.get((tenant_id, run_id))
+
+    def seed_research(self, tenant_id: str, run_id: str) -> None:
+        self.rows[(tenant_id, run_id)] = {"tenant_id": tenant_id, "run_id": run_id, "kind": "research"}
 
 
 def test_platform_trace_sink_strips_seq_and_appends():
@@ -77,3 +85,24 @@ def test_distinct_sessions_get_distinct_runs(toolset_core):
     ts.market_get_ohlcv("AAA", _ctx={"tenant_id": TENANT, "session_id": "s1"})
     ts.market_get_ohlcv("AAA", _ctx={"tenant_id": TENANT, "session_id": "s2"})
     assert len(ts.runs.created) == 2
+
+
+def test_session_context_can_attach_to_precreated_research_run(toolset_core):
+    ts = _platform_toolset(toolset_core)
+    run_id = str(uuid.uuid4())
+    ts.runs.seed_research(TENANT, run_id)
+    ctx = {"tenant_id": TENANT, "agent_id": "claude"}
+
+    out = ts.session_context(
+        prompt="what does nvda look like",
+        title="NVDA scan",
+        session_id=run_id,
+        _ctx=ctx,
+    )
+    ts.market_get_ohlcv("AAA", _ctx=ctx)
+
+    assert out["session_id"] == run_id
+    assert ts.runs.created == []  # reused the web-created session instead of opening another
+    events = ts.sink.events(run_id)
+    assert [e["type"] for e in events] == ["reasoning", "tool_call", "tool_result"]
+    assert events[0]["data"]["prompt"] == "what does nvda look like"

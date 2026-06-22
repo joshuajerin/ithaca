@@ -13,13 +13,24 @@ export type TraceEventType = TraceEvent["type"];
 export interface RunRow {
   id: string;
   tenant_id: string;
-  kind: "backtest" | "paper" | string;
+  kind: "backtest" | "paper" | "research" | string;
   state: string;
   strategy_id: string | null;
   created_at?: string | null;
   updated_at?: string | null;
   spec?: Record<string, unknown> | null;
   result?: Record<string, unknown> | null;
+  events?: TraceEvent[];
+  trace?: Record<string, unknown> | null;
+}
+
+export interface SessionRow extends RunRow {
+  prompt?: string | null;
+  title?: string | null;
+  agent?: string | null;
+  last_event_at?: string | null;
+  call_count?: number;
+  warning_count?: number;
 }
 
 // Strategy row as returned by GET /api/strategies.

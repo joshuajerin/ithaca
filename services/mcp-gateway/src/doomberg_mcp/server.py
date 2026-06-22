@@ -59,18 +59,43 @@ class Toolset:
         self.skills = SkillSet(archive)
         self._proc_session = uuid.uuid4().hex  # groups a stdio process's calls when ctx has none
         self._sessions: dict[tuple[str, str], str] = {}  # (tenant, session) -> research run_id
+        self._agent_active_sessions: dict[tuple[str, str], str] = {}
+
+    def _agent_session_key(self, tenant_id: str, agent_id: str | None) -> tuple[str, str]:
+        return (tenant_id, str(agent_id or self._proc_session))
+
+    def _existing_research_run(self, tenant_id: str, session: str) -> str | None:
+        """If `session` is an existing research run id, reuse it instead of creating another."""
+        try:
+            uuid.UUID(str(session))
+        except (TypeError, ValueError):
+            return None
+        getter = getattr(self.runs, "get", None)
+        if getter is None:
+            return None
+        try:
+            run = getter(tenant_id, session)
+        except TypeError:
+            return None
+        if run and run.get("kind") == "research":
+            return str(session)
+        return None
 
     def _research_run(self, tenant_id: str, session: str, agent_id: str | None) -> str:
         """Return (creating if needed) the research run_id for this (tenant, session)."""
         key = (tenant_id, session)
         run_id = self._sessions.get(key)
         if run_id is None:
-            run_id = self.runs.create_research(tenant_id)
+            run_id = self._existing_research_run(tenant_id, session)
+            created = run_id is None
+            if run_id is None:
+                run_id = self.runs.create_research(tenant_id)
             self._sessions[key] = run_id
-            # Open the session lineage. session_id is the (UUID) research run_id so the event
-            # validates; the agent's raw session string rides along in data.
-            Tracer(self.sink, run_id=run_id, tenant_id=tenant_id, session_id=run_id,
-                   actor_id=agent_id).event("session_open", {"agentSession": session})
+            if created:
+                # Open the session lineage. session_id is the (UUID) research run_id so the
+                # event validates; the agent's raw session string rides along in data.
+                Tracer(self.sink, run_id=run_id, tenant_id=tenant_id, session_id=run_id,
+                       actor_id=agent_id).event("session_open", {"agentSession": session})
         return run_id
 
     def _tracer(self, ctx: dict | None) -> Tracer:
@@ -78,7 +103,8 @@ class Toolset:
         tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
         agent_id = ctx.get("agent_id")
         if self.runs is not None:
-            session = str(ctx.get("session_id") or self._proc_session)
+            active = self._agent_active_sessions.get(self._agent_session_key(tenant_id, agent_id))
+            session = str(ctx.get("session_id") or active or self._proc_session)
             run_id = self._research_run(tenant_id, session, agent_id)
             return Tracer(self.sink, run_id=run_id, tenant_id=tenant_id,
                           session_id=run_id, actor_id=agent_id)
@@ -90,6 +116,31 @@ class Toolset:
             session_id=ctx.get("session_id"),
             actor_id=agent_id,
         )
+
+    def session_context(self, prompt: str | None = None, title: str | None = None,
+                        session_id: str | None = None, _ctx: dict | None = None) -> dict:
+        """Attach prompt/session metadata to the current agent trace.
+
+        If ``session_id`` is an existing research-run UUID opened by the web UI, future calls
+        from the same tenant+agent key are grouped into that run. If omitted, this opens or
+        reuses the agent's default research run and records the prompt as a reasoning event.
+        """
+        ctx = dict(_ctx or {})
+        tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
+        agent_id = ctx.get("agent_id")
+        if session_id:
+            ctx["session_id"] = str(session_id)
+            self._agent_active_sessions[self._agent_session_key(tenant_id, agent_id)] = str(session_id)
+        tr = self._tracer(ctx)
+        data = {"kind": "session_context"}
+        if prompt is not None:
+            data["prompt"] = prompt
+            data["text"] = prompt
+        if title is not None:
+            data["title"] = title
+        if prompt is not None or title is not None:
+            tr.event("reasoning", data)
+        return {"status": "ok", "session_id": tr.run_id, "prompt_captured": prompt is not None}
 
     def market_get_ohlcv(self, symbol: str, range: str = "6mo", interval: str = "1d",
                          _ctx: dict | None = None) -> dict:
@@ -243,6 +294,11 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     def call_skill(tool: str, params: dict) -> dict:
         """Skill-catalog dispatch that injects the per-request tenant ``_ctx`` (HTTP mode)."""
         return ts.call_skill(tool, params, _ctx=_ctx())
+
+    @mcp.tool(description="Attach a user prompt/title and optional Doomberg session id to this MCP trace.")
+    def session_context(prompt: str | None = None, title: str | None = None,
+                        session_id: str | None = None) -> dict:
+        return ts.session_context(prompt=prompt, title=title, session_id=session_id, _ctx=_ctx())
 
     @mcp.tool(description="Fetch OHLCV price history for one symbol, with a provenance envelope.")
     def market_get_ohlcv(symbol: str, range: str = "6mo", interval: str = "1d") -> dict:

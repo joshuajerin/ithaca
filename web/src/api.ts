@@ -1,5 +1,5 @@
 import { API_BASE, API_KEY, TENANT_ID } from "./config";
-import type { RunRow, StrategyRow } from "./types";
+import type { RunRow, SessionRow, StrategyRow } from "./types";
 
 // Thin REST client over the rest-gateway. The browser NEVER speaks MCP; this is the only
 // backend it knows. Two auth modes, resolved at the gateway's single front door:
@@ -74,8 +74,21 @@ export const api = {
     return unwrapList<RunRow>(raw, "runs");
   },
 
+  async listSessions(signal?: AbortSignal): Promise<SessionRow[]> {
+    const raw = await getJson<unknown>(`/sessions`, signal);
+    return unwrapList<SessionRow>(raw, "sessions");
+  },
+
   async getRun(id: string, signal?: AbortSignal): Promise<RunRow> {
     return getJson<RunRow>(`/runs/${encodeURIComponent(id)}`, signal);
+  },
+
+  async getSession(id: string, signal?: AbortSignal): Promise<RunRow> {
+    return getJson<RunRow>(`/runs/${encodeURIComponent(id)}`, signal);
+  },
+
+  async createSession(prompt: string, title?: string, signal?: AbortSignal): Promise<RunRow> {
+    return postJson<RunRow>(`/sessions`, { prompt, title }, signal);
   },
 
   async listStrategies(signal?: AbortSignal): Promise<StrategyRow[]> {

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { applyEvent, emptyTimeline, reduceEvents, reduceUpTo } from "./timeline";
+import { buildWorkflowItems, promptMeta } from "./sessionWorkflow";
 import type { TraceEvent } from "./types";
 
 const RUN = "11111111-1111-1111-1111-111111111111";
@@ -88,5 +89,25 @@ describe("timeline reducer", () => {
     ]);
     expect(state.nodes[0].status).toBe("error");
     expect(state.errors).toHaveLength(1);
+  });
+
+  it("builds a prompt-rooted workflow with parent span depth", () => {
+    const events: TraceEvent[] = [
+      ev({ seq: 0, type: "session_open", data: { prompt: "what does nvda look like", title: "NVDA" } }),
+      ev({ seq: 1, type: "tool_call", span_id: "root", data: { name: "market.news", args: { ticker: "NVDA" } } }),
+      ev({ seq: 2, type: "tool_result", span_id: "root", data: { name: "market.news", source: "archive" } }),
+      ev({
+        seq: 3,
+        type: "tool_call",
+        span_id: "child",
+        parent_span_id: "root",
+        data: { name: "fundamentals.get", args: { symbol: "NVDA" } },
+      }),
+    ];
+    const workflow = buildWorkflowItems(reduceEvents(events), events);
+    expect(promptMeta(events).prompt).toBe("what does nvda look like");
+    expect(workflow.map((item) => item.name)).toEqual(["user", "market.news", "fundamentals.get"]);
+    expect(workflow.map((item) => item.depth)).toEqual([0, 1, 2]);
+    expect(workflow[1].summary).toContain("source archive");
   });
 });

@@ -1,6 +1,7 @@
 """FastAPI app — the web UI's ONLY backend (the browser never speaks MCP).
 
 Reads (tenant-scoped, observability):
+  - ``POST /api/sessions``             open a research session with captured prompt metadata.
   - ``GET  /api/runs``                 list runs for the tenant (optional ?kind=).
   - ``GET  /api/runs/{id}``            one run + its shaped trace (run + three lanes + events).
   - ``GET  /api/runs/{id}/book``       the live paper book (positions) for a deployment.
@@ -83,6 +84,11 @@ class CreateRunBody(BaseModel):
     range: str = "1y"
 
 
+class CreateSessionBody(BaseModel):
+    prompt: str
+    title: str | None = None
+
+
 class GoogleExchangeBody(BaseModel):
     code: str
     redirect_uri: str
@@ -133,14 +139,19 @@ def _verify_bearer(request: Request, authorization: str | None) -> dict[str, Any
     # Session JWT (human users via email+password / OAuth).
     try:
         user = stores.users.verify_session(key)
-        return {"tenant_id": user["tenant_id"], "key_id": user["id"], "scopes": []}
+        return {
+            "tenant_id": user["tenant_id"],
+            "key_id": user["id"],
+            "scopes": ["data:read", "strategy:author", "deploy:backtest", "deploy:paper"],
+            "actor_kind": "user",
+        }
     except SessionError:
         pass
     # API key (BYO agents).
     principal = stores.auth.verify(key)
     if principal is None:
         raise HTTPException(status_code=401, detail="invalid or revoked token")
-    return principal
+    return {**principal, "actor_kind": "agent"}
 
 
 def require_tenant(
@@ -183,7 +194,7 @@ def _ctx(
     if principal is not None:
         return Ctx(
             tenant_id=principal["tenant_id"],
-            actor_kind=(x_actor_kind or "agent").strip().lower(),
+            actor_kind=(x_actor_kind or principal.get("actor_kind") or "agent").strip().lower(),
             actor_id=(x_actor_id or "").strip() or principal["key_id"],
             scopes=frozenset(principal["scopes"]),
         )
@@ -202,6 +213,39 @@ def _do(fn, *args) -> dict[str, Any]:
         return fn(*args)
     except ActionError as err:
         raise HTTPException(status_code=err.status, detail=err.detail) from err
+
+
+def _session_summary(row: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Add prompt/tool-count metadata to a research run row for the Sessions list."""
+    prompt = None
+    title = None
+    agent = None
+    last_event_at = None
+    call_count = 0
+    warning_count = 0
+    for ev in events:
+        last_event_at = ev.get("ts") or last_event_at
+        actor = ev.get("actor") or {}
+        if actor.get("id") and agent is None:
+            agent = actor.get("id")
+        data = ev.get("data") or {}
+        if prompt is None and isinstance(data, dict):
+            prompt = data.get("prompt") or data.get("userPrompt")
+            title = data.get("title") or title
+        if ev.get("type") == "tool_call":
+            call_count += 1
+        warnings = data.get("warnings") if isinstance(data, dict) else None
+        if isinstance(warnings, list):
+            warning_count += len(warnings)
+    return {
+        **shape_run_row(row),
+        "prompt": prompt,
+        "title": title or (prompt[:80] if isinstance(prompt, str) else None),
+        "agent": agent,
+        "last_event_at": last_event_at,
+        "call_count": call_count,
+        "warning_count": warning_count,
+    }
 
 
 def _web_dist_dir() -> Path | None:
@@ -576,6 +620,74 @@ def create_app(db: Any | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="key not found")
         stores.auth.revoke_key(key_id)
         return {"key_id": key_id, "revoked": True}
+
+    # ---- research sessions ------------------------------------------------------------
+    @app.get("/api/sessions")
+    def list_sessions(
+        tenant_id: str = Depends(require_tenant),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        rows = stores.runs.list(tenant_id, kind="research")
+        return {
+            "sessions": [
+                _session_summary(row, stores.trace.events(tenant_id, row["run_id"]))
+                for row in rows
+            ]
+        }
+
+    @app.post("/api/sessions", status_code=201)
+    def create_session(
+        body: CreateSessionBody,
+        request: Request,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+        x_tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+        tenant_id: str | None = Query(default=None),
+        x_actor_kind: str | None = Header(default=None, alias="X-Actor-Kind"),
+        x_actor_id: str | None = Header(default=None, alias="X-Actor-Id"),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        """Open a research-session run and capture the user's prompt as trace data."""
+        prompt = body.prompt.strip()
+        if not prompt:
+            raise HTTPException(status_code=422, detail="prompt is required")
+
+        principal = _verify_bearer(request, authorization)
+        if principal is not None:
+            resolved_tenant = principal["tenant_id"]
+            actor_kind = (x_actor_kind or principal.get("actor_kind") or "user").strip().lower()
+            actor_id = (x_actor_id or principal.get("key_id") or "ui").strip() or "ui"
+        else:
+            resolved_tenant = x_tenant_id or tenant_id
+            if not resolved_tenant:
+                raise HTTPException(
+                    status_code=400,
+                    detail="X-Tenant-Id header (or ?tenant_id=) is required",
+                )
+            actor_kind = (x_actor_kind or "user").strip().lower()
+            actor_id = (x_actor_id or "ui").strip() or "ui"
+
+        if actor_kind not in {"agent", "user", "system"}:
+            actor_kind = "user"
+
+        run_id = stores.runs.create_research(resolved_tenant)
+        title = (body.title or prompt[:80]).strip()
+        stores.trace.append({
+            "run_id": run_id,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "type": "session_open",
+            "tenant_id": resolved_tenant,
+            "session_id": run_id,
+            "origin_session_id": run_id,
+            "actor": {"kind": actor_kind, "id": actor_id},
+            "data": {
+                "prompt": prompt,
+                "title": title,
+                "createdBy": "web" if actor_kind == "user" else actor_kind,
+            },
+        })
+        run = stores.runs.get(resolved_tenant, run_id)
+        events = stores.trace.events(resolved_tenant, run_id)
+        return shape_run(run, events)
 
     # ---- reads -------------------------------------------------------------------------
     @app.get("/api/runs")
