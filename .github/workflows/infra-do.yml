@@ -1,0 +1,65 @@
+name: infra-do
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to plan (prod or dev)"
+        required: true
+        default: "dev"
+        type: choice
+        options: [dev, prod]
+      apply:
+        description: "Apply Terraform. Requires remote state migration first."
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-do-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  terraform:
+    name: terraform plan
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.6"
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        env:
+          DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+        run: terraform init -input=false
+
+      - name: Terraform validate
+        run: terraform validate -no-color
+
+      - name: Terraform plan
+        env:
+          DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          terraform plan -input=false \
+            -var="environment=${{ inputs.environment }}" \
+            -var="data_gateway_namespace=${{ vars.K8S_GATEWAY_NAMESPACE }}" \
+            -var="worker_namespace=${{ vars.K8S_WORKER_NAMESPACE }}"
+
+      - name: Apply guard
+        if: inputs.apply
+        run: |
+          echo "Terraform apply from GitHub is intentionally blocked until remote state is migrated and reviewed." >&2
+          exit 1

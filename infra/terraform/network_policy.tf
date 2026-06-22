@@ -15,6 +15,7 @@ resource "kubernetes_namespace" "workers" {
 
     labels = {
       "doomberg/role"                      = "workers"
+      "doomberg/environment"               = var.environment
       "pod-security.kubernetes.io/enforce" = "restricted"
     }
   }
@@ -25,7 +26,8 @@ resource "kubernetes_namespace" "gateway" {
     name = var.data_gateway_namespace
 
     labels = {
-      "doomberg/role" = "data-gateway"
+      "doomberg/role"        = "data-gateway"
+      "doomberg/environment" = var.environment
     }
   }
 }
@@ -70,13 +72,14 @@ resource "kubernetes_network_policy" "workers_allow_gateway" {
       to {
         namespace_selector {
           match_labels = {
-            "doomberg/role" = "data-gateway"
+            "doomberg/role"        = "data-gateway"
+            "doomberg/environment" = var.environment
           }
         }
 
         pod_selector {
           match_labels = {
-            "doomberg/component" = "data-gateway"
+            "doomberg/component" = "app"
           }
         }
       }

@@ -26,6 +26,7 @@ RUN pip install --no-cache-dir uv==0.7.13
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
+    UV_HTTP_TIMEOUT=120 \
     UV_PYTHON_DOWNLOADS=never \
     UV_PROJECT_ENVIRONMENT=/opt/venv
 
@@ -69,7 +70,7 @@ FROM node:24-slim AS web-builder
 
 ARG VITE_GOOGLE_CLIENT_ID=""
 ARG VITE_GITHUB_CLIENT_ID=""
-ARG VITE_OAUTH_REDIRECT="https://doomberg.me/auth/callback"
+ARG VITE_OAUTH_REDIRECT=""
 ARG VITE_API_BASE="/api"
 
 ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID \

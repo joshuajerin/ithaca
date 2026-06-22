@@ -47,3 +47,11 @@ __pycache__/
 .verification/runs/
 .verification/verifier/
 .verification/preflight.json
+.gstack/
+
+# Local runtime/state artifacts
+data/
+doomberg.db
+doomberg.db-shm
+doomberg.db-wal
+infra/terraform/tfplan

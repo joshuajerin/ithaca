@@ -5,10 +5,12 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: short-loader
-  namespace: doomberg-gateway
+  namespace: ${K8S_GATEWAY_NAMESPACE}
   labels:
     doomberg/component: short-loader
+    doomberg/environment: ${DOOMBERG_ENV}
 spec:
+  suspend: ${SHORT_LOADER_SUSPEND}
   schedule: "0 2 * * 0"   # Sunday 02:00 UTC
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
@@ -43,6 +45,8 @@ spec:
               imagePullPolicy: IfNotPresent
               args: ["archive-load-short"]
               env:
+                - name: DOOMBERG_ENV
+                  value: "${DOOMBERG_ENV}"
                 - name: DOOMBERG_ARCHIVE_URL
                   valueFrom:
                     secretKeyRef:

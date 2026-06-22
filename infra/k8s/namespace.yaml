@@ -1,10 +1,19 @@
-# doomberg-gateway namespace. Terraform (network_policy.tf) also creates this with
-# the doomberg/role=data-gateway label; this manifest is idempotent so the deploy
-# script can apply it standalone. The label lets the workers' egress NetworkPolicy
-# select this namespace as the single allowed destination.
+# Environment namespaces. Terraform creates the prod namespaces today; this
+# manifest lets the deploy script create/label prod and dev
+# consistently without requiring Terraform apply for every service rollout.
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: doomberg-gateway
+  name: ${K8S_GATEWAY_NAMESPACE}
   labels:
     doomberg/role: data-gateway
+    doomberg/environment: ${DOOMBERG_ENV}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${K8S_WORKER_NAMESPACE}
+  labels:
+    doomberg/role: workers
+    doomberg/environment: ${DOOMBERG_ENV}
+    pod-security.kubernetes.io/enforce: restricted

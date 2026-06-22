@@ -1,7 +1,12 @@
 # infra/k8s — Doomberg v2 service manifests (Phase 4 deploy)
 
-Deployment + Service manifests for the always-on plane, applied with `kubectl`
-after `terraform apply` brings up the DOKS cluster (see `deploy/RUNBOOK.md`).
+Deployment + Service manifests for the always-on plane, rendered by
+`deploy/deploy_services.sh` and applied with `kubectl` after the DOKS cluster
+exists (see `deploy/RUNBOOK.md`).
+
+The manifests are environment-aware shell templates. `DEPLOY_ENV=prod` keeps the
+existing production namespaces and NodePorts; `DEPLOY_ENV=dev` renders into a
+separate namespace pair with distinct NodePorts and separate PVCs/secrets.
 
 ## Why one pod for rest+control+conductor
 
@@ -25,9 +30,11 @@ visible to the conductor's `BacktestWorker`, which runs it to `succeeded`.
 
 ## Files
 
-- `namespace.yaml`        — `doomberg-gateway` ns (idempotent; TF also creates it).
+- `namespace.yaml`        — gateway + worker namespaces for the selected env.
 - `app-deployment.yaml`   — rest-gateway + control-plane + conductor (1 pod, shared SQLite).
-- `app-service.yaml`      — NodePort 30080 → rest `/healthz` (LB entry 80) + 30808 → control-plane (LB entry 8080).
-- `mcp-deployment.yaml`   — mcp-gateway (stdio today; NO ingress — see hardening).
+- `app-service.yaml`      — NodePort service with env-specific ports.
+- `worker-networkpolicy.yaml` — default-deny worker egress plus same-env gateway allow.
+- `caddy.yaml`            — public HTTPS routing for prod and dev hostnames.
+- `mcp-deployment.yaml`   — legacy standalone MCP deployment. It is no longer applied by the standard deploy path; hosted MCP is the `mcp-gateway` container inside `doomberg-app`.
 
 The `doomberg-db` Secret + the image tag are wired by `deploy/deploy_services.sh`.

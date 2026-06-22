@@ -4,6 +4,33 @@ Reliability-first, HA, **CPU-only** stack on DOKS. This is the full one-command-
 sequence to take the repo from "apply-ready Terraform" to a running paper-prod
 cluster, plus the node-failover test that proves HA.
 
+## GitHub-controlled deploys
+
+The normal deploy path is now GitHub Actions:
+
+| Branch | Environment | Kubernetes namespaces | Public hosts |
+|---|---|---|---|
+| `main` | `prod` | `doomberg-gateway`, `doomberg-workers` | `app.doomberg.me`, `mcp.doomberg.me` |
+| any other same-repo branch | `dev` | `doomberg-dev-gateway`, `doomberg-dev-workers` | `dev-app.doomberg.me`, `dev-mcp.doomberg.me` |
+
+Prod app pods default to the `paper` node pool. Dev app pods default to the
+tainted `backtest` pool so dev does not compete with prod for the current paper
+node; override with `APP_NODE_WORKLOAD` if the cluster topology changes.
+
+`deploy-do.yml` builds an immutable DOCR image from the checked-out SHA, deploys only
+that tag, and moves `latest` only after a successful prod rollout. The prod job also
+verifies that the deploying SHA still equals `origin/main`.
+
+Each GitHub environment owns its own secrets and variables. Required secrets are
+`DIGITALOCEAN_ACCESS_TOKEN`, `DOOMBERG_ARCHIVE_URL`, `DOOMBERG_SESSION_SECRET`,
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `OAUTH_GITHUB_CLIENT_ID`,
+`OAUTH_GITHUB_CLIENT_SECRET`, and `DOOMBERG_ADMIN_TOKEN`. Optional secrets include
+`FMP_API_KEY` and `DOOMBERG_SMOKE_API_KEY`.
+
+Local scripts in this directory remain available as break-glass tooling. They now
+accept `DEPLOY_ENV=prod|dev` and render environment-specific Kubernetes
+manifests instead of assuming prod.
+
 > **Boundary:** every step below requires a DigitalOcean API token in
 > `infra/terraform/.env`. There is no token in the repo and nothing here runs
 > automatically — applying creates billable resources. Read the cost section first.

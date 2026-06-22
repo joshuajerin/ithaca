@@ -5,7 +5,7 @@ name: deploy-checks
 # these run on every PR to keep the deploy path from rotting.
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
 
 permissions:

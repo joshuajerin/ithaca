@@ -1,65 +1,70 @@
 #!/usr/bin/env bash
-# Build the single multi-service doomberg image and push it to the DigitalOcean
-# Container Registry (DOCR). CPU-only image; no GPU layers.
+# Build the single multi-service doomberg image and push it to DigitalOcean
+# Container Registry (DOCR). CI passes explicit immutable tags; local use can
+# still default to the current git short SHA.
 #
-#   deploy/build_and_push.sh [TAG]
-#
-# TAG defaults to the short git SHA (falls back to "latest"). Requires:
-#   - docker (a running daemon)
-#   - doctl, authenticated:  doctl auth init   (or DIGITALOCEAN_TOKEN in env)
-#
-# Reads the registry name from infra/terraform/.env if present (REGISTRY_NAME),
-# else defaults to "doomberg" (matches infra/terraform var.registry_name).
-#
-# This script DOES push to your registry — it needs a real DO token. It does NOT
-# create cluster/DB resources or spend on compute; it only uses registry storage.
+#   IMAGE_TAG=prod-a5fe2a0 PUSH_LATEST=0 deploy/build_and_push.sh
+#   deploy/build_and_push.sh a5fe2a0
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-# Optional .env (the same one apply.sh sources) for REGISTRY_NAME / token.
-if [[ -f infra/terraform/.env ]]; then
+if [[ "${LOAD_LOCAL_ENV:-1}" != "0" && -f infra/terraform/.env ]]; then
   # shellcheck disable=SC1091
   set -a; source infra/terraform/.env; set +a
 fi
 
 REGISTRY_NAME="${REGISTRY_NAME:-doomberg}"
 REGISTRY_HOST="registry.digitalocean.com/${REGISTRY_NAME}"
-IMAGE_NAME="doomberg"
+IMAGE_NAME="${IMAGE_NAME:-doomberg}"
 
-# Tag: explicit arg > git short SHA > "latest".
-TAG="${1:-}"
-if [[ -z "${TAG}" ]]; then
-  if TAG="$(git rev-parse --short HEAD 2>/dev/null)"; then :; else TAG="latest"; fi
+IMAGE_TAG="${IMAGE_TAG:-${1:-}}"
+if [[ -z "${IMAGE_TAG}" ]]; then
+  if IMAGE_TAG="$(git rev-parse --short HEAD 2>/dev/null)"; then :; else IMAGE_TAG="local"; fi
 fi
 
-LOCAL_REF="${IMAGE_NAME}:${TAG}"
-REMOTE_REF="${REGISTRY_HOST}/${IMAGE_NAME}:${TAG}"
-REMOTE_LATEST="${REGISTRY_HOST}/${IMAGE_NAME}:latest"
+LOCAL_REF="${IMAGE_NAME}:${IMAGE_TAG}"
+REMOTE_REF="${REGISTRY_HOST}/${IMAGE_NAME}:${IMAGE_TAG}"
 
-echo "==> Building ${LOCAL_REF} (linux/amd64, CPU-only)"
-# DOKS nodes are amd64; build for that platform explicitly so an arm64 dev
-# machine doesn't push an unschedulable image.
+BUILD_TAGS=(-t "${LOCAL_REF}" -t "${REMOTE_REF}")
+PUSH_REFS=("${REMOTE_REF}")
+
+if [[ "${PUSH_LATEST:-0}" == "1" ]]; then
+  BUILD_TAGS+=(-t "${REGISTRY_HOST}/${IMAGE_NAME}:latest")
+  PUSH_REFS+=("${REGISTRY_HOST}/${IMAGE_NAME}:latest")
+fi
+
+if [[ -n "${EXTRA_IMAGE_TAGS:-}" ]]; then
+  IFS=',' read -r -a extra_tags <<< "${EXTRA_IMAGE_TAGS}"
+  for tag in "${extra_tags[@]}"; do
+    tag="${tag//[[:space:]]/}"
+    [[ -z "${tag}" ]] && continue
+    BUILD_TAGS+=(-t "${REGISTRY_HOST}/${IMAGE_NAME}:${tag}")
+    PUSH_REFS+=("${REGISTRY_HOST}/${IMAGE_NAME}:${tag}")
+  done
+fi
+
+BUILD_ARGS=()
+for name in VITE_GOOGLE_CLIENT_ID VITE_GITHUB_CLIENT_ID VITE_OAUTH_REDIRECT VITE_API_BASE; do
+  if [[ -n "${!name:-}" ]]; then
+    BUILD_ARGS+=(--build-arg "${name}=${!name}")
+  fi
+done
+
+echo "==> Building ${REMOTE_REF} (linux/amd64, CPU-only)"
 DOCKER_BUILDKIT=1 docker build \
   --platform linux/amd64 \
-  -t "${LOCAL_REF}" \
-  -t "${REMOTE_REF}" \
-  -t "${REMOTE_LATEST}" \
+  "${BUILD_TAGS[@]}" \
+  "${BUILD_ARGS[@]}" \
   -f Dockerfile .
 
 echo "==> Logging in to DOCR (${REGISTRY_NAME})"
-# Uses DIGITALOCEAN_TOKEN from env / .env, or an existing `doctl auth init`.
 doctl registry login
 
-echo "==> Pushing ${REMOTE_REF}"
-docker push "${REMOTE_REF}"
-echo "==> Pushing ${REMOTE_LATEST}"
-docker push "${REMOTE_LATEST}"
+for ref in "${PUSH_REFS[@]}"; do
+  echo "==> Pushing ${ref}"
+  docker push "${ref}"
+done
 
-echo "==> Pushed:"
-echo "      ${REMOTE_REF}"
-echo "      ${REMOTE_LATEST}"
-echo ""
-echo "Set worker_image / archive_loader_image to: ${REMOTE_REF}"
-echo "(or leave the :latest default in infra/terraform/variables.tf)"
+echo "==> Pushed primary image: ${REMOTE_REF}"

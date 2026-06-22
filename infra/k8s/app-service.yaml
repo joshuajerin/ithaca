@@ -9,9 +9,10 @@ apiVersion: v1
 kind: Service
 metadata:
   name: doomberg-app
-  namespace: doomberg-gateway
+  namespace: ${K8S_GATEWAY_NAMESPACE}
   labels:
     doomberg/component: app
+    doomberg/environment: ${DOOMBERG_ENV}
 spec:
   type: NodePort
   selector:
@@ -20,10 +21,10 @@ spec:
     - name: rest
       port: 8000
       targetPort: 8000
-      nodePort: 30080
+      nodePort: ${REST_NODE_PORT}
       protocol: TCP
     - name: mcp
       port: 8080
       targetPort: 8080
-      nodePort: 30808
+      nodePort: ${MCP_NODE_PORT}
       protocol: TCP

@@ -29,7 +29,7 @@ const GITHUB_CLIENT_ID = import.meta.env.VITE_GITHUB_CLIENT_ID as string | undef
 // OAuth requires a path (not a hash) redirect URI. main.tsx intercepts this path
 // before the HashRouter mounts and runs the exchange.
 export const REDIRECT_URI: string =
-  (import.meta.env.VITE_OAUTH_REDIRECT as string | undefined) ??
+  (import.meta.env.VITE_OAUTH_REDIRECT as string | undefined) ||
   `${window.location.origin}/auth/callback`;
 
 export function providerConfigured(p: Provider): boolean {

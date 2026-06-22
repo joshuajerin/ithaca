@@ -19,13 +19,13 @@ variable "apply_resource_tags" {
 }
 
 variable "environment" {
-  description = "Deployment environment (dev|staging|prod). Used in resource names + tags."
+  description = "Deployment environment (dev|prod). Used in resource names + tags."
   type        = string
   default     = "dev"
 
   validation {
-    condition     = contains(["dev", "staging", "prod"], var.environment)
-    error_message = "environment must be one of: dev, staging, prod."
+    condition     = contains(["dev", "prod"], var.environment)
+    error_message = "environment must be one of: dev, prod."
   }
 }
 

@@ -21,7 +21,7 @@ data:
       email admin@doomberg.me
     }
 
-    # The MCP endpoint for remote BYO agents: https://mcp.doomberg.me/mcp
+    # Production MCP endpoint for remote BYO agents: https://mcp.doomberg.me/mcp
     mcp.doomberg.me {
       reverse_proxy doomberg-app.doomberg-gateway.svc.cluster.local:8080 {
         # MCP streamable-HTTP is long-lived SSE; don't buffer or cut it short.
@@ -36,6 +36,21 @@ data:
     # The UI / REST API: https://app.doomberg.me
     app.doomberg.me {
       reverse_proxy doomberg-app.doomberg-gateway.svc.cluster.local:8000
+    }
+
+    # Dev: latest non-main branch.
+    dev-mcp.doomberg.me {
+      reverse_proxy doomberg-app.doomberg-dev-gateway.svc.cluster.local:8080 {
+        flush_interval -1
+        transport http {
+          read_timeout 1h
+          write_timeout 1h
+        }
+      }
+    }
+
+    dev-app.doomberg.me {
+      reverse_proxy doomberg-app.doomberg-dev-gateway.svc.cluster.local:8000
     }
 ---
 apiVersion: v1
