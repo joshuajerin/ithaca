@@ -38,8 +38,9 @@ data:
       reverse_proxy doomberg-app.doomberg-gateway.svc.cluster.local:8000
     }
 
-    # Dev: latest non-main branch.
-    dev-mcp.doomberg.me {
+    # Dev: latest non-main branch. The sslip.io aliases work before doomberg.me
+    # DNS records are created and still terminate TLS through the same Caddy LB.
+    dev-mcp.doomberg.me, dev-mcp.129.212.135.120.sslip.io {
       reverse_proxy doomberg-app.doomberg-dev-gateway.svc.cluster.local:8080 {
         flush_interval -1
         transport http {
@@ -49,7 +50,7 @@ data:
       }
     }
 
-    dev-app.doomberg.me {
+    dev-app.doomberg.me, dev-app.129.212.135.120.sslip.io {
       reverse_proxy doomberg-app.doomberg-dev-gateway.svc.cluster.local:8000
     }
 ---

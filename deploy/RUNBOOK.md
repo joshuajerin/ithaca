@@ -11,7 +11,11 @@ The normal deploy path is now GitHub Actions:
 | Branch | Environment | Kubernetes namespaces | Public hosts |
 |---|---|---|---|
 | `main` | `prod` | `doomberg-gateway`, `doomberg-workers` | `app.doomberg.me`, `mcp.doomberg.me` |
-| any other same-repo branch | `dev` | `doomberg-dev-gateway`, `doomberg-dev-workers` | `dev-app.doomberg.me`, `dev-mcp.doomberg.me` |
+| any other same-repo branch | `dev` | `doomberg-dev-gateway`, `doomberg-dev-workers` | `dev-app.129.212.135.120.sslip.io`, `dev-mcp.129.212.135.120.sslip.io` |
+
+The canonical dev hostnames are still `dev-app.doomberg.me` and
+`dev-mcp.doomberg.me`; Caddy also serves the `sslip.io` aliases above so dev MCP
+is reachable before the `doomberg.me` DNS records exist.
 
 Prod app pods default to the `paper` node pool. Dev app pods default to the
 tainted `backtest` pool so dev does not compete with prod for the current paper

@@ -36,8 +36,10 @@ case "${DEPLOY_ENV}" in
   dev)
     K8S_GATEWAY_NAMESPACE="${K8S_GATEWAY_NAMESPACE:-doomberg-dev-gateway}"
     K8S_WORKER_NAMESPACE="${K8S_WORKER_NAMESPACE:-doomberg-dev-workers}"
-    APP_HOST="${APP_HOST:-dev-app.doomberg.me}"
-    MCP_HOST="${MCP_HOST:-dev-mcp.doomberg.me}"
+    APP_HOST="${APP_HOST:-dev-app.129.212.135.120.sslip.io}"
+    MCP_HOST="${MCP_HOST:-dev-mcp.129.212.135.120.sslip.io}"
+    DEV_APP_HOST_CANONICAL="${DEV_APP_HOST_CANONICAL:-dev-app.doomberg.me}"
+    DEV_MCP_HOST_CANONICAL="${DEV_MCP_HOST_CANONICAL:-dev-mcp.doomberg.me}"
     REST_NODE_PORT="${REST_NODE_PORT:-30082}"
     MCP_NODE_PORT="${MCP_NODE_PORT:-30810}"
     APP_NODE_WORKLOAD="${APP_NODE_WORKLOAD:-backtest}"
@@ -50,7 +52,11 @@ case "${DEPLOY_ENV}" in
     ;;
 esac
 
-MCP_ALLOWED_HOSTS="${MCP_ALLOWED_HOSTS:-${MCP_HOST},${MCP_HOST}:443}"
+if [[ "${DEPLOY_ENV}" == "dev" ]]; then
+  MCP_ALLOWED_HOSTS="${MCP_ALLOWED_HOSTS:-${MCP_HOST},${MCP_HOST}:443,${DEV_MCP_HOST_CANONICAL},${DEV_MCP_HOST_CANONICAL}:443}"
+else
+  MCP_ALLOWED_HOSTS="${MCP_ALLOWED_HOSTS:-${MCP_HOST},${MCP_HOST}:443}"
+fi
 
 : "${DOOMBERG_ARCHIVE_URL:?DOOMBERG_ARCHIVE_URL must be set for ${DEPLOY_ENV}}"
 : "${DOOMBERG_SESSION_SECRET:?DOOMBERG_SESSION_SECRET must be set for ${DEPLOY_ENV}}"
