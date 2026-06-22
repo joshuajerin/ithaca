@@ -35,6 +35,5 @@ visible to the conductor's `BacktestWorker`, which runs it to `succeeded`.
 - `app-service.yaml`      — NodePort service with env-specific ports.
 - `worker-networkpolicy.yaml` — default-deny worker egress plus same-env gateway allow.
 - `caddy.yaml`            — public HTTPS routing for prod and dev hostnames.
-- `mcp-deployment.yaml`   — legacy standalone MCP deployment. It is no longer applied by the standard deploy path; hosted MCP is the `mcp-gateway` container inside `doomberg-app`.
 
 The `doomberg-db` Secret + the image tag are wired by `deploy/deploy_services.sh`.
