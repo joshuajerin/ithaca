@@ -1,0 +1,138 @@
+# Caddy — automatic HTTPS reverse proxy for the public doomberg.me endpoints.
+#
+# Why Caddy: it obtains + auto-renews Let's Encrypt certs with zero config (ACME
+# HTTP-01 on :80 / TLS-ALPN-01 on :443) and routes by Host. It fronts the in-cluster
+# doomberg-app Service (rest :8000, mcp :8080). A dedicated DO LoadBalancer Service
+# gives it a public IP; point the doomberg.me subdomains at that IP and TLS issues
+# automatically once DNS resolves. Lives in doomberg-gateway (unrestricted egress,
+# so it can reach the ACME API).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: caddy-config
+  namespace: doomberg-gateway
+data:
+  Caddyfile: |
+    {
+      # Non-privileged internal ports (pod runs unprivileged); the LoadBalancer maps
+      # public :80 -> 8080 and :443 -> 8443, so ACME still sees the canonical ports.
+      http_port 8080
+      https_port 8443
+      email admin@doomberg.me
+    }
+
+    # Production MCP endpoint for remote BYO agents: https://mcp.doomberg.me/mcp
+    mcp.doomberg.me {
+      reverse_proxy doomberg-app.doomberg-gateway.svc.cluster.local:8080 {
+        # MCP streamable-HTTP is long-lived SSE; don't buffer or cut it short.
+        flush_interval -1
+        transport http {
+          read_timeout 1h
+          write_timeout 1h
+        }
+      }
+    }
+
+    # The UI / REST API: https://app.doomberg.me
+    app.doomberg.me {
+      reverse_proxy doomberg-app.doomberg-gateway.svc.cluster.local:8000
+    }
+
+    # Dev: latest non-main branch.
+    dev-mcp.doomberg.me {
+      reverse_proxy doomberg-app.doomberg-dev-gateway.svc.cluster.local:8080 {
+        flush_interval -1
+        transport http {
+          read_timeout 1h
+          write_timeout 1h
+        }
+      }
+    }
+
+    dev-app.doomberg.me {
+      reverse_proxy doomberg-app.doomberg-dev-gateway.svc.cluster.local:8000
+    }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: caddy-data
+  namespace: doomberg-gateway
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: do-block-storage
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caddy
+  namespace: doomberg-gateway
+  labels:
+    doomberg/component: caddy
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # single writer on the cert volume (RWO)
+  selector:
+    matchLabels:
+      doomberg/component: caddy
+  template:
+    metadata:
+      labels:
+        doomberg/component: caddy
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        workload: paper
+      securityContext:
+        fsGroup: 1000
+      volumes:
+        - name: config
+          configMap:
+            name: caddy-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: caddy-data
+        - name: xdg-config
+          emptyDir: {}
+      containers:
+        - name: caddy
+          image: caddy:2.10
+          args: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: https, containerPort: 8443 }
+          env:
+            - { name: XDG_DATA_HOME, value: /data }
+            - { name: XDG_CONFIG_HOME, value: /config }
+          volumeMounts:
+            - { name: config, mountPath: /etc/caddy }
+            - { name: data, mountPath: /data }
+            - { name: xdg-config, mountPath: /config }
+          resources:
+            requests: { cpu: "50m", memory: 96Mi }
+            limits: { cpu: "500m", memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: caddy
+  namespace: doomberg-gateway
+  labels:
+    doomberg/component: caddy
+  annotations:
+    # TCP passthrough: Caddy terminates TLS itself (so ACME TLS-ALPN works).
+    service.beta.kubernetes.io/do-loadbalancer-protocol: "tcp"
+    service.beta.kubernetes.io/do-loadbalancer-healthcheck-protocol: "tcp"
+    service.beta.kubernetes.io/do-loadbalancer-healthcheck-port: "8080"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    doomberg/component: caddy
+  ports:
+    - { name: http, port: 80, targetPort: 8080, protocol: TCP }
+    - { name: https, port: 443, targetPort: 8443, protocol: TCP }
