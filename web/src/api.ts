@@ -87,7 +87,7 @@ export const api = {
     return getJson<RunRow>(`/runs/${encodeURIComponent(id)}`, signal);
   },
 
-  async createSession(prompt: string, title?: string, signal?: AbortSignal): Promise<RunRow> {
+  async createSession(prompt = "", title?: string, signal?: AbortSignal): Promise<RunRow> {
     return postJson<RunRow>(`/sessions`, { prompt, title }, signal);
   },
 

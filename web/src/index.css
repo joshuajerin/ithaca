@@ -381,6 +381,11 @@ input, select { font-family: inherit; }
   outline: none;
 }
 .prompt-textarea:focus { border-color: var(--accent); }
+.realtime-start {
+  border: 1px solid var(--border-soft);
+  background: var(--surface);
+  padding: 12px;
+}
 .prompt-box {
   border: 1px solid var(--border);
   background: var(--surface);

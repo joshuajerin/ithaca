@@ -85,7 +85,7 @@ class CreateRunBody(BaseModel):
 
 
 class CreateSessionBody(BaseModel):
-    prompt: str
+    prompt: str = ""
     title: str | None = None
 
 
@@ -651,10 +651,13 @@ def create_app(db: Any | None = None) -> FastAPI:
         x_actor_id: str | None = Header(default=None, alias="X-Actor-Id"),
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
-        """Open a research-session run and capture the user's prompt as trace data."""
+        """Open a research-session run.
+
+        The web UI may start a realtime run before the user prompt exists in this service.
+        In that flow the agent later calls MCP ``session_context`` with the actual prompt,
+        and the trace updates live under the same run id.
+        """
         prompt = body.prompt.strip()
-        if not prompt:
-            raise HTTPException(status_code=422, detail="prompt is required")
 
         principal = _verify_bearer(request, authorization)
         if principal is not None:
@@ -675,7 +678,13 @@ def create_app(db: Any | None = None) -> FastAPI:
             actor_kind = "user"
 
         run_id = stores.runs.create_research(resolved_tenant)
-        title = (body.title or prompt[:80]).strip()
+        title = (body.title or prompt[:80] or "Realtime session").strip()
+        data = {
+            "title": title,
+            "createdBy": "web" if actor_kind == "user" else actor_kind,
+        }
+        if prompt:
+            data["prompt"] = prompt
         stores.trace.append({
             "run_id": run_id,
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -684,11 +693,7 @@ def create_app(db: Any | None = None) -> FastAPI:
             "session_id": run_id,
             "origin_session_id": run_id,
             "actor": {"kind": actor_kind, "id": actor_id},
-            "data": {
-                "prompt": prompt,
-                "title": title,
-                "createdBy": "web" if actor_kind == "user" else actor_kind,
-            },
+            "data": data,
         })
         run = stores.runs.get(resolved_tenant, run_id)
         events = stores.trace.events(resolved_tenant, run_id)

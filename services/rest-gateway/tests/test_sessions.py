@@ -69,6 +69,10 @@ def test_signed_in_event_stream_can_authenticate_with_query_token(client):
     assert tenant_id in resp.text
 
 
-def test_create_session_requires_prompt(client, tenant_a):
+def test_create_session_can_start_realtime_without_prompt(client, stores, tenant_a):
     resp = client.post("/api/sessions", json={"prompt": "  "}, headers={"X-Tenant-Id": tenant_a})
-    assert resp.status_code == 422
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    events = stores.trace.events(tenant_a, body["id"])
+    assert events[0]["data"]["title"] == "Realtime session"
+    assert "prompt" not in events[0]["data"]

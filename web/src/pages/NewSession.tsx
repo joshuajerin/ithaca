@@ -7,7 +7,6 @@ const MCP_URL = "https://mcp.doomberg.me/mcp";
 const MCP_SCOPES = ["data:read", "strategy:author", "deploy:backtest", "deploy:paper"];
 
 export function NewSession() {
-  const [prompt, setPrompt] = useState("");
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -17,26 +16,21 @@ export function NewSession() {
   const [copied, setCopied] = useState<string | null>(null);
   const navigate = useNavigate();
 
-  const cleanPrompt = prompt.trim();
   const cleanTitle = title.trim();
   const contextPayload = created ? {
     name: "session_context",
     arguments: {
       session_id: created.id,
-      prompt: cleanPrompt,
-      title: cleanTitle || cleanPrompt.slice(0, 80),
+      prompt: "<your prompt from chat>",
+      title: cleanTitle || "Realtime session",
     },
   } : null;
 
   async function submit() {
-    if (!cleanPrompt) {
-      setError("Prompt is required.");
-      return;
-    }
     setBusy(true);
     setError(null);
     try {
-      const session = await api.createSession(cleanPrompt, cleanTitle || undefined);
+      const session = await api.createSession("", cleanTitle || undefined);
       setCreated(session);
       setAgentKey(null);
     } catch (e) {
@@ -71,7 +65,7 @@ export function NewSession() {
       <div className="page-head">
         <div>
           <div className="page-title">New Session</div>
-          <div className="page-sub">capture the prompt, then attach MCP tool calls to the trace</div>
+          <div className="page-sub">start a realtime MCP trace; the prompt arrives from chat</div>
         </div>
       </div>
 
@@ -85,20 +79,20 @@ export function NewSession() {
           placeholder="NVDA scan"
         />
 
-        <label className="set-h" htmlFor="session-prompt">Prompt</label>
-        <textarea
-          id="session-prompt"
-          className="prompt-textarea"
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          placeholder="user: what does nvda look like"
-        />
+        <div className="realtime-start">
+          <div className="set-h">Realtime run</div>
+          <div className="set-hint no-pad">
+            Start the session here, then prompt your agent from chat. The first MCP
+            <code> session_context </code> call records that prompt and every skill call streams
+            into the live trace.
+          </div>
+        </div>
 
         {error && <div className="banner">{error}</div>}
 
         <div className="set-actions">
           <button className="btn primary" onClick={submit} disabled={busy}>
-            {busy ? "Opening..." : "Open Session"}
+            {busy ? "Starting..." : "Start Realtime Session"}
           </button>
           {created && (
             <button className="btn" onClick={() => navigate(`/sessions/${created.id}`)}>
