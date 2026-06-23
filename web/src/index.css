@@ -1282,30 +1282,29 @@ input, select { font-family: inherit; }
 }
 
 .terminal-canvas-shell {
-  --term-bg: #241609;
-  --term-bg-2: #31220f;
-  --term-panel: #2b1d10;
-  --term-panel-2: #392815;
-  --term-border: rgba(198, 150, 72, 0.42);
-  --term-border-strong: rgba(226, 172, 82, 0.76);
-  --term-text: #fff0c8;
-  --term-text-soft: #ead6aa;
-  --term-muted: #b99a62;
-  --term-muted-dim: #816a45;
-  --term-accent: #d8892e;
-  --term-accent-2: #8f9a45;
-  --term-negative: #b86745;
+  --term-bg: var(--bg);
+  --term-panel: var(--surface);
+  --term-panel-2: var(--panel);
+  --term-panel-soft: var(--panel-2);
+  --term-border: var(--border);
+  --term-border-strong: var(--accent);
+  --term-text: var(--fg);
+  --term-text-soft: #353229;
+  --term-muted: var(--muted);
+  --term-muted-dim: var(--muted-dim);
+  --term-accent: var(--accent);
+  --term-accent-2: var(--pos);
+  --term-negative: var(--neg);
   flex: 1;
   min-height: 0;
   overflow: auto;
   border: 1px solid var(--term-border);
   background:
-    radial-gradient(68% 58% at 14% 0%, rgba(216, 137, 46, 0.24), transparent 64%),
-    radial-gradient(54% 48% at 100% 10%, rgba(143, 154, 69, 0.16), transparent 68%),
-    linear-gradient(rgba(255, 216, 150, 0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 216, 150, 0.045) 1px, transparent 1px),
-    linear-gradient(135deg, var(--term-bg), #170e07 55%, var(--term-bg-2));
-  background-size: auto, auto, 32px 32px, 32px 32px, auto;
+    radial-gradient(58% 42% at 100% 0%, rgba(72, 92, 17, 0.08), transparent 70%),
+    linear-gradient(rgba(72, 92, 17, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(72, 92, 17, 0.035) 1px, transparent 1px),
+    var(--term-bg);
+  background-size: auto, 32px 32px, 32px 32px, auto;
   padding: 18px;
   color: var(--term-text);
 }
@@ -1342,7 +1341,7 @@ input, select { font-family: inherit; }
 
 .terminal-canvas-stats span {
   border: 1px solid var(--term-border);
-  background: rgba(43, 29, 16, 0.64);
+  background: var(--term-panel-soft);
   color: var(--term-muted);
   padding: 6px 8px;
   font: 9px/1 var(--font-mono);
@@ -1352,7 +1351,7 @@ input, select { font-family: inherit; }
 
 .terminal-canvas-shell .bg-black,
 .terminal-canvas-shell .bg-background {
-  background-color: rgba(43, 29, 16, 0.92) !important;
+  background-color: var(--term-panel) !important;
 }
 
 .terminal-canvas-shell .bg-muted,
@@ -1360,13 +1359,13 @@ input, select { font-family: inherit; }
 .terminal-canvas-shell [class*="bg-[#111]"],
 .terminal-canvas-shell [class*="bg-white/"],
 .terminal-canvas-shell [class*="bg-white\\["] {
-  background-color: rgba(57, 40, 21, 0.72) !important;
+  background-color: var(--term-panel-soft) !important;
 }
 
 .terminal-canvas-shell .bg-white,
 .terminal-canvas-shell .bg-primary,
 .terminal-canvas-shell .bg-foreground {
-  background: linear-gradient(135deg, var(--term-accent), #e7b35e) !important;
+  background: var(--term-accent) !important;
 }
 
 .terminal-canvas-shell .bg-emerald-400 {
@@ -1388,8 +1387,8 @@ input, select { font-family: inherit; }
 
 .terminal-canvas-shell [class*="border-white/"],
 .terminal-canvas-shell [class*="ring-white/"] {
-  border-color: rgba(226, 172, 82, 0.48) !important;
-  --tw-ring-color: rgba(226, 172, 82, 0.48) !important;
+  border-color: var(--term-border) !important;
+  --tw-ring-color: var(--term-border) !important;
 }
 
 .terminal-canvas-shell .text-white,
@@ -1402,7 +1401,7 @@ input, select { font-family: inherit; }
 .terminal-canvas-shell .text-black,
 .terminal-canvas-shell .text-background,
 .terminal-canvas-shell .text-primary-foreground {
-  color: #241609 !important;
+  color: var(--term-panel) !important;
 }
 
 .terminal-canvas-shell .text-muted-foreground,
@@ -1433,7 +1432,7 @@ input, select { font-family: inherit; }
 .terminal-canvas-shell input,
 .terminal-canvas-shell select,
 .terminal-canvas-shell option {
-  background-color: rgba(36, 22, 9, 0.92) !important;
+  background-color: var(--term-panel) !important;
   color: var(--term-text) !important;
   border-color: var(--term-border) !important;
 }
@@ -1443,14 +1442,41 @@ input, select { font-family: inherit; }
 }
 
 .terminal-canvas-shell .shadow-lg {
-  box-shadow: 0 18px 48px rgba(19, 11, 5, 0.44) !important;
+  box-shadow: 0 18px 48px rgba(26, 26, 20, 0.10) !important;
 }
 
 .terminal-canvas-shell [data-panel-id] > div {
-  background:
-    linear-gradient(180deg, rgba(57, 40, 21, 0.94), rgba(34, 21, 10, 0.96)) !important;
+  background: var(--term-panel) !important;
   border-color: var(--term-border) !important;
-  box-shadow: inset 0 1px rgba(255, 225, 166, 0.06), 0 18px 44px rgba(18, 10, 5, 0.22);
+  box-shadow: 0 14px 34px rgba(26, 26, 20, 0.08);
+}
+
+.terminal-canvas-shell [data-panel-id] > div > div:first-child,
+.terminal-canvas-shell thead,
+.terminal-canvas-shell .recharts-tooltip-wrapper > div {
+  background: var(--term-panel-soft) !important;
+  border-color: var(--term-border) !important;
+}
+
+.terminal-canvas-shell [data-panel-id] > div > div:last-child {
+  background: var(--term-panel) !important;
+}
+
+.terminal-canvas-shell button[aria-pressed="true"],
+.terminal-canvas-shell .border-white.text-white {
+  background: var(--term-accent) !important;
+  border-color: var(--term-accent) !important;
+  color: var(--term-panel) !important;
+}
+
+.terminal-canvas-shell button:not([aria-pressed="true"]):hover {
+  border-color: var(--term-accent) !important;
+  color: var(--term-accent) !important;
+}
+
+.terminal-canvas-shell table tr:hover,
+.terminal-canvas-shell [class*="hover:bg-white"]:hover {
+  background: var(--term-panel-soft) !important;
 }
 
 .terminal-canvas-shell [data-panel-id] > div:hover {
@@ -1459,7 +1485,7 @@ input, select { font-family: inherit; }
 
 .terminal-canvas-shell .recharts-cartesian-grid line,
 .terminal-canvas-shell .recharts-reference-line-line {
-  stroke: rgba(198, 150, 72, 0.26) !important;
+  stroke: var(--border-soft) !important;
 }
 
 .terminal-canvas-shell .recharts-line-curve,
@@ -1471,7 +1497,7 @@ input, select { font-family: inherit; }
 }
 
 .terminal-canvas-shell .recharts-area-area {
-  fill: rgba(216, 137, 46, 0.18) !important;
+  fill: rgba(72, 92, 17, 0.16) !important;
 }
 
 .terminal-canvas-shell .recharts-text,
