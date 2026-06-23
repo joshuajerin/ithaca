@@ -159,14 +159,19 @@ def require_tenant(
     authorization: str | None = Header(default=None, alias="Authorization"),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
     tenant_id: str | None = Query(default=None),
+    access_token: str | None = Query(default=None),
 ) -> str:
     """Tenant from a bearer key (prod) or the ``X-Tenant-Id`` header / ``?tenant_id=`` query.
 
     A bearer key's tenant takes precedence and is authoritative. Otherwise the dev path uses
     the header or the EventSource query param. No tenant => 400. We never fall back to an
     unscoped query (the hard isolation rule).
+
+    EventSource cannot send custom headers, so the live session stream may pass the signed-in
+    session token as ``?access_token=``. It is resolved exactly like ``Authorization: Bearer``.
     """
-    principal = _verify_bearer(request, authorization)
+    token_authorization = authorization or (f"Bearer {access_token}" if access_token else None)
+    principal = _verify_bearer(request, token_authorization)
     if principal is not None:
         return principal["tenant_id"]
     resolved = x_tenant_id or tenant_id

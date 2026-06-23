@@ -9,6 +9,9 @@ import type { RunRow } from "../types";
 import { Panel } from "../panels/registry";
 import { fmtClock, fmtTime, shortId, stateClass } from "../lib/format";
 
+const MCP_URL = "https://mcp.doomberg.me/mcp";
+const MCP_SCOPES = ["data:read", "strategy:author", "deploy:backtest", "deploy:paper"];
+
 export function SessionDetail() {
   const { id } = useParams<{ id: string }>();
   const { data: run, reload } = useAsync<RunRow>((s) => api.getSession(id!, s), [id]);
@@ -16,6 +19,9 @@ export function SessionDetail() {
   const [replaySeq, setReplaySeq] = useState<number | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [memoryOpen, setMemoryOpen] = useState(false);
+  const [agentKey, setAgentKey] = useState<string | null>(null);
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
 
   const events = useMemo(() => {
     const bySeq = new Map<number, (typeof liveEvents)[number]>();
@@ -36,6 +42,31 @@ export function SessionDetail() {
   const workflow = useMemo(() => buildWorkflowItems(state, visibleEvents), [state, visibleEvents]);
   const meta = useMemo(() => promptMeta(visibleEvents), [visibleEvents]);
   const selected = workflow.find((item) => item.key === selectedKey) ?? workflow[workflow.length - 1];
+  const contextPayload = useMemo(() => ({
+    name: "session_context",
+    arguments: {
+      session_id: id,
+      prompt: meta.prompt,
+      title: meta.title ?? meta.prompt?.slice(0, 80) ?? shortId(id),
+    },
+  }), [id, meta.prompt, meta.title]);
+
+  async function mintSessionKey() {
+    setAgentBusy(true);
+    try {
+      const res = await api.mintKey(MCP_SCOPES);
+      setAgentKey(res.api_key);
+    } finally {
+      setAgentBusy(false);
+    }
+  }
+
+  function copy(label: string, value: string) {
+    navigator.clipboard?.writeText(value).then(() => {
+      setCopied(label);
+      window.setTimeout(() => setCopied(null), 1400);
+    });
+  }
 
   return (
     <div className="page session-page">
@@ -74,6 +105,48 @@ export function SessionDetail() {
           <span>{state.errors.length} errors</span>
         </div>
       </div>
+
+      <section className="dash-section wide session-handoff">
+        <div className="section-head">
+          <span>Agent handoff</span>
+          <span>{state.nodes.length ? "streaming" : "waiting"}</span>
+        </div>
+        <div className="handoff-grid compact">
+          <div className="handoff-block">
+            <div className="set-h">MCP</div>
+            <div className="kv"><span className="k">endpoint</span> {MCP_URL}</div>
+            <div className="kv"><span className="k">session</span> {id}</div>
+            <div className="set-actions">
+              <button className="btn" onClick={() => copy("session", id ?? "")}>
+                {copied === "session" ? "Copied" : "Copy session id"}
+              </button>
+            </div>
+          </div>
+          <div className="handoff-block">
+            <div className="set-h">Attach payload</div>
+            <pre className="pre handoff-pre">{safeJson(contextPayload)}</pre>
+            <div className="set-actions">
+              <button className="btn" onClick={() => copy("context", safeJson(contextPayload))}>
+                {copied === "context" ? "Copied" : "Copy context"}
+              </button>
+            </div>
+          </div>
+          <div className="handoff-block">
+            <div className="set-h">Same-account key</div>
+            <button className="btn primary" onClick={mintSessionKey} disabled={agentBusy}>
+              {agentBusy ? "Generating..." : "Generate MCP key"}
+            </button>
+            {agentKey && (
+              <>
+                <code className="mono set-value key-plain">{agentKey}</code>
+                <button className="btn" onClick={() => copy("key", agentKey)}>
+                  {copied === "key" ? "Copied" : "Copy key"}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </section>
 
       <div className="toolbar replay-bar">
         <button className={`btn ${replaySeq === null ? "primary" : ""}`} onClick={() => setReplaySeq(null)}>

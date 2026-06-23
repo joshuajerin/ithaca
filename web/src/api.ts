@@ -97,10 +97,17 @@ export const api = {
   },
 
   // The /api/runs/{id}/events SSE URL. EventSource cannot set headers, so the tenant
-  // is passed as a query param the gateway maps back to a ctx in local dev.
+  // is passed as a query param in local dev. Signed-in users pass the session token as
+  // access_token so the stream resolves to the same tenant/account as normal REST calls.
   eventsUrl(id: string): string {
-    const sep = `${API_BASE}/runs/${encodeURIComponent(id)}/events`.includes("?") ? "&" : "?";
-    return `${API_BASE}/runs/${encodeURIComponent(id)}/events${sep}tenant_id=${encodeURIComponent(TENANT_ID)}`;
+    const url = new URL(`${API_BASE}/runs/${encodeURIComponent(id)}/events`, window.location.origin);
+    const oauthToken = localStorage.getItem("doomberg.token");
+    if (oauthToken) {
+      url.searchParams.set("access_token", oauthToken);
+    } else {
+      url.searchParams.set("tenant_id", TENANT_ID);
+    }
+    return API_BASE.startsWith("http") ? url.toString() : `${url.pathname}${url.search}${url.hash}`;
   },
 
   async getBook(id: string, signal?: AbortSignal): Promise<Record<string, unknown> | null> {
