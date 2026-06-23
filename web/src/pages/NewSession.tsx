@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import type { RunRow } from "../types";
@@ -7,43 +7,44 @@ const MCP_URL = "https://mcp.doomberg.me/mcp";
 const MCP_SCOPES = ["data:read", "strategy:author", "deploy:backtest", "deploy:paper"];
 
 export function NewSession() {
+  const [title, setTitle] = useState("NVDA scan");
+  const [prompt, setPrompt] = useState("what does nvda look like");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<RunRow | null>(null);
   const [agentKey, setAgentKey] = useState<string | null>(null);
   const [keyBusy, setKeyBusy] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
-  const started = useRef(false);
   const navigate = useNavigate();
 
   const contextPayload = created ? {
     name: "session_context",
     arguments: {
       session_id: created.id,
-      prompt: "<your prompt from chat>",
+      prompt,
+      title,
     },
   } : null;
 
-  async function startSession() {
-    if (started.current) return;
-    started.current = true;
+  async function startSession(event?: React.FormEvent) {
+    event?.preventDefault();
+    const trimmedPrompt = prompt.trim();
+    if (!trimmedPrompt) {
+      setError("Prompt is required.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const session = await api.createSession("");
+      const session = await api.createSession(trimmedPrompt, title.trim() || undefined);
       setCreated(session);
       setAgentKey(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-      started.current = false;
     } finally {
       setBusy(false);
     }
   }
-
-  useEffect(() => {
-    void startSession();
-  }, []);
 
   async function generateAgentKey() {
     setKeyBusy(true);
@@ -75,25 +76,37 @@ export function NewSession() {
       </div>
 
       <section className="prompt-editor">
-        <div className="realtime-start">
+        <form className="realtime-start" onSubmit={startSession}>
           <div className="set-h">Realtime run</div>
           <div className="set-hint no-pad">
-            This page opens a blank session automatically. Prompt your agent from chat; the first MCP
-            <code> session_context </code> call records that prompt and every skill call streams
-            into the live trace.
+            Start a session with the user prompt first. The MCP <code> session_context </code> call
+            then attaches the agent workflow to this trace.
           </div>
-        </div>
+          <input
+            className="auth-input"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Session title"
+          />
+          <textarea
+            className="prompt-textarea"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="user: what does nvda look like"
+          />
+          <div className="set-actions">
+            <button className="btn primary" type="submit" disabled={busy}>
+              {busy ? "Starting..." : "Start Session"}
+            </button>
+            {created && (
+              <button className="btn" type="button" onClick={() => navigate(`/sessions/${created.id}`)}>
+                Open Live Trace
+              </button>
+            )}
+          </div>
+        </form>
 
         {error && <div className="banner">{error}</div>}
-
-        <div className="set-actions">
-          {busy && <span className="page-sub">Starting session...</span>}
-          {created && (
-            <button className="btn" onClick={() => navigate(`/sessions/${created.id}`)}>
-              Open Live Trace
-            </button>
-          )}
-        </div>
       </section>
 
       {created && contextPayload && (
