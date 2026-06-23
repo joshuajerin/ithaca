@@ -678,11 +678,12 @@ def create_app(db: Any | None = None) -> FastAPI:
             actor_kind = "user"
 
         run_id = stores.runs.create_research(resolved_tenant)
-        title = (body.title or prompt[:80] or "Realtime session").strip()
+        title = (body.title or prompt[:80]).strip()
         data = {
-            "title": title,
             "createdBy": "web" if actor_kind == "user" else actor_kind,
         }
+        if title:
+            data["title"] = title
         if prompt:
             data["prompt"] = prompt
         stores.trace.append({

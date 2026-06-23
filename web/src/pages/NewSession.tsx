@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import type { RunRow } from "../types";
@@ -7,38 +7,43 @@ const MCP_URL = "https://mcp.doomberg.me/mcp";
 const MCP_SCOPES = ["data:read", "strategy:author", "deploy:backtest", "deploy:paper"];
 
 export function NewSession() {
-  const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<RunRow | null>(null);
   const [agentKey, setAgentKey] = useState<string | null>(null);
   const [keyBusy, setKeyBusy] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  const started = useRef(false);
   const navigate = useNavigate();
 
-  const cleanTitle = title.trim();
   const contextPayload = created ? {
     name: "session_context",
     arguments: {
       session_id: created.id,
       prompt: "<your prompt from chat>",
-      title: cleanTitle || "Realtime session",
     },
   } : null;
 
-  async function submit() {
+  async function startSession() {
+    if (started.current) return;
+    started.current = true;
     setBusy(true);
     setError(null);
     try {
-      const session = await api.createSession("", cleanTitle || undefined);
+      const session = await api.createSession("");
       setCreated(session);
       setAgentKey(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      started.current = false;
     } finally {
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    void startSession();
+  }, []);
 
   async function generateAgentKey() {
     setKeyBusy(true);
@@ -65,24 +70,15 @@ export function NewSession() {
       <div className="page-head">
         <div>
           <div className="page-title">New Session</div>
-          <div className="page-sub">start a realtime MCP trace; the prompt arrives from chat</div>
+          <div className="page-sub">starting an empty realtime MCP trace</div>
         </div>
       </div>
 
       <section className="prompt-editor">
-        <label className="set-h" htmlFor="session-title">Title</label>
-        <input
-          id="session-title"
-          className="auth-input"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="NVDA scan"
-        />
-
         <div className="realtime-start">
           <div className="set-h">Realtime run</div>
           <div className="set-hint no-pad">
-            Start the session here, then prompt your agent from chat. The first MCP
+            This page opens a blank session automatically. Prompt your agent from chat; the first MCP
             <code> session_context </code> call records that prompt and every skill call streams
             into the live trace.
           </div>
@@ -91,9 +87,7 @@ export function NewSession() {
         {error && <div className="banner">{error}</div>}
 
         <div className="set-actions">
-          <button className="btn primary" onClick={submit} disabled={busy}>
-            {busy ? "Starting..." : "Start Realtime Session"}
-          </button>
+          {busy && <span className="page-sub">Starting session...</span>}
           {created && (
             <button className="btn" onClick={() => navigate(`/sessions/${created.id}`)}>
               Open Live Trace

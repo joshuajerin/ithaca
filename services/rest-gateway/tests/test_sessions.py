@@ -74,5 +74,5 @@ def test_create_session_can_start_realtime_without_prompt(client, stores, tenant
     assert resp.status_code == 201, resp.text
     body = resp.json()
     events = stores.trace.events(tenant_a, body["id"])
-    assert events[0]["data"]["title"] == "Realtime session"
+    assert "title" not in events[0]["data"]
     assert "prompt" not in events[0]["data"]
