@@ -72,3 +72,14 @@ def test_x_tenant_id_fallback_disabled_in_prod(client, monkeypatch):
     resp = client.get("/api/runs", headers={"X-Tenant-Id": tid})
     assert resp.status_code == 401
     assert resp.json()["detail"] == "authentication required"
+
+
+def test_query_access_token_is_not_a_rest_auth_path(client, stores, monkeypatch):
+    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    tid = stores.auth.create_tenant("Acme")
+    key, _ = stores.auth.mint_key(tid, ["data:read"])
+
+    resp = client.get("/api/runs", params={"access_token": key})
+
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "authentication required"

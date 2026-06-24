@@ -157,6 +157,24 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions (user_id);
 
+-- Short-lived one-time bearer tickets for browser EventSource connections.
+-- EventSource cannot send Authorization headers; these tickets are minted over normal
+-- authenticated REST, scoped to one tenant/run, and consumed by the SSE route. Only a
+-- SHA-256 hash of the ticket secret is persisted.
+CREATE TABLE IF NOT EXISTS sse_tickets (
+    ticket_id   TEXT PRIMARY KEY,
+    tenant_id   TEXT NOT NULL,
+    run_id      TEXT NOT NULL,
+    principal_id TEXT NOT NULL,
+    secret_hash TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    expires_at  TEXT NOT NULL,
+    used_at     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_sse_tickets_tenant_run
+    ON sse_tickets (tenant_id, run_id, expires_at);
+
 -- Durable compute jobs. A run can own multiple jobs over time, but the first cut creates
 -- one job per queued run. The lease columns let workers recover jobs abandoned by a dead
 -- worker without relying on an MCP/client process staying alive.

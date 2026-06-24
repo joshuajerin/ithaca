@@ -223,14 +223,27 @@ export const api = {
     );
   },
 
-  // The /api/runs/{id}/events SSE URL. EventSource cannot set headers, so the tenant
-  // is passed as a query param only for local dev. Signed-in users pass the session token
-  // as access_token so the stream resolves to the same tenant/account as normal REST calls.
-  eventsUrl(id: string): string {
+  async mintRunEventsTicket(id: string, afterSeq = -1, signal?: AbortSignal) {
+    return postJson<{
+      sse_ticket: string;
+      run_id: string;
+      tenant_id: string;
+      expires_at: string;
+      single_use: boolean;
+      after_seq?: number;
+    }>(`/runs/${encodeURIComponent(id)}/events-ticket`, { after_seq: afterSeq }, signal);
+  },
+
+  // The /api/runs/{id}/events SSE URL. EventSource cannot set headers, so production
+  // streams use a short-lived one-time ticket minted over normal authenticated REST.
+  // Local dev can still fall back to ?tenant_id= when no ticket was minted.
+  eventsUrl(id: string, opts?: { sseTicket?: string; afterSeq?: number }): string {
     const url = new URL(`${API_BASE}/runs/${encodeURIComponent(id)}/events`, window.location.origin);
-    const oauthToken = localStorage.getItem("doomberg.token");
-    if (oauthToken) {
-      url.searchParams.set("access_token", oauthToken);
+    if (opts?.sseTicket) {
+      url.searchParams.set("sse_ticket", opts.sseTicket);
+      if (typeof opts.afterSeq === "number" && opts.afterSeq >= 0) {
+        url.searchParams.set("after_seq", String(opts.afterSeq));
+      }
     } else {
       url.searchParams.set("tenant_id", TENANT_ID);
     }

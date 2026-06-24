@@ -43,5 +43,6 @@ pnpm --filter @doomberg/web test     # vitest
 - `VITE_TENANT_ID` — `X-Tenant-Id` sent on every request (the hard isolation key).
   Default `00000000-0000-0000-0000-000000000001`.
 
-`EventSource` can't set headers, so the SSE URL passes `?tenant_id=` as a query param the
-gateway maps back to ctx in local dev.
+`EventSource` can't set headers, so production streams first mint a short-lived
+`/api/runs/{id}/events-ticket` over authenticated REST and pass only that one-time ticket to
+the SSE URL. Local dev can still fall back to `?tenant_id=`.

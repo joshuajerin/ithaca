@@ -22,12 +22,15 @@ is required and threaded into every store call as the first arg. No unscoped rea
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json as _json
 import os
+import secrets
 import urllib.parse
 import urllib.request
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -178,6 +181,10 @@ class MintKeyBody(BaseModel):
     scopes: list[str] | None = None
 
 
+class MintSseTicketBody(BaseModel):
+    after_seq: int | None = None
+
+
 def _bearer_key(authorization: str | None) -> str | None:
     """Extract the ``dmbg_...`` token from an ``Authorization: Bearer <key>`` header."""
     if not authorization:
@@ -275,6 +282,90 @@ def _public_provider_connection(connection: dict[str, Any]) -> dict[str, Any]:
         "created_at": connection.get("created_at"),
         "updated_at": connection.get("updated_at"),
     }
+
+
+def _sse_ticket_ttl_seconds() -> int:
+    raw = os.environ.get("DOOMBERG_SSE_TICKET_TTL_SECONDS", "60")
+    try:
+        return max(5, min(300, int(raw)))
+    except ValueError:
+        return 60
+
+
+def _hash_sse_secret(secret: str) -> str:
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+
+def _mint_sse_ticket(stores: Stores, ctx: Ctx, run_id: str) -> dict[str, Any]:
+    run = stores.runs.get(ctx.tenant_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(seconds=_sse_ticket_ttl_seconds())
+    ticket_id = uuid.uuid4().hex
+    secret = secrets.token_urlsafe(32)
+    token = f"{ticket_id}.{secret}"
+    with stores.db.write_lock:
+        with stores.db.conn as conn:
+            conn.execute(
+                "DELETE FROM sse_tickets WHERE expires_at < ? OR used_at IS NOT NULL",
+                (now.isoformat(),),
+            )
+            conn.execute(
+                "INSERT INTO sse_tickets "
+                "(ticket_id, tenant_id, run_id, principal_id, secret_hash, created_at, expires_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    ticket_id,
+                    ctx.tenant_id,
+                    run_id,
+                    str(ctx.actor_id),
+                    _hash_sse_secret(secret),
+                    now.isoformat(),
+                    expires.isoformat(),
+                ),
+            )
+    return {
+        "sse_ticket": token,
+        "run_id": run_id,
+        "tenant_id": ctx.tenant_id,
+        "expires_at": expires.isoformat(),
+        "single_use": True,
+    }
+
+
+def _redeem_sse_ticket(stores: Stores, ticket: str, run_id: str) -> str:
+    try:
+        ticket_id, secret = ticket.split(".", 1)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="invalid sse ticket") from exc
+    if not ticket_id or not secret:
+        raise HTTPException(status_code=401, detail="invalid sse ticket")
+
+    now = datetime.now(timezone.utc)
+    with stores.db.write_lock:
+        with stores.db.conn as conn:
+            row = conn.execute(
+                "SELECT * FROM sse_tickets WHERE ticket_id = ? AND used_at IS NULL",
+                (ticket_id,),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=401, detail="invalid or already-used sse ticket")
+            if row["run_id"] != str(run_id):
+                raise HTTPException(status_code=401, detail="sse ticket is not valid for this run")
+            expires_at = datetime.fromisoformat(row["expires_at"])
+            if expires_at < now:
+                raise HTTPException(status_code=401, detail="sse ticket expired")
+            if not hmac.compare_digest(row["secret_hash"], _hash_sse_secret(secret)):
+                raise HTTPException(status_code=401, detail="invalid sse ticket")
+            cur = conn.execute(
+                "UPDATE sse_tickets SET used_at = ? WHERE ticket_id = ? AND used_at IS NULL",
+                (now.isoformat(), ticket_id),
+            )
+            if cur.rowcount != 1:
+                raise HTTPException(status_code=401, detail="invalid or already-used sse ticket")
+            return str(row["tenant_id"])
 
 
 def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
@@ -396,7 +487,6 @@ def require_tenant(
     authorization: str | None = Header(default=None, alias="Authorization"),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
     tenant_id: str | None = Query(default=None),
-    access_token: str | None = Query(default=None),
 ) -> str:
     """Tenant from a bearer key (prod) or the ``X-Tenant-Id`` header / ``?tenant_id=`` query.
 
@@ -404,11 +494,10 @@ def require_tenant(
     the dev header or EventSource query param. Deployed envs require auth unless explicitly
     opted in with ``DOOMBERG_ALLOW_DEV_TENANT_HEADER=1``.
 
-    EventSource cannot send custom headers, so the live session stream may pass the signed-in
-    session token as ``?access_token=``. It is resolved exactly like ``Authorization: Bearer``.
+    EventSource cannot send custom headers; the live stream uses short-lived SSE tickets
+    minted by an authenticated REST request instead of putting account credentials in URLs.
     """
-    token_authorization = authorization or (f"Bearer {access_token}" if access_token else None)
-    principal = _verify_bearer(request, token_authorization)
+    principal = _verify_bearer(request, authorization)
     if principal is not None:
         return principal["tenant_id"]
     if not _allow_dev_tenant_header():
@@ -882,6 +971,25 @@ def create_app(db: Any | None = None) -> FastAPI:
         stores.auth.revoke_key(key_id)
         return {"key_id": key_id, "revoked": True}
 
+    @app.post("/api/runs/{run_id}/events-ticket", status_code=201)
+    def mint_run_events_ticket(
+        run_id: str,
+        body: MintSseTicketBody | None = None,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        """Mint a short-lived one-time ticket for EventSource.
+
+        Browsers cannot attach ``Authorization`` to EventSource, so the UI obtains this
+        ticket over normal authenticated REST and then presents only the ticket in the SSE
+        URL. The long-lived session/API token never appears in query strings.
+        """
+        _require_scope(ctx, "data:read")
+        ticket = _mint_sse_ticket(stores, ctx, run_id)
+        if body and body.after_seq is not None:
+            ticket["after_seq"] = int(body.after_seq)
+        return ticket
+
     # ---- research sessions ------------------------------------------------------------
     @app.get("/api/sessions")
     def list_sessions(
@@ -1350,11 +1458,30 @@ def create_app(db: Any | None = None) -> FastAPI:
     def stream_events(
         run_id: str,
         request: Request,
-        tenant_id: str = Depends(require_tenant),
         stores: Stores = Depends(get_stores),
         last_event_id: str | None = Header(default=None),
+        authorization: str | None = Header(default=None, alias="Authorization"),
+        x_tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+        tenant_id: str | None = Query(default=None),
+        access_token: str | None = Query(default=None),
+        sse_ticket: str | None = Query(default=None),
     ) -> StreamingResponse:
-        run = stores.runs.get(tenant_id, run_id)
+        if sse_ticket:
+            resolved_tenant_id = _redeem_sse_ticket(stores, sse_ticket, run_id)
+        elif access_token:
+            raise HTTPException(
+                status_code=401,
+                detail="use /api/runs/{run_id}/events-ticket instead of access_token query auth",
+            )
+        else:
+            resolved_tenant_id = require_tenant(
+                request,
+                authorization=authorization,
+                x_tenant_id=x_tenant_id,
+                tenant_id=tenant_id,
+            )
+
+        run = stores.runs.get(resolved_tenant_id, run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="run not found")
 
@@ -1368,7 +1495,7 @@ def create_app(db: Any | None = None) -> FastAPI:
         deadline_seconds = float(deadline) if deadline is not None else None
 
         stream = event_stream(
-            stores.trace, tenant_id, run_id,
+            stores.trace, resolved_tenant_id, run_id,
             after_seq=after_seq, deadline_seconds=deadline_seconds, replay_only=replay_only,
         )
         return StreamingResponse(

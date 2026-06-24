@@ -220,6 +220,7 @@ _TENANT_TABLES = (
     "books",
     "api_keys",
     "users",
+    "sse_tickets",
     "jobs",
     "artifacts",
     "approvals",

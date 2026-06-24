@@ -51,11 +51,43 @@ def test_create_session_uses_signed_in_users_tenant(client):
     assert event["data"]["prompt"] == "screen semis with unusual volume"
 
 
-def test_signed_in_event_stream_can_authenticate_with_query_token(client):
+def test_signed_in_event_stream_uses_one_time_ticket(client):
     token, tenant_id, _user_id = _signup(client, email="stream@sessions.test")
     created = client.post(
         "/api/sessions",
         json={"prompt": "stream this session"},
+        headers=_bearer(token),
+    ).json()
+
+    minted = client.post(
+        f"/api/runs/{created['id']}/events-ticket",
+        json={},
+        headers=_bearer(token),
+    )
+    assert minted.status_code == 201, minted.text
+    ticket = minted.json()["sse_ticket"]
+
+    resp = client.get(
+        f"/api/runs/{created['id']}/events",
+        params={"sse_ticket": ticket, "replay_only": "1", "deadline": "0"},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert "stream this session" in resp.text
+    assert tenant_id in resp.text
+
+    replay = client.get(
+        f"/api/runs/{created['id']}/events",
+        params={"sse_ticket": ticket, "replay_only": "1", "deadline": "0"},
+    )
+    assert replay.status_code == 401
+
+
+def test_signed_in_event_stream_rejects_query_access_token(client):
+    token, _tenant_id, _user_id = _signup(client, email="query-token@sessions.test")
+    created = client.post(
+        "/api/sessions",
+        json={"prompt": "do not leak token in url"},
         headers=_bearer(token),
     ).json()
 
@@ -64,9 +96,8 @@ def test_signed_in_event_stream_can_authenticate_with_query_token(client):
         params={"access_token": token, "replay_only": "1", "deadline": "0"},
     )
 
-    assert resp.status_code == 200, resp.text
-    assert "stream this session" in resp.text
-    assert tenant_id in resp.text
+    assert resp.status_code == 401
+    assert "events-ticket" in resp.json()["detail"]
 
 
 def test_create_session_can_start_realtime_without_prompt(client, stores, tenant_a):
