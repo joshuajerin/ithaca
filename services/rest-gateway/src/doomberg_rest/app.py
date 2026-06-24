@@ -49,6 +49,7 @@ from doomberg_platform import (
     BookStore,
     ExecutionStore,
     JobStore,
+    LeaseStore,
     ProviderStore,
     RunStore,
     SessionError,
@@ -80,6 +81,7 @@ class Stores:
         self.auth = AuthStore(db)
         self.users = UserStore(db)
         self.jobs = JobStore(db)
+        self.leases = LeaseStore(db)
         self.artifacts = ArtifactStore(db)
         self.approvals = ApprovalStore(db)
         self.providers = ProviderStore(db)
@@ -256,6 +258,7 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
     snapshots = stores.providers.list_snapshots(tenant_id, limit=25)
     jobs = stores.jobs.list(tenant_id, limit=500)
     triggers = stores.triggers.list(tenant_id, limit=500)
+    leases = stores.leases.list()
 
     connected = [c for c in connections if c.get("state") == "connected"]
     ibkr_names = {"ibkr", "ibkr-engine", "interactive_brokers", "interactive-brokers"}
@@ -316,6 +319,11 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
             "state": "warn" if queued_jobs and active_jobs == 0 else "succeeded",
             "detail": f"{queued_jobs} queued, {active_jobs} leased/running, {failed_jobs} terminal",
         },
+        {
+            "name": "Worker leadership",
+            "state": "succeeded" if leases else "paused",
+            "detail": f"{len(leases)} active lease row{'' if len(leases) == 1 else 's'}",
+        },
     ]
 
     return {
@@ -350,6 +358,7 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
             "leased_or_running": active_jobs,
             "terminal": failed_jobs,
         },
+        "leases": leases,
         "triggers": {
             "active": active_triggers,
             "total": len(triggers),

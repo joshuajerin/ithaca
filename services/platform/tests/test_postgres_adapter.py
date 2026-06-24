@@ -5,7 +5,7 @@ import os
 import pytest
 from platform_helpers import new_uuid, trace_event
 
-from doomberg_platform import AuthStore, ExecutionStore, JobStore, TraceStore, open_db
+from doomberg_platform import AuthStore, ExecutionStore, JobStore, LeaseStore, TraceStore, open_db
 from doomberg_platform.pg_db import _convert_placeholders, is_postgres_dsn
 
 
@@ -46,6 +46,10 @@ def test_live_postgres_platform_smoke() -> None:
         claimed = jobs.claim_available(worker_id="pg-smoke-worker")
         assert [j["job_id"] for j in claimed] == [job["job_id"]]
         assert claimed[0]["state"] == "leased"
+        leases = LeaseStore(db)
+        assert leases.acquire("pg-smoke-leader", "worker-a", ttl_seconds=30) is not None
+        assert leases.acquire("pg-smoke-leader", "worker-b", ttl_seconds=30) is None
+        assert leases.release("pg-smoke-leader", "worker-a") is True
 
         seq = TraceStore(db).append(trace_event(tenant_id, run_id))
         assert seq >= 0

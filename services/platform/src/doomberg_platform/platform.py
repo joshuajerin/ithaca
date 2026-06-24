@@ -11,6 +11,7 @@ from .book_store import BookStore
 from .control_store import ApprovalStore, ArtifactStore, ExecutionStore, ProviderStore, TriggerStore
 from .db import Db, open_db
 from .job_store import JobStore
+from .lease_store import LeaseStore
 from .run_store import RunStore
 from .strategy_store import StrategyStore
 from .trace_store import TraceStore
@@ -29,6 +30,7 @@ class Platform:
         self.auth = AuthStore(self.db)
         self.users = UserStore(self.db)
         self.jobs = JobStore(self.db)
+        self.leases = LeaseStore(self.db)
         self.artifacts = ArtifactStore(self.db)
         self.approvals = ApprovalStore(self.db)
         self.providers = ProviderStore(self.db)

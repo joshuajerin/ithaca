@@ -24,6 +24,7 @@ def test_ops_status_reports_ibkr_and_execution_readiness(client, stores, tenant_
     monkeypatch.setenv("DOOMBERG_ENABLE_LIVE_EXECUTION", "1")
     run_id = seed_run(stores, tenant_a, kind="backtest")
     stores.jobs.create_for_run(tenant_a, run_id, kind="backtest", profile="backtest")
+    stores.leases.acquire("trigger-engine", "worker-a", ttl_seconds=60)
     stores.providers.upsert_connection(
         tenant_a,
         provider="ibkr",
@@ -42,6 +43,7 @@ def test_ops_status_reports_ibkr_and_execution_readiness(client, stores, tenant_
     assert body["ibkr"]["connected_execution_provider"] is True
     assert body["execution"]["live_enabled"] is True
     assert body["jobs"]["queued"] == 1
+    assert body["leases"][0]["lease_name"] == "trigger-engine"
     assert any(row["name"] == "Live execution" and row["state"] == "succeeded"
                for row in body["readiness"])
 

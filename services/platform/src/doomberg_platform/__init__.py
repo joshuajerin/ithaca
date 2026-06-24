@@ -17,6 +17,7 @@ from .book_store import BookConflict, BookNotFound, BookStore
 from .control_store import ApprovalStore, ArtifactStore, ExecutionStore, ProviderStore, TriggerStore
 from .db import Db, open_db
 from .job_store import JobConflict, JobNotFound, JobStore
+from .lease_store import LeaseConflict, LeaseStore
 from .platform import Platform
 from .run_store import (
     RunNotFound,
@@ -38,6 +39,7 @@ __all__ = [
     "BookStore",
     "AuthStore",
     "JobStore",
+    "LeaseStore",
     "ArtifactStore",
     "ApprovalStore",
     "ProviderStore",
@@ -50,6 +52,7 @@ __all__ = [
     "RunNotFound",
     "JobConflict",
     "JobNotFound",
+    "LeaseConflict",
     "BookConflict",
     "BookNotFound",
     "UserStore",

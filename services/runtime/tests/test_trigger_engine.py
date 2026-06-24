@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import threading
+import time
 
 from doomberg_runtime import StaticQuoteClient, TriggerEngine, TriggerJobWorker
 
@@ -88,6 +90,48 @@ def test_trigger_engine_fires_quote_run_and_cooldown_blocks_repeat(durable_platf
 
     assert second["fired"] == []
     assert second["skipped"][0]["reason"] == "COOLDOWN"
+
+
+def test_trigger_engine_run_forever_requires_leadership(durable_platform, monkeypatch):
+    tenant = durable_platform.auth.create_tenant("trigger tenant")
+    now = dt.datetime(2026, 6, 24, 13, 30, tzinfo=dt.timezone.utc)
+    _active_trigger(durable_platform, tenant, _policy())
+    quote_client = StaticQuoteClient({"NVDA": _quote(now)})
+    monkeypatch.setenv("DOOMBERG_TRIGGER_LEASE_TTL_S", "30")
+
+    assert durable_platform.leases.acquire("trigger-engine", "owner-1", ttl_seconds=30) is not None
+    blocked = TriggerEngine(durable_platform, quote_client=quote_client, worker_id="owner-2")
+    stop = threading.Event()
+    blocked_thread = threading.Thread(
+        target=blocked.run_forever,
+        kwargs={"interval_s": 0.01, "stop": stop},
+        daemon=True,
+    )
+    blocked_thread.start()
+    time.sleep(0.05)
+    stop.set()
+    blocked_thread.join(timeout=1)
+
+    assert durable_platform.triggers.list_firings(tenant) == []
+
+    assert durable_platform.leases.release("trigger-engine", "owner-1") is True
+    leader = TriggerEngine(durable_platform, quote_client=quote_client, worker_id="owner-2")
+    stop = threading.Event()
+    leader_thread = threading.Thread(
+        target=leader.run_forever,
+        kwargs={"interval_s": 0.01, "stop": stop},
+        daemon=True,
+    )
+    leader_thread.start()
+    for _ in range(50):
+        if durable_platform.triggers.list_firings(tenant):
+            break
+        time.sleep(0.01)
+    stop.set()
+    leader_thread.join(timeout=1)
+
+    assert len(durable_platform.triggers.list_firings(tenant)) == 1
+    assert durable_platform.leases.get("trigger-engine") is None
 
 
 def test_trigger_engine_requires_connected_live_data_when_policy_says_so(

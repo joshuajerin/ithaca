@@ -3,9 +3,9 @@
 # This deployment owns active loops and has no ingress. It shares the managed
 # Postgres platform store with the app deployment, so API/MCP processes can be
 # rolled and scaled independently from queue polling, paper ticks, and trigger
-# evaluation. Keep WORKER_REPLICAS=1 until paper scheduler and trigger polling
-# have explicit leader leases; backtest/trigger job claiming is already
-# protected by durable job leases.
+# evaluation. Multiple replicas are safe: backtest/trigger jobs use durable job
+# leases, while paper scheduling and trigger polling use platform worker_leases
+# so only one replica runs each active singleton loop at a time.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,7 +17,10 @@ metadata:
 spec:
   replicas: ${WORKER_REPLICAS}
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
   selector:
     matchLabels:
       doomberg/component: worker
@@ -37,6 +40,16 @@ spec:
           operator: Equal
           value: ${WORKER_NODE_WORKLOAD}
           effect: NoSchedule
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    doomberg/component: worker
+                    doomberg/environment: ${DOOMBERG_ENV}
+                topologyKey: kubernetes.io/hostname
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -117,6 +130,8 @@ spec:
               value: "2"
             - name: DOOMBERG_PAPER_INTERVAL_S
               value: "60"
+            - name: DOOMBERG_PAPER_LEASE_TTL_S
+              value: "180"
             - name: FMP_API_KEY
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: fmp_api_key, optional: true }
@@ -147,6 +162,8 @@ spec:
                   key: platform_url
             - name: DOOMBERG_TRIGGER_INTERVAL_S
               value: "5"
+            - name: DOOMBERG_TRIGGER_LEASE_TTL_S
+              value: "60"
             - name: DOOMBERG_IBKR_ENGINE_URL
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: ibkr_engine_url, optional: true }

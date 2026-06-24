@@ -16,11 +16,13 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from ._trace import emit
+from .leader import acquire_loop_lease, process_owner, release_loop_lease
 
 __all__ = [
     "HttpQuoteClient",
@@ -614,9 +616,22 @@ class TriggerEngine:
 
     def run_forever(self, *, interval_s: float = 5.0, stop: threading.Event | None = None) -> None:
         stop = stop or threading.Event()
-        while not stop.is_set():
-            self.poll_once()
-            stop.wait(interval_s)
+        ttl_s = float(os.environ.get("DOOMBERG_TRIGGER_LEASE_TTL_S", str(max(60.0, interval_s * 3.0))))
+        lease_name = os.environ.get("DOOMBERG_TRIGGER_LEASE_NAME", "trigger-engine")
+        try:
+            while not stop.is_set():
+                if acquire_loop_lease(
+                    self.platform,
+                    lease_name=lease_name,
+                    owner_id=self.worker_id,
+                    ttl_seconds=ttl_s,
+                    role="trigger-engine",
+                ):
+                    self.poll_once()
+                stop.wait(interval_s)
+        finally:
+            with suppress(Exception):
+                release_loop_lease(self.platform, lease_name=lease_name, owner_id=self.worker_id)
 
 
 def main() -> None:
@@ -625,13 +640,16 @@ def main() -> None:
     db_path = os.environ.get("DOOMBERG_DB", ":memory:")
     interval_s = float(os.environ.get("DOOMBERG_TRIGGER_INTERVAL_S", "5"))
     platform = Platform(db_path)
+    worker_id = process_owner("trigger-engine")
     print(
         "doomberg trigger engine up — "
         f"db={db_path}, interval={interval_s}s, "
+        f"lease_ttl={os.environ.get('DOOMBERG_TRIGGER_LEASE_TTL_S') or max(60.0, interval_s * 3.0)}s, "
+        f"owner={worker_id}, "
         f"ibkr_url={'set' if os.environ.get('DOOMBERG_IBKR_ENGINE_URL') else 'unset'}",
         flush=True,
     )
-    TriggerEngine(platform).run_forever(interval_s=interval_s)
+    TriggerEngine(platform, worker_id=worker_id).run_forever(interval_s=interval_s)
 
 
 if __name__ == "__main__":

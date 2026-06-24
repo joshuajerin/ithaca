@@ -17,7 +17,7 @@ Prod app and active worker pods default to the `paper` node pool. Dev app and
 worker pods default to the tainted `backtest` pool so dev does not compete with
 prod for the current paper node; override with `APP_NODE_WORKLOAD` or
 `WORKER_NODE_WORKLOAD` if the cluster topology changes. Prod app replicas
-default to `2`; active worker replicas default to `1`.
+default to `2`; active worker replicas default to `2`.
 
 `deploy-do.yml` builds an immutable DOCR image from the checked-out SHA, deploys only
 that tag, and moves `latest` only after a successful prod rollout. The prod job also
@@ -231,9 +231,11 @@ load balancer rules in Terraform. The service manifest, worker network policy,
 both `doomberg-db` Secrets, and replica counts are rendered/applied by
 `deploy/deploy_services.sh`.
 
-Keep `WORKER_REPLICAS=1` until the paper scheduler and trigger polling have
-explicit leader leases. Durable backtest and trigger-analysis job claiming uses
-Postgres worker leases, but those always-on loops are still active pollers.
+Production defaults to `WORKER_REPLICAS=2`. Backtest and trigger-analysis jobs
+are claimed through durable job leases. The paper scheduler and trigger polling
+loops use the platform `worker_leases` table, so only one worker replica owns
+each singleton loop at a time; if the owner dies, another replica takes over
+after the lease TTL.
 
 For connected-account live trigger quotes, set:
 
@@ -305,11 +307,12 @@ doctl databases pool list <db-id>     # confirm the cluster has a standby node
 ```
 
 Pass criteria: during 8b–8c the `/healthz` curl keeps returning 200 and at least
-one `doomberg-app` replica stays `Running`. The single active worker may restart
-on the surviving node; queued/running work remains auditable in Postgres and
-leased jobs retry or fail through the durable job state. That is the public
-node-failover guarantee the `paper_node_count >= 2` + `lb_size_unit >= 2` +
-multi-replica app deployment buys.
+one `doomberg-app` replica stays `Running`. At least one worker pod should also
+remain or reschedule; queued/running work remains auditable in Postgres, leased
+jobs retry or fail through durable job state, and singleton loops fail over via
+`worker_leases`. That is the public node-failover guarantee the
+`paper_node_count >= 2` + `lb_size_unit >= 2` + multi-replica app/worker
+deployments buy.
 
 ---
 
@@ -321,9 +324,8 @@ multi-replica app deployment buys.
   app. (Never restore in-place over the live primary.)
 - **Scaling backtests:** the `backtest` pool is reserved for heavier future
   worker profiles and can be selected with `WORKER_NODE_WORKLOAD=backtest`.
-  Keep the always-on `doomberg-workers` deployment at one replica until worker
-  leader leases are added; job leasing is durable, but paper/trigger pollers are
-  intentionally single-active today.
+  `doomberg-workers` can run multiple replicas: job workers claim work through
+  durable job leases, while paper/trigger singleton loops use `worker_leases`.
 - **Teardown:** `cd infra/terraform && terraform destroy`. NOTE: the Postgres
   cluster has `prevent_destroy = true` — remove that lifecycle block (or
   `terraform state rm`) deliberately before destroying the DB.

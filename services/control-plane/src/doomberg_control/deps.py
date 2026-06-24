@@ -35,6 +35,7 @@ from doomberg_platform import (
     BookStore,
     ExecutionStore,
     JobStore,
+    LeaseStore,
     ProviderStore,
     RunStore,
     StrategyStore,
@@ -104,6 +105,7 @@ class Platform:
         self.books = BookStore(self.db)
         self.auth = AuthStore(self.db)
         self.jobs = JobStore(self.db)
+        self.leases = LeaseStore(self.db)
         self.artifacts = ArtifactStore(self.db)
         self.approvals = ApprovalStore(self.db)
         self.providers = ProviderStore(self.db)

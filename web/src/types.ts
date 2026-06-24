@@ -207,6 +207,16 @@ export interface OpsStatus {
     leased_or_running: number;
     terminal: number;
   };
+  leases: Array<{
+    lease_name: string;
+    owner_id: string;
+    lease_expires_at: string;
+    heartbeat_at: string;
+    metadata: Record<string, unknown>;
+    version: number;
+    created_at: string;
+    updated_at: string;
+  }>;
   triggers: {
     active: number;
     total: number;

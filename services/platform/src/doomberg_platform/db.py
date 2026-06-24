@@ -192,6 +192,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_idempotency
     ON jobs (tenant_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 
+-- Cross-process leadership leases for active worker loops such as trigger polling and
+-- paper scheduling. These are infrastructure rows, not tenant data: every replica can
+-- attempt to renew, but only the current owner can run the singleton loop until the
+-- lease expires or is released.
+CREATE TABLE IF NOT EXISTS worker_leases (
+    lease_name       TEXT PRIMARY KEY,
+    owner_id         TEXT NOT NULL,
+    lease_expires_at TEXT NOT NULL,
+    heartbeat_at     TEXT NOT NULL,
+    metadata         TEXT NOT NULL,
+    version          INTEGER NOT NULL,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_worker_leases_expires
+    ON worker_leases (lease_expires_at);
+
 -- Large outputs live outside trace_events; trace rows point at artifact ids.
 CREATE TABLE IF NOT EXISTS artifacts (
     tenant_id    TEXT NOT NULL,

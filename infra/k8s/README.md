@@ -25,9 +25,11 @@ The `platform-migrate` init container applies the platform schema before the
 app and worker containers start. The process open path also applies idempotent
 DDL, so a restart remains self-healing.
 
-Keep `WORKER_REPLICAS=1` until the paper scheduler and trigger polling have
-explicit leader leases. Backtest and trigger-analysis job claiming is durable,
-but those two long-running loops are still active pollers.
+Production can run multiple `doomberg-workers` replicas. Backtest and
+trigger-analysis jobs are claimed through durable job leases; the paper
+scheduler and trigger polling loops use `worker_leases`, so only one replica
+owns each singleton loop at a time. The default deploy uses two prod worker
+replicas and one dev worker replica.
 
 ## Files
 

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
+
+from doomberg_platform import LeaseConflict
 
 
 def test_job_store_idempotent_enqueue_and_lease(platform):
@@ -69,6 +72,59 @@ def test_job_store_cancel_by_run(platform):
 
     assert [j["job_id"] for j in cancelled] == [job["job_id"]]
     assert platform.jobs.get(tenant, job["job_id"])["state"] == "cancelled"
+
+
+def test_lease_store_owner_renewal_expiry_and_release(platform):
+    now = dt.datetime(2026, 6, 24, 12, 0, tzinfo=dt.timezone.utc)
+
+    first = platform.leases.acquire("trigger-engine", "worker-a", ttl_seconds=30, now=now)
+    assert first is not None
+    assert first["owner_id"] == "worker-a"
+
+    blocked = platform.leases.acquire(
+        "trigger-engine",
+        "worker-b",
+        ttl_seconds=30,
+        now=now + dt.timedelta(seconds=10),
+    )
+    assert blocked is None
+    assert platform.leases.get("trigger-engine")["owner_id"] == "worker-a"
+
+    renewed = platform.leases.acquire(
+        "trigger-engine",
+        "worker-a",
+        ttl_seconds=30,
+        now=now + dt.timedelta(seconds=20),
+    )
+    assert renewed is not None
+    assert renewed["owner_id"] == "worker-a"
+    assert renewed["version"] == first["version"] + 1
+
+    taken = platform.leases.acquire(
+        "trigger-engine",
+        "worker-b",
+        ttl_seconds=30,
+        now=now + dt.timedelta(seconds=61),
+    )
+    assert taken is not None
+    assert taken["owner_id"] == "worker-b"
+
+    assert platform.leases.release("trigger-engine", "worker-a") is False
+    assert platform.leases.release("trigger-engine", "worker-b") is True
+    assert platform.leases.get("trigger-engine") is None
+
+
+def test_lease_store_heartbeat_requires_current_owner(platform):
+    platform.leases.acquire("paper-scheduler", "worker-a", ttl_seconds=30)
+
+    try:
+        platform.leases.heartbeat("paper-scheduler", "worker-b", ttl_seconds=30)
+    except LeaseConflict:
+        pass
+    else:  # pragma: no cover - assertion message is clearer than pytest import for this small test.
+        raise AssertionError("non-owner heartbeat should fail")
+
+    assert platform.leases.heartbeat("paper-scheduler", "worker-a", ttl_seconds=30)["owner_id"] == "worker-a"
 
 
 def test_artifacts_approvals_providers_and_execution(platform):
