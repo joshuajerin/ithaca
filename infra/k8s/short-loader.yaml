@@ -5,9 +5,10 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: short-loader
-  namespace: ${K8S_GATEWAY_NAMESPACE}
+  namespace: ${K8S_WORKER_NAMESPACE}
   labels:
-    doomberg/component: short-loader
+    doomberg/component: worker
+    doomberg/worker-role: short-loader
     doomberg/environment: ${DOOMBERG_ENV}
 spec:
   suspend: ${SHORT_LOADER_SUSPEND}
@@ -20,15 +21,20 @@ spec:
       backoffLimit: 2
       activeDeadlineSeconds: 1800   # 30 min hard cap
       template:
+        metadata:
+          labels:
+            doomberg/component: worker
+            doomberg/worker-role: short-loader
+            doomberg/environment: ${DOOMBERG_ENV}
         spec:
           restartPolicy: OnFailure
           automountServiceAccountToken: false
           nodeSelector:
-            workload: paper
+            workload: ${WORKER_NODE_WORKLOAD}
           tolerations:
             - key: workload
               operator: Equal
-              value: paper
+              value: ${WORKER_NODE_WORKLOAD}
               effect: NoSchedule
           securityContext:
             runAsNonRoot: true

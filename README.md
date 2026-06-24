@@ -38,6 +38,9 @@ The full vertical slice **and the deploy-layer conductor** run end-to-end locall
   control plane's single-writer `apply_paper_delta` re-gates and writes the position book (applied `fill`);
 - every step is a gap-free trace; the UI replays it and exposes the human lifecycle controls
   (promote → activate → pause/resume → retire) + the live paper book.
+- the DigitalOcean deploy path uses managed Postgres as the platform system-of-record and splits
+  stateless API/MCP pods from the always-on worker loops (`conductor` + `trigger-engine`), so
+  the app plane no longer depends on a shared SQLite PVC.
 
 The DigitalOcean deploy layer is shaped in Terraform (declarative, not applied); "prod" is paper-only by design.
 
@@ -65,7 +68,9 @@ pnpm --filter @doomberg/web run test && pnpm --filter @doomberg/web run build
 ### Run the services locally
 
 ```bash
-export DOOMBERG_DB=./doomberg.db              # shared SQLite system-of-record (default :memory:)
+export DOOMBERG_DB=./doomberg.db              # local SQLite system-of-record (default :memory:)
+# Production uses managed Postgres instead:
+# export DOOMBERG_DB=postgresql://user:pass@host:5432/dbname?sslmode=require
 
 # MCP server the BYO agent connects to (stdio)
 uv run python -m doomberg_mcp
@@ -85,15 +90,29 @@ export DOOMBERG_IBKR_ENGINE_TOKEN=replace-with-bearer-token   # optional if the 
 # export DOOMBERG_IBKR_QUOTE_PATH=/v1/market/quote/{symbol}
 uv run --package doomberg-runtime python -m doomberg_runtime.trigger_engine
 
+# execution gateway: paper fills are enabled by default. Live IBKR submission is
+# blocked unless this is explicitly set and an IBKR order endpoint is configured.
+# export DOOMBERG_ENABLE_LIVE_EXECUTION=1
+# export DOOMBERG_IBKR_ORDER_PATH=/orders
+# export DOOMBERG_EXECUTION_MAX_NOTIONAL_USD=10000
+
 # observability UI (proxies /api -> :8000)
 pnpm --filter @doomberg/web dev
 ```
 
-All six local processes share the one SQLite system-of-record via `DOOMBERG_DB`. The browser talks only to the
+All six local processes share the same platform system-of-record via `DOOMBERG_DB`. The browser talks only to the
 rest-gateway (`:8000`); its human money-path actions (promote/activate/pause/resume/retire) call the same
 `doomberg_control.actions` the control plane exposes, so there is one money-path implementation, two transports.
 The trigger engine also shares `DOOMBERG_DB`, uses the IBKR engine only as a per-user connected-account data
 source, and never submits broker orders directly.
+
+In Kubernetes, `deploy/deploy_services.sh` creates the same `doomberg-db` Secret in the gateway and worker
+namespaces. `doomberg-app` runs `rest-gateway`, `control-plane`, and hosted HTTP MCP; `doomberg-workers`
+runs the active queue/paper/trigger loops against the same Postgres store.
+
+The implemented skill catalog is contract-backed by `doomberg_core.skills.ALL_SKILL_MANIFESTS`.
+MCP `search_skills` and `describe_skill` read those manifests, while `run_skill` still only
+executes skills present in the runnable registry.
 
 ### Contracts (the frozen source of truth)
 

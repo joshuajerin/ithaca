@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from conftest import valid_spec
+from control_helpers import valid_spec
 
 from doomberg_control.money import apply_paper_delta, make_applier
 

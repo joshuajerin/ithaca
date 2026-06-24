@@ -16,3 +16,7 @@ members = [
 target-version = "py311"
 line-length = 100
 extend-exclude = ["**/generated/**"]
+
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
+asyncio_mode = "auto"

@@ -1,4 +1,4 @@
-"""Shared test helpers: seed runs, strategies, and trace events via the platform stores."""
+"""Shared REST-gateway test helpers."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ def _now_iso() -> str:
 
 
 def seed_run(stores: Any, tenant_id: str, *, kind: str = "backtest") -> str:
-    """Create a draft run for the tenant; returns its run_id."""
     return stores.runs.create(tenant_id, kind, None, {"name": "demo"})
 
 
@@ -30,7 +29,6 @@ def append_event(
     span_id: str | None = None,
     session_id: str | None = None,
 ) -> int:
-    """Append a minimal-but-valid TraceEvent; returns the server-assigned seq."""
     event: dict[str, Any] = {
         "run_id": run_id,
         "ts": _now_iso(),

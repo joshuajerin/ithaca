@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from helpers import new_uuid, strategy_spec
+from platform_helpers import new_uuid, strategy_spec
 
 
 def test_create_returns_id_and_version(strategy_store):

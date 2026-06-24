@@ -9,6 +9,7 @@ dependencies = [
     "doomberg-core",
     "doomberg-contracts",
     "doomberg-platform",
+    "doomberg-control-plane",
 ]
 
 [project.optional-dependencies]
@@ -29,3 +30,4 @@ asyncio_mode = "auto"
 doomberg-core = { workspace = true }
 doomberg-contracts = { workspace = true }
 doomberg-platform = { workspace = true }
+doomberg-control-plane = { workspace = true }

@@ -73,11 +73,20 @@ class TraceStore:
         with self._db.write_lock:
             conn = self._db.conn
             with conn:
-                cur = conn.execute(
-                    "SELECT next_seq FROM run_seq WHERE run_id = ?", (run_id,)
-                )
-                row = cur.fetchone()
-                seq = 0 if row is None else int(row["next_seq"])
+                if getattr(self._db, "is_postgres", False):
+                    row = conn.execute(
+                        "INSERT INTO run_seq (run_id, next_seq) VALUES (?, 1) "
+                        "ON CONFLICT(run_id) DO UPDATE SET next_seq = run_seq.next_seq + 1 "
+                        "RETURNING next_seq - 1 AS seq",
+                        (run_id,),
+                    ).fetchone()
+                    seq = int(row["seq"])
+                else:
+                    cur = conn.execute(
+                        "SELECT next_seq FROM run_seq WHERE run_id = ?", (run_id,)
+                    )
+                    row = cur.fetchone()
+                    seq = 0 if row is None else int(row["next_seq"])
                 conn.execute(
                     "INSERT INTO trace_events "
                     "(tenant_id, run_id, seq, ts, type, session_id, origin_session_id, "
@@ -97,11 +106,12 @@ class TraceStore:
                         data_json,
                     ),
                 )
-                conn.execute(
-                    "INSERT INTO run_seq (run_id, next_seq) VALUES (?, ?) "
-                    "ON CONFLICT(run_id) DO UPDATE SET next_seq = ?",
-                    (run_id, seq + 1, seq + 1),
-                )
+                if not getattr(self._db, "is_postgres", False):
+                    conn.execute(
+                        "INSERT INTO run_seq (run_id, next_seq) VALUES (?, ?) "
+                        "ON CONFLICT(run_id) DO UPDATE SET next_seq = ?",
+                        (run_id, seq + 1, seq + 1),
+                    )
 
         # Publish the durable, normalized event for any live SSE tail.
         published = _row_to_event_from_values(

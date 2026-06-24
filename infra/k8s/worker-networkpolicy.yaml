@@ -1,5 +1,6 @@
-# Default-deny worker namespace egress, with the single allowed destination set
-# to this environment's data-gateway namespace.
+# Default-deny the worker namespace, then allow only the runtime egress workers
+# need: DNS, same-env gateway calls, managed Postgres, and HTTPS/HTTP provider
+# traffic for connected broker/data engines.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -14,7 +15,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-egress-data-gateway
+  name: allow-egress-runtime-dependencies
   namespace: ${K8S_WORKER_NAMESPACE}
   labels:
     doomberg/environment: ${DOOMBERG_ENV}
@@ -34,6 +35,10 @@ spec:
               doomberg/component: app
       ports:
         - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 8001
+        - protocol: TCP
           port: 8080
     - to:
         - namespaceSelector:
@@ -44,3 +49,19 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 25060

@@ -1,7 +1,7 @@
 """Unit tests for the compliance + risk gate (pure, no HTTP)."""
 from __future__ import annotations
 
-from conftest import valid_spec
+from control_helpers import valid_spec
 
 from doomberg_control.gate import DEFAULT_RESTRICTED, evaluate_spec_gate
 

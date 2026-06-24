@@ -21,7 +21,7 @@ __all__ = ["Platform"]
 
 class Platform:
     def __init__(self, db: Db | str = ":memory:") -> None:
-        self.db: Db = db if isinstance(db, Db) else open_db(db)
+        self.db = db if hasattr(db, "conn") and hasattr(db, "write_lock") else open_db(db)
         self.runs = RunStore(self.db)
         self.strategies = StrategyStore(self.db)
         self.trace = TraceStore(self.db)

@@ -10,16 +10,17 @@ that platform — so tenant isolation and trace state never leak between tests.
 from __future__ import annotations
 
 import sys
-import uuid
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+_TEST_ROOT = Path(__file__).resolve().parent
 
 
 def _ensure_importable() -> None:
     candidates = [
+        _TEST_ROOT,
         _REPO_ROOT / "packages" / "contracts" / "py",
         _REPO_ROOT / "doomberg-core" / "src",
         _REPO_ROOT / "services" / "platform" / "src",
@@ -35,6 +36,7 @@ _ensure_importable()
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from control_helpers import valid_spec  # noqa: E402
 from doomberg_control.app import create_app  # noqa: E402
 from doomberg_control.deps import Platform, get_core, get_platform  # noqa: E402
 from doomberg_core import Core  # noqa: E402
@@ -56,43 +58,16 @@ def client(platform):
 
 @pytest.fixture()
 def tenant_a() -> str:
+    import uuid
+
     return str(uuid.uuid4())
 
 
 @pytest.fixture()
 def tenant_b() -> str:
+    import uuid
+
     return str(uuid.uuid4())
-
-
-def human_headers(tenant_id: str) -> dict[str, str]:
-    return {
-        "X-Tenant-Id": tenant_id,
-        "X-Actor-Kind": "human",
-        "X-Actor-Id": "trader-1",
-    }
-
-
-def agent_headers(tenant_id: str) -> dict[str, str]:
-    return {
-        "X-Tenant-Id": tenant_id,
-        "X-Actor-Kind": "agent",
-        "X-Actor-Id": str(uuid.uuid4()),
-    }
-
-
-def valid_spec(name: str = "Momentum Top-N", symbols: list[str] | None = None) -> dict:
-    """A minimal, schema-valid StrategySpec (long-only momentum, feasible risk limits)."""
-    return {
-        "spec_version": "1.0",
-        "name": name,
-        "universe": {"symbols": symbols or ["AAPL", "MSFT", "NVDA", "AMZN"],
-                     "source": "prices"},
-        "strategy": {"id": "momentum", "params": {"lookback": 60, "top": 2}},
-        "construction": {"scheme": "equal_weight", "long_only": True, "gross": 1.0},
-        "risk": {"max_gross": 1.0, "max_net": 1.0, "max_name_pct": 0.5},
-        "execution": {"cost_bps": 5.0, "algo": "vwap", "rebalance": "weekly@close"},
-        "seed": 42,
-    }
 
 
 @pytest.fixture()

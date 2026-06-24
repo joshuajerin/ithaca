@@ -77,9 +77,10 @@ class BookStore:
             with self._db.conn as conn:
                 # Another writer may have created it between our read and this insert; ignore.
                 conn.execute(
-                    "INSERT OR IGNORE INTO books "
+                    "INSERT INTO books "
                     "(tenant_id, run_id, capital, weights, marks, version, updated_at) "
-                    "VALUES (?, ?, ?, '{}', '{}', 0, ?)",
+                    "VALUES (?, ?, ?, '{}', '{}', 0, ?) "
+                    "ON CONFLICT(tenant_id, run_id) DO NOTHING",
                     (tenant_id, run_id, float(capital), now),
                 )
         return self.get(tenant_id, run_id)  # type: ignore[return-value]
@@ -117,10 +118,21 @@ class BookStore:
                     raise BookConflict(
                         f"book version mismatch: expected {expect}, found {current_version}"
                     )
-                conn.execute(
+                cur = conn.execute(
                     "UPDATE books SET weights = ?, marks = ?, version = ?, updated_at = ? "
-                    "WHERE tenant_id = ? AND run_id = ?",
+                    "WHERE tenant_id = ? AND run_id = ? AND version = ?",
                     (json.dumps(weights), marks_json, current_version + 1, now,
-                     tenant_id, run_id),
+                     tenant_id, run_id, current_version),
                 )
+                if cur.rowcount == 0:
+                    latest = conn.execute(
+                        "SELECT version FROM books WHERE tenant_id = ? AND run_id = ?",
+                        (tenant_id, run_id),
+                    ).fetchone()
+                    if latest is None:
+                        raise BookNotFound(run_id)
+                    raise BookConflict(
+                        f"book version mismatch: expected {current_version}, "
+                        f"found {int(latest['version'])}"
+                    )
         return self.get(tenant_id, run_id)  # type: ignore[return-value]

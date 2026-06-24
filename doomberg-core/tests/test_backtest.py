@@ -1,14 +1,13 @@
 """End-to-end backtest through the Core, on a deterministic network-free panel."""
 from __future__ import annotations
 
-import numpy as np
 import pytest
 from pydantic import ValidationError
 
 from doomberg_core import Core, DataGateway
 from doomberg_core.api import Core as CoreCls
 
-from conftest import make_fetch
+from core_helpers import make_fetch
 
 
 def _spec(**over):

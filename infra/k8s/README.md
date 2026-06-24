@@ -1,4 +1,4 @@
-# infra/k8s — Doomberg v2 service manifests (Phase 4 deploy)
+# infra/k8s - Doomberg v2 service manifests
 
 Deployment + Service manifests for the always-on plane, rendered by
 `deploy/deploy_services.sh` and applied with `kubectl` after the DOKS cluster
@@ -6,40 +6,58 @@ exists (see `deploy/RUNBOOK.md`).
 
 The manifests are environment-aware shell templates. `DEPLOY_ENV=prod` keeps the
 existing production namespaces and NodePorts; `DEPLOY_ENV=dev` renders into a
-separate namespace pair with distinct NodePorts and separate PVCs/secrets.
+separate namespace pair with distinct NodePorts and secrets.
 
-## Why one pod for rest+control+conductor+trigger+mcp
+## App/Worker Split
 
-The platform **system-of-record is SQLite** (`doomberg_platform.Db` →
-`sqlite3.connect(DOOMBERG_DB)`), not Postgres. The prod Managed Postgres holds
-only the **read-only `archive.*`** reference data (read through `DOOMBERG_ARCHIVE_URL`
-/ the `ArchiveGateway`). So for a run created via the control-plane/rest-gateway to
-actually execute, the **conductor must see the same SQLite file**.
+The platform system-of-record is now Postgres: every app container receives
+`DOOMBERG_DB` from the `doomberg-db.platform_url` Secret key. The read-only
+archive uses `DOOMBERG_ARCHIVE_URL` from `doomberg-db.archive_url`; those DSNs
+may point at the same managed database with different schemas.
 
-`app-deployment.yaml` therefore co-locates **rest-gateway + control-plane +
-conductor + trigger-engine + mcp-gateway** as containers in ONE pod, sharing the
-same RWO PVC-backed SQLite file at `/data/doomberg.db`
-(`DOOMBERG_DB=/data/doomberg.db`). A created run is visible to the conductor's
-`BacktestWorker`; trigger policies are visible to the trigger engine; MCP API
-keys minted through the dashboard are visible to the hosted MCP gateway.
+`app-deployment.yaml` runs only the stateless ingress/control roles:
+`rest-gateway`, `control-plane`, and `mcp-gateway`. `worker-deployment.yaml`
+runs the active loops: `conductor` and `trigger-engine`. Postgres removes the
+old shared SQLite PVC requirement and lets the app replicas scale separately
+from queue polling, paper ticks, and trigger evaluation.
 
-> Single-replica by design: SQLite is single-writer and the PVC is ReadWriteOnce,
-> so the always-on app pod is **not** horizontally scaled. Node-level HA still
-> holds (2 paper nodes; the pod reschedules onto the survivor), and the PVC keeps
-> control-plane state across ordinary pod restarts. Migrating the system-of-record to the
-> Managed Postgres (RLS schema) is the documented path to multi-replica HA — see
-> the Phase 7 hardening notes. Until then, treat this as paper-prod state.
+The `platform-migrate` init container applies the platform schema before the
+app and worker containers start. The process open path also applies idempotent
+DDL, so a restart remains self-healing.
+
+Keep `WORKER_REPLICAS=1` until the paper scheduler and trigger polling have
+explicit leader leases. Backtest and trigger-analysis job claiming is durable,
+but those two long-running loops are still active pollers.
 
 ## Files
 
-- `namespace.yaml`        — gateway + worker namespaces for the selected env.
-- `app-deployment.yaml`   — rest-gateway + control-plane + conductor + trigger-engine + mcp-gateway (1 pod, shared SQLite PVC).
-- `app-service.yaml`      — NodePort service with env-specific ports.
-- `worker-networkpolicy.yaml` — default-deny worker egress plus same-env gateway allow.
-- `caddy.yaml`            — public HTTPS routing for prod and dev hostnames.
+- `namespace.yaml` - gateway + worker namespaces for the selected env.
+- `app-deployment.yaml` - rest-gateway + control-plane + mcp-gateway.
+- `worker-deployment.yaml` - conductor + trigger-engine.
+- `app-service.yaml` - NodePort service with env-specific ports.
+- `worker-networkpolicy.yaml` - default-deny worker namespace plus DNS, gateway, Postgres, and provider egress.
+- `caddy.yaml` - public HTTPS routing for prod and dev hostnames.
+- `pvc.yaml` - legacy SQLite state PVC retained for rollback/dev experiments; not applied by `deploy_services.sh`.
 
-The `doomberg-db` Secret + the image tag are wired by `deploy/deploy_services.sh`.
+The `doomberg-db` Secret is created in both the gateway and worker namespaces by
+`deploy/deploy_services.sh`, along with the image tag and replica counts.
+Set `DOOMBERG_PLATFORM_DB_URL` for the platform store and `DOOMBERG_ARCHIVE_URL`
+for archive reads. If `DOOMBERG_ARCHIVE_URL` is omitted, the deploy script uses
+the platform DSN for both.
+
 Set `DOOMBERG_IBKR_ENGINE_URL` (and optionally `DOOMBERG_IBKR_ENGINE_TOKEN` /
 `DOOMBERG_IBKR_QUOTE_PATH`) in the deploy environment to back live trigger quote
-evaluation with the user-run IBKR engine. Without a URL, the sidecar stays up but
+evaluation with the user-run IBKR engine. Without a URL, the worker stays up but
 active live-data trigger evaluations will return provider errors until configured.
+
+The REST and control-plane containers also receive the IBKR order endpoint and
+execution safety knobs:
+
+- `DOOMBERG_ENABLE_LIVE_EXECUTION` - must be `1` before the gateway will submit to IBKR.
+- `DOOMBERG_IBKR_ORDER_PATH` - default `/orders`.
+- `DOOMBERG_EXECUTION_MAX_NOTIONAL_USD`, `DOOMBERG_EXECUTION_MAX_QUANTITY`,
+  `DOOMBERG_EXECUTION_MAX_FRESHNESS_MS` - deterministic risk limits.
+
+Paper orders can be filled locally by the execution gateway. Live orders require
+the explicit switch, an IBKR engine URL, a connected provider record with
+order/trading capability, and a human submit action.

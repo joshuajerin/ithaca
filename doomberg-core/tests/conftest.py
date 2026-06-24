@@ -2,9 +2,15 @@
 from __future__ import annotations
 
 import datetime as dt
+import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
+
+_TEST_ROOT = Path(__file__).resolve().parent
+if str(_TEST_ROOT) not in sys.path:
+    sys.path.insert(0, str(_TEST_ROOT))
 
 
 def _trading_days(n: int, start: str = "2024-01-01") -> list[str]:

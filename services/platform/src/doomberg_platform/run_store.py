@@ -243,11 +243,30 @@ class RunStore:
 
                 new_version = current_version + 1
                 now = _now()
-                conn.execute(
+                cur = conn.execute(
                     "UPDATE runs SET state = ?, version = ?, updated_at = ? "
-                    "WHERE tenant_id = ? AND run_id = ?",
-                    (to_state, new_version, now, tenant_id, run_id),
+                    "WHERE tenant_id = ? AND run_id = ? AND state = ? AND version = ?",
+                    (
+                        to_state,
+                        new_version,
+                        now,
+                        tenant_id,
+                        run_id,
+                        current_state,
+                        current_version,
+                    ),
                 )
+                if cur.rowcount == 0:
+                    latest = conn.execute(
+                        "SELECT state, version FROM runs WHERE tenant_id = ? AND run_id = ?",
+                        (tenant_id, run_id),
+                    ).fetchone()
+                    if latest is None:
+                        raise RunNotFound(run_id)
+                    raise TransitionConflict(
+                        f"version mismatch: expected {current_version}, "
+                        f"found {int(latest['version'])}"
+                    )
                 updated = conn.execute(
                     "SELECT * FROM runs WHERE tenant_id = ? AND run_id = ?",
                     (tenant_id, run_id),

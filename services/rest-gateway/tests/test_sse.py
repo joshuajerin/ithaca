@@ -12,7 +12,7 @@ from doomberg_rest.sse import (
     parse_last_event_id,
 )
 
-from helpers import append_event, seed_run
+from rest_helpers import append_event, seed_run
 
 
 def test_format_event_frames_id_and_type():
@@ -21,7 +21,7 @@ def test_format_event_frames_id_and_type():
     assert "event: reasoning\n" in frame
     assert frame.endswith("\n\n")
     # data line is valid JSON carrying the event
-    data_line = [l for l in frame.splitlines() if l.startswith("data: ")][0]
+    data_line = [line for line in frame.splitlines() if line.startswith("data: ")][0]
     assert json.loads(data_line[len("data: "):])["seq"] == 7
 
 
@@ -36,7 +36,7 @@ def test_parse_last_event_id():
 
 
 def _parse_ids(text: str) -> list[int]:
-    return [int(l[len("id: "):]) for l in text.splitlines() if l.startswith("id: ")]
+    return [int(line[len("id: "):]) for line in text.splitlines() if line.startswith("id: ")]
 
 
 def test_sse_streams_existing_events_for_run(client, stores, tenant_a):

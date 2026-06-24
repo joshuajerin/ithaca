@@ -1,9 +1,9 @@
 [project]
 name = "doomberg-platform"
 version = "0.0.0"
-description = "Local system-of-record (SQLite): trace events, runs, strategies + pub/sub for SSE."
+description = "Platform system-of-record: traces, runs, strategies, jobs, auth, and governance stores over SQLite local or Postgres production."
 requires-python = ">=3.11"
-dependencies = ["doomberg-core", "doomberg-contracts"]
+dependencies = ["doomberg-core", "doomberg-contracts", "psycopg[binary]>=3.1"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

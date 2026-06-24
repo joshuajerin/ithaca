@@ -9,7 +9,7 @@ import pytest
 from doomberg_runtime import result_hash, run_backtest_job
 from doomberg_runtime.deadline import Deadline
 
-from conftest import Platform, seed_queued_run
+from runtime_helpers import seed_queued_run
 
 
 def test_backtest_writes_result_and_succeeds(platform, tenant_id, spec, core):

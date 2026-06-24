@@ -1,0 +1,168 @@
+# Always-on worker pod: conductor + trigger-engine.
+#
+# This deployment owns active loops and has no ingress. It shares the managed
+# Postgres platform store with the app deployment, so API/MCP processes can be
+# rolled and scaled independently from queue polling, paper ticks, and trigger
+# evaluation. Keep WORKER_REPLICAS=1 until paper scheduler and trigger polling
+# have explicit leader leases; backtest/trigger job claiming is already
+# protected by durable job leases.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doomberg-workers
+  namespace: ${K8S_WORKER_NAMESPACE}
+  labels:
+    doomberg/component: worker
+    doomberg/environment: ${DOOMBERG_ENV}
+spec:
+  replicas: ${WORKER_REPLICAS}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      doomberg/component: worker
+      doomberg/worker-role: active-runtime
+  template:
+    metadata:
+      labels:
+        doomberg/component: worker
+        doomberg/worker-role: active-runtime
+        doomberg/environment: ${DOOMBERG_ENV}
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        workload: ${WORKER_NODE_WORKLOAD}
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: ${WORKER_NODE_WORKLOAD}
+          effect: NoSchedule
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: platform-migrate
+          image: ${WORKER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args: ["platform-migrate"]
+          env:
+            - name: DOOMBERG_ENV
+              value: "${DOOMBERG_ENV}"
+            - name: DOOMBERG_DB
+              valueFrom:
+                secretKeyRef:
+                  name: doomberg-db
+                  key: platform_url
+          resources:
+            requests: { cpu: "100m", memory: 128Mi }
+            limits: { cpu: "500m", memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+        - name: archive-migrate
+          image: ${WORKER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args: ["archive-migrate"]
+          env:
+            - name: DOOMBERG_ENV
+              value: "${DOOMBERG_ENV}"
+            - name: DOOMBERG_ARCHIVE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: doomberg-db
+                  key: archive_url
+          resources:
+            requests: { cpu: "100m", memory: 128Mi }
+            limits: { cpu: "500m", memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      containers:
+        # --- conductor: backtest worker + trigger job worker + paper scheduler.
+        - name: conductor
+          image: ${WORKER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args: ["conductor"]
+          env:
+            - name: DOOMBERG_ENV
+              value: "${DOOMBERG_ENV}"
+            - name: DOOMBERG_DB
+              valueFrom:
+                secretKeyRef:
+                  name: doomberg-db
+                  key: platform_url
+            - name: DOOMBERG_ARCHIVE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: doomberg-db
+                  key: archive_url
+            - name: DOOMBERG_BACKTEST_INTERVAL_S
+              value: "2"
+            - name: DOOMBERG_TRIGGER_JOB_INTERVAL_S
+              value: "2"
+            - name: DOOMBERG_PAPER_INTERVAL_S
+              value: "60"
+            - name: FMP_API_KEY
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: fmp_api_key, optional: true }
+          resources:
+            requests: { cpu: "200m", memory: 320Mi }
+            limits: { cpu: "2", memory: 2Gi }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+        # --- trigger-engine: polls active trigger policies and creates durable runs.
+        # Uses a user-connected IBKR engine as a connected-account live-data source.
+        # It never submits broker orders directly.
+        - name: trigger-engine
+          image: ${WORKER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args: ["trigger-engine"]
+          env:
+            - name: DOOMBERG_ENV
+              value: "${DOOMBERG_ENV}"
+            - name: DOOMBERG_DB
+              valueFrom:
+                secretKeyRef:
+                  name: doomberg-db
+                  key: platform_url
+            - name: DOOMBERG_TRIGGER_INTERVAL_S
+              value: "5"
+            - name: DOOMBERG_IBKR_ENGINE_URL
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_engine_url, optional: true }
+            - name: DOOMBERG_IBKR_ENGINE_TOKEN
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_engine_token, optional: true }
+            - name: DOOMBERG_IBKR_QUOTE_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_quote_path, optional: true }
+          resources:
+            requests: { cpu: "100m", memory: 192Mi }
+            limits: { cpu: "500m", memory: 512Mi }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }

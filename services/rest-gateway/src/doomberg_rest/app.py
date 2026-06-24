@@ -40,6 +40,7 @@ from pydantic import BaseModel
 from doomberg_control import actions
 from doomberg_control.actions import ActionError
 from doomberg_control.deps import HUMAN_ACTOR_KINDS, Ctx
+from doomberg_control.execution_gateway import ExecutionGateway
 from doomberg_core import Core
 from doomberg_platform import (
     AuthStore,
@@ -126,6 +127,14 @@ class CreateProviderConnectionBody(BaseModel):
     account_ref: str | None = None
     credential_ref: str | None = None
     retention_policy: str | None = None
+
+
+class CreateOrderIntentBody(BaseModel):
+    run_id: str
+    payload: dict[str, Any]
+    strategy_id: str | None = None
+    account_ref: str | None = None
+    idempotency_key: str | None = None
 
 
 class CreateSessionBody(BaseModel):
@@ -224,6 +233,129 @@ def _allow_dev_tenant_header() -> bool:
         return override.strip().lower() in {"1", "true", "yes", "on"}
     env = (os.environ.get("DOOMBERG_ENV") or "").strip().lower()
     return env in {"", "test", "local"}
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _configured_host(url: str | None) -> str | None:
+    if not url:
+        return None
+    parsed = urllib.parse.urlparse(url)
+    return parsed.netloc or "configured"
+
+
+def _has_capability(connection: dict[str, Any], names: set[str]) -> bool:
+    caps = {str(cap).strip().lower() for cap in connection.get("capabilities") or []}
+    return bool(caps.intersection(names))
+
+
+def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
+    connections = stores.providers.list_connections(tenant_id)
+    snapshots = stores.providers.list_snapshots(tenant_id, limit=25)
+    jobs = stores.jobs.list(tenant_id, limit=500)
+    triggers = stores.triggers.list(tenant_id, limit=500)
+
+    connected = [c for c in connections if c.get("state") == "connected"]
+    ibkr_names = {"ibkr", "ibkr-engine", "interactive_brokers", "interactive-brokers"}
+    ibkr_connections = [
+        c for c in connected
+        if str(c.get("provider") or "").strip().lower() in ibkr_names
+    ]
+    quote_caps = {"quote", "quotes", "market_data", "market-data", "data"}
+    execution_caps = {"orders", "trading", "execution"}
+    ibkr_quote_provider = any(_has_capability(c, quote_caps) for c in ibkr_connections)
+    ibkr_execution_provider = any(_has_capability(c, execution_caps) for c in ibkr_connections)
+    entitlement_records = sum(len(c.get("entitlements") or []) for c in connections)
+
+    ibkr_url = os.environ.get("DOOMBERG_IBKR_ENGINE_URL")
+    ibkr_host = _configured_host(ibkr_url)
+    live_execution = _env_flag("DOOMBERG_ENABLE_LIVE_EXECUTION")
+    queued_jobs = sum(1 for job in jobs if job.get("state") == "queued")
+    active_jobs = sum(1 for job in jobs if job.get("state") in {"leased", "running"})
+    failed_jobs = sum(1 for job in jobs if job.get("state") in {"failed", "timed_out", "cancelled"})
+    active_triggers = sum(1 for trigger in triggers if trigger.get("state") == "active")
+
+    readiness = [
+        {
+            "name": "Platform store",
+            "state": "succeeded" if getattr(stores.db, "is_postgres", False) else "paused",
+            "detail": "Postgres system-of-record"
+            if getattr(stores.db, "is_postgres", False)
+            else "Local SQLite system-of-record",
+        },
+        {
+            "name": "Archive DSN",
+            "state": "succeeded" if os.environ.get("DOOMBERG_ARCHIVE_URL") else "warn",
+            "detail": "Archive reads configured"
+            if os.environ.get("DOOMBERG_ARCHIVE_URL")
+            else "DOOMBERG_ARCHIVE_URL is unset",
+        },
+        {
+            "name": "IBKR engine",
+            "state": "succeeded" if ibkr_host else "warn",
+            "detail": f"Configured for {ibkr_host}" if ibkr_host else "DOOMBERG_IBKR_ENGINE_URL is unset",
+        },
+        {
+            "name": "IBKR provider record",
+            "state": "succeeded" if ibkr_quote_provider else "warn",
+            "detail": "Connected quote capability registered"
+            if ibkr_quote_provider
+            else "Register a connected provider with quote capability",
+        },
+        {
+            "name": "Live execution",
+            "state": "succeeded" if live_execution and ibkr_execution_provider and ibkr_host else "paused",
+            "detail": "Live IBKR submission enabled and provider-gated"
+            if live_execution and ibkr_execution_provider and ibkr_host
+            else "Paper execution only",
+        },
+        {
+            "name": "Worker backlog",
+            "state": "warn" if queued_jobs and active_jobs == 0 else "succeeded",
+            "detail": f"{queued_jobs} queued, {active_jobs} leased/running, {failed_jobs} terminal",
+        },
+    ]
+
+    return {
+        "platform": {
+            "database": "postgres" if getattr(stores.db, "is_postgres", False) else "sqlite",
+            "archive_configured": bool(os.environ.get("DOOMBERG_ARCHIVE_URL")),
+            "mcp_allowed_hosts": os.environ.get("DOOMBERG_MCP_ALLOWED_HOSTS") or "",
+        },
+        "ibkr": {
+            "engine_configured": bool(ibkr_host),
+            "engine_host": ibkr_host,
+            "quote_path": os.environ.get("DOOMBERG_IBKR_QUOTE_PATH") or "/quote?symbol={symbol}",
+            "order_path": os.environ.get("DOOMBERG_IBKR_ORDER_PATH") or "/orders",
+            "connected_quote_provider": ibkr_quote_provider,
+            "connected_execution_provider": ibkr_execution_provider,
+        },
+        "execution": {
+            "paper_enabled": True,
+            "live_enabled": live_execution,
+            "max_notional_usd": os.environ.get("DOOMBERG_EXECUTION_MAX_NOTIONAL_USD") or "10000",
+            "max_quantity": os.environ.get("DOOMBERG_EXECUTION_MAX_QUANTITY") or "10000",
+            "max_freshness_ms": os.environ.get("DOOMBERG_EXECUTION_MAX_FRESHNESS_MS") or "10000",
+        },
+        "providers": {
+            "connections": len(connections),
+            "connected": len(connected),
+            "entitlement_records": entitlement_records,
+            "dataset_snapshots": len(snapshots),
+        },
+        "jobs": {
+            "queued": queued_jobs,
+            "leased_or_running": active_jobs,
+            "terminal": failed_jobs,
+        },
+        "triggers": {
+            "active": active_triggers,
+            "total": len(triggers),
+        },
+        "readiness": readiness,
+    }
 
 
 def require_tenant(
@@ -853,6 +985,13 @@ def create_app(db: Any | None = None) -> FastAPI:
             )
         }
 
+    @app.get("/api/ops/status")
+    def ops_status(
+        tenant_id: str = Depends(require_tenant),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        return _ops_status(stores, tenant_id)
+
     @app.get("/api/artifacts")
     def list_artifacts(
         run_id: str | None = None,
@@ -977,6 +1116,57 @@ def create_app(db: Any | None = None) -> FastAPI:
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
         return {"order_intents": stores.execution.list_intents(tenant_id, run_id=run_id, state=state, limit=limit)}
+
+    @app.post("/api/order-intents", status_code=201)
+    def create_order_intent(
+        body: CreateOrderIntentBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        try:
+            return ExecutionGateway(stores).create_intent(
+                ctx,
+                run_id=body.run_id,
+                payload=body.payload,
+                strategy_id=body.strategy_id,
+                account_ref=body.account_ref,
+                idempotency_key=body.idempotency_key,
+            )
+        except ActionError as err:
+            raise HTTPException(status_code=err.status, detail=err.detail) from err
+
+    @app.get("/api/order-intents/{intent_id}")
+    def get_order_intent(
+        intent_id: str,
+        tenant_id: str = Depends(require_tenant),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        record = stores.execution.get_record(tenant_id, intent_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="order intent not found")
+        return record
+
+    @app.post("/api/order-intents/{intent_id}/preview")
+    def preview_order_intent(
+        intent_id: str,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        try:
+            return ExecutionGateway(stores).preview(ctx, intent_id)
+        except ActionError as err:
+            raise HTTPException(status_code=err.status, detail=err.detail) from err
+
+    @app.post("/api/order-intents/{intent_id}/submit")
+    def submit_order_intent(
+        intent_id: str,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        try:
+            return ExecutionGateway(stores).submit(ctx, intent_id)
+        except ActionError as err:
+            raise HTTPException(status_code=err.status, detail=err.detail) from err
 
     @app.get("/api/triggers")
     def list_triggers(

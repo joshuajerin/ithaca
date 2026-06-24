@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from helpers import append_event, seed_run, seed_strategy
+from rest_helpers import append_event, seed_run, seed_strategy
 
 
 def test_runs_require_tenant_header(client):

@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from . import actions
 from .actions import ActionError
 from .deps import Ctx, Platform, get_core, get_ctx, get_platform
+from .execution_gateway import ExecutionGateway
 
 __all__ = ["create_app", "app"]
 
@@ -56,6 +57,14 @@ class CreateTenantBody(BaseModel):
 
 class MintKeyBody(BaseModel):
     scopes: list[str]
+
+
+class CreateOrderIntentBody(BaseModel):
+    run_id: str
+    payload: dict[str, Any]
+    strategy_id: str | None = None
+    account_ref: str | None = None
+    idempotency_key: str | None = None
 
 
 def _require_admin(x_admin_token: str | None) -> None:
@@ -182,6 +191,58 @@ def create_app() -> FastAPI:
         if run is None:
             raise HTTPException(status_code=404, detail="run not found")
         return run
+
+    # ---- deterministic execution gateway ----------------------------------------------
+    @app.post("/execution/intents", status_code=201)
+    def create_order_intent(
+        body: CreateOrderIntentBody,
+        ctx: Ctx = Depends(get_ctx),
+        platform: Platform = Depends(get_platform),
+    ) -> dict[str, Any]:
+        try:
+            return ExecutionGateway(platform).create_intent(
+                ctx,
+                run_id=body.run_id,
+                payload=body.payload,
+                strategy_id=body.strategy_id,
+                account_ref=body.account_ref,
+                idempotency_key=body.idempotency_key,
+            )
+        except ActionError as err:
+            _raise(err)
+
+    @app.get("/execution/intents/{intent_id}")
+    def get_order_intent(
+        intent_id: str,
+        ctx: Ctx = Depends(get_ctx),
+        platform: Platform = Depends(get_platform),
+    ) -> dict[str, Any]:
+        record = platform.execution.get_record(ctx.tenant_id, intent_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="order intent not found")
+        return record
+
+    @app.post("/execution/intents/{intent_id}/preview")
+    def preview_order_intent(
+        intent_id: str,
+        ctx: Ctx = Depends(get_ctx),
+        platform: Platform = Depends(get_platform),
+    ) -> dict[str, Any]:
+        try:
+            return ExecutionGateway(platform).preview(ctx, intent_id)
+        except ActionError as err:
+            _raise(err)
+
+    @app.post("/execution/intents/{intent_id}/submit")
+    def submit_order_intent(
+        intent_id: str,
+        ctx: Ctx = Depends(get_ctx),
+        platform: Platform = Depends(get_platform),
+    ) -> dict[str, Any]:
+        try:
+            return ExecutionGateway(platform).submit(ctx, intent_id)
+        except ActionError as err:
+            _raise(err)
 
     # ---- admin (operator-only; inert unless DOOMBERG_ADMIN_TOKEN is set) ----------------
     @app.post("/admin/tenants", status_code=201)

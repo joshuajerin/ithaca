@@ -63,6 +63,8 @@ async def test_server_registers_three_tools(toolset):
     assert {"market_get_ohlcv", "backtest_run", "propose_strategy"} <= names
     assert {"search_skills", "describe_skill", "run_skill", "get_run", "subscribe_run",
             "cancel_run", "list_approvals", "decide_approval", "get_artifact"} <= names
+    assert {"create_order_intent", "preview_order_intent", "get_order_intent",
+            "submit_order_intent"} <= names
 
 
 def test_run_skill_queues_durable_backtest(toolset_core, sample_spec):
@@ -119,3 +121,52 @@ def test_run_skill_interactive_persists_result_and_trace(toolset_core):
     got = ts.get_run(out["run_id"], _ctx={"tenant_id": tenant})
     assert got["run"]["result"]["provenance"]["source"] == "yahoo-chart"
     assert any(e["type"] == "tool_result" for e in got["events"])
+
+
+def test_mcp_order_intent_flow_uses_execution_gateway(toolset_core):
+    platform = Platform(":memory:")
+    tenant = platform.auth.create_tenant("mcp-execution")
+    run_id = platform.runs.create_research(tenant)
+    ts = Toolset(
+        core=toolset_core,
+        sink=PlatformTraceSink(platform.trace),
+        runs=platform.runs,
+        platform=platform,
+    )
+
+    created = ts.create_order_intent(
+        run_id,
+        {
+            "broker": "paper",
+            "symbol": "AAA",
+            "side": "buy",
+            "quantity": 1,
+            "order_type": "limit",
+            "limit_price": 100,
+        },
+        idempotency_key="mcp-intent-1",
+        _ctx={"tenant_id": tenant, "agent_id": "agent", "actor_kind": "agent"},
+    )
+    intent_id = created["intent_id"]
+
+    preview = ts.preview_order_intent(
+        intent_id,
+        _ctx={"tenant_id": tenant, "agent_id": "agent", "actor_kind": "agent"},
+    )
+    assert preview["state"] == "approval_required"
+    assert platform.approvals.list_pending(tenant)[0]["request"]["intent_id"] == intent_id
+
+    refused = ts.submit_order_intent(
+        intent_id,
+        _ctx={"tenant_id": tenant, "agent_id": "agent", "actor_kind": "agent"},
+    )
+    assert refused["error"]["code"] == "APPROVAL_REQUIRED"
+
+    submitted = ts.submit_order_intent(
+        intent_id,
+        _ctx={"tenant_id": tenant, "agent_id": "human", "actor_kind": "user"},
+    )
+    assert submitted["state"] == "filled"
+    assert submitted["orders"][0]["broker"] == "paper"
+    assert submitted["fills"][0]["payload"]["notional_usd"] == 100
+    assert ts.get_order_intent(intent_id, _ctx={"tenant_id": tenant})["orders"][0]["state"] == "filled"

@@ -4,7 +4,7 @@ The trigger engine is deliberately separate from MCP: it polls active trigger po
 observes live market data through a provider client, evaluates typed conditions, and creates
 durable Doomberg runs when a policy fires. A trigger never submits a broker order directly.
 If a policy asks for execution, the engine creates an approval request around the proposed
-action; the execution gateway remains the only future broker-write path.
+action; the execution gateway is the only broker-write path.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ import json
 import os
 import re
 import threading
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -265,7 +264,6 @@ class TriggerEngine:
     def evaluate(self, trigger: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
         now = now or _now()
         tenant_id = str(trigger["tenant_id"])
-        trigger_id = str(trigger["trigger_id"])
         policy = trigger.get("policy") or {}
         when = policy.get("when") or {}
         event = when.get("event") or "price.threshold"

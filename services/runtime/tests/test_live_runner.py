@@ -8,7 +8,7 @@ import pytest
 
 from doomberg_runtime import run_paper_tick
 
-from conftest import seed_queued_run
+from runtime_helpers import seed_queued_run
 
 
 def _promote_to_live(platform, tenant_id, spec):

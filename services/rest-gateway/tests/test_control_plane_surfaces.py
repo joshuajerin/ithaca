@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from helpers import seed_run
+from rest_helpers import seed_run
 
 
 def _h(tenant_id: str) -> dict[str, str]:
@@ -14,6 +14,36 @@ def test_dev_tenant_header_must_be_uuid(client):
 
     assert response.status_code == 400
     assert response.json()["detail"] == "tenant_id must be a UUID"
+
+
+def test_ops_status_reports_ibkr_and_execution_readiness(client, stores, tenant_a, monkeypatch):
+    monkeypatch.setenv("DOOMBERG_ARCHIVE_URL", "postgresql://archive.example/db")
+    monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", "https://ibkr.example")
+    monkeypatch.setenv("DOOMBERG_IBKR_QUOTE_PATH", "/v1/quote/{symbol}")
+    monkeypatch.setenv("DOOMBERG_IBKR_ORDER_PATH", "/v1/orders")
+    monkeypatch.setenv("DOOMBERG_ENABLE_LIVE_EXECUTION", "1")
+    run_id = seed_run(stores, tenant_a, kind="backtest")
+    stores.jobs.create_for_run(tenant_a, run_id, kind="backtest", profile="backtest")
+    stores.providers.upsert_connection(
+        tenant_a,
+        provider="ibkr",
+        capabilities=["quotes", "orders", "trading"],
+        entitlements=[{"dataset": "equities-options", "entitlement_class": "connected_account"}],
+        account_ref="ibkr-vps",
+    )
+
+    response = client.get("/api/ops/status", headers=_h(tenant_a))
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ibkr"]["engine_configured"] is True
+    assert body["ibkr"]["engine_host"] == "ibkr.example"
+    assert body["ibkr"]["connected_quote_provider"] is True
+    assert body["ibkr"]["connected_execution_provider"] is True
+    assert body["execution"]["live_enabled"] is True
+    assert body["jobs"]["queued"] == 1
+    assert any(row["name"] == "Live execution" and row["state"] == "succeeded"
+               for row in body["readiness"])
 
 
 def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tenant_a, tenant_b):
@@ -107,6 +137,34 @@ def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tena
 
     intents = client.get("/api/order-intents", headers=_h(tenant_a)).json()["order_intents"]
     assert intents[0]["intent_id"] == intent["intent_id"]
+    created_intent = client.post(
+        "/api/order-intents",
+        json={
+            "run_id": run_id,
+            "payload": {
+                "broker": "paper",
+                "symbol": "MSFT",
+                "side": "buy",
+                "quantity": 1,
+                "order_type": "limit",
+                "limit_price": 250,
+            },
+            "idempotency_key": "rest-intent-1",
+        },
+        headers=_h(tenant_a),
+    )
+    assert created_intent.status_code == 201, created_intent.text
+    rest_intent_id = created_intent.json()["intent_id"]
+    preview = client.post(f"/api/order-intents/{rest_intent_id}/preview", headers=_h(tenant_a))
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["state"] == "approved"
+    submitted = client.post(f"/api/order-intents/{rest_intent_id}/submit", headers=_h(tenant_a))
+    assert submitted.status_code == 200, submitted.text
+    assert submitted.json()["state"] == "filled"
+    assert submitted.json()["fills"][0]["payload"]["notional_usd"] == 250
+    assert client.get(f"/api/order-intents/{rest_intent_id}", headers=_h(tenant_a)).json()[
+        "orders"
+    ][0]["broker"] == "paper"
 
     triggers = client.get("/api/triggers", headers=_h(tenant_a)).json()["triggers"]
     assert triggers[0]["trigger_id"] == trigger["trigger_id"]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from conftest import agent_headers, human_headers, valid_spec
+from control_helpers import agent_headers, human_headers, valid_spec
 
 
 def _promoted_paper(client, tenant) -> str:

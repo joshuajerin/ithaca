@@ -46,6 +46,9 @@ SCOPE_BY_TOOL = {
     "propose_strategy": "strategy:author",
     "run_skill": "runs:write",
     "cancel_run": "runs:cancel",
+    "create_order_intent": "runs:write",
+    "preview_order_intent": "runs:write",
+    "submit_order_intent": "deploy:paper",
     "list_approvals": "approvals:read",
     "decide_approval": "approvals:decide",
     "get_artifact": "artifacts:read",
@@ -65,7 +68,12 @@ class Principal:
 
     def ctx(self) -> dict:
         """The ``_ctx`` the Toolset expects (tenant-scopes the trace + research session)."""
-        return {"tenant_id": self.tenant_id, "agent_id": self.key_id, "actor_kind": "agent"}
+        return {
+            "tenant_id": self.tenant_id,
+            "agent_id": self.key_id,
+            "actor_kind": "agent",
+            "scopes": set(self.scopes),
+        }
 
 
 def current_principal() -> Principal | None:

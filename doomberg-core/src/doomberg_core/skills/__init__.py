@@ -18,6 +18,14 @@ sides build to the same protocol.
 from __future__ import annotations
 
 from .archive import ArchiveGateway
+from .manifest import ALL_SKILL_MANIFESTS, CORE_SKILL_MANIFESTS, SKILL_MANIFESTS
 from .skillset import SKILLS, SkillSet
 
-__all__ = ["ArchiveGateway", "SkillSet", "SKILLS"]
+__all__ = [
+    "ALL_SKILL_MANIFESTS",
+    "ArchiveGateway",
+    "CORE_SKILL_MANIFESTS",
+    "SKILL_MANIFESTS",
+    "SKILLS",
+    "SkillSet",
+]

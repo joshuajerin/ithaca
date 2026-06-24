@@ -13,10 +13,12 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+_TEST_ROOT = Path(__file__).resolve().parent
 
 
 def _ensure_importable() -> None:
     candidates = [
+        _TEST_ROOT,
         _REPO_ROOT / "packages" / "contracts" / "py",
         _REPO_ROOT / "services" / "platform" / "src",
     ]

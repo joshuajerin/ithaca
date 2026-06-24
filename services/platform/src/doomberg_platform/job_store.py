@@ -2,8 +2,8 @@
 
 Runs are the user-facing audit object. Jobs are the worker-facing execution object:
 profile, payload, lease owner, heartbeat, checkpoint, attempts, idempotency, and terminal
-state. The first implementation uses SQLite but keeps the method surface compatible with a
-future Postgres-backed queue.
+state. SQLite handles local/dev, while the Postgres adapter uses row locks for production
+worker leases.
 """
 
 from __future__ import annotations
@@ -179,8 +179,8 @@ class JobStore:
     ) -> list[dict[str, Any]]:
         """Lease queued or expired jobs for a worker.
 
-        The update happens under the SQLite write lock. Postgres should replace this with
-        `FOR UPDATE SKIP LOCKED`, but the observable behavior should stay the same.
+        SQLite uses the local write lock. Postgres uses row locks with
+        ``FOR UPDATE SKIP LOCKED`` so multiple workers cannot lease the same job.
         """
         if not profiles or not kinds:
             return []
@@ -191,6 +191,7 @@ class JobStore:
         kind_marks = ",".join("?" for _ in kinds)
         with self._db.write_lock:
             with self._db.conn as conn:
+                lock_clause = " FOR UPDATE SKIP LOCKED" if getattr(self._db, "is_postgres", False) else ""
                 rows = conn.execute(
                     f"SELECT * FROM jobs "
                     f"WHERE profile IN ({profile_marks}) AND kind IN ({kind_marks}) "
@@ -198,7 +199,8 @@ class JobStore:
                     "AND (state = 'queued' OR "
                     "     (state IN ('leased', 'running') AND lease_expires_at IS NOT NULL "
                     "      AND lease_expires_at <= ?)) "
-                    "ORDER BY created_at ASC, job_id ASC LIMIT ?",
+                    "ORDER BY created_at ASC, job_id ASC LIMIT ?"
+                    f"{lock_clause}",
                     (*profiles, *kinds, now, int(limit)),
                 ).fetchall()
                 leased: list[dict[str, Any]] = []

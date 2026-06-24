@@ -1,14 +1,10 @@
-# Always-on app pod: rest-gateway + control-plane + conductor + trigger-engine.
+# Always-on app pod: rest-gateway + control-plane + mcp-gateway.
 #
-# These roles of the single doomberg image share one pod so they share the
-# SQLite system-of-record (DOOMBERG_DB=/data/doomberg.db on the RWO PVC). A run
-# created via the control-plane/rest-gateway is therefore visible to the
-# conductor's BacktestWorker and the trigger engine, which creates durable runs
-# from live provider events. The archive (read-only reference data) is read
-# separately over Postgres via DOOMBERG_ARCHIVE_URL.
-#
-# Single replica by design (SQLite single-writer + pod-local emptyDir). Pinned to
-# the selected workload pool. ${WORKER_IMAGE} is substituted by deploy_services.sh.
+# The active worker loops live in worker-deployment.yaml. This deployment is the
+# stateless ingress/control surface over the managed Postgres platform store
+# (DOOMBERG_DB from doomberg-db.platform_url), so it does not mount a shared
+# SQLite PVC and can be scaled separately from compute workers.
+# ${WORKER_IMAGE} is substituted by deploy_services.sh.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -18,9 +14,12 @@ metadata:
     doomberg/component: app
     doomberg/environment: ${DOOMBERG_ENV}
 spec:
-  replicas: 1
+  replicas: ${APP_REPLICAS}
   strategy:
-    type: Recreate # one writer at a time on the shared SQLite file
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       doomberg/component: app
@@ -29,9 +28,7 @@ spec:
       labels:
         doomberg/component: app
         doomberg/environment: ${DOOMBERG_ENV}
-        # Mark this pod as the data-gateway target so the workers' egress
-        # NetworkPolicy allow-rule (pod_selector doomberg/component=data-gateway)
-        # can reach the rest/control surface in-cluster.
+        # Mark this pod as the same-env data-gateway target for worker egress.
         doomberg/role: data-gateway
     spec:
       automountServiceAccountToken: false
@@ -42,6 +39,16 @@ spec:
           operator: Equal
           value: ${APP_NODE_WORKLOAD}
           effect: NoSchedule
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    doomberg/component: app
+                    doomberg/environment: ${DOOMBERG_ENV}
+                topologyKey: kubernetes.io/hostname
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -50,6 +57,31 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       initContainers:
+        # Apply the platform system-of-record schema before API/MCP containers
+        # start. open_db() is idempotent too, but this gives rollout failures a
+        # clear init-container surface.
+        - name: platform-migrate
+          image: ${WORKER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args: ["platform-migrate"]
+          env:
+            - name: DOOMBERG_ENV
+              value: "${DOOMBERG_ENV}"
+            - name: DOOMBERG_DB
+              valueFrom:
+                secretKeyRef:
+                  name: doomberg-db
+                  key: platform_url
+          resources:
+            requests: { cpu: "100m", memory: 128Mi }
+            limits: { cpu: "500m", memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
         # Apply any new archive.* DDL before the app containers start.
         # Uses IF NOT EXISTS throughout so it's safe to re-run on every pod start.
         - name: archive-migrate
@@ -75,12 +107,6 @@ spec:
           volumeMounts:
             - { name: tmp, mountPath: /tmp }
       volumes:
-        # Durable block storage for the SQLite system-of-record — survives pod
-        # restarts/reschedules (emptyDir would lose all runs/strategies/trace/books).
-        # Single-replica by design (SQLite single-writer); RWO is correct.
-        - name: state
-          persistentVolumeClaim:
-            claimName: doomberg-state
         - name: tmp
           emptyDir: {}
       containers:
@@ -96,7 +122,10 @@ spec:
             - name: DOOMBERG_ENV
               value: "${DOOMBERG_ENV}"
             - name: DOOMBERG_DB
-              value: /data/doomberg.db
+              valueFrom:
+                secretKeyRef:
+                  name: doomberg-db
+                  key: platform_url
             - name: DOOMBERG_ARCHIVE_URL
               valueFrom:
                 secretKeyRef:
@@ -122,6 +151,27 @@ spec:
             - name: FMP_API_KEY
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: fmp_api_key, optional: true }
+            - name: DOOMBERG_ENABLE_LIVE_EXECUTION
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: enable_live_execution, optional: true }
+            - name: DOOMBERG_EXECUTION_MAX_NOTIONAL_USD
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: execution_max_notional_usd, optional: true }
+            - name: DOOMBERG_EXECUTION_MAX_QUANTITY
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: execution_max_quantity, optional: true }
+            - name: DOOMBERG_EXECUTION_MAX_FRESHNESS_MS
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: execution_max_freshness_ms, optional: true }
+            - name: DOOMBERG_IBKR_ENGINE_URL
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_engine_url, optional: true }
+            - name: DOOMBERG_IBKR_ENGINE_TOKEN
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_engine_token, optional: true }
+            - name: DOOMBERG_IBKR_ORDER_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_order_path, optional: true }
           readinessProbe:
             httpGet:
               path: /healthz
@@ -138,7 +188,6 @@ spec:
             requests: { cpu: "200m", memory: 320Mi }
             limits: { cpu: "1", memory: 1Gi }
           volumeMounts:
-            - { name: state, mountPath: /data }
             - { name: tmp, mountPath: /tmp }
           securityContext:
             allowPrivilegeEscalation: false
@@ -157,7 +206,10 @@ spec:
             - name: DOOMBERG_ENV
               value: "${DOOMBERG_ENV}"
             - name: DOOMBERG_DB
-              value: /data/doomberg.db
+              valueFrom:
+                secretKeyRef:
+                  name: doomberg-db
+                  key: platform_url
             - name: DOOMBERG_ARCHIVE_URL
               valueFrom:
                 secretKeyRef:
@@ -168,6 +220,27 @@ spec:
             - name: DOOMBERG_ADMIN_TOKEN
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: admin_token, optional: true }
+            - name: DOOMBERG_ENABLE_LIVE_EXECUTION
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: enable_live_execution, optional: true }
+            - name: DOOMBERG_EXECUTION_MAX_NOTIONAL_USD
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: execution_max_notional_usd, optional: true }
+            - name: DOOMBERG_EXECUTION_MAX_QUANTITY
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: execution_max_quantity, optional: true }
+            - name: DOOMBERG_EXECUTION_MAX_FRESHNESS_MS
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: execution_max_freshness_ms, optional: true }
+            - name: DOOMBERG_IBKR_ENGINE_URL
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_engine_url, optional: true }
+            - name: DOOMBERG_IBKR_ENGINE_TOKEN
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_engine_token, optional: true }
+            - name: DOOMBERG_IBKR_ORDER_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_order_path, optional: true }
           readinessProbe:
             httpGet: { path: /healthz, port: 8001 }
             initialDelaySeconds: 5
@@ -180,77 +253,6 @@ spec:
             requests: { cpu: "200m", memory: 320Mi }
             limits: { cpu: "1", memory: 1Gi }
           volumeMounts:
-            - { name: state, mountPath: /data }
-            - { name: tmp, mountPath: /tmp }
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            capabilities: { drop: ["ALL"] }
-        # --- conductor: backtest worker + paper scheduler (no ingress) ---
-        - name: conductor
-          image: ${WORKER_IMAGE}
-          imagePullPolicy: IfNotPresent
-          args: ["conductor"]
-          env:
-            - name: DOOMBERG_ENV
-              value: "${DOOMBERG_ENV}"
-            - name: DOOMBERG_DB
-              value: /data/doomberg.db
-            - name: DOOMBERG_ARCHIVE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: doomberg-db
-                  key: archive_url
-            # Tighter loops so a queued backtest is picked up quickly.
-            - name: DOOMBERG_BACKTEST_INTERVAL_S
-              value: "2"
-            - name: DOOMBERG_TRIGGER_JOB_INTERVAL_S
-              value: "2"
-            - name: DOOMBERG_PAPER_INTERVAL_S
-              value: "60"
-            - name: FMP_API_KEY
-              valueFrom:
-                secretKeyRef: { name: doomberg-db, key: fmp_api_key, optional: true }
-          resources:
-            requests: { cpu: "200m", memory: 320Mi }
-            limits: { cpu: "2", memory: 2Gi }
-          volumeMounts:
-            - { name: state, mountPath: /data }
-            - { name: tmp, mountPath: /tmp }
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            capabilities: { drop: ["ALL"] }
-        # --- trigger-engine: polls active trigger policies and creates runs.
-        # Uses the user's IBKR engine on a VPS as a connected-account live-data
-        # source. It never submits broker orders directly.
-        - name: trigger-engine
-          image: ${WORKER_IMAGE}
-          imagePullPolicy: IfNotPresent
-          args: ["trigger-engine"]
-          env:
-            - name: DOOMBERG_ENV
-              value: "${DOOMBERG_ENV}"
-            - name: DOOMBERG_DB
-              value: /data/doomberg.db
-            - name: DOOMBERG_TRIGGER_INTERVAL_S
-              value: "5"
-            - name: DOOMBERG_IBKR_ENGINE_URL
-              valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_engine_url, optional: true }
-            - name: DOOMBERG_IBKR_ENGINE_TOKEN
-              valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_engine_token, optional: true }
-            - name: DOOMBERG_IBKR_QUOTE_PATH
-              valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_quote_path, optional: true }
-          resources:
-            requests: { cpu: "100m", memory: 192Mi }
-            limits: { cpu: "500m", memory: 512Mi }
-          volumeMounts:
-            - { name: state, mountPath: /data }
             - { name: tmp, mountPath: /tmp }
           securityContext:
             allowPrivilegeEscalation: false
@@ -258,9 +260,8 @@ spec:
             runAsNonRoot: true
             capabilities: { drop: ["ALL"] }
         # --- mcp-gateway (HTTP): the hosted MCP endpoint for remote BYO agents.
-        # Co-located in this pod ON PURPOSE so it shares the /data SQLite auth store
-        # with the control-plane (where tenant API keys are minted) — a separate pod
-        # can't share the RWO PVC. Streamable-HTTP at POST /mcp, per-tenant bearer auth.
+        # Co-located with the control plane for the initial deploy shape. Auth/API keys are
+        # shared through Postgres; Streamable-HTTP lives at POST /mcp.
         # LB :8080 → NodePort 30808 → this container :8080. ---
         - name: mcp-gateway
           image: ${WORKER_IMAGE}
@@ -279,7 +280,10 @@ spec:
             - name: DOOMBERG_MCP_ALLOWED_HOSTS
               value: "${MCP_ALLOWED_HOSTS}"
             - name: DOOMBERG_DB
-              value: /data/doomberg.db
+              valueFrom:
+                secretKeyRef:
+                  name: doomberg-db
+                  key: platform_url
             - name: DOOMBERG_ARCHIVE_URL
               valueFrom:
                 secretKeyRef:
@@ -300,7 +304,6 @@ spec:
             requests: { cpu: "150m", memory: 256Mi }
             limits: { cpu: "1", memory: 512Mi }
           volumeMounts:
-            - { name: state, mountPath: /data }
             - { name: tmp, mountPath: /tmp }
           securityContext:
             allowPrivilegeEscalation: false

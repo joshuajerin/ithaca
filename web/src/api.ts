@@ -4,13 +4,34 @@ import type {
   ArtifactRow,
   DatasetSnapshotRow,
   JobRow,
+  OrderIntentRecord,
   OrderIntentRow,
+  OpsStatus,
   ProviderConnectionRow,
   RunRow,
   SessionRow,
   StrategyRow,
   TriggerRow,
 } from "./types";
+
+export interface ProviderConnectionInput {
+  provider: string;
+  capabilities?: string[];
+  entitlements?: Array<Record<string, unknown>>;
+  state?: string;
+  connection_id?: string;
+  account_ref?: string;
+  credential_ref?: string;
+  retention_policy?: string;
+}
+
+export interface OrderIntentInput {
+  run_id: string;
+  payload: Record<string, unknown>;
+  strategy_id?: string;
+  account_ref?: string;
+  idempotency_key?: string;
+}
 
 // Thin REST client over the rest-gateway. The browser NEVER speaks MCP; this is the only
 // backend it knows. Two auth modes, resolved at the gateway's single front door:
@@ -113,6 +134,10 @@ export const api = {
     return unwrapList<JobRow>(raw, "jobs");
   },
 
+  async getOpsStatus(signal?: AbortSignal): Promise<OpsStatus> {
+    return getJson<OpsStatus>(`/ops/status`, signal);
+  },
+
   async listArtifacts(signal?: AbortSignal): Promise<ArtifactRow[]> {
     const raw = await getJson<unknown>(`/artifacts`, signal);
     return unwrapList<ArtifactRow>(raw, "artifacts");
@@ -142,14 +167,50 @@ export const api = {
     return { connections: raw.connections ?? [], snapshots: raw.snapshots ?? [] };
   },
 
+  async upsertProviderConnection(body: ProviderConnectionInput, signal?: AbortSignal) {
+    return postJson<ProviderConnectionRow>(`/providers`, body, signal);
+  },
+
   async listOrderIntents(signal?: AbortSignal): Promise<OrderIntentRow[]> {
     const raw = await getJson<unknown>(`/order-intents`, signal);
     return unwrapList<OrderIntentRow>(raw, "order_intents");
   },
 
+  async createOrderIntent(body: OrderIntentInput, signal?: AbortSignal): Promise<OrderIntentRecord> {
+    return postJson<OrderIntentRecord>(`/order-intents`, body, signal);
+  },
+
+  async previewOrderIntent(intentId: string, signal?: AbortSignal): Promise<OrderIntentRecord> {
+    return postJson<OrderIntentRecord>(
+      `/order-intents/${encodeURIComponent(intentId)}/preview`,
+      {},
+      signal,
+    );
+  },
+
+  async submitOrderIntent(intentId: string, signal?: AbortSignal): Promise<OrderIntentRecord> {
+    return postJson<OrderIntentRecord>(
+      `/order-intents/${encodeURIComponent(intentId)}/submit`,
+      {},
+      signal,
+    );
+  },
+
   async listTriggers(signal?: AbortSignal): Promise<TriggerRow[]> {
     const raw = await getJson<unknown>(`/triggers`, signal);
     return unwrapList<TriggerRow>(raw, "triggers");
+  },
+
+  async createTrigger(name: string, policy: Record<string, unknown>, state = "draft", signal?: AbortSignal) {
+    return postJson<TriggerRow>(`/triggers`, { name, policy, state }, signal);
+  },
+
+  async setTriggerState(triggerId: string, state: string, signal?: AbortSignal) {
+    return postJson<TriggerRow>(
+      `/triggers/${encodeURIComponent(triggerId)}/state`,
+      { state },
+      signal,
+    );
   },
 
   // The /api/runs/{id}/events SSE URL. EventSource cannot set headers, so the tenant

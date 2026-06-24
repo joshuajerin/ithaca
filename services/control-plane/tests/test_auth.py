@@ -8,9 +8,7 @@ from __future__ import annotations
 
 import uuid
 
-import pytest
-
-from conftest import valid_spec
+from control_helpers import valid_spec
 
 
 def _mint(platform, scopes, name="Acme"):

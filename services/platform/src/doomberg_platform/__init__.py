@@ -1,7 +1,9 @@
-"""doomberg-platform — Local system-of-record (SQLite).
+"""doomberg-platform — platform system-of-record stores.
 
 Trace events (append-only, gap-free seq per run), runs (state machine with optimistic
-version guard), strategies (immutable versioned specs), plus in-process pub/sub for SSE.
+version guard), strategies (immutable versioned specs), jobs, auth, and governance rows.
+Local/dev can use SQLite; production can use Postgres by passing a Postgres DSN as
+``DOOMBERG_DB``.
 ``tenant_id`` is a hard isolation invariant: it is the first argument and a column on
 every table, and every query filters by it.
 

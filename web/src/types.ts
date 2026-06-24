@@ -131,6 +131,34 @@ export interface OrderIntentRow {
   updated_at?: string | null;
 }
 
+export interface OrderRow {
+  tenant_id: string;
+  order_id: string;
+  intent_id: string;
+  broker: string;
+  client_order_id: string;
+  broker_order_id?: string | null;
+  state: string;
+  payload: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface FillRow {
+  tenant_id: string;
+  fill_id: string;
+  order_id: string;
+  broker_fill_id?: string | null;
+  payload: Record<string, unknown>;
+  event_time: string;
+  created_at?: string | null;
+}
+
+export interface OrderIntentRecord extends OrderIntentRow {
+  orders?: OrderRow[];
+  fills?: FillRow[];
+}
+
 export interface TriggerRow {
   tenant_id: string;
   trigger_id: string;
@@ -139,6 +167,51 @@ export interface TriggerRow {
   policy: Record<string, unknown>;
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+export interface OpsReadinessRow {
+  name: string;
+  state: "succeeded" | "warn" | "paused" | "failed" | string;
+  detail: string;
+}
+
+export interface OpsStatus {
+  platform: {
+    database: string;
+    archive_configured: boolean;
+    mcp_allowed_hosts?: string;
+  };
+  ibkr: {
+    engine_configured: boolean;
+    engine_host?: string | null;
+    quote_path: string;
+    order_path: string;
+    connected_quote_provider: boolean;
+    connected_execution_provider: boolean;
+  };
+  execution: {
+    paper_enabled: boolean;
+    live_enabled: boolean;
+    max_notional_usd: string;
+    max_quantity: string;
+    max_freshness_ms: string;
+  };
+  providers: {
+    connections: number;
+    connected: number;
+    entitlement_records: number;
+    dataset_snapshots: number;
+  };
+  jobs: {
+    queued: number;
+    leased_or_running: number;
+    terminal: number;
+  };
+  triggers: {
+    active: number;
+    total: number;
+  };
+  readiness: OpsReadinessRow[];
 }
 
 // Backtest result `data` shape (from INTERFACES.md / doomberg_core).

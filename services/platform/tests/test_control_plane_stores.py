@@ -134,6 +134,40 @@ def test_artifacts_approvals_providers_and_execution(platform):
     assert again["intent_id"] == intent["intent_id"]
     assert platform.execution.list_intents(tenant, run_id=run_id)[0]["intent_id"] == intent["intent_id"]
     assert uuid.UUID(intent["intent_id"])
+    approved = platform.execution.set_intent_state(
+        tenant,
+        intent["intent_id"],
+        state="approved",
+        risk_decision={"decision": "approved"},
+    )
+    assert approved["state"] == "approved"
+    order = platform.execution.create_order(
+        tenant,
+        intent["intent_id"],
+        broker="paper",
+        client_order_id="dmbg-test-1",
+        payload={"symbol": "AAPL", "quantity": 1},
+        state="filled",
+        broker_order_id="paper-1",
+    )
+    same_order = platform.execution.create_order(
+        tenant,
+        intent["intent_id"],
+        broker="paper",
+        client_order_id="dmbg-test-1",
+        payload={"symbol": "MSFT", "quantity": 2},
+    )
+    assert same_order["order_id"] == order["order_id"]
+    fill = platform.execution.create_fill(
+        tenant,
+        order["order_id"],
+        broker_fill_id="fill-1",
+        payload={"symbol": "AAPL", "quantity": 1, "price": 100},
+        event_time="2026-06-24T00:00:00+00:00",
+    )
+    record = platform.execution.get_record(tenant, intent["intent_id"])
+    assert record["orders"][0]["order_id"] == order["order_id"]
+    assert record["fills"][0]["fill_id"] == fill["fill_id"]
 
 
 def test_trigger_store_lifecycle(platform):

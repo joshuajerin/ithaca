@@ -6,7 +6,7 @@ import threading
 import time
 
 import pytest
-from helpers import new_uuid, trace_event
+from platform_helpers import new_uuid, trace_event
 from pydantic import ValidationError
 
 

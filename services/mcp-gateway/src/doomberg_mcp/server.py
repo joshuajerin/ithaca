@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import uuid
 
-from doomberg_core import SKILLS, Core, SkillSet
+from doomberg_control.actions import ActionError
+from doomberg_control.deps import Ctx
+from doomberg_control.execution_gateway import ExecutionGateway
+from doomberg_core import ALL_SKILL_MANIFESTS, SKILLS, Core, SkillSet
 
 from .trace import InMemoryTrace, PlatformTraceSink, Tracer
 
@@ -206,24 +209,7 @@ class Toolset:
                       intent: str | None = None) -> dict:
         """Progressive skill discovery: small catalog entries, not all tools as context."""
         q = (query or "").strip().lower()
-        entries = [
-            {"skill_id": "market.get_ohlcv", "name": "Market OHLCV",
-             "description": "Fetch OHLCV price history with provenance.",
-             "runtime_profile": "interactive", "source_classes": ["community"]},
-            {"skill_id": "backtest.run", "name": "Backtest Run",
-             "description": "Queue a durable backtest from a declarative StrategySpec.",
-             "runtime_profile": "backtest", "source_classes": ["community", "computed"]},
-        ]
-        for skill_id, method in sorted(SKILLS.items()):
-            group = skill_id.split(".", 1)[0]
-            entries.append({
-                "skill_id": skill_id,
-                "name": skill_id.replace(".", " ").title(),
-                "description": f"Archive/computed Doomberg skill implemented by {method}.",
-                "runtime_profile": "interactive",
-                "asset_class": group,
-                "source_classes": ["community" if group not in {"options", "vol"} else "computed"],
-            })
+        entries = [self._manifest_entry(m) for m in ALL_SKILL_MANIFESTS.values()]
         if q:
             entries = [
                 e for e in entries
@@ -244,39 +230,15 @@ class Toolset:
     def describe_skill(self, skill_id: str, version: str | None = None) -> dict:
         """Return a compact manifest-like description for a skill."""
         skill_id = self._canonical_skill_id(skill_id)
-        if skill_id == "market.get_ohlcv":
-            return {
-                "skill_id": skill_id,
-                "version": version or "0.1.0",
-                "runtime_profile": "interactive",
-                "permissions": {"datasets": ["prices"], "broker": [], "network": []},
-                "input": {"symbol": "string", "range": "string?", "interval": "string?"},
-                "output": "ProvenanceEnvelope",
-                "trigger_compatible": True,
-            }
-        if skill_id == "backtest.run":
-            return {
-                "skill_id": skill_id,
-                "version": version or "0.1.0",
-                "runtime_profile": "backtest",
-                "permissions": {"datasets": ["prices"], "broker": [], "network": []},
-                "input": {"spec": "StrategySpec", "range": "string?"},
-                "output": "durable run id + artifacts/result",
-                "trigger_compatible": True,
-            }
-        if skill_id not in SKILLS:
+        manifest = ALL_SKILL_MANIFESTS.get(skill_id)
+        if manifest is None:
             return self._typed_error("INVALID_SYMBOL", f"unknown skill: {skill_id}",
                                      "Call search_skills and use a returned skill_id.")
-        return {
-            "skill_id": skill_id,
-            "version": version or "0.1.0",
-            "runtime_profile": "interactive",
-            "permissions": {"datasets": ["doomberg-v1-archive"], "broker": [], "network": []},
-            "input": "skill-specific declarative JSON object",
-            "output": "ProvenanceEnvelope",
-            "trigger_compatible": True,
-            "method": SKILLS[skill_id],
-        }
+        out = dict(manifest)
+        if version is not None and version != out["version"]:
+            return self._typed_error("INVALID_SYMBOL", f"unknown skill version: {version}",
+                                     "Call describe_skill without a version or use the advertised version.")
+        return out
 
     def run_skill(self, skill_id: str, input: dict | None = None, mode: str = "auto",
                   idempotency_key: str | None = None, _ctx: dict | None = None) -> dict:
@@ -464,13 +426,96 @@ class Toolset:
                                      "Check the artifact_id and tenant credential.")
         return artifact
 
+    def create_order_intent(
+        self,
+        run_id: str,
+        payload: dict,
+        strategy_id: str | None = None,
+        account_ref: str | None = None,
+        idempotency_key: str | None = None,
+        _ctx: dict | None = None,
+    ) -> dict:
+        if self.platform is None:
+            return self._typed_error(
+                "JOB_QUEUED",
+                "order intents require the hosted platform store",
+                "Use the hosted MCP endpoint or REST API.",
+            )
+        try:
+            return ExecutionGateway(self.platform).create_intent(
+                self._ctx_to_control_ctx(_ctx),
+                run_id=run_id,
+                payload=dict(payload or {}),
+                strategy_id=strategy_id,
+                account_ref=account_ref,
+                idempotency_key=idempotency_key,
+            )
+        except ActionError as exc:
+            return self._action_error(exc)
+
+    def preview_order_intent(self, intent_id: str, _ctx: dict | None = None) -> dict:
+        if self.platform is None:
+            return self._typed_error(
+                "JOB_QUEUED",
+                "order intents require the hosted platform store",
+                "Use the hosted MCP endpoint or REST API.",
+            )
+        try:
+            return ExecutionGateway(self.platform).preview(self._ctx_to_control_ctx(_ctx), intent_id)
+        except ActionError as exc:
+            return self._action_error(exc)
+
+    def get_order_intent(self, intent_id: str, _ctx: dict | None = None) -> dict:
+        if self.platform is None:
+            return self._typed_error(
+                "JOB_QUEUED",
+                "order intents require the hosted platform store",
+                "Use the hosted MCP endpoint or REST API.",
+            )
+        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
+        record = self.platform.execution.get_record(tenant_id, intent_id)
+        if record is None:
+            return self._typed_error(
+                "ORDER_STATE_CONFLICT",
+                "order intent not found",
+                "Check the intent_id and tenant credential.",
+            )
+        return record
+
+    def submit_order_intent(self, intent_id: str, _ctx: dict | None = None) -> dict:
+        if self.platform is None:
+            return self._typed_error(
+                "JOB_QUEUED",
+                "order intents require the hosted platform store",
+                "Use the hosted MCP endpoint or REST API.",
+            )
+        try:
+            return ExecutionGateway(self.platform).submit(self._ctx_to_control_ctx(_ctx), intent_id)
+        except ActionError as exc:
+            return self._action_error(exc)
+
     @staticmethod
     def _canonical_skill_id(skill_id: str) -> str:
         if skill_id == "market_get_ohlcv":
             return "market.get_ohlcv"
         if skill_id == "backtest_run":
             return "backtest.run"
-        return str(skill_id).replace("_", ".") if str(skill_id).replace("_", ".") in SKILLS else str(skill_id)
+        dotted = str(skill_id).replace("_", ".")
+        return dotted if dotted in ALL_SKILL_MANIFESTS else str(skill_id)
+
+    @staticmethod
+    def _manifest_entry(manifest: dict) -> dict:
+        skill_id = str(manifest["skill_id"])
+        runtime = manifest.get("runtime") or {}
+        return {
+            "skill_id": skill_id,
+            "name": manifest["name"],
+            "description": manifest["description"],
+            "runtime_profile": runtime.get("profile"),
+            "asset_class": skill_id.split(".", 1)[0],
+            "source_classes": manifest.get("source_classes") or [],
+            "trigger_compatible": manifest.get("trigger_compatible", False),
+        }
 
     @staticmethod
     def _typed_error(code: str, message: str, recovery_action: str,
@@ -483,6 +528,45 @@ class Toolset:
                 "details": details or {},
             }
         }
+
+    def _ctx_to_control_ctx(self, ctx: dict | None) -> Ctx:
+        ctx = ctx or {}
+        scopes = ctx.get("scopes")
+        if scopes is None:
+            scopes = {
+                "data:read",
+                "strategy:author",
+                "runs:write",
+                "runs:cancel",
+                "approvals:read",
+                "approvals:decide",
+                "providers:write",
+                "triggers:write",
+                "artifacts:read",
+                "deploy:backtest",
+                "deploy:paper",
+            }
+        return Ctx(
+            tenant_id=ctx.get("tenant_id") or _DEFAULT_TENANT,
+            actor_kind=(ctx.get("actor_kind") or "agent").strip().lower(),
+            actor_id=ctx.get("agent_id") or ctx.get("actor_id") or self._proc_session,
+            scopes=frozenset(scopes),
+        )
+
+    def _action_error(self, exc: ActionError) -> dict:
+        code = "POLICY_DENIED" if exc.status == 409 else "APPROVAL_REQUIRED"
+        if exc.status == 404:
+            code = "ORDER_STATE_CONFLICT"
+        elif exc.status == 403:
+            code = "APPROVAL_REQUIRED"
+        elif exc.status == 503:
+            code = "BROKER_CONNECTION_REQUIRED"
+        return self._typed_error(
+            code,
+            str(exc.detail),
+            "Inspect the order intent, risk decision, approvals, and connected broker state.",
+            {"status": exc.status, "detail": exc.detail},
+        )
 
 
 def _build_archive():
@@ -626,6 +710,35 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     @mcp.tool(description="Fetch artifact metadata by id. Artifact content is addressed by returned URI.")
     def get_artifact(artifact_id: str) -> dict:
         return ts.get_artifact(artifact_id, _ctx=_ctx())
+
+    @mcp.tool(description="Create a governed order intent. This never submits a broker order.")
+    def create_order_intent(
+        run_id: str,
+        payload: dict,
+        strategy_id: str | None = None,
+        account_ref: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict:
+        return ts.create_order_intent(
+            run_id,
+            payload,
+            strategy_id=strategy_id,
+            account_ref=account_ref,
+            idempotency_key=idempotency_key,
+            _ctx=_ctx(),
+        )
+
+    @mcp.tool(description="Evaluate an order intent against deterministic execution policy.")
+    def preview_order_intent(intent_id: str) -> dict:
+        return ts.preview_order_intent(intent_id, _ctx=_ctx())
+
+    @mcp.tool(description="Fetch an order intent with associated broker orders and fills.")
+    def get_order_intent(intent_id: str) -> dict:
+        return ts.get_order_intent(intent_id, _ctx=_ctx())
+
+    @mcp.tool(description="Submit an approved order intent. Hosted agent callers receive an approval error; human dashboard submission is required.")
+    def submit_order_intent(intent_id: str) -> dict:
+        return ts.submit_order_intent(intent_id, _ctx=_ctx())
 
     @mcp.tool(description="Attach a user prompt/title and optional Doomberg session id to this MCP trace.")
     def session_context(prompt: str | None = None, title: str | None = None,

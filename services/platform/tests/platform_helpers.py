@@ -19,7 +19,6 @@ def trace_event(
     data: dict[str, Any] | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
-    """A minimal, contract-valid TraceEvent dict (seq is server-assigned on append)."""
     ev: dict[str, Any] = {
         "run_id": run_id,
         "ts": datetime.now(timezone.utc).isoformat(),
@@ -32,7 +31,6 @@ def trace_event(
 
 
 def strategy_spec(name: str = "Momentum 12-1") -> dict[str, Any]:
-    """A contract-valid StrategySpec dict (server stamps id/version/tenant_id)."""
     return {
         "spec_version": "1.0",
         "name": name,

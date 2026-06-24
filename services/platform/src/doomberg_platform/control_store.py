@@ -34,6 +34,33 @@ def _trigger_state(state: str) -> str:
     return state
 
 
+def _order_row_to_dict(row: Any) -> dict[str, Any]:
+    return {
+        "tenant_id": row["tenant_id"],
+        "order_id": row["order_id"],
+        "intent_id": row["intent_id"],
+        "broker": row["broker"],
+        "broker_order_id": row["broker_order_id"],
+        "client_order_id": row["client_order_id"],
+        "state": row["state"],
+        "payload": _loads(row["payload"], {}),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _fill_row_to_dict(row: Any) -> dict[str, Any]:
+    return {
+        "tenant_id": row["tenant_id"],
+        "fill_id": row["fill_id"],
+        "order_id": row["order_id"],
+        "broker_fill_id": row["broker_fill_id"],
+        "payload": _loads(row["payload"], {}),
+        "event_time": row["event_time"],
+        "created_at": row["created_at"],
+    }
+
+
 class ArtifactStore:
     def __init__(self, db: Db) -> None:
         self._db = db
@@ -465,6 +492,16 @@ class ExecutionStore:
             "updated_at": row["updated_at"],
         }
 
+    def get_record(self, tenant_id: str, intent_id: str) -> dict[str, Any] | None:
+        intent = self.get_intent(tenant_id, intent_id)
+        if intent is None:
+            return None
+        orders = self.list_orders(tenant_id, intent_id=intent_id)
+        fills: list[dict[str, Any]] = []
+        for order in orders:
+            fills.extend(self.list_fills(tenant_id, order_id=order["order_id"]))
+        return {**intent, "orders": orders, "fills": fills}
+
     def get_intent_by_idempotency(self, tenant_id: str, idempotency_key: str) -> dict[str, Any] | None:
         row = self._db.conn.execute(
             "SELECT intent_id FROM order_intents WHERE tenant_id = ? AND idempotency_key = ?",
@@ -496,6 +533,219 @@ class ExecutionStore:
             tuple(params),
         ).fetchall()
         return [i for r in rows if (i := self.get_intent(str(tenant_id), r["intent_id"])) is not None]
+
+    def set_intent_state(
+        self,
+        tenant_id: str,
+        intent_id: str,
+        *,
+        state: str,
+        risk_decision: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        now = _now()
+        with self._db.write_lock:
+            with self._db.conn as conn:
+                cur = conn.execute(
+                    "UPDATE order_intents SET state = ?, "
+                    "risk_decision = COALESCE(?, risk_decision), updated_at = ? "
+                    "WHERE tenant_id = ? AND intent_id = ?",
+                    (
+                        state,
+                        json.dumps(risk_decision) if risk_decision is not None else None,
+                        now,
+                        str(tenant_id),
+                        str(intent_id),
+                    ),
+                )
+                if cur.rowcount == 0:
+                    raise KeyError(intent_id)
+        intent = self.get_intent(tenant_id, intent_id)
+        if intent is None:
+            raise KeyError(intent_id)
+        return intent
+
+    def create_order(
+        self,
+        tenant_id: str,
+        intent_id: str,
+        *,
+        broker: str,
+        client_order_id: str,
+        payload: dict[str, Any],
+        state: str = "submitted",
+        broker_order_id: str | None = None,
+    ) -> dict[str, Any]:
+        existing = self.get_order_by_client_order_id(tenant_id, broker, client_order_id)
+        if existing is not None:
+            return existing
+        order_id = str(uuid.uuid4())
+        now = _now()
+        with self._db.write_lock:
+            with self._db.conn as conn:
+                try:
+                    conn.execute(
+                        "INSERT INTO orders "
+                        "(tenant_id, order_id, intent_id, broker, broker_order_id, client_order_id, "
+                        "state, payload, created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            str(tenant_id),
+                            order_id,
+                            str(intent_id),
+                            broker,
+                            broker_order_id,
+                            client_order_id,
+                            state,
+                            json.dumps(payload),
+                            now,
+                            now,
+                        ),
+                    )
+                except Exception:
+                    existing = self.get_order_by_client_order_id(tenant_id, broker, client_order_id)
+                    if existing is not None:
+                        return existing
+                    raise
+        order = self.get_order(tenant_id, order_id)
+        if order is None:
+            raise KeyError(order_id)
+        return order
+
+    def get_order(self, tenant_id: str, order_id: str) -> dict[str, Any] | None:
+        row = self._db.conn.execute(
+            "SELECT * FROM orders WHERE tenant_id = ? AND order_id = ?",
+            (str(tenant_id), str(order_id)),
+        ).fetchone()
+        return _order_row_to_dict(row) if row else None
+
+    def get_order_by_client_order_id(
+        self, tenant_id: str, broker: str, client_order_id: str
+    ) -> dict[str, Any] | None:
+        row = self._db.conn.execute(
+            "SELECT * FROM orders WHERE tenant_id = ? AND broker = ? AND client_order_id = ?",
+            (str(tenant_id), broker, client_order_id),
+        ).fetchone()
+        return _order_row_to_dict(row) if row else None
+
+    def list_orders(
+        self,
+        tenant_id: str,
+        *,
+        intent_id: str | None = None,
+        state: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses = ["tenant_id = ?"]
+        params: list[Any] = [str(tenant_id)]
+        if intent_id is not None:
+            clauses.append("intent_id = ?")
+            params.append(str(intent_id))
+        if state is not None:
+            clauses.append("state = ?")
+            params.append(state)
+        params.append(max(1, min(int(limit), 500)))
+        rows = self._db.conn.execute(
+            "SELECT * FROM orders WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY created_at ASC, order_id ASC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+        return [_order_row_to_dict(row) for row in rows]
+
+    def set_order_state(
+        self,
+        tenant_id: str,
+        order_id: str,
+        *,
+        state: str,
+        broker_order_id: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        current = self.get_order(tenant_id, order_id)
+        if current is None:
+            raise KeyError(order_id)
+        merged_payload = dict(current["payload"])
+        if payload is not None:
+            merged_payload.update(payload)
+        now = _now()
+        with self._db.write_lock:
+            with self._db.conn as conn:
+                conn.execute(
+                    "UPDATE orders SET state = ?, broker_order_id = COALESCE(?, broker_order_id), "
+                    "payload = ?, updated_at = ? WHERE tenant_id = ? AND order_id = ?",
+                    (
+                        state,
+                        broker_order_id,
+                        json.dumps(merged_payload),
+                        now,
+                        str(tenant_id),
+                        str(order_id),
+                    ),
+                )
+        order = self.get_order(tenant_id, order_id)
+        if order is None:
+            raise KeyError(order_id)
+        return order
+
+    def create_fill(
+        self,
+        tenant_id: str,
+        order_id: str,
+        *,
+        payload: dict[str, Any],
+        event_time: str,
+        broker_fill_id: str | None = None,
+    ) -> dict[str, Any]:
+        fill_id = str(uuid.uuid4())
+        now = _now()
+        with self._db.write_lock:
+            with self._db.conn as conn:
+                conn.execute(
+                    "INSERT INTO fills "
+                    "(tenant_id, fill_id, order_id, broker_fill_id, payload, event_time, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        str(tenant_id),
+                        fill_id,
+                        str(order_id),
+                        broker_fill_id,
+                        json.dumps(payload),
+                        event_time,
+                        now,
+                    ),
+                )
+        fill = self.get_fill(tenant_id, fill_id)
+        if fill is None:
+            raise KeyError(fill_id)
+        return fill
+
+    def get_fill(self, tenant_id: str, fill_id: str) -> dict[str, Any] | None:
+        row = self._db.conn.execute(
+            "SELECT * FROM fills WHERE tenant_id = ? AND fill_id = ?",
+            (str(tenant_id), str(fill_id)),
+        ).fetchone()
+        return _fill_row_to_dict(row) if row else None
+
+    def list_fills(
+        self,
+        tenant_id: str,
+        *,
+        order_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses = ["tenant_id = ?"]
+        params: list[Any] = [str(tenant_id)]
+        if order_id is not None:
+            clauses.append("order_id = ?")
+            params.append(str(order_id))
+        params.append(max(1, min(int(limit), 500)))
+        rows = self._db.conn.execute(
+            "SELECT * FROM fills WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY event_time ASC, created_at ASC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+        return [_fill_row_to_dict(row) for row in rows]
 
 
 class TriggerStore:

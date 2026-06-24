@@ -12,6 +12,7 @@
 #   trigger-engine   -> python -m doomberg_runtime.trigger_engine
 #   backtest-runner  -> python -m doomberg_runtime.backtest_runner
 #   live-runner      -> python -m doomberg_runtime.live_runner
+#   platform-migrate -> python scripts/migrate_platform.py
 #   archive-load     -> python scripts/import_v1_archive.py   (Stream 1's loader)
 #   shell            -> exec a shell (debug)
 #
@@ -54,6 +55,10 @@ case "${ROLE}" in
     ;;
   live-runner)
     exec python -m doomberg_runtime.live_runner "$@"
+    ;;
+  platform-migrate)
+    # Idempotent DDL for the platform system-of-record (SQLite local or Postgres prod).
+    exec python scripts/migrate_platform.py "$@"
     ;;
   archive-load)
     # Stream 1's one-shot archive loader (seeds archive.* on first deploy).

@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -465,6 +465,7 @@ version = "0.0.0"
 source = { editable = "services/mcp-gateway" }
 dependencies = [
     { name = "doomberg-contracts" },
+    { name = "doomberg-control-plane" },
     { name = "doomberg-core" },
     { name = "doomberg-platform" },
     { name = "mcp" },
@@ -480,6 +481,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "doomberg-contracts", editable = "packages/contracts/py" },
+    { name = "doomberg-control-plane", editable = "services/control-plane" },
     { name = "doomberg-core", editable = "doomberg-core" },
     { name = "doomberg-platform", editable = "services/platform" },
     { name = "mcp", specifier = ">=1.2.0" },
@@ -496,6 +498,7 @@ source = { editable = "services/platform" }
 dependencies = [
     { name = "doomberg-contracts" },
     { name = "doomberg-core" },
+    { name = "psycopg", extra = ["binary"] },
 ]
 
 [package.optional-dependencies]
@@ -507,6 +510,7 @@ dev = [
 requires-dist = [
     { name = "doomberg-contracts", editable = "packages/contracts/py" },
     { name = "doomberg-core", editable = "doomberg-core" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
 ]
 provides-extras = ["dev"]

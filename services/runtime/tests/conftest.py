@@ -22,7 +22,9 @@ import pytest
 
 # --- make doomberg_core + doomberg_contracts importable in isolated runs ---------
 _ROOT = Path(__file__).resolve().parents[3]
+_TEST_ROOT = Path(__file__).resolve().parent
 for p in (
+    _TEST_ROOT,
     _ROOT / "doomberg-core" / "src",
     _ROOT / "packages" / "contracts" / "py",
     _ROOT / "services" / "platform" / "src",

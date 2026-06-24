@@ -10,7 +10,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from doomberg_core import SKILLS, Core
+from doomberg_contracts import SkillManifest
+from doomberg_core import ALL_SKILL_MANIFESTS, SKILLS, Core
 from doomberg_mcp import InMemoryTrace, Toolset
 
 R = "11111111-1111-1111-1111-111111111111"
@@ -166,3 +167,17 @@ def test_skills_degrade_without_archive():
     assert out["warnings"][0]["code"] == "ARCHIVE_UNAVAILABLE"
     # still traced
     assert [e["type"] for e in ts.sink.events(R)] == ["tool_call", "tool_result"]
+
+
+def test_progressive_skill_discovery_uses_manifest_catalog(archive_toolset):
+    out = archive_toolset.search_skills(query="options")
+    ids = {row["skill_id"] for row in out["skills"]}
+    assert "options.greeks" in ids
+    assert out["count"] >= 2
+    assert all("runtime_profile" in row for row in out["skills"])
+
+
+def test_describe_skill_returns_contract_manifest(archive_toolset):
+    manifest = archive_toolset.describe_skill("options.greeks")
+    assert manifest == ALL_SKILL_MANIFESTS["options.greeks"]
+    SkillManifest.model_validate(manifest)

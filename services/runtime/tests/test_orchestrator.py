@@ -7,7 +7,7 @@ import datetime as dt
 
 from doomberg_runtime import AlwaysOpen, BacktestWorker, PaperScheduler, RegularHoursCalendar
 
-from conftest import seed_queued_run
+from runtime_helpers import seed_queued_run
 
 
 def _make_live_paper(platform, tenant_id, spec):

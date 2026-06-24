@@ -1,15 +1,14 @@
-"""SQLite-backed handle shared by the platform stores.
+"""SQLite-backed local handle shared by the platform stores.
 
 `open_db(path|":memory:")` returns a :class:`Db` handle the stores share. The handle
 owns the connection, the schema, a per-process write lock (SQLite is single-writer), and
 an in-process pub/sub registry used by :class:`~doomberg_platform.trace_store.TraceStore`
 to deliver a live tail to SSE subscribers.
 
-Local-only design notes (read before swapping to Postgres):
+Local design notes:
 - The in-process pub/sub (a per-run :class:`threading.Condition` over an in-memory list of
-  recent events) stands in for Postgres ``LISTEN``/``NOTIFY``. In prod, ``subscribe`` becomes
-  a ``LISTEN`` on a per-run channel and replay reads from the durable table; the public
-  signatures here do not change.
+  recent events) is only for SQLite/local. Postgres uses a compatible adapter with durable
+  replay plus ``LISTEN``/``NOTIFY``; the public signatures here do not change.
 - A single :class:`threading.RLock` serializes all writes. SQLite only allows one writer at a
   time; centralizing it here lets ``TraceStore.append`` compute a gap-free seq inside one
   transaction without racing other writers (runs, strategies) on the same connection.
@@ -304,8 +303,8 @@ CREATE TABLE IF NOT EXISTS trigger_firings (
 CREATE INDEX IF NOT EXISTS idx_trigger_firings_lookup
     ON trigger_firings (tenant_id, trigger_id, dedupe_key, event_time);
 
--- Execution records. Live submission remains disabled until the execution gateway is
--- complete; these rows establish the deterministic order-intent audit surface.
+-- Execution records. Broker writes must pass through the deterministic execution gateway;
+-- these rows establish the order-intent, broker-order, and fill audit surface.
 CREATE TABLE IF NOT EXISTS order_intents (
     tenant_id        TEXT NOT NULL,
     intent_id        TEXT NOT NULL,
@@ -372,6 +371,8 @@ class _RunChannel:
 class Db:
     """Shared SQLite handle: connection + write lock + in-proc pub/sub registry."""
 
+    is_postgres = False
+
     def __init__(self, path: str) -> None:
         self.path = path
         # check_same_thread=False so the SSE subscribe thread can read; all writes are
@@ -426,10 +427,14 @@ class Db:
             self._conn.close()
 
 
-def open_db(path: str = ":memory:") -> Db:
+def open_db(path: str = ":memory:") -> Any:
     """Open (or create) the shared platform database.
 
-    `path` is a filesystem path or ``":memory:"``. The returned handle is shared by
-    :class:`TraceStore`, :class:`RunStore`, and :class:`StrategyStore`.
+    ``path`` is a filesystem path, ``":memory:"``, or a ``postgresql://``/``postgres://``
+    DSN. The returned handle is shared by all platform stores.
     """
+    if isinstance(path, str) and path.startswith(("postgres://", "postgresql://")):
+        from .pg_db import PostgresDb
+
+        return PostgresDb(path)
     return Db(path)
