@@ -6,10 +6,10 @@ Two front-door principal resolvers, same ``Ctx`` seam:
   is verified by the platform :class:`AuthStore` (constant-time, revocation-aware). The
   resolved principal carries ``tenant_id`` + capability ``scopes``; an API key is an *agent*
   actor (it can author + request, never self-promote — the money-path actor rule still binds).
-- **Local dev:** when no bearer key is present we fall back to the ``X-Tenant-Id`` header
-  (a UUID) + optional ``X-Actor-Kind`` / ``X-Actor-Id``. Dev mode grants the full launch
-  scope set so the existing flows work unchanged; the human-actor rule on money actions is
-  unchanged.
+- **Local dev/test only:** when no bearer key is present we can fall back to the
+  ``X-Tenant-Id`` header (a UUID) + optional ``X-Actor-Kind`` / ``X-Actor-Id``. Deployed
+  environments must opt in with ``DOOMBERG_ALLOW_DEV_TENANT_HEADER=1``; otherwise public
+  callers need real bearer/session auth.
 
 A bad / revoked bearer key is a hard 401 (it does NOT silently fall back to dev mode).
 
@@ -63,6 +63,14 @@ HUMAN_ACTOR_KINDS = frozenset({"human", "user"})
 # Dev mode (X-Tenant-Id header, no bearer key) grants the full launch scope set so the
 # existing local flows are unchanged. Scope enforcement only bites authenticated agents.
 _DEV_SCOPES: frozenset[str] = VALID_SCOPES
+
+
+def _allow_dev_tenant_header() -> bool:
+    override = os.environ.get("DOOMBERG_ALLOW_DEV_TENANT_HEADER")
+    if override is not None:
+        return override.strip().lower() in {"1", "true", "yes", "on"}
+    env = (os.environ.get("DOOMBERG_ENV") or "").strip().lower()
+    return env in {"", "test", "local"}
 
 
 @dataclass(frozen=True)
@@ -146,7 +154,7 @@ def resolve_ctx(
 
     Bearer key present  -> verify it (401 on bad/revoked); principal is an *agent* actor
                            carrying exactly its minted scopes.
-    No bearer key       -> dev fallback on ``X-Tenant-Id`` (401 if absent); full dev scopes.
+    No bearer key       -> local/test dev fallback on ``X-Tenant-Id``; deployed envs 401.
     """
     key = _bearer_key(authorization)
     if key is not None:
@@ -165,6 +173,8 @@ def resolve_ctx(
             scopes=frozenset(principal["scopes"]),
         )
 
+    if not _allow_dev_tenant_header():
+        raise HTTPException(status_code=401, detail="authentication required")
     if not x_tenant_id:
         raise HTTPException(status_code=401, detail="X-Tenant-Id header is required")
     tenant_id = _require_uuid(x_tenant_id, "X-Tenant-Id")

@@ -14,9 +14,10 @@ import type {
 
 // Thin REST client over the rest-gateway. The browser NEVER speaks MCP; this is the only
 // backend it knows. Two auth modes, resolved at the gateway's single front door:
-//   - Prod:  VITE_API_KEY set -> `Authorization: Bearer <key>`; the gateway derives the
-//            tenant from the key (the authoritative isolation source).
-//   - Dev:   no key -> the X-Tenant-Id header carries the tenant (local-dev fallback).
+//   - Prod:  browser session token or VITE_API_KEY -> `Authorization: Bearer <token>`;
+//            the gateway derives the tenant from the credential.
+//   - Dev:   no token/key -> X-Tenant-Id carries the tenant only when the gateway's local
+//            dev fallback is enabled.
 
 function headers(): HeadersInit {
   const h: Record<string, string> = { "Content-Type": "application/json" };
@@ -152,8 +153,8 @@ export const api = {
   },
 
   // The /api/runs/{id}/events SSE URL. EventSource cannot set headers, so the tenant
-  // is passed as a query param in local dev. Signed-in users pass the session token as
-  // access_token so the stream resolves to the same tenant/account as normal REST calls.
+  // is passed as a query param only for local dev. Signed-in users pass the session token
+  // as access_token so the stream resolves to the same tenant/account as normal REST calls.
   eventsUrl(id: string): string {
     const url = new URL(`${API_BASE}/runs/${encodeURIComponent(id)}/events`, window.location.origin);
     const oauthToken = localStorage.getItem("doomberg.token");

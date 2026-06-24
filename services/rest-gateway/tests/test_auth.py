@@ -64,3 +64,11 @@ def test_agent_key_scope_too_low_to_author_is_403(client, stores):
 def test_x_tenant_id_dev_fallback_still_works(client):
     tid = str(uuid.uuid4())
     assert client.get("/api/runs", headers={"X-Tenant-Id": tid}).status_code == 200
+
+
+def test_x_tenant_id_fallback_disabled_in_prod(client, monkeypatch):
+    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    tid = str(uuid.uuid4())
+    resp = client.get("/api/runs", headers={"X-Tenant-Id": tid})
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "authentication required"

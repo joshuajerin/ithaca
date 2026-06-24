@@ -101,6 +101,15 @@ def test_x_tenant_id_dev_fallback_still_works(client):
     assert resp.status_code == 201
 
 
+def test_x_tenant_id_fallback_disabled_in_prod(client, monkeypatch):
+    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    tid = str(uuid.uuid4())
+    resp = client.post("/strategies", json={"spec": valid_spec()},
+                       headers={"X-Tenant-Id": tid, "X-Actor-Kind": "human"})
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "authentication required"
+
+
 def test_no_credentials_at_all_is_401(client):
     assert client.post("/strategies", json={"spec": valid_spec()}).status_code == 401
 

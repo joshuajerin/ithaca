@@ -218,6 +218,14 @@ def _validate_tenant_id(value: str) -> str:
     return str(value)
 
 
+def _allow_dev_tenant_header() -> bool:
+    override = os.environ.get("DOOMBERG_ALLOW_DEV_TENANT_HEADER")
+    if override is not None:
+        return override.strip().lower() in {"1", "true", "yes", "on"}
+    env = (os.environ.get("DOOMBERG_ENV") or "").strip().lower()
+    return env in {"", "test", "local"}
+
+
 def require_tenant(
     request: Request,
     authorization: str | None = Header(default=None, alias="Authorization"),
@@ -227,9 +235,9 @@ def require_tenant(
 ) -> str:
     """Tenant from a bearer key (prod) or the ``X-Tenant-Id`` header / ``?tenant_id=`` query.
 
-    A bearer key's tenant takes precedence and is authoritative. Otherwise the dev path uses
-    the header or the EventSource query param. No tenant => 400. We never fall back to an
-    unscoped query (the hard isolation rule).
+    A bearer key's tenant takes precedence and is authoritative. Otherwise local/test can use
+    the dev header or EventSource query param. Deployed envs require auth unless explicitly
+    opted in with ``DOOMBERG_ALLOW_DEV_TENANT_HEADER=1``.
 
     EventSource cannot send custom headers, so the live session stream may pass the signed-in
     session token as ``?access_token=``. It is resolved exactly like ``Authorization: Bearer``.
@@ -238,6 +246,8 @@ def require_tenant(
     principal = _verify_bearer(request, token_authorization)
     if principal is not None:
         return principal["tenant_id"]
+    if not _allow_dev_tenant_header():
+        raise HTTPException(status_code=401, detail="authentication required")
     resolved = x_tenant_id or tenant_id
     if not resolved:
         raise HTTPException(status_code=400, detail="X-Tenant-Id header (or ?tenant_id=) is required")
@@ -256,8 +266,8 @@ def _ctx(
 
     - **Bearer key (a BYO agent):** an *agent* actor carrying exactly the key's scopes — it
       may author/request but the human-actor rule still blocks self-promotion.
-    - **Dev / UI (no bearer key):** a *user* actor (the human at the keyboard) with the full
-      dev scope set, so the UI's buttons behave as before.
+    - **Local dev/test (no bearer key):** a *user* actor (the human at the keyboard) with the
+      full dev scope set, so local UI buttons behave as before.
     """
     principal = _verify_bearer(request, authorization)
     if principal is not None:
@@ -267,6 +277,8 @@ def _ctx(
             actor_id=principal["key_id"],
             scopes=frozenset(principal["scopes"]),
         )
+    if not _allow_dev_tenant_header():
+        raise HTTPException(status_code=401, detail="authentication required")
     resolved = x_tenant_id or tenant_id
     if not resolved:
         raise HTTPException(status_code=400, detail="X-Tenant-Id header (or ?tenant_id=) is required")
