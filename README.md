@@ -120,6 +120,11 @@ runs the active queue/paper/trigger loops against the same Postgres store.
 The implemented skill catalog is contract-backed by `doomberg_core.skills.ALL_SKILL_MANIFESTS`.
 MCP `search_skills` and `describe_skill` read those manifests, while `run_skill` still only
 executes skills present in the runnable registry.
+MCP clients can also read the progressive-discovery resources
+`doomberg://skills/catalog`, `doomberg://skills/{skill_id}/{version}`,
+`doomberg://runs/{run_id}`, `doomberg://policies/current`, `doomberg://accounts`,
+and `doomberg://data/providers`; hosted HTTP resource reads require `data:read` and
+return tenant-scoped, credential-redacted JSON.
 
 ### Contracts (the frozen source of truth)
 

@@ -16,8 +16,9 @@ The middleware:
 
 * requires ``Authorization: Bearer dmbg_...`` on every MCP request → **401** on
   missing/invalid/revoked key (``AuthStore.verify`` is constant-time + revocation-aware);
-* requires scope ``data:read`` for any ``tools/call`` and additionally ``strategy:author``
-  for the ``propose_strategy`` tool → **403** if missing;
+* requires scope ``data:read`` for any ``tools/call`` or MCP resource read/list request,
+  and additionally ``strategy:author`` for the ``propose_strategy`` tool → **403** if
+  missing;
 * stashes the verified principal (``tenant_id`` + scopes) in a request-scoped
   :class:`contextvars.ContextVar` so the tool wrappers can pass it into the Toolset as
   ``_ctx`` — every hosted call is then tenant-scoped and traced under that tenant (the
@@ -42,6 +43,11 @@ _PRINCIPAL: contextvars.ContextVar["Principal | None"] = contextvars.ContextVar(
 
 # Scope policy (kept here, next to enforcement, so it reads as one unit).
 SCOPE_TOOL_CALL = "data:read"  # required for any tools/call
+RESOURCE_READ_METHODS = {
+    "resources/read",
+    "resources/list",
+    "resources/templates/list",
+}
 SCOPE_BY_TOOL = {
     "propose_strategy": "strategy:author",
     "run_skill": "runs:write",
@@ -95,11 +101,10 @@ def _bearer(headers) -> str | None:
 def _scope_needed(body: bytes) -> set[str] | None:
     """Extra scopes a JSON-RPC body needs, or None when it cannot be inspected.
 
-    Best-effort parse of the JSON-RPC body: a ``tools/call`` always needs ``data:read``;
-    tool-specific calls add all scopes required by every call in the body. A batch request
-    therefore gets the union of required scopes instead of the first arbitrary set member.
-    A non-tools/call request (initialize, tools/list, ping, notifications) returns an empty
-    set and only requires a valid key.
+    Best-effort parse of the JSON-RPC body: tool-specific calls add all scopes required by
+    every call in the body. A batch request therefore gets the union of required scopes
+    instead of the first arbitrary set member. Base ``data:read`` gating for tools and
+    resources is handled by :func:`_requires_data_read`.
     """
     try:
         msg = json.loads(body)
@@ -120,6 +125,22 @@ def _scope_needed(body: bytes) -> set[str] | None:
     if not is_tool_call:
         return set()
     return needs
+
+
+def _requires_data_read(body: bytes) -> bool:
+    """Whether a JSON-RPC request reads tool/resource data and needs ``data:read``."""
+    try:
+        msg = json.loads(body)
+    except Exception:
+        return False
+    msgs = msg if isinstance(msg, list) else [msg]
+    for m in msgs:
+        if not isinstance(m, dict):
+            continue
+        method = m.get("method")
+        if method == "tools/call" or method in RESOURCE_READ_METHODS:
+            return True
+    return False
 
 
 def _json_error(status: int, message: str):
@@ -177,7 +198,7 @@ class TenantAuthMiddleware:
         body, more = await _read_body(receive)
         extra_scopes = _scope_needed(body)
         if extra_scopes is not None:
-            if _is_tool_call(body) and not principal.has(SCOPE_TOOL_CALL):
+            if _requires_data_read(body) and not principal.has(SCOPE_TOOL_CALL):
                 await _json_error(403, f"missing scope: {SCOPE_TOOL_CALL}")(scope, receive, send)
                 return
             for extra in sorted(extra_scopes):

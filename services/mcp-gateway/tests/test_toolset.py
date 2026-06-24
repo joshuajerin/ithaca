@@ -126,6 +126,133 @@ async def test_server_registers_three_tools(toolset):
     assert "ibkr_smoke" in names
 
 
+async def test_server_registers_control_plane_resources(toolset):
+    from doomberg_mcp import create_server
+
+    mcp, _ = create_server(toolset)
+
+    resources = await mcp.list_resources()
+    uris = {str(resource.uri) for resource in resources}
+    assert {
+        "doomberg://skills/catalog",
+        "doomberg://policies/current",
+        "doomberg://accounts",
+        "doomberg://data/providers",
+    } <= uris
+
+    templates = await mcp.list_resource_templates()
+    template_uris = {template.uriTemplate for template in templates}
+    assert {
+        "doomberg://skills/{skill_id}/{version}",
+        "doomberg://runs/{run_id}",
+    } <= template_uris
+
+
+async def test_skill_resources_return_catalog_and_manifest(toolset):
+    from doomberg_mcp import create_server
+
+    mcp, _ = create_server(toolset)
+
+    catalog_contents = await mcp.read_resource("doomberg://skills/catalog")
+    catalog = json.loads(catalog_contents[0].content)
+    assert catalog["kind"] == "skills.catalog"
+    assert catalog["count"] >= 50
+    assert any(skill["skill_id"] == "market.get_ohlcv" for skill in catalog["skills"])
+
+    manifest_contents = await mcp.read_resource("doomberg://skills/market.get_ohlcv/0.1.0")
+    manifest = json.loads(manifest_contents[0].content)
+    assert manifest["skill_id"] == "market.get_ohlcv"
+    assert manifest["version"] == "0.1.0"
+    assert manifest["runtime"]["profile"] == "interactive"
+
+
+async def test_platform_resources_return_tenant_scoped_views_without_secrets(toolset_core):
+    from doomberg_mcp import create_server
+
+    default_tenant = "00000000-0000-0000-0000-000000000000"
+    platform = Platform(":memory:")
+    run_id = platform.runs.create(default_tenant, "interactive", None, {"skill_id": "market.get_ohlcv"})
+    platform.trace.append({
+        "run_id": run_id,
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "type": "run_transition",
+        "tenant_id": default_tenant,
+        "data": {"from": "draft", "to": "queued"},
+    })
+    platform.providers.upsert_connection(
+        default_tenant,
+        provider="ibkr",
+        capabilities=["quote", "orders"],
+        entitlements=[{"dataset": "equities", "entitlement_class": "connected_account"}],
+        account_ref="DU12345",
+        credential_ref="secret://ibkr-token",
+    )
+    platform.providers.create_snapshot(
+        default_tenant,
+        provider="community",
+        dataset="prices",
+        entitlement_class="public_delayed",
+        as_of="2026-06-24T00:00:00+00:00",
+        manifest={"symbols": ["AAPL"]},
+        uri="spaces://doomberg-artifacts/snapshots/prices.parquet",
+    )
+    ts = Toolset(
+        core=toolset_core,
+        sink=PlatformTraceSink(platform.trace),
+        runs=platform.runs,
+        platform=platform,
+    )
+    mcp, _ = create_server(ts)
+
+    run_contents = await mcp.read_resource(f"doomberg://runs/{run_id}")
+    run_body = json.loads(run_contents[0].content)
+    assert run_body["run"]["run_id"] == run_id
+    assert run_body["events"][0]["type"] == "run_transition"
+
+    accounts = json.loads((await mcp.read_resource("doomberg://accounts"))[0].content)
+    assert accounts["accounts"][0]["account_ref"] == "DU12345"
+    assert "credential_ref" not in json.dumps(accounts)
+
+    providers = json.loads((await mcp.read_resource("doomberg://data/providers"))[0].content)
+    assert providers["connections"][0]["provider"] == "ibkr"
+    assert providers["dataset_snapshots"][0]["dataset"] == "prices"
+    assert "credential_ref" not in json.dumps(providers)
+
+
+def test_resource_methods_are_tenant_scoped_and_redacted(toolset_core):
+    platform = Platform(":memory:")
+    tenant_a = platform.auth.create_tenant("tenant-a")
+    tenant_b = platform.auth.create_tenant("tenant-b")
+    platform.providers.upsert_connection(
+        tenant_a,
+        provider="alpaca",
+        capabilities=["bars"],
+        entitlements=[{"dataset": "equities"}],
+        account_ref="A-1",
+        credential_ref="secret://tenant-a",
+    )
+    platform.providers.upsert_connection(
+        tenant_b,
+        provider="ibkr",
+        capabilities=["quote"],
+        entitlements=[{"dataset": "equities"}],
+        account_ref="B-1",
+        credential_ref="secret://tenant-b",
+    )
+    ts = Toolset(
+        core=toolset_core,
+        sink=PlatformTraceSink(platform.trace),
+        runs=platform.runs,
+        platform=platform,
+    )
+
+    accounts_a = ts.accounts_resource(_ctx={"tenant_id": tenant_a})
+
+    assert [account["account_ref"] for account in accounts_a["accounts"]] == ["A-1"]
+    assert "B-1" not in json.dumps(accounts_a)
+    assert "credential_ref" not in json.dumps(accounts_a)
+
+
 def test_ibkr_smoke_returns_diagnosis_and_traces_provider_status(toolset, monkeypatch):
     with _QuoteServer() as server:
         monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)

@@ -11,17 +11,58 @@ agents, per-tenant bearer auth + scopes; see :mod:`doomberg_mcp.http`).
 """
 from __future__ import annotations
 
+import json
 import uuid
 
 from doomberg_control.actions import ActionError
 from doomberg_control.deps import Ctx
-from doomberg_control.execution_gateway import ExecutionGateway
+from doomberg_control.execution_gateway import ExecutionGateway, ExecutionPolicy
 from doomberg_core import ALL_SKILL_MANIFESTS, SKILLS, Core, SkillSet
 from doomberg_core.providers import IbkrEngineClient
 
 from .trace import InMemoryTrace, PlatformTraceSink, Tracer
 
 _DEFAULT_TENANT = "00000000-0000-0000-0000-000000000000"
+
+_TYPED_ERROR_CODES = [
+    "AUTH_REQUIRED",
+    "BROKER_CONNECTION_REQUIRED",
+    "ENTITLEMENT_REQUIRED",
+    "DATA_STALE",
+    "PROVIDER_DEGRADED",
+    "RATE_LIMITED",
+    "INVALID_SYMBOL",
+    "MARKET_CLOSED",
+    "JOB_QUEUED",
+    "JOB_BUDGET_EXCEEDED",
+    "POLICY_DENIED",
+    "APPROVAL_REQUIRED",
+    "ORDER_STATE_CONFLICT",
+    "DUPLICATE_IDEMPOTENCY_KEY",
+]
+
+
+def _json_resource(payload: dict) -> str:
+    return json.dumps(payload, indent=2, sort_keys=True)
+
+
+def _without_none(payload: dict) -> dict:
+    return {k: v for k, v in payload.items() if v is not None}
+
+
+def _public_connection(connection: dict) -> dict:
+    """Return an agent-safe provider connection view with no credential material."""
+    return _without_none({
+        "connection_id": connection.get("connection_id"),
+        "provider": connection.get("provider"),
+        "account_ref": connection.get("account_ref"),
+        "state": connection.get("state"),
+        "capabilities": connection.get("capabilities") or [],
+        "entitlements": connection.get("entitlements") or [],
+        "retention_policy": connection.get("retention_policy"),
+        "created_at": connection.get("created_at"),
+        "updated_at": connection.get("updated_at"),
+    })
 
 # Pydantic-validated provenance summaries are small; we surface key fields into the trace
 # so the UI timeline can show "what came back" without the full payload.
@@ -240,6 +281,109 @@ class Toolset:
             return self._typed_error("INVALID_SYMBOL", f"unknown skill version: {version}",
                                      "Call describe_skill without a version or use the advertised version.")
         return out
+
+    def skills_catalog_resource(self) -> dict:
+        """Read-only MCP resource for progressive skill discovery."""
+        entries = sorted(
+            (self._manifest_entry(m) for m in ALL_SKILL_MANIFESTS.values()),
+            key=lambda entry: entry["skill_id"],
+        )
+        return {
+            "kind": "skills.catalog",
+            "count": len(entries),
+            "truncated": False,
+            "skills": entries,
+        }
+
+    def skill_resource(self, skill_id: str, version: str) -> dict:
+        """Read-only MCP resource for one skill manifest version."""
+        return self.describe_skill(skill_id, version=version)
+
+    def run_resource(self, run_id: str, _ctx: dict | None = None) -> dict:
+        """Read-only MCP resource for a durable run, including jobs, artifacts and events."""
+        return self.get_run(run_id, _ctx=_ctx)
+
+    def policies_resource(self, _ctx: dict | None = None) -> dict:
+        """Read-only MCP resource describing current deterministic platform policy."""
+        policy = ExecutionPolicy.from_env()
+        return {
+            "kind": "policies.current",
+            "tenant_id": (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT,
+            "broker_write_boundary": "execution_gateway",
+            "skills_may_call_brokers_directly": False,
+            "paper_trading_default": True,
+            "live_execution": {
+                "enabled": policy.live_enabled,
+                "requires_connected_provider": policy.require_connected_provider_for_live,
+            },
+            "execution": {
+                "max_notional_usd": policy.max_notional_usd,
+                "max_quantity": policy.max_quantity,
+                "max_freshness_ms": policy.max_freshness_ms,
+            },
+            "typed_errors": list(_TYPED_ERROR_CODES),
+        }
+
+    def accounts_resource(self, _ctx: dict | None = None) -> dict:
+        """Read-only tenant-scoped account view with credential material redacted."""
+        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
+        if self.platform is None:
+            connections: list[dict] = []
+        else:
+            connections = [
+                _public_connection(c)
+                for c in self.platform.providers.list_connections(tenant_id)
+            ]
+        accounts = [
+            _without_none({
+                "account_ref": c.get("account_ref"),
+                "provider": c.get("provider"),
+                "state": c.get("state"),
+                "capabilities": c.get("capabilities") or [],
+                "entitlements": c.get("entitlements") or [],
+            })
+            for c in connections
+            if c.get("account_ref")
+        ]
+        return {
+            "kind": "accounts",
+            "tenant_id": tenant_id,
+            "paper_trading": {"enabled": True, "broker": "paper"},
+            "accounts": accounts,
+            "provider_connections": connections,
+        }
+
+    def data_providers_resource(self, _ctx: dict | None = None) -> dict:
+        """Read-only tenant-scoped data-provider and dataset snapshot view."""
+        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
+        if self.platform is None:
+            connections: list[dict] = []
+            snapshots: list[dict] = []
+        else:
+            connections = [
+                _public_connection(c)
+                for c in self.platform.providers.list_connections(tenant_id)
+            ]
+            snapshots = self.platform.providers.list_snapshots(tenant_id, limit=50)
+        ibkr = IbkrEngineClient()
+        return {
+            "kind": "data.providers",
+            "tenant_id": tenant_id,
+            "connections": connections,
+            "dataset_snapshots": snapshots,
+            "ibkr_engine": {
+                "configured": ibkr.configured(),
+                "host": ibkr.host,
+                "quote_path": ibkr.quote_path,
+                "order_path": ibkr.order_path,
+                "entitlement_class": "connected_account",
+            },
+            "supported_modes": [
+                "community_public_delayed",
+                "connected_account",
+                "doomberg_licensed_placeholder",
+            ],
+        }
 
     def run_skill(self, skill_id: str, input: dict | None = None, mode: str = "auto",
                   idempotency_key: str | None = None, _ctx: dict | None = None) -> dict:
@@ -702,6 +846,60 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     def call_skill(tool: str, params: dict) -> dict:
         """Skill-catalog dispatch that injects the per-request tenant ``_ctx`` (HTTP mode)."""
         return ts.call_skill(tool, params, _ctx=_ctx())
+
+    @mcp.resource(
+        "doomberg://skills/catalog",
+        name="skills_catalog",
+        description="Compact Doomberg skill catalog for progressive discovery.",
+        mime_type="application/json",
+    )
+    def skills_catalog_resource() -> str:
+        return _json_resource(ts.skills_catalog_resource())
+
+    @mcp.resource(
+        "doomberg://skills/{skill_id}/{version}",
+        name="skill_manifest",
+        description="One versioned Doomberg skill manifest.",
+        mime_type="application/json",
+    )
+    def skill_manifest_resource(skill_id: str, version: str) -> str:
+        return _json_resource(ts.skill_resource(skill_id, version))
+
+    @mcp.resource(
+        "doomberg://runs/{run_id}",
+        name="run",
+        description="Durable run with jobs, artifacts and replayable trace events.",
+        mime_type="application/json",
+    )
+    def run_resource(run_id: str) -> str:
+        return _json_resource(ts.run_resource(run_id, _ctx=_ctx()))
+
+    @mcp.resource(
+        "doomberg://policies/current",
+        name="policies_current",
+        description="Current deterministic Doomberg control-plane policies.",
+        mime_type="application/json",
+    )
+    def policies_current_resource() -> str:
+        return _json_resource(ts.policies_resource(_ctx=_ctx()))
+
+    @mcp.resource(
+        "doomberg://accounts",
+        name="accounts",
+        description="Tenant-scoped account and provider connection summary with credentials redacted.",
+        mime_type="application/json",
+    )
+    def accounts_resource() -> str:
+        return _json_resource(ts.accounts_resource(_ctx=_ctx()))
+
+    @mcp.resource(
+        "doomberg://data/providers",
+        name="data_providers",
+        description="Tenant-scoped data provider and dataset snapshot summary.",
+        mime_type="application/json",
+    )
+    def data_providers_resource() -> str:
+        return _json_resource(ts.data_providers_resource(_ctx=_ctx()))
 
     @mcp.tool(description="Search Doomberg skills without loading the full catalog into context.")
     def search_skills(query: str = "", asset_class: str | None = None,

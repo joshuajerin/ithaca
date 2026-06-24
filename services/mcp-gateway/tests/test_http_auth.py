@@ -25,7 +25,7 @@ from doomberg_mcp import (
     build_http_app,
     current_principal,
 )
-from doomberg_mcp.http import _bearer, _is_tool_call, _scope_needed
+from doomberg_mcp.http import _bearer, _is_tool_call, _requires_data_read, _scope_needed
 from doomberg_platform import Platform
 
 
@@ -125,8 +125,20 @@ def test_scope_policy_recognizes_calls():
     body = json.dumps({"method": "tools/list"}).encode()
     assert _is_tool_call(body) is False
     assert _scope_needed(body) == set()
+    assert _requires_data_read(body) is False
+    # Resource reads/listing expose control-plane state and require the same data:read
+    # baseline enforced by the hosted middleware.
+    body = json.dumps({
+        "method": "resources/read",
+        "params": {"uri": "doomberg://skills/catalog"},
+    }).encode()
+    assert _scope_needed(body) == set()
+    assert _requires_data_read(body) is True
+    body = json.dumps({"method": "resources/list"}).encode()
+    assert _requires_data_read(body) is True
     # garbage body: never raises, gates nothing extra
     assert _scope_needed(b"not json") is None
+    assert _requires_data_read(b"not json") is False
 
 
 # --------------------------------------------------------------------------------------
@@ -217,6 +229,17 @@ def test_tool_call_requires_data_read_scope(middleware, keys):
     # a key with NO scopes cannot make a tools/call (needs data:read) -> 403
     out = _run_mw(middleware, token=keys["no_scope"], body=CALL)
     assert out["status"] == 403 and out["passed"] is False
+
+
+def test_resource_read_requires_data_read_scope(middleware, keys):
+    body = {"jsonrpc": "2.0", "id": 1, "method": "resources/read",
+            "params": {"uri": "doomberg://skills/catalog"}}
+
+    denied = _run_mw(middleware, token=keys["no_scope"], body=body)
+    allowed = _run_mw(middleware, token=keys["read_only"], body=body)
+
+    assert denied["status"] == 403 and denied["passed"] is False
+    assert allowed["passed"] is True and allowed["principal"].has("data:read")
 
 
 def test_propose_requires_strategy_author_scope(middleware, keys):
