@@ -12,6 +12,7 @@ import type {
   RunRow,
   SessionRow,
   StrategyRow,
+  TriggerDryRunResult,
   TriggerRow,
 } from "./types";
 
@@ -208,6 +209,10 @@ export const api = {
 
   async createTrigger(name: string, policy: Record<string, unknown>, state = "draft", signal?: AbortSignal) {
     return postJson<TriggerRow>(`/triggers`, { name, policy, state }, signal);
+  },
+
+  async dryRunTrigger(name: string, policy: Record<string, unknown>, signal?: AbortSignal) {
+    return postJson<TriggerDryRunResult>(`/triggers/dry-run`, { name, policy }, signal);
   },
 
   async setTriggerState(triggerId: string, state: string, signal?: AbortSignal) {

@@ -170,6 +170,24 @@ export interface TriggerRow {
   updated_at?: string | null;
 }
 
+export interface TriggerDryRunResult {
+  dry_run: true;
+  would_fire: boolean;
+  reason: string;
+  trigger_id?: string | null;
+  tenant_id?: string | null;
+  dedupe_key?: string | null;
+  quote_mode?: string | null;
+  would_create?: {
+    run: boolean;
+    job: boolean;
+    approval: boolean;
+    broker_order: boolean;
+  };
+  action?: Record<string, unknown>;
+  context?: Record<string, unknown>;
+}
+
 export interface OpsReadinessRow {
   name: string;
   state: "succeeded" | "warn" | "paused" | "failed" | string;

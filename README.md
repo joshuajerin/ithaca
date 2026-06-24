@@ -113,10 +113,13 @@ rest-gateway (`:8000`); its human money-path actions (promote/activate/pause/res
 `doomberg_control.actions` the control plane exposes, so there is one money-path implementation, two transports.
 The trigger engine also shares `DOOMBERG_DB`, uses the IBKR engine only as a per-user connected-account data
 source, and never submits broker orders directly.
-The launch gate creates a synthetic quote-only trigger, verifies it creates a durable run with
-connected-account provenance, and retires the trigger; when `--require-ibkr` is set and
-`DOOMBERG_IBKR_ENGINE_URL` is configured, that probe uses the live IBKR engine instead of the
-static IBKR-shaped quote used in local/offline checks.
+Users can dry-run trigger policies through REST before activation; the dry-run reports the
+same condition/control decision without creating runs, firings, approvals, jobs, or broker
+actions. The launch gate dry-runs a synthetic quote-only trigger, then creates one active
+trigger, verifies it creates a durable run with connected-account provenance, and retires it;
+when `--require-ibkr` is set and `DOOMBERG_IBKR_ENGINE_URL` is configured, the active trigger
+probe uses the live IBKR engine instead of the static IBKR-shaped quote used in local/offline
+checks.
 
 In Kubernetes, `deploy/deploy_services.sh` creates the same `doomberg-db` Secret in the gateway and worker
 namespaces. `doomberg-app` runs `rest-gateway`, `control-plane`, and hosted HTTP MCP; `doomberg-workers`

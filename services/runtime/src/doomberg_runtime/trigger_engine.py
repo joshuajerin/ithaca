@@ -229,6 +229,74 @@ class TriggerEngine:
 
         return self._fire(trigger, policy, context, now)
 
+    def dry_run(
+        self,
+        trigger: dict[str, Any],
+        *,
+        now: datetime | None = None,
+        quote: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Evaluate a trigger policy without creating runs, jobs, approvals, or firings."""
+        now = now or _now()
+        tenant_id = str(trigger["tenant_id"])
+        policy = trigger.get("policy") or {}
+        when = policy.get("when") or {}
+        event = when.get("event") or "price.threshold"
+        if event not in {"price.threshold", "market.price", "market.quote"}:
+            return self._dry_skip(trigger, "UNSUPPORTED_EVENT", {"event": event})
+
+        symbol = self._symbol(policy)
+        if quote is None:
+            normalized_quote = self.quote_client.quote(symbol, tenant_id=tenant_id)
+            quote_mode = "live"
+        else:
+            try:
+                normalized_quote = normalize_quote(
+                    quote,
+                    symbol=symbol,
+                    source=str(quote.get("source") or "dry-run"),
+                )
+            except IbkrQuoteInvariantError as exc:
+                raise TriggerEvaluationError(str(exc)) from exc
+            quote_mode = "provided"
+        context = self._context(trigger, policy, normalized_quote, now)
+        decision = self._condition(policy.get("condition") or {}, context)
+        if not decision.ok:
+            return self._dry_skip(trigger, "CONDITION_FALSE", decision.context, quote_mode=quote_mode)
+
+        controls = policy.get("controls") or {}
+        controls_check = self._controls(trigger, controls, context, now)
+        if controls_check is not None:
+            return self._dry_skip(
+                trigger,
+                str(controls_check.get("reason") or "CONTROLS_BLOCKED"),
+                controls_check.get("context") or context,
+                quote_mode=quote_mode,
+            )
+
+        action = policy.get("action") or {}
+        mode = action.get("mode") or "analyze"
+        run_skill = action.get("run_skill") or "market.quote"
+        approval_required = bool(controls.get("approval_required")) or mode == "execute"
+        dedupe_key = self._dedupe_key(controls, context)
+        return {
+            "dry_run": True,
+            "would_fire": True,
+            "reason": "WOULD_FIRE",
+            "trigger_id": trigger.get("trigger_id"),
+            "tenant_id": tenant_id,
+            "dedupe_key": dedupe_key,
+            "quote_mode": quote_mode,
+            "would_create": {
+                "run": True,
+                "job": run_skill not in {"market.quote", "market.snapshot", "market.get_quote"},
+                "approval": approval_required,
+                "broker_order": False,
+            },
+            "action": {"run_skill": run_skill, "mode": mode},
+            "context": self._safe_context(context),
+        }
+
     def _symbol(self, policy: dict[str, Any]) -> str:
         when = policy.get("when") or {}
         universe = when.get("universe")
@@ -551,6 +619,30 @@ class TriggerEngine:
             "trigger_id": trigger.get("trigger_id"),
             "tenant_id": trigger.get("tenant_id"),
             "reason": reason,
+            "context": self._safe_context(context),
+        }
+
+    def _dry_skip(
+        self,
+        trigger: dict[str, Any],
+        reason: str,
+        context: dict[str, Any],
+        *,
+        quote_mode: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "dry_run": True,
+            "would_fire": False,
+            "reason": reason,
+            "trigger_id": trigger.get("trigger_id"),
+            "tenant_id": trigger.get("tenant_id"),
+            "quote_mode": quote_mode,
+            "would_create": {
+                "run": False,
+                "job": False,
+                "approval": False,
+                "broker_order": False,
+            },
             "context": self._safe_context(context),
         }
 

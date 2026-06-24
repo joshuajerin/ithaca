@@ -39,6 +39,7 @@ def test_launch_gate_local_mode_passes_without_external_services(capsys, monkeyp
     assert statuses["artifact fetch"] == "pass"
     assert statuses["mcp unauthorized rejection"] == "pass"
     assert statuses["trigger provider register"] == "pass"
+    assert statuses["trigger dry-run"] == "pass"
     assert statuses["trigger realtime create"] == "pass"
     assert statuses["trigger realtime fire"] == "pass"
     assert statuses["trigger realtime run fetch"] == "pass"
@@ -57,7 +58,9 @@ def test_launch_gate_local_mode_passes_without_external_services(capsys, monkeyp
     catalog = next(row for row in body["results"] if row["name"] == "mcp resource catalog")
     assert catalog["evidence"]["count"] >= 50
     trigger_fire = next(row for row in body["results"] if row["name"] == "trigger realtime fire")
+    trigger_dry_run = next(row for row in body["results"] if row["name"] == "trigger dry-run")
     trigger_history = next(row for row in body["results"] if row["name"] == "trigger realtime history")
+    assert trigger_dry_run["evidence"]["quote_mode"] == "provided"
     assert trigger_fire["evidence"]["quote_mode"] == "static-ibkr-shaped"
     assert trigger_history["evidence"]["run_id"] == trigger_fire["evidence"]["run_id"]
     created = next(row for row in body["results"] if row["name"] == "mcp durable run create")

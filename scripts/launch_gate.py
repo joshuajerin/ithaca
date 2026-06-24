@@ -898,6 +898,61 @@ def _check_realtime_trigger(
         )
     )
 
+    now = datetime.now(timezone.utc)
+    policy = _launch_gate_trigger_policy(symbol)
+    provider_tenant_id = str(provider.get("tenant_id") or "")
+    runs_before = len(stores.runs.list(provider_tenant_id)) if provider_tenant_id else None
+    firings_before = len(stores.triggers.list_firings(provider_tenant_id)) if provider_tenant_id else None
+    dry_run, failure = _post_json(
+        rest,
+        "/api/triggers/dry-run",
+        {
+            "name": f"launch-gate-{symbol.lower()}-dry-run",
+            "policy": policy,
+            "quote": {
+                "symbol": symbol,
+                "price": 212.45,
+                "last": 212.45,
+                "bid": 212.44,
+                "ask": 212.46,
+                "event_time": now.isoformat(),
+                "received_time": now.isoformat(),
+                "source": "ibkr-engine",
+                "source_account": "launch-gate",
+                "entitlement_class": "connected_account",
+            },
+        },
+        token=token,
+        tenant_id=tenant_id,
+        name="trigger dry-run",
+    )
+    if failure:
+        return results + [failure]
+    assert dry_run is not None
+    runs_after = len(stores.runs.list(provider_tenant_id)) if provider_tenant_id else runs_before
+    firings_after = len(stores.triggers.list_firings(provider_tenant_id)) if provider_tenant_id else firings_before
+    if not dry_run.get("would_fire") or runs_after != runs_before or firings_after != firings_before:
+        return results + [
+            _fail(
+                "trigger dry-run",
+                "trigger dry-run did not predict fire without side effects",
+                body=dry_run,
+                runs_before=runs_before,
+                runs_after=runs_after,
+                firings_before=firings_before,
+                firings_after=firings_after,
+            )
+        ]
+    results.append(
+        _pass(
+            "trigger dry-run",
+            "trigger policy dry-run predicted a fire without durable side effects",
+            reason=dry_run.get("reason"),
+            quote_mode=dry_run.get("quote_mode"),
+            would_create=dry_run.get("would_create"),
+        )
+    )
+
     trigger_id: str | None = None
     trigger, failure = _post_json(
         rest,
@@ -905,7 +960,7 @@ def _check_realtime_trigger(
         {
             "name": f"launch-gate-{symbol.lower()}-{uuid.uuid4().hex[:8]}",
             "state": "active",
-            "policy": _launch_gate_trigger_policy(symbol),
+            "policy": policy,
         },
         token=token,
         tenant_id=tenant_id,
@@ -936,7 +991,6 @@ def _check_realtime_trigger(
             )
         )
     else:
-        now = datetime.now(timezone.utc)
         quote_client = (
             HttpQuoteClient(timeout_s=5.0)
             if use_live_ibkr

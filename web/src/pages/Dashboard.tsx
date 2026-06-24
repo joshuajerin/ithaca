@@ -14,6 +14,7 @@ import type {
   RunRow,
   SessionRow,
   StrategyRow,
+  TriggerDryRunResult,
   TriggerRow,
 } from "../types";
 
@@ -37,6 +38,7 @@ export function Dashboard() {
   const [triggerSymbol, setTriggerSymbol] = useState("NVDA");
   const [triggerPrice, setTriggerPrice] = useState("");
   const [triggerOp, setTriggerOp] = useState<"gte" | "lte">("gte");
+  const [triggerDryRun, setTriggerDryRun] = useState<TriggerDryRunResult | null>(null);
   const [orderRunId, setOrderRunId] = useState("");
   const [orderSymbol, setOrderSymbol] = useState("AAPL");
   const [orderQuantity, setOrderQuantity] = useState("1");
@@ -161,13 +163,12 @@ export function Dashboard() {
     });
   }
 
-  function createPriceTrigger(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function currentPriceTrigger() {
     const symbol = triggerSymbol.trim().toUpperCase();
     const price = Number(triggerPrice);
     if (!symbol || !Number.isFinite(price) || price <= 0) {
       setActionError("Enter a symbol and positive trigger price.");
-      return;
+      return null;
     }
     const policy = {
       when: {
@@ -196,8 +197,30 @@ export function Dashboard() {
         channels: ["dashboard"],
       },
     };
+    return {
+      name: `${symbol.toLowerCase()}-price-${triggerOp}-${price}`,
+      policy,
+      price,
+      symbol,
+    };
+  }
+
+  function dryRunPriceTrigger() {
+    const prepared = currentPriceTrigger();
+    if (!prepared) return undefined;
+    return runAction("trigger-dry-run", async () => {
+      const result = await api.dryRunTrigger(prepared.name, prepared.policy);
+      setTriggerDryRun(result);
+    });
+  }
+
+  function createPriceTrigger(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const prepared = currentPriceTrigger();
+    if (!prepared) return undefined;
+    setTriggerDryRun(null);
     return runAction("trigger", () =>
-      api.createTrigger(`${symbol.toLowerCase()}-price-${triggerOp}-${price}`, policy, "active"),
+      api.createTrigger(prepared.name, prepared.policy, "active"),
     );
   }
 
@@ -431,6 +454,13 @@ export function Dashboard() {
             <StatusRow state={activeTriggers ? "succeeded" : "paused"} title="Trigger policies" detail={`${activeTriggers} active of ${triggers.length} total.`} />
             <StatusRow state={artifacts.length ? "succeeded" : "paused"} title="Artifacts" detail={`${artifacts.length} run artifact${artifacts.length === 1 ? "" : "s"} indexed.`} />
             <StatusRow state={queuedJobs ? "pending" : "succeeded"} title="Queued jobs" detail={`${queuedJobs} queued worker job${queuedJobs === 1 ? "" : "s"}.`} />
+            {triggerDryRun ? (
+              <StatusRow
+                state={triggerDryRun.would_fire ? "pending" : "paused"}
+                title={`Trigger dry run / ${triggerDryRun.reason}`}
+                detail={`${String(triggerDryRun.context?.symbol ?? triggerSymbol.toUpperCase())} ${String(triggerDryRun.context?.price ?? "no quote")} · ${triggerDryRun.would_create?.run ? "would create run" : "no run"} · ${triggerDryRun.quote_mode ?? "quote"}`}
+              />
+            ) : null}
           </div>
           <form className="ops-form" onSubmit={createPriceTrigger}>
             <input className="ops-input" value={triggerSymbol} onChange={(e) => setTriggerSymbol(e.target.value)} placeholder="symbol" />
@@ -439,6 +469,7 @@ export function Dashboard() {
               <option value="lte">at/below</option>
             </select>
             <input className="ops-input" value={triggerPrice} onChange={(e) => setTriggerPrice(e.target.value)} placeholder="price" inputMode="decimal" />
+            <button className="btn" type="button" onClick={dryRunPriceTrigger} disabled={busy === "trigger-dry-run"}>Test Trigger</button>
             <button className="btn" type="submit" disabled={busy === "trigger"}>Create Trigger</button>
           </form>
           <div className="mini-list">

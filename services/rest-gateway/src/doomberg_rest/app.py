@@ -117,6 +117,12 @@ class CreateTriggerBody(BaseModel):
     state: str = "draft"
 
 
+class DryRunTriggerBody(BaseModel):
+    name: str = "dry-run"
+    policy: dict[str, Any]
+    quote: dict[str, Any] | None = None
+
+
 class SetTriggerStateBody(BaseModel):
     state: str
 
@@ -1234,6 +1240,30 @@ def create_app(db: Any | None = None) -> FastAPI:
                 limit=limit,
             )
         }
+
+    @app.post("/api/triggers/dry-run")
+    def dry_run_trigger(
+        body: DryRunTriggerBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        _require_scope(ctx, "triggers:write")
+        from doomberg_runtime import TriggerEngine, TriggerEvaluationError
+
+        trigger = {
+            "tenant_id": ctx.tenant_id,
+            "trigger_id": f"dry-run-{uuid.uuid4()}",
+            "name": body.name,
+            "state": "draft",
+            "policy": body.policy,
+        }
+        try:
+            return TriggerEngine(stores, worker_id="rest-trigger-dry-run").dry_run(
+                trigger,
+                quote=body.quote,
+            )
+        except TriggerEvaluationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/api/triggers", status_code=201)
     def create_trigger(

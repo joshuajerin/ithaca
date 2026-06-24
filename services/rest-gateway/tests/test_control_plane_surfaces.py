@@ -123,6 +123,60 @@ def test_ibkr_smoke_route_calls_read_only_quote_engine(client, tenant_a, monkeyp
     assert server.requests == [{"path": "/v1/quote/AAPL", "tenant": tenant_a}]
 
 
+def test_trigger_dry_run_route_has_no_side_effects(client, stores, tenant_a):
+    now = datetime.now(timezone.utc).isoformat()
+    policy = {
+        "when": {"event": "market.quote", "universe": ["NVDA"]},
+        "condition": {
+            "all": [
+                {"price": {"gte": 900}},
+                {"data_freshness_seconds": {"lte": 10}},
+            ]
+        },
+        "controls": {
+            "dedupe_key": "${symbol}:price",
+            "cooldown": "0s",
+            "max_runs_per_day": 8,
+            "require_connected_live_data": True,
+        },
+        "action": {"run_skill": "market.quote", "mode": "analyze"},
+    }
+
+    response = client.post(
+        "/api/triggers/dry-run",
+        headers=_h(tenant_a),
+        json={
+            "name": "nvda-test",
+            "policy": policy,
+            "quote": {
+                "symbol": "NVDA",
+                "price": 950,
+                "event_time": now,
+                "received_time": now,
+                "source": "ibkr-engine",
+                "entitlement_class": "connected_account",
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["dry_run"] is True
+    assert body["would_fire"] is True
+    assert body["reason"] == "WOULD_FIRE"
+    assert body["would_create"] == {
+        "run": True,
+        "job": False,
+        "approval": False,
+        "broker_order": False,
+    }
+    assert body["context"]["source"] == "ibkr-engine"
+    assert stores.runs.list(tenant_a) == []
+    assert stores.jobs.list(tenant_a) == []
+    assert stores.approvals.list(tenant_a) == []
+    assert stores.triggers.list_firings(tenant_a) == []
+
+
 def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tenant_a, tenant_b):
     run_id = seed_run(stores, tenant_a, kind="backtest")
     other_run_id = seed_run(stores, tenant_b, kind="backtest")

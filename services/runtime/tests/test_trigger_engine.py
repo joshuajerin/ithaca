@@ -162,6 +162,63 @@ def test_trigger_engine_requires_connected_live_data_when_policy_says_so(
     assert result["skipped"][0]["reason"] == "ENTITLEMENT_REQUIRED"
 
 
+def test_trigger_dry_run_predicts_fire_without_side_effects(durable_platform, tenant_id):
+    tenant = durable_platform.auth.create_tenant("trigger tenant")
+    now = dt.datetime(2026, 6, 24, 13, 30, tzinfo=dt.timezone.utc)
+    trigger = {
+        "tenant_id": tenant,
+        "trigger_id": "dry-nvda",
+        "name": "dry-run",
+        "state": "draft",
+        "policy": _policy(cooldown="0s"),
+    }
+    engine = TriggerEngine(durable_platform)
+
+    result = engine.dry_run(trigger, now=now, quote=_quote(now))
+
+    assert result["dry_run"] is True
+    assert result["would_fire"] is True
+    assert result["reason"] == "WOULD_FIRE"
+    assert result["would_create"] == {
+        "run": True,
+        "job": False,
+        "approval": False,
+        "broker_order": False,
+    }
+    assert result["context"]["symbol"] == "NVDA"
+    assert result["context"]["entitlement_class"] == "connected_account"
+    assert durable_platform.runs.list(tenant) == []
+    assert durable_platform.jobs.list(tenant) == []
+    assert durable_platform.approvals.list(tenant) == []
+    assert durable_platform.triggers.list_firings(tenant) == []
+
+
+def test_trigger_dry_run_reports_controls_block_without_writes(durable_platform, tenant_id):
+    tenant = durable_platform.auth.create_tenant("trigger tenant")
+    now = dt.datetime(2026, 6, 24, 13, 30, tzinfo=dt.timezone.utc)
+    trigger = {
+        "tenant_id": tenant,
+        "trigger_id": "dry-nvda",
+        "name": "dry-run",
+        "state": "draft",
+        "policy": _policy(cooldown="0s", require_live=True),
+    }
+    engine = TriggerEngine(durable_platform)
+
+    result = engine.dry_run(
+        trigger,
+        now=now,
+        quote=_quote(now, entitlement_class="public_delayed"),
+    )
+
+    assert result["dry_run"] is True
+    assert result["would_fire"] is False
+    assert result["reason"] == "ENTITLEMENT_REQUIRED"
+    assert result["would_create"]["run"] is False
+    assert durable_platform.runs.list(tenant) == []
+    assert durable_platform.triggers.list_firings(tenant) == []
+
+
 def test_trigger_engine_rejects_unknown_condition_operator(durable_platform, tenant_id):
     tenant = durable_platform.auth.create_tenant("trigger tenant")
     now = dt.datetime(2026, 6, 24, 13, 30, tzinfo=dt.timezone.utc)

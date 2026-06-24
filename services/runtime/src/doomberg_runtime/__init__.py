@@ -18,13 +18,14 @@ from .orchestrator import BacktestWorker, PaperScheduler, TriggerJobWorker
 
 
 def __getattr__(name: str):
-    if name in {"TriggerEngine", "HttpQuoteClient", "StaticQuoteClient"}:
-        from .trigger_engine import HttpQuoteClient, StaticQuoteClient, TriggerEngine
+    if name in {"TriggerEngine", "HttpQuoteClient", "StaticQuoteClient", "TriggerEvaluationError"}:
+        from .trigger_engine import HttpQuoteClient, StaticQuoteClient, TriggerEngine, TriggerEvaluationError
 
         exported = {
             "TriggerEngine": TriggerEngine,
             "HttpQuoteClient": HttpQuoteClient,
             "StaticQuoteClient": StaticQuoteClient,
+            "TriggerEvaluationError": TriggerEvaluationError,
         }
         globals().update(exported)
         return exported[name]
@@ -44,6 +45,7 @@ __all__ = [
     "TriggerEngine",
     "HttpQuoteClient",
     "StaticQuoteClient",
+    "TriggerEvaluationError",
     "MarketCalendar",
     "RegularHoursCalendar",
     "AlwaysOpen",
