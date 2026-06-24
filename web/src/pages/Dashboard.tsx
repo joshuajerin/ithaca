@@ -7,6 +7,7 @@ import type {
   ArtifactRow,
   DatasetSnapshotRow,
   JobRow,
+  IbkrSmokeStatus,
   OrderIntentRow,
   OpsStatus,
   ProviderConnectionRow,
@@ -40,6 +41,8 @@ export function Dashboard() {
   const [orderSymbol, setOrderSymbol] = useState("AAPL");
   const [orderQuantity, setOrderQuantity] = useState("1");
   const [orderLimit, setOrderLimit] = useState("");
+  const [ibkrSmokeSymbol, setIbkrSmokeSymbol] = useState("AAPL");
+  const [ibkrSmoke, setIbkrSmoke] = useState<IbkrSmokeStatus | null>(null);
   const { data, loading, error, reload } = useAsync<DashboardData>(
     async (signal) => {
       const [runs, sessions, strategies, jobs, ops, artifacts, approvals, providers, orderIntents, triggers] = await Promise.all([
@@ -142,6 +145,20 @@ export function Dashboard() {
         retention_policy: "connected-account",
       }),
     );
+  }
+
+  function smokeIbkr(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const symbol = ibkrSmokeSymbol.trim().toUpperCase();
+    if (!symbol) {
+      setActionError("Enter a symbol for the IBKR smoke.");
+      return;
+    }
+    setIbkrSmokeSymbol(symbol);
+    return runAction("ibkr-smoke", async () => {
+      const result = await api.ibkrSmoke(symbol);
+      setIbkrSmoke(result);
+    });
   }
 
   function createPriceTrigger(event: FormEvent<HTMLFormElement>) {
@@ -326,11 +343,31 @@ export function Dashboard() {
               <span>{ops?.ibkr.engine_configured ? ops.ibkr.engine_host ?? "configured" : "unset"}</span>
             </div>
           </div>
+          {ibkrSmoke ? (
+            <div className="warning-list">
+              <StatusRow
+                state={ibkrSmoke.ok ? "succeeded" : "failed"}
+                title={`IBKR smoke / ${ibkrSmoke.status}`}
+                detail={`${ibkrSmoke.symbol} ${formatOptionalNumber(ibkrSmoke.quote?.price)} · freshness ${formatOptionalNumber(ibkrSmoke.quote?.freshness_ms)}ms · latency ${formatOptionalNumber(ibkrSmoke.latency_ms)}ms`}
+              />
+            </div>
+          ) : null}
           <div className="ops-actions">
             <button className="btn" type="button" onClick={connectIbkr} disabled={busy === "provider"}>
               Connect IBKR VPS
             </button>
           </div>
+          <form className="ops-form" onSubmit={smokeIbkr}>
+            <input
+              className="ops-input"
+              value={ibkrSmokeSymbol}
+              onChange={(e) => setIbkrSmokeSymbol(e.target.value)}
+              placeholder="symbol"
+            />
+            <button className="btn" type="submit" disabled={busy === "ibkr-smoke"}>
+              Smoke IBKR
+            </button>
+          </form>
           <div className="mini-list">
             {providers.slice(0, 4).map((provider) => (
               <div className="mini-row" key={provider.connection_id}>
@@ -499,4 +536,8 @@ function formatDate(value?: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(ms);
+}
+
+function formatOptionalNumber(value?: number | null) {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "n/a";
 }

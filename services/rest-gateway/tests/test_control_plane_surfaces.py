@@ -2,11 +2,67 @@
 
 from __future__ import annotations
 
+import json
+import threading
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
+
 from rest_helpers import seed_run
 
 
 def _h(tenant_id: str) -> dict[str, str]:
     return {"X-Tenant-Id": tenant_id}
+
+
+class _QuoteServer:
+    def __init__(self) -> None:
+        self.requests: list[dict[str, Any]] = []
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                owner.requests.append({"path": self.path, "tenant": self.headers.get("X-Tenant-Id")})
+                now = datetime.now(timezone.utc).isoformat()
+                body = {
+                    "quote": {
+                        "symbol": "AAPL",
+                        "last": 212.45,
+                        "event_time": now,
+                        "received_time": now,
+                        "source": "ibkr-engine",
+                        "entitlement_class": "connected_account",
+                    }
+                }
+                raw = json.dumps(body).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def log_message(self, *_args: Any) -> None:
+                return
+
+        self._handler = Handler
+        self._server: ThreadingHTTPServer | None = None
+        self._thread: threading.Thread | None = None
+        self.url = ""
+
+    def __enter__(self) -> "_QuoteServer":
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler)
+        host, port = self._server.server_address
+        self.url = f"http://{host}:{port}"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
 
 
 def test_dev_tenant_header_must_be_uuid(client):
@@ -46,6 +102,25 @@ def test_ops_status_reports_ibkr_and_execution_readiness(client, stores, tenant_
     assert body["leases"][0]["lease_name"] == "trigger-engine"
     assert any(row["name"] == "Live execution" and row["state"] == "succeeded"
                for row in body["readiness"])
+
+
+def test_ibkr_smoke_route_calls_read_only_quote_engine(client, tenant_a, monkeypatch):
+    with _QuoteServer() as server:
+        monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
+        monkeypatch.setenv("DOOMBERG_IBKR_QUOTE_PATH", "/v1/quote/{symbol}")
+
+        response = client.get(
+            "/api/ops/ibkr-smoke?symbol=aapl&max_freshness_ms=10000",
+            headers=_h(tenant_a),
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is True
+    assert body["quote"]["symbol"] == "AAPL"
+    assert body["quote"]["price"] == 212.45
+    assert "raw" not in body["quote"]
+    assert server.requests == [{"path": "/v1/quote/AAPL", "tenant": tenant_a}]
 
 
 def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tenant_a, tenant_b):

@@ -243,6 +243,21 @@ For connected-account live trigger quotes, set:
 export DOOMBERG_IBKR_ENGINE_URL=https://your-ibkr-vps.example.com
 export DOOMBERG_IBKR_ENGINE_TOKEN=...        # optional
 export DOOMBERG_IBKR_QUOTE_PATH=/quote?symbol={symbol}  # optional
+export DOOMBERG_IBKR_SMOKE_MAX_FRESHNESS_MS=60000        # optional live-session gate
+```
+
+Before enabling trigger policies that require connected live data, run the same
+read-only quote smoke the REST dashboard and MCP `ibkr_smoke` tool use:
+
+```bash
+python scripts/ibkr_smoke.py --symbol AAPL --json
+```
+
+In Kubernetes, run it from the deployed image with the same Secret-mounted env:
+
+```bash
+kubectl -n doomberg-workers run ibkr-smoke --rm -it --restart=Never \
+  --image="${IMAGE}" -- ibkr-smoke --symbol AAPL --json
 ```
 
 For live broker submission through the deterministic execution gateway, set the

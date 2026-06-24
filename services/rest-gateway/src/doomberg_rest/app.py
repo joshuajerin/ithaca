@@ -42,6 +42,7 @@ from doomberg_control.actions import ActionError
 from doomberg_control.deps import HUMAN_ACTOR_KINDS, Ctx
 from doomberg_control.execution_gateway import ExecutionGateway
 from doomberg_core import Core
+from doomberg_core.providers import IbkrEngineClient
 from doomberg_platform import (
     AuthStore,
     ApprovalStore,
@@ -1000,6 +1001,18 @@ def create_app(db: Any | None = None) -> FastAPI:
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
         return _ops_status(stores, tenant_id)
+
+    @app.get("/api/ops/ibkr-smoke")
+    def ibkr_smoke(
+        symbol: str = "AAPL",
+        max_freshness_ms: int | None = Query(default=None, ge=0),
+        tenant_id: str = Depends(require_tenant),
+    ) -> dict[str, Any]:
+        return IbkrEngineClient().diagnose_quote(
+            symbol=symbol,
+            tenant_id=tenant_id,
+            max_freshness_ms=max_freshness_ms,
+        )
 
     @app.get("/api/artifacts")
     def list_artifacts(

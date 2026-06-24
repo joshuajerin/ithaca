@@ -51,6 +51,9 @@ Set `DOOMBERG_IBKR_ENGINE_URL` (and optionally `DOOMBERG_IBKR_ENGINE_TOKEN` /
 `DOOMBERG_IBKR_QUOTE_PATH`) in the deploy environment to back live trigger quote
 evaluation with the user-run IBKR engine. Without a URL, the worker stays up but
 active live-data trigger evaluations will return provider errors until configured.
+Run `ibkr-smoke --symbol AAPL --json` from the deployed image, or call
+`GET /api/ops/ibkr-smoke?symbol=AAPL`, to verify the read-only quote route,
+source, entitlement class, and freshness before enabling live-data triggers.
 
 The REST and control-plane containers also receive the IBKR order endpoint and
 execution safety knobs:

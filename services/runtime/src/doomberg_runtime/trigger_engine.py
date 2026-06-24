@@ -9,17 +9,22 @@ action; the execution gateway is the only broker-write path.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import threading
-import urllib.error
-import urllib.parse
-import urllib.request
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
+
+from doomberg_core.providers import (
+    IbkrEngineClient,
+    IbkrEngineConnectionError,
+    IbkrEngineError,
+    IbkrEngineHttpError,
+    IbkrQuoteInvariantError,
+    normalize_quote,
+)
 
 from ._trace import emit
 from .leader import acquire_loop_lease, process_owner, release_loop_lease
@@ -69,18 +74,6 @@ def _parse_time(value: Any, *, default: datetime | None = None) -> datetime:
     return default or _now()
 
 
-def _first_number(data: dict[str, Any], names: tuple[str, ...]) -> float | None:
-    for name in names:
-        value = data.get(name)
-        if value is None:
-            continue
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            continue
-    return None
-
-
 def _dig(data: Any, path: str) -> Any:
     cur = data
     for part in path.split("."):
@@ -126,39 +119,33 @@ class HttpQuoteClient:
         quote_path: str | None = None,
         timeout_s: float = 5.0,
     ) -> None:
-        self.base_url = (base_url or os.environ.get("DOOMBERG_IBKR_ENGINE_URL") or "").rstrip("/")
-        self.token = token if token is not None else os.environ.get("DOOMBERG_IBKR_ENGINE_TOKEN")
-        self.quote_path = quote_path or os.environ.get("DOOMBERG_IBKR_QUOTE_PATH") or "/quote?symbol={symbol}"
-        self.timeout_s = float(timeout_s)
+        self.client = IbkrEngineClient(
+            base_url=base_url,
+            token=token,
+            quote_path=quote_path,
+            timeout_s=timeout_s,
+        )
+        self.base_url = self.client.base_url
+        self.token = self.client.token
+        self.quote_path = self.client.quote_path
+        self.timeout_s = self.client.timeout_s
 
     def quote(self, symbol: str, *, tenant_id: str | None = None) -> dict[str, Any]:
-        if not self.base_url:
+        if not self.client.configured():
             raise TriggerEvaluationError("DOOMBERG_IBKR_ENGINE_URL is not configured")
-        url = self._url(symbol)
-        req = urllib.request.Request(url, method="GET")
-        req.add_header("Accept", "application/json")
-        req.add_header("User-Agent", "doomberg-trigger-engine")
-        if tenant_id:
-            req.add_header("X-Tenant-Id", str(tenant_id))
-        if self.token:
-            req.add_header("Authorization", f"Bearer {self.token}")
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
-                raw = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            raise TriggerEvaluationError(f"IBKR engine HTTP {exc.code}") from exc
-        except Exception as exc:
+            return self.client.quote(symbol, tenant_id=tenant_id)
+        except IbkrEngineHttpError as exc:
+            raise TriggerEvaluationError(f"IBKR engine HTTP {exc.status}") from exc
+        except IbkrQuoteInvariantError as exc:
+            raise TriggerEvaluationError(str(exc)) from exc
+        except IbkrEngineConnectionError as exc:
             raise TriggerEvaluationError(f"IBKR engine request failed: {exc}") from exc
-        return normalize_quote(raw, symbol=symbol, source="ibkr-engine")
+        except IbkrEngineError as exc:
+            raise TriggerEvaluationError(f"IBKR engine request failed: {exc}") from exc
 
     def _url(self, symbol: str) -> str:
-        encoded = urllib.parse.quote(symbol.upper())
-        if "{symbol}" in self.quote_path:
-            path = self.quote_path.replace("{symbol}", encoded)
-        else:
-            sep = "&" if "?" in self.quote_path else "?"
-            path = f"{self.quote_path}{sep}symbol={encoded}"
-        return f"{self.base_url}{path if path.startswith('/') else '/' + path}"
+        return self.client.url_for_path(self.quote_path, symbol=symbol)
 
 
 class StaticQuoteClient:
@@ -172,54 +159,10 @@ class StaticQuoteClient:
             raw = self.quotes[symbol.upper()]
         except KeyError as exc:
             raise TriggerEvaluationError(f"no quote for {symbol.upper()}") from exc
-        return normalize_quote(raw, symbol=symbol, source=raw.get("source") or "static")
-
-
-def normalize_quote(raw: dict[str, Any], *, symbol: str, source: str) -> dict[str, Any]:
-    payload = raw.get("data") if isinstance(raw.get("data"), dict) else raw
-    payload = payload.get("quote") if isinstance(payload.get("quote"), dict) else payload
-    price = _first_number(
-        payload,
-        (
-            "price",
-            "last",
-            "last_price",
-            "lastPrice",
-            "marketPrice",
-            "mark",
-            "close",
-        ),
-    )
-    if price is None:
-        raise TriggerEvaluationError(f"quote for {symbol.upper()} did not include a price")
-    event_time = _parse_time(
-        payload.get("event_time")
-        or payload.get("as_of")
-        or payload.get("asOf")
-        or payload.get("timestamp")
-        or payload.get("time")
-    )
-    received_time = _parse_time(
-        payload.get("received_time")
-        or payload.get("receivedTime")
-        or payload.get("received_at")
-        or payload.get("receivedAt")
-    )
-    freshness_ms = max(0, int((received_time - event_time).total_seconds() * 1000))
-    return {
-        "symbol": str(payload.get("symbol") or symbol).upper(),
-        "price": price,
-        "last": price,
-        "bid": _first_number(payload, ("bid", "bid_price", "bidPrice")),
-        "ask": _first_number(payload, ("ask", "ask_price", "askPrice")),
-        "source": str(payload.get("source") or source),
-        "source_account": payload.get("source_account") or payload.get("account") or "ibkr-vps",
-        "entitlement_class": payload.get("entitlement_class") or "connected_account",
-        "event_time": event_time.isoformat(),
-        "received_time": received_time.isoformat(),
-        "freshness_ms": freshness_ms,
-        "raw": raw,
-    }
+        try:
+            return normalize_quote(raw, symbol=symbol, source=raw.get("source") or "static")
+        except IbkrQuoteInvariantError as exc:
+            raise TriggerEvaluationError(str(exc)) from exc
 
 
 @dataclass(frozen=True)

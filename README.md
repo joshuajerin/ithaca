@@ -88,6 +88,9 @@ export DOOMBERG_IBKR_ENGINE_URL=https://your-ibkr-engine.example.com
 export DOOMBERG_IBKR_ENGINE_TOKEN=replace-with-bearer-token   # optional if the VPS is otherwise private
 # Optional when the VPS does not expose GET /quote?symbol=NVDA.
 # export DOOMBERG_IBKR_QUOTE_PATH=/v1/market/quote/{symbol}
+# Optional hard freshness gate for read-only live-data handoff checks.
+# export DOOMBERG_IBKR_SMOKE_MAX_FRESHNESS_MS=60000
+uv run python scripts/ibkr_smoke.py --symbol AAPL --json
 uv run --package doomberg-runtime python -m doomberg_runtime.trigger_engine
 
 # execution gateway: paper fills are enabled by default. Live IBKR submission is

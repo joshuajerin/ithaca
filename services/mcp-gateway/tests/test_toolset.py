@@ -1,6 +1,12 @@
 """MCP toolset behavior + trace emission + the closed-spec security invariant."""
 from __future__ import annotations
 
+import json
+import threading
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
@@ -12,7 +18,59 @@ R2 = "22222222-2222-2222-2222-222222222222"
 R3 = "33333333-3333-3333-3333-333333333333"
 R4 = "44444444-4444-4444-4444-444444444444"
 R5 = "55555555-5555-5555-5555-555555555555"
+R6 = "66666666-6666-6666-6666-666666666666"
 AGENT = "agent_x"
+
+
+class _QuoteServer:
+    def __init__(self) -> None:
+        self.requests: list[dict[str, Any]] = []
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                owner.requests.append({"path": self.path, "tenant": self.headers.get("X-Tenant-Id")})
+                now = datetime.now(timezone.utc).isoformat()
+                raw = json.dumps({
+                    "data": {
+                        "quote": {
+                            "symbol": "AAPL",
+                            "price": 212.45,
+                            "event_time": now,
+                            "received_time": now,
+                            "source": "ibkr-engine",
+                            "entitlement_class": "connected_account",
+                        }
+                    }
+                }).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def log_message(self, *_args: Any) -> None:
+                return
+
+        self._handler = Handler
+        self._server: ThreadingHTTPServer | None = None
+        self._thread: threading.Thread | None = None
+        self.url = ""
+
+    def __enter__(self) -> "_QuoteServer":
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler)
+        host, port = self._server.server_address
+        self.url = f"http://{host}:{port}"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
 
 
 def test_market_get_ohlcv_returns_envelope_and_traces(toolset):
@@ -65,6 +123,28 @@ async def test_server_registers_three_tools(toolset):
             "cancel_run", "list_approvals", "decide_approval", "get_artifact"} <= names
     assert {"create_order_intent", "preview_order_intent", "get_order_intent",
             "submit_order_intent"} <= names
+    assert "ibkr_smoke" in names
+
+
+def test_ibkr_smoke_returns_diagnosis_and_traces_provider_status(toolset, monkeypatch):
+    with _QuoteServer() as server:
+        monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
+        monkeypatch.setenv("DOOMBERG_IBKR_QUOTE_PATH", "/quote/{symbol}")
+
+        out = toolset.ibkr_smoke(
+            "aapl",
+            max_freshness_ms=10_000,
+            _ctx={"run_id": R6, "tenant_id": R6, "agent_id": AGENT},
+        )
+
+    assert out["ok"] is True
+    assert out["quote"]["symbol"] == "AAPL"
+    assert "raw" not in out["quote"]
+    assert server.requests == [{"path": "/quote/AAPL", "tenant": R6}]
+    event = toolset.sink.events(R6)[-1]
+    assert event["type"] == "provider_status"
+    assert event["data"]["provider"] == "ibkr-engine"
+    assert event["data"]["ok"] is True
 
 
 def test_run_skill_queues_durable_backtest(toolset_core, sample_spec):

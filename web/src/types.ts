@@ -224,6 +224,41 @@ export interface OpsStatus {
   readiness: OpsReadinessRow[];
 }
 
+export interface IbkrSmokeInvariant {
+  name: string;
+  ok: boolean;
+  detail: string;
+  enforced?: boolean;
+  max_freshness_ms?: number;
+}
+
+export interface IbkrSmokeStatus {
+  configured: boolean;
+  ok: boolean;
+  status: string;
+  code: string;
+  host?: string | null;
+  quote_path: string;
+  symbol: string;
+  latency_ms?: number | null;
+  error?: string;
+  recovery_action?: string;
+  quote?: {
+    symbol: string;
+    price: number;
+    last?: number;
+    bid?: number | null;
+    ask?: number | null;
+    source: string;
+    source_account?: string | null;
+    entitlement_class?: string | null;
+    event_time: string;
+    received_time: string;
+    freshness_ms: number;
+  } | null;
+  invariants: IbkrSmokeInvariant[];
+}
+
 // Backtest result `data` shape (from INTERFACES.md / doomberg_core).
 export interface BacktestResult {
   equityCurve: { d: string; v: number }[];

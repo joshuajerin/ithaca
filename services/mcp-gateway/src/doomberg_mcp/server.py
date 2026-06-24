@@ -17,6 +17,7 @@ from doomberg_control.actions import ActionError
 from doomberg_control.deps import Ctx
 from doomberg_control.execution_gateway import ExecutionGateway
 from doomberg_core import ALL_SKILL_MANIFESTS, SKILLS, Core, SkillSet
+from doomberg_core.providers import IbkrEngineClient
 
 from .trace import InMemoryTrace, PlatformTraceSink, Tracer
 
@@ -494,6 +495,36 @@ class Toolset:
         except ActionError as exc:
             return self._action_error(exc)
 
+    def ibkr_smoke(
+        self,
+        symbol: str = "AAPL",
+        max_freshness_ms: int | None = None,
+        _ctx: dict | None = None,
+    ) -> dict:
+        """Read-only smoke for the connected-account IBKR engine quote route."""
+
+        ctx = dict(_ctx or {})
+        tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
+        result = IbkrEngineClient().diagnose_quote(
+            symbol=symbol,
+            tenant_id=tenant_id,
+            max_freshness_ms=max_freshness_ms,
+        )
+        tr = self._tracer(_ctx)
+        tr.event(
+            "provider_status",
+            {
+                "provider": "ibkr-engine",
+                "symbol": result.get("symbol"),
+                "ok": result.get("ok"),
+                "status": result.get("status"),
+                "code": result.get("code"),
+                "host": result.get("host"),
+                "latency_ms": result.get("latency_ms"),
+            },
+        )
+        return result
+
     @staticmethod
     def _canonical_skill_id(skill_id: str) -> str:
         if skill_id == "market_get_ohlcv":
@@ -739,6 +770,10 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     @mcp.tool(description="Submit an approved order intent. Hosted agent callers receive an approval error; human dashboard submission is required.")
     def submit_order_intent(intent_id: str) -> dict:
         return ts.submit_order_intent(intent_id, _ctx=_ctx())
+
+    @mcp.tool(description="Read-only IBKR engine quote smoke with source, entitlement, and freshness checks.")
+    def ibkr_smoke(symbol: str = "AAPL", max_freshness_ms: int | None = None) -> dict:
+        return ts.ibkr_smoke(symbol=symbol, max_freshness_ms=max_freshness_ms, _ctx=_ctx())
 
     @mcp.tool(description="Attach a user prompt/title and optional Doomberg session id to this MCP trace.")
     def session_context(prompt: str | None = None, title: str | None = None,

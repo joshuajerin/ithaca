@@ -4,6 +4,7 @@ import type {
   ArtifactRow,
   DatasetSnapshotRow,
   JobRow,
+  IbkrSmokeStatus,
   OrderIntentRecord,
   OrderIntentRow,
   OpsStatus,
@@ -136,6 +137,10 @@ export const api = {
 
   async getOpsStatus(signal?: AbortSignal): Promise<OpsStatus> {
     return getJson<OpsStatus>(`/ops/status`, signal);
+  },
+
+  async ibkrSmoke(symbol = "AAPL", signal?: AbortSignal): Promise<IbkrSmokeStatus> {
+    return getJson<IbkrSmokeStatus>(`/ops/ibkr-smoke?symbol=${encodeURIComponent(symbol)}`, signal);
   },
 
   async listArtifacts(signal?: AbortSignal): Promise<ArtifactRow[]> {

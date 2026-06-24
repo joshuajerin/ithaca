@@ -6,14 +6,17 @@ orders/fills, and every path runs through the same policy, idempotency, and audi
 
 from __future__ import annotations
 
-import json
 import os
-import urllib.error
-import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+
+from doomberg_core.providers import (
+    IbkrEngineClient,
+    IbkrEngineConnectionError,
+    IbkrEngineError,
+    IbkrEngineHttpError,
+)
 
 from .actions import ActionError
 from .deps import HUMAN_ACTOR_KINDS, Ctx
@@ -155,12 +158,13 @@ class IBKREngineBrokerAdapter:
         token: str | None = None,
         order_path: str | None = None,
     ) -> None:
-        self.base_url = (base_url or os.environ.get("DOOMBERG_IBKR_ENGINE_URL") or "").rstrip("/")
-        self.token = token if token is not None else os.environ.get("DOOMBERG_IBKR_ENGINE_TOKEN")
-        self.order_path = order_path or os.environ.get("DOOMBERG_IBKR_ORDER_PATH") or "/orders"
+        self.client = IbkrEngineClient(base_url=base_url, token=token, order_path=order_path, timeout_s=15)
+        self.base_url = self.client.base_url
+        self.token = self.client.token
+        self.order_path = self.client.order_path
 
     def configured(self) -> bool:
-        return bool(self.base_url)
+        return self.client.configured()
 
     def submit(
         self,
@@ -170,33 +174,26 @@ class IBKREngineBrokerAdapter:
         client_order_id: str,
         order: dict[str, Any],
     ) -> dict[str, Any]:
-        if not self.base_url:
+        if not self.client.configured():
             raise ActionError(503, "IBKR engine is not configured")
-        url = urllib.parse.urljoin(f"{self.base_url}/", self.order_path.lstrip("/"))
-        body = {
-            "tenant_id": tenant_id,
-            "intent_id": intent_id,
-            "client_order_id": client_order_id,
-            "order": order,
-        }
-        data = json.dumps(body).encode("utf-8")
-        req = urllib.request.Request(url, data=data, method="POST")
-        req.add_header("Content-Type", "application/json")
-        if self.token:
-            req.add_header("Authorization", f"Bearer {self.token}")
         try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                raw = json.loads(resp.read() or b"{}")
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
+            raw = self.client.submit_order(
+                tenant_id=tenant_id,
+                intent_id=intent_id,
+                client_order_id=client_order_id,
+                order=order,
+            )
+        except IbkrEngineHttpError as exc:
             return {
                 "broker_order_id": None,
                 "state": "rejected",
                 "fills": [],
-                "raw": {"status": exc.code, "detail": detail},
+                "raw": {"status": exc.status, "detail": exc.detail},
             }
-        except urllib.error.URLError as exc:
-            raise ActionError(503, f"IBKR engine unreachable: {exc.reason}") from exc
+        except IbkrEngineConnectionError as exc:
+            raise ActionError(503, str(exc)) from exc
+        except IbkrEngineError as exc:
+            raise ActionError(503, f"IBKR engine request failed: {exc}") from exc
         state = _canonical_state(str(raw.get("state") or raw.get("status") or "submitted"))
         broker_order_id = raw.get("broker_order_id") or raw.get("order_id") or raw.get("id")
         fills = raw.get("fills") if isinstance(raw.get("fills"), list) else []
