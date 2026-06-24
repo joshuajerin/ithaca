@@ -8,7 +8,6 @@ diverge. ``ctx`` carries tenant/session/deadline (enforced by callers; threaded 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from doomberg_contracts import StrategySpec
 

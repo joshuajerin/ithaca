@@ -1,5 +1,4 @@
 """Download FINRA REGSHO short interest / volume and SEC FTD data."""
-import csv, io, requests
 from datetime import datetime, timezone
 
 FINRA_SHORT_URL = "https://api.finra.org/data/group/OTCMarket/name/otcShortInterest"
@@ -28,10 +27,8 @@ def fetch_sec_ftd(symbol: str) -> list[dict]:
     """Fetch failures-to-deliver from SEC (quarterly CSV files)."""
     # SEC FTD files: https://www.sec.gov/data/foiadocuments/series-and-class-data
     # Most recent quarter file
-    import requests
     rows = []
     try:
-        url = "https://www.sec.gov/files/data/fails-deliver-data/cnsfails202501b.zip"
         # For now return empty - real implementation would download and parse
         pass
     except Exception:

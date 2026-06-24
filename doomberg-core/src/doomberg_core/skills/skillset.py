@@ -1472,7 +1472,6 @@ def _macro_regime(tiles: list[dict]) -> dict | None:
         return None
     eq = sum(equity_moves) / len(equity_moves)
     gold = pick("GOLD", "XAU", "GC")
-    dxy = pick("DXY", "USD")
     oil = pick("WTI", "CL", "OIL", "BRENT")
     vix = pick("VIX")
     y10 = pick("US10Y", "TNX", "UST10Y")

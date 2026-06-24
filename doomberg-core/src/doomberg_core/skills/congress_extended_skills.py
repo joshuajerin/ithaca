@@ -2,7 +2,6 @@
 and a congress member screener — backed by archive.congress_trades + optional live feeds."""
 from __future__ import annotations
 
-import os
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from typing import Any
@@ -12,7 +11,6 @@ import requests
 from .archive import ArchiveGateway
 from .envelope import (
     ARCHIVE_UNAVAILABLE,
-    computed_envelope,
     envelope,
     freshness_of,
     warn,
@@ -20,7 +18,9 @@ from .envelope import (
 
 ARCHIVE_INPUTS = "doomberg-v1-archive"
 
-_NOW_ISO = lambda: datetime.now(timezone.utc).isoformat()
+
+def _NOW_ISO() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _f(v: Any) -> float | None:

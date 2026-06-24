@@ -11,7 +11,6 @@ Import pattern (mirrors extended_skills.py):
 """
 from __future__ import annotations
 
-import math
 import requests
 from calendar import monthrange
 from datetime import datetime, timezone, timedelta, date

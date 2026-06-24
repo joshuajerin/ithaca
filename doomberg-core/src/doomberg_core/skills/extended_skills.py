@@ -84,7 +84,7 @@ def _hurst_rs(log_prices: np.ndarray) -> float | None:
 
     # candidate sub-series lengths: powers of 2 from 8 up to n//2
     lengths = [2 ** k for k in range(3, int(math.log2(n)))]
-    lengths = [l for l in lengths if l >= 8 and l <= n // 2]
+    lengths = [length for length in lengths if length >= 8 and length <= n // 2]
     if len(lengths) < 3:
         return None
 
@@ -183,10 +183,10 @@ def _atr(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 
     if n < period + 1:
         return None
     h = highs[-n:]
-    l = lows[-n:]
+    lows_tail = lows[-n:]
     c = closes[-n:]
-    trs = np.maximum(h[1:] - l[1:],
-           np.maximum(np.abs(h[1:] - c[:-1]), np.abs(l[1:] - c[:-1])))
+    trs = np.maximum(h[1:] - lows_tail[1:],
+           np.maximum(np.abs(h[1:] - c[:-1]), np.abs(lows_tail[1:] - c[:-1])))
     if trs.size < period:
         return None
     atr_val = float(trs[-period:].mean())

@@ -123,7 +123,7 @@ def main() -> int:
         _fail("resolved ctx is not the expected agent principal")
     if set(agent.scopes) != set(AGENT_SCOPES):
         _fail(f"resolved ctx scopes wrong: {sorted(agent.scopes)}")
-    print(f"  ✓ key verified + resolved to agent ctx (tenant-bound, scope-bound)")
+    print("  ✓ key verified + resolved to agent ctx (tenant-bound, scope-bound)")
 
     # A scope-too-low key is genuinely refused (prove enforcement, not just defaults).
     weak_key, _ = platform.auth.mint_key(tenant, ["data:read"])

@@ -10,16 +10,15 @@ import requests
 
 from .archive import ArchiveGateway
 from .envelope import (
-    ARCHIVE_UNAVAILABLE,
-    computed_envelope,
     envelope,
-    freshness_of,
     warn,
 )
 
 ARCHIVE_INPUTS = "doomberg-v1-archive"
 
-_NOW_ISO = lambda: datetime.now(timezone.utc).isoformat()
+
+def _NOW_ISO() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _f(v: Any) -> float | None:
@@ -414,7 +413,6 @@ class FinancialsSkills:
                             ed_dt = ed
                             ed_iso = ed.isoformat()
                         else:
-                            from datetime import date as _date
                             ed_dt = datetime.fromisoformat(str(ed)).replace(tzinfo=timezone.utc)
                             ed_iso = ed_dt.isoformat()
 

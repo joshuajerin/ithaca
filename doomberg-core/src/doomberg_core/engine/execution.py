@@ -21,7 +21,7 @@ an order with no real intraday data is reported unsupported upstream.
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Sequence
 
 import numpy as np
 

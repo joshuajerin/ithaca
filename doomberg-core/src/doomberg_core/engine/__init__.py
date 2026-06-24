@@ -94,7 +94,10 @@ from .portfolio import SCHEMES, construct_portfolio, normalize_scheme
 
 __all__ = [
     "attribution",
+    "compliance",
+    "optimize",
     "active_stats",
+    "align_benchmark_returns",
     "book_returns",
     "brinson",
     "brinson_linked",
@@ -159,4 +162,15 @@ __all__ = [
     "square_root_impact",
     "daily_vol_from_closes",
     "aggregate_tca",
+    "estimate_trade_costs",
+    "Constraints",
+    "OptResult",
+    "apply_long_only_constraints",
+    "black_litterman",
+    "hrp",
+    "implied_risk_aversion",
+    "mean_variance",
+    "portfolio_stats",
+    "risk_contributions",
+    "risk_parity",
 ]
