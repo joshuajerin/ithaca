@@ -262,8 +262,9 @@ kubectl -n doomberg-workers run ibkr-smoke --rm -it --restart=Never \
 
 Run the full customer-handoff gate after rollout. This creates a synthetic
 launch-gate tenant/session/artifact, verifies REST auth rejection, ops status,
-SSE replay, artifact fetch, MCP unauthenticated rejection, and the IBKR quote
-smoke when required:
+SSE replay, artifact fetch, MCP unauthenticated rejection, authenticated MCP
+resource reads, MCP no-scope resource denial, and the IBKR quote smoke when
+required:
 
 ```bash
 kubectl -n doomberg-gateway run launch-gate --rm -it --restart=Never \
@@ -271,7 +272,8 @@ kubectl -n doomberg-gateway run launch-gate --rm -it --restart=Never \
 ```
 
 For an external check through ingress, provide the public REST/MCP URLs and an
-issued API key:
+issued API key. Set `DOOMBERG_MCP_NO_SCOPE_API_KEY` as well when you want the
+gate to prove resource reads are denied for a valid key without `data:read`.
 
 ```bash
 DOOMBERG_REST_URL=https://app.doomberg.me \

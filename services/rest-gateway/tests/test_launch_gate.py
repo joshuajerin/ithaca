@@ -38,7 +38,14 @@ def test_launch_gate_local_mode_passes_without_external_services(capsys, monkeyp
     assert statuses["event replay"] == "pass"
     assert statuses["artifact fetch"] == "pass"
     assert statuses["mcp unauthorized rejection"] == "pass"
+    assert statuses["mcp initialize"] == "pass"
+    assert statuses["mcp resource list"] == "pass"
+    assert statuses["mcp resource templates"] == "pass"
+    assert statuses["mcp resource catalog"] == "pass"
+    assert statuses["mcp resource scope denial"] == "pass"
     assert statuses["ibkr smoke"] == "skip"
+    catalog = next(row for row in body["results"] if row["name"] == "mcp resource catalog")
+    assert catalog["evidence"]["count"] >= 50
 
 
 def test_launch_gate_can_require_ibkr_smoke(capsys, monkeypatch):

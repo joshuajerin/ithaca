@@ -100,7 +100,7 @@ uv run --package doomberg-runtime python -m doomberg_runtime.trigger_engine
 # export DOOMBERG_EXECUTION_MAX_NOTIONAL_USD=10000
 
 # customer-handoff launch gate: migrations, REST auth, sessions, SSE replay,
-# artifact reads, MCP auth rejection, ops status, and optional IBKR smoke.
+# artifact reads, MCP auth/resource checks, ops status, and optional IBKR smoke.
 uv run python scripts/launch_gate.py --mode local --skip-ibkr
 
 # observability UI (proxies /api -> :8000)

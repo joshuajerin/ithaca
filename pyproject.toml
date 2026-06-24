@@ -20,3 +20,13 @@ extend-exclude = ["**/generated/**"]
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib"]
 asyncio_mode = "auto"
+testpaths = [
+    "doomberg-core/tests",
+    "packages/contracts/py/tests",
+    "services/control-plane/tests",
+    "services/data-archive/tests",
+    "services/mcp-gateway/tests",
+    "services/platform/tests",
+    "services/rest-gateway/tests",
+    "services/runtime/tests",
+]

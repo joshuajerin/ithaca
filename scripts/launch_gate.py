@@ -202,6 +202,204 @@ def _post_json(
     return parsed, None
 
 
+def _mcp_headers(*, token: str | None = None, session_id: str | None = None) -> dict[str, str]:
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if session_id:
+        headers["mcp-session-id"] = session_id
+    return headers
+
+
+def _mcp_json_from_text(text: str) -> dict[str, Any] | None:
+    """Parse a streamable-HTTP MCP response, which may be JSON or an SSE event."""
+    try:
+        parsed = json.loads(text or "{}")
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        pass
+    data_lines: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("data:"):
+            data_lines.append(line.split(":", 1)[1].strip())
+    if not data_lines:
+        return None
+    try:
+        parsed = json.loads("\n".join(data_lines))
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _mcp_post_url(
+    mcp_url: str,
+    *,
+    method: str,
+    params: dict[str, Any] | None = None,
+    token: str | None = None,
+    session_id: str | None = None,
+    mid: int | None = 1,
+) -> Response:
+    body: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+    if mid is not None:
+        body["id"] = mid
+    if params is not None:
+        body["params"] = params
+    req = urllib.request.Request(mcp_url, data=json.dumps(body).encode("utf-8"), method="POST")
+    for key, value in _mcp_headers(token=token, session_id=session_id).items():
+        req.add_header(key, value)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return Response(resp.status, resp.read(), dict(resp.headers.items()))
+    except urllib.error.HTTPError as exc:
+        return Response(exc.code, exc.read(), dict(exc.headers.items()))
+
+
+def _mcp_initialize(send, *, token: str) -> tuple[str | None, GateResult | None]:
+    response = send(
+        method="initialize",
+        params={
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "doomberg-launch-gate", "version": "1"},
+        },
+        token=token,
+        mid=1,
+    )
+    if response.status_code != 200:
+        return None, _fail(
+            "mcp initialize",
+            f"unexpected HTTP {response.status_code}",
+            body=response.text[:500],
+        )
+    session_id = response.headers.get("mcp-session-id")
+    if not session_id:
+        return None, _fail("mcp initialize", "MCP response did not include mcp-session-id")
+    body = _mcp_json_from_text(response.text)
+    capabilities = ((body or {}).get("result") or {}).get("capabilities") or {}
+    if "resources" not in capabilities:
+        return None, _fail("mcp initialize", "MCP server did not advertise resource capability", body=body)
+    response = send(
+        method="notifications/initialized",
+        token=token,
+        session_id=session_id,
+        mid=None,
+    )
+    if response.status_code not in {200, 202}:
+        return None, _fail(
+            "mcp initialize",
+            f"initialized notification returned HTTP {response.status_code}",
+            body=response.text[:500],
+        )
+    return session_id, _pass("mcp initialize", "authenticated MCP session initialized")
+
+
+def _mcp_content_json(body: dict[str, Any]) -> dict[str, Any] | None:
+    contents = ((body.get("result") or {}).get("contents") or [])
+    if not contents:
+        return None
+    text = contents[0].get("text")
+    if not isinstance(text, str):
+        return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _check_mcp_resources(send, *, token: str, no_scope_token: str | None = None) -> list[GateResult]:
+    session_id, init_result = _mcp_initialize(send, token=token)
+    results = [init_result] if init_result else []
+    if session_id is None:
+        return results
+
+    response = send(method="resources/list", token=token, session_id=session_id, mid=2)
+    body = _mcp_json_from_text(response.text)
+    resources = ((body or {}).get("result") or {}).get("resources") or []
+    resource_uris = {item.get("uri") for item in resources if isinstance(item, dict)}
+    required = {
+        "doomberg://skills/catalog",
+        "doomberg://policies/current",
+        "doomberg://accounts",
+        "doomberg://data/providers",
+    }
+    missing = sorted(required - resource_uris)
+    if response.status_code != 200:
+        results.append(_fail("mcp resource list", f"unexpected HTTP {response.status_code}", body=response.text[:500]))
+    elif missing:
+        results.append(_fail("mcp resource list", "required MCP resources missing", missing=missing))
+    else:
+        results.append(_pass("mcp resource list", "required MCP resources are advertised", count=len(resources)))
+
+    response = send(method="resources/templates/list", token=token, session_id=session_id, mid=3)
+    body = _mcp_json_from_text(response.text)
+    templates = ((body or {}).get("result") or {}).get("resourceTemplates") or []
+    template_uris = {item.get("uriTemplate") for item in templates if isinstance(item, dict)}
+    required_templates = {
+        "doomberg://skills/{skill_id}/{version}",
+        "doomberg://runs/{run_id}",
+    }
+    missing_templates = sorted(required_templates - template_uris)
+    if response.status_code != 200:
+        results.append(_fail("mcp resource templates", f"unexpected HTTP {response.status_code}", body=response.text[:500]))
+    elif missing_templates:
+        results.append(
+            _fail("mcp resource templates", "required MCP resource templates missing", missing=missing_templates)
+        )
+    else:
+        results.append(
+            _pass("mcp resource templates", "required MCP resource templates are advertised", count=len(templates))
+        )
+
+    response = send(
+        method="resources/read",
+        params={"uri": "doomberg://skills/catalog"},
+        token=token,
+        session_id=session_id,
+        mid=4,
+    )
+    body = _mcp_json_from_text(response.text)
+    catalog = _mcp_content_json(body or {})
+    skills = catalog.get("skills") if isinstance(catalog, dict) else None
+    if response.status_code != 200:
+        results.append(_fail("mcp resource catalog", f"unexpected HTTP {response.status_code}", body=response.text[:500]))
+    elif not isinstance(skills, list) or not any(s.get("skill_id") == "market.get_ohlcv" for s in skills if isinstance(s, dict)):
+        results.append(_fail("mcp resource catalog", "skills catalog did not include market.get_ohlcv", body=catalog))
+    else:
+        results.append(
+            _pass(
+                "mcp resource catalog",
+                "authenticated resource read returned the skill catalog",
+                count=catalog.get("count"),
+            )
+        )
+
+    if no_scope_token:
+        response = send(
+            method="resources/read",
+            params={"uri": "doomberg://skills/catalog"},
+            token=no_scope_token,
+            mid=5,
+        )
+        if response.status_code == 403:
+            results.append(_pass("mcp resource scope denial", "no-scope key was denied resource read", status=403))
+        else:
+            results.append(
+                _fail(
+                    "mcp resource scope denial",
+                    f"expected 403 for no-scope resource read, got HTTP {response.status_code}",
+                    body=response.text[:500],
+                )
+            )
+    else:
+        results.append(_skip("mcp resource scope denial", "no no-scope MCP key configured"))
+    return results
+
+
 def _check_unauthorized_rest(rest: RestClient) -> GateResult:
     response = rest.request("GET", "/api/runs", token="dmbg_test_notareal_secret")
     if response.status_code == 401:
@@ -415,27 +613,22 @@ def _check_ibkr(
 
 
 def _check_mcp_unauthorized_url(mcp_url: str) -> GateResult:
-    req = urllib.request.Request(
-        mcp_url,
-        data=json.dumps({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": "search_skills", "arguments": {"query": "market"}},
-        }).encode("utf-8"),
-        method="POST",
-    )
-    req.add_header("Accept", "application/json, text/event-stream")
-    req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return _fail("mcp unauthorized rejection", f"expected 401, got HTTP {resp.status}")
-    except urllib.error.HTTPError as exc:
-        if exc.code == 401:
-            return _pass("mcp unauthorized rejection", "unauthenticated MCP tool call rejected", status=401)
-        return _fail("mcp unauthorized rejection", f"expected 401, got HTTP {exc.code}", body=exc.read().decode("utf-8", errors="replace")[:500])
+        response = _mcp_post_url(
+            mcp_url,
+            method="tools/call",
+            params={"name": "search_skills", "arguments": {"query": "market"}},
+            token=None,
+        )
     except Exception as exc:  # noqa: BLE001 - operator-facing diagnostic.
         return _fail("mcp unauthorized rejection", f"MCP request failed: {exc}")
+    if response.status_code == 401:
+        return _pass("mcp unauthorized rejection", "unauthenticated MCP tool call rejected", status=401)
+    return _fail(
+        "mcp unauthorized rejection",
+        f"expected 401, got HTTP {response.status_code}",
+        body=response.text[:500],
+    )
 
 
 def _check_mcp_unauthorized_local(db: Any) -> GateResult:
@@ -464,6 +657,50 @@ def _check_mcp_unauthorized_local(db: Any) -> GateResult:
     return _fail("mcp unauthorized rejection", f"expected 401, got HTTP {response.status_code}", body=response.text[:500])
 
 
+def _check_mcp_resources_url(
+    mcp_url: str,
+    *,
+    token: str,
+    no_scope_token: str | None,
+) -> list[GateResult]:
+    return _check_mcp_resources(
+        lambda **kwargs: _mcp_post_url(mcp_url, **kwargs),
+        token=token,
+        no_scope_token=no_scope_token,
+    )
+
+
+def _check_mcp_resources_local(db: Any, *, token: str, no_scope_token: str) -> list[GateResult]:
+    from fastapi.testclient import TestClient
+
+    from doomberg_core import Core
+    from doomberg_mcp import PlatformTraceSink, Toolset, build_http_app
+    from doomberg_platform import Platform
+
+    platform = Platform(db)
+    toolset = Toolset(core=Core(), sink=PlatformTraceSink(platform.trace), runs=platform.runs, platform=platform)
+    app, _mcp, _ts = build_http_app(toolset=toolset, verifier=platform.auth)
+
+    def send(
+        *,
+        method: str,
+        params: dict[str, Any] | None = None,
+        token: str | None = None,
+        session_id: str | None = None,
+        mid: int | None = 1,
+    ) -> Response:
+        body: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+        if mid is not None:
+            body["id"] = mid
+        if params is not None:
+            body["params"] = params
+        raw = client.post("/mcp", headers=_mcp_headers(token=token, session_id=session_id), json=body)
+        return Response(raw.status_code, raw.content, dict(raw.headers))
+
+    with TestClient(app) as client:
+        return _check_mcp_resources(send, token=token, no_scope_token=no_scope_token)
+
+
 def _run_local(args: argparse.Namespace) -> list[GateResult]:
     from fastapi.testclient import TestClient
 
@@ -482,6 +719,7 @@ def _run_local(args: argparse.Namespace) -> list[GateResult]:
     else:
         tenant_id = stores.auth.create_tenant(f"launch-gate-{uuid.uuid4().hex[:8]}")
     token, key_id = stores.auth.mint_key(tenant_id, ALL_GATE_SCOPES)
+    no_scope_token, no_scope_key_id = stores.auth.mint_key(tenant_id, [])
     owner_id = f"launch-gate-{uuid.uuid4().hex[:8]}"
     stores.leases.acquire(
         "launch-gate",
@@ -496,7 +734,13 @@ def _run_local(args: argparse.Namespace) -> list[GateResult]:
             dsn="postgres" if getattr(db, "is_postgres", False) else dsn,
             database="postgres" if getattr(db, "is_postgres", False) else "sqlite",
         ),
-        _pass("tenant key", "scoped launch-gate key minted", tenant_id=tenant_id, key_id=key_id),
+        _pass(
+            "tenant key",
+            "scoped launch-gate keys minted",
+            tenant_id=tenant_id,
+            key_id=key_id,
+            no_scope_key_id=no_scope_key_id,
+        ),
     ]
     try:
         with TestClient(app) as client:
@@ -533,6 +777,7 @@ def _run_local(args: argparse.Namespace) -> list[GateResult]:
                 )
             )
         results.append(_check_mcp_unauthorized_local(db))
+        results.extend(_check_mcp_resources_local(db, token=token, no_scope_token=no_scope_token))
     finally:
         stores.leases.release("launch-gate", owner_id)
         db.close()
@@ -581,6 +826,19 @@ def _run_http(args: argparse.Namespace) -> list[GateResult]:
     mcp_url = args.mcp_url or os.environ.get("DOOMBERG_MCP_URL")
     if mcp_url:
         results.append(_check_mcp_unauthorized_url(mcp_url))
+        mcp_token = args.mcp_api_key or token
+        if mcp_token:
+            results.extend(
+                _check_mcp_resources_url(
+                    mcp_url,
+                    token=mcp_token,
+                    no_scope_token=args.mcp_no_scope_api_key,
+                )
+            )
+        elif args.require_mcp:
+            results.append(_fail("mcp initialize", "MCP resource checks require an API key"))
+        else:
+            results.append(_skip("mcp initialize", "no MCP API key configured for resource checks"))
     elif args.require_mcp:
         results.append(_fail("mcp unauthorized rejection", "--mcp-url or DOOMBERG_MCP_URL is required"))
     else:
@@ -623,6 +881,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--base-url", default=os.environ.get("DOOMBERG_REST_URL"), help="REST base URL for HTTP mode.")
     parser.add_argument("--mcp-url", default=os.environ.get("DOOMBERG_MCP_URL"), help="MCP endpoint URL for HTTP mode.")
     parser.add_argument("--api-key", default=os.environ.get("DOOMBERG_API_KEY"), help="Bearer key for deployed REST.")
+    parser.add_argument(
+        "--mcp-api-key",
+        default=os.environ.get("DOOMBERG_MCP_API_KEY"),
+        help="Bearer key for deployed MCP resource checks. Defaults to --api-key when unset.",
+    )
+    parser.add_argument(
+        "--mcp-no-scope-api-key",
+        default=os.environ.get("DOOMBERG_MCP_NO_SCOPE_API_KEY"),
+        help="Optional no-scope MCP bearer key used to prove resource reads are denied.",
+    )
     parser.add_argument("--tenant-id", default=None, help="Tenant id for dev-header HTTP mode or local synthetic tenant.")
     parser.add_argument("--ibkr-symbol", default="AAPL", help="Symbol for the optional IBKR read-only smoke.")
     parser.add_argument("--skip-ibkr", action="store_true", help="Do not call /api/ops/ibkr-smoke.")
