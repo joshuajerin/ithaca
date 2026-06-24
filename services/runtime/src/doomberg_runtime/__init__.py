@@ -15,7 +15,20 @@ from .calendar import AlwaysOpen, MarketCalendar, RegularHoursCalendar
 from .deadline import Deadline, DeadlineExceeded
 from .live_runner import DEFAULT_MAX_STALENESS_S, run_paper_tick
 from .orchestrator import BacktestWorker, PaperScheduler, TriggerJobWorker
-from .trigger_engine import HttpQuoteClient, StaticQuoteClient, TriggerEngine
+
+
+def __getattr__(name: str):
+    if name in {"TriggerEngine", "HttpQuoteClient", "StaticQuoteClient"}:
+        from .trigger_engine import HttpQuoteClient, StaticQuoteClient, TriggerEngine
+
+        exported = {
+            "TriggerEngine": TriggerEngine,
+            "HttpQuoteClient": HttpQuoteClient,
+            "StaticQuoteClient": StaticQuoteClient,
+        }
+        globals().update(exported)
+        return exported[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "run_backtest_job",
