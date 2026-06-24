@@ -263,8 +263,12 @@ kubectl -n doomberg-workers run ibkr-smoke --rm -it --restart=Never \
 Run the full customer-handoff gate after rollout. This creates a synthetic
 launch-gate tenant/session/artifact, verifies REST auth rejection, ops status,
 SSE replay, artifact fetch, MCP unauthenticated rejection, authenticated MCP
-resource reads, MCP durable `run_skill` enqueue/read/cancel cleanup, MCP
-no-scope resource denial, and the IBKR quote smoke when required:
+resource reads, real-time trigger-to-run readiness, MCP durable `run_skill`
+enqueue/read/cancel cleanup, MCP no-scope resource denial, and the IBKR quote
+smoke when required. The trigger probe creates a synthetic quote-only trigger,
+fires it once, verifies the durable run and firing history, then retires it;
+with `--require-ibkr`, it reads the configured IBKR engine instead of the
+offline static quote:
 
 ```bash
 kubectl -n doomberg-gateway run launch-gate --rm -it --restart=Never \

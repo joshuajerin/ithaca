@@ -38,6 +38,12 @@ def test_launch_gate_local_mode_passes_without_external_services(capsys, monkeyp
     assert statuses["event replay"] == "pass"
     assert statuses["artifact fetch"] == "pass"
     assert statuses["mcp unauthorized rejection"] == "pass"
+    assert statuses["trigger provider register"] == "pass"
+    assert statuses["trigger realtime create"] == "pass"
+    assert statuses["trigger realtime fire"] == "pass"
+    assert statuses["trigger realtime run fetch"] == "pass"
+    assert statuses["trigger realtime history"] == "pass"
+    assert statuses["trigger realtime cleanup"] == "pass"
     assert statuses["mcp initialize"] == "pass"
     assert statuses["mcp resource list"] == "pass"
     assert statuses["mcp resource templates"] == "pass"
@@ -50,6 +56,10 @@ def test_launch_gate_local_mode_passes_without_external_services(capsys, monkeyp
     assert statuses["ibkr smoke"] == "skip"
     catalog = next(row for row in body["results"] if row["name"] == "mcp resource catalog")
     assert catalog["evidence"]["count"] >= 50
+    trigger_fire = next(row for row in body["results"] if row["name"] == "trigger realtime fire")
+    trigger_history = next(row for row in body["results"] if row["name"] == "trigger realtime history")
+    assert trigger_fire["evidence"]["quote_mode"] == "static-ibkr-shaped"
+    assert trigger_history["evidence"]["run_id"] == trigger_fire["evidence"]["run_id"]
     created = next(row for row in body["results"] if row["name"] == "mcp durable run create")
     cleanup = next(row for row in body["results"] if row["name"] == "mcp durable run cleanup")
     assert cleanup["evidence"]["run_id"] == created["evidence"]["run_id"]

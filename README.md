@@ -100,8 +100,8 @@ uv run --package doomberg-runtime python -m doomberg_runtime.trigger_engine
 # export DOOMBERG_EXECUTION_MAX_NOTIONAL_USD=10000
 
 # customer-handoff launch gate: migrations, REST auth, sessions, SSE replay,
-# artifact reads, MCP auth/resource checks, MCP run create/cancel, ops status,
-# and optional IBKR smoke.
+# artifact reads, trigger-to-run readiness, MCP auth/resource checks,
+# MCP run create/cancel, ops status, and optional IBKR smoke.
 uv run python scripts/launch_gate.py --mode local --skip-ibkr
 
 # observability UI (proxies /api -> :8000)
@@ -113,6 +113,10 @@ rest-gateway (`:8000`); its human money-path actions (promote/activate/pause/res
 `doomberg_control.actions` the control plane exposes, so there is one money-path implementation, two transports.
 The trigger engine also shares `DOOMBERG_DB`, uses the IBKR engine only as a per-user connected-account data
 source, and never submits broker orders directly.
+The launch gate creates a synthetic quote-only trigger, verifies it creates a durable run with
+connected-account provenance, and retires the trigger; when `--require-ibkr` is set and
+`DOOMBERG_IBKR_ENGINE_URL` is configured, that probe uses the live IBKR engine instead of the
+static IBKR-shaped quote used in local/offline checks.
 
 In Kubernetes, `deploy/deploy_services.sh` creates the same `doomberg-db` Secret in the gateway and worker
 namespaces. `doomberg-app` runs `rest-gateway`, `control-plane`, and hosted HTTP MCP; `doomberg-workers`

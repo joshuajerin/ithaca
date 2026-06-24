@@ -16,6 +16,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -43,6 +44,21 @@ _LAUNCH_GATE_BACKTEST_SPEC = {
     "execution": {"cost_bps": 5, "algo": "vwap", "rebalance": "monthly@close"},
     "seed": 42,
 }
+
+
+def _launch_gate_trigger_policy(symbol: str) -> dict[str, Any]:
+    return {
+        "when": {"event": "price.threshold", "universe": [symbol.upper()]},
+        "condition": {"price": {"gt": 0}},
+        "controls": {
+            "dedupe_key": "${trigger_id}:${symbol}",
+            "cooldown": "0s",
+            "max_runs_per_day": 25,
+            "require_connected_live_data": True,
+            "approval_required": False,
+        },
+        "action": {"run_skill": "market.quote", "mode": "analyze"},
+    }
 
 
 @dataclass
@@ -822,6 +838,256 @@ def _check_ibkr(
     )
 
 
+def _check_realtime_trigger(
+    rest: RestClient,
+    *,
+    stores: Any,
+    token: str | None,
+    tenant_id: str | None,
+    symbol: str,
+    require_live_ibkr: bool,
+) -> list[GateResult]:
+    from doomberg_runtime import HttpQuoteClient, StaticQuoteClient, TriggerEngine
+
+    symbol = (symbol or "AAPL").upper()
+    results: list[GateResult] = []
+    connection_id = f"launch-gate-{uuid.uuid4().hex[:12]}"
+    provider, failure = _post_json(
+        rest,
+        "/api/providers",
+        {
+            "connection_id": connection_id,
+            "provider": "ibkr-engine",
+            "account_ref": "launch-gate",
+            "credential_ref": "env:DOOMBERG_IBKR_ENGINE_TOKEN",
+            "state": "connected",
+            "capabilities": ["quote"],
+            "entitlements": [
+                {
+                    "dataset": "equities.quotes",
+                    "entitlement_class": "connected_account",
+                    "permitted_use": "agent_processing",
+                }
+            ],
+            "retention_policy": "launch_gate_synthetic",
+        },
+        token=token,
+        tenant_id=tenant_id,
+        name="trigger provider register",
+    )
+    if failure:
+        return [failure]
+    assert provider is not None
+    if provider.get("connection_id") != connection_id or provider.get("state") != "connected":
+        return [_fail("trigger provider register", "IBKR provider connection was not registered", body=provider)]
+    results.append(
+        _pass(
+            "trigger provider register",
+            "connected IBKR quote provider registered for trigger readiness",
+            connection_id=connection_id,
+            provider=provider.get("provider"),
+        )
+    )
+
+    trigger_id: str | None = None
+    trigger, failure = _post_json(
+        rest,
+        "/api/triggers",
+        {
+            "name": f"launch-gate-{symbol.lower()}-{uuid.uuid4().hex[:8]}",
+            "state": "active",
+            "policy": _launch_gate_trigger_policy(symbol),
+        },
+        token=token,
+        tenant_id=tenant_id,
+        name="trigger realtime create",
+    )
+    if failure:
+        return results + [failure]
+    assert trigger is not None
+    trigger_id = str(trigger.get("trigger_id") or "")
+    if not trigger_id or trigger.get("state") != "active":
+        return results + [_fail("trigger realtime create", "active trigger was not created", body=trigger)]
+    results.append(
+        _pass(
+            "trigger realtime create",
+            "active connected-live-data trigger created",
+            trigger_id=trigger_id,
+            symbol=symbol,
+        )
+    )
+
+    use_live_ibkr = require_live_ibkr
+    if use_live_ibkr and not os.environ.get("DOOMBERG_IBKR_ENGINE_URL"):
+        results.append(
+            _fail(
+                "trigger realtime fire",
+                "live IBKR trigger gate requires DOOMBERG_IBKR_ENGINE_URL",
+                recovery_action="Set DOOMBERG_IBKR_ENGINE_URL or run without --require-ibkr.",
+            )
+        )
+    else:
+        now = datetime.now(timezone.utc)
+        quote_client = (
+            HttpQuoteClient(timeout_s=5.0)
+            if use_live_ibkr
+            else StaticQuoteClient(
+                {
+                    symbol: {
+                        "symbol": symbol,
+                        "price": 212.45,
+                        "last": 212.45,
+                        "bid": 212.44,
+                        "ask": 212.46,
+                        "event_time": now.isoformat(),
+                        "received_time": now.isoformat(),
+                        "source": "ibkr-engine",
+                        "source_account": "launch-gate",
+                        "entitlement_class": "connected_account",
+                    }
+                }
+            )
+        )
+        quote_mode = "live-ibkr" if use_live_ibkr else "static-ibkr-shaped"
+        try:
+            outcome = TriggerEngine(
+                stores,
+                quote_client=quote_client,
+                worker_id="launch-gate-trigger",
+            ).evaluate(trigger, now=now)
+        except Exception as exc:  # noqa: BLE001 - operator-facing readiness evidence.
+            results.append(
+                _fail(
+                    "trigger realtime fire",
+                    f"trigger evaluation failed: {type(exc).__name__}",
+                    detail=str(exc)[:300],
+                    quote_mode=quote_mode,
+                )
+            )
+        else:
+            if not outcome.get("fired"):
+                results.append(
+                    _fail(
+                        "trigger realtime fire",
+                        "connected-live-data trigger did not fire",
+                        reason=outcome.get("reason"),
+                        context=outcome.get("context"),
+                        quote_mode=quote_mode,
+                    )
+                )
+            else:
+                results.append(
+                    _pass(
+                        "trigger realtime fire",
+                        "trigger engine created a durable run from an IBKR quote",
+                        run_id=outcome.get("run_id"),
+                        firing_id=outcome.get("firing_id"),
+                        state=outcome.get("state"),
+                        quote_mode=quote_mode,
+                    )
+                )
+                run_id = str(outcome.get("run_id") or "")
+                run, run_failure = _get_json(
+                    rest,
+                    f"/api/runs/{urllib.parse.quote(run_id)}",
+                    token=token,
+                    tenant_id=tenant_id,
+                    name="trigger realtime run fetch",
+                )
+                if run_failure:
+                    results.append(run_failure)
+                else:
+                    events = (run or {}).get("events") or []
+                    event_types = [event.get("type") for event in events]
+                    provenance = (((run or {}).get("result") or {}).get("provenance") or {})
+                    if (run or {}).get("state") != "succeeded" or not {
+                        "trigger_fired",
+                        "tool_call",
+                        "tool_result",
+                        "run_transition",
+                    }.issubset(set(event_types)):
+                        results.append(
+                            _fail(
+                                "trigger realtime run fetch",
+                                "trigger run did not expose the expected state and trace",
+                                state=(run or {}).get("state"),
+                                event_types=event_types,
+                            )
+                        )
+                    elif provenance.get("entitlement_class") != "connected_account":
+                        results.append(
+                            _fail(
+                                "trigger realtime run fetch",
+                                "trigger result did not preserve connected-account entitlement",
+                                provenance=provenance,
+                            )
+                        )
+                    else:
+                        results.append(
+                            _pass(
+                                "trigger realtime run fetch",
+                                "trigger run trace and provenance are visible through REST",
+                                run_id=run_id,
+                                events=len(events),
+                                source=provenance.get("source"),
+                                entitlement_class=provenance.get("entitlement_class"),
+                            )
+                        )
+
+                firings, firings_failure = _get_json(
+                    rest,
+                    f"/api/trigger-firings?trigger_id={urllib.parse.quote(trigger_id)}",
+                    token=token,
+                    tenant_id=tenant_id,
+                    name="trigger realtime history",
+                )
+                if firings_failure:
+                    results.append(firings_failure)
+                else:
+                    rows = (firings or {}).get("firings") or []
+                    if not any(row.get("run_id") == run_id for row in rows):
+                        results.append(
+                            _fail(
+                                "trigger realtime history",
+                                "trigger firing history did not include the launch-gate run",
+                                trigger_id=trigger_id,
+                                run_id=run_id,
+                            )
+                        )
+                    else:
+                        results.append(
+                            _pass(
+                                "trigger realtime history",
+                                "trigger firing history recorded the durable run",
+                                trigger_id=trigger_id,
+                                run_id=run_id,
+                                count=len(rows),
+                            )
+                        )
+
+    cleanup, cleanup_failure = _post_json(
+        rest,
+        f"/api/triggers/{urllib.parse.quote(trigger_id)}/state",
+        {"state": "retired"},
+        token=token,
+        tenant_id=tenant_id,
+        name="trigger realtime cleanup",
+    )
+    if cleanup_failure:
+        results.append(cleanup_failure)
+    elif cleanup and cleanup.get("state") == "retired":
+        results.append(
+            _pass(
+                "trigger realtime cleanup",
+                "launch-gate trigger retired after evaluation",
+                trigger_id=trigger_id,
+            )
+        )
+    else:
+        results.append(_fail("trigger realtime cleanup", "trigger did not retire", body=cleanup))
+    return results
+
+
 def _check_mcp_unauthorized_url(mcp_url: str) -> GateResult:
     try:
         response = _mcp_post_url(
@@ -984,6 +1250,16 @@ def _run_local(args: argparse.Namespace) -> list[GateResult]:
                     symbol=args.ibkr_symbol,
                     skip=args.skip_ibkr,
                     require=args.require_ibkr,
+                )
+            )
+            results.extend(
+                _check_realtime_trigger(
+                    rest,
+                    stores=stores,
+                    token=token,
+                    tenant_id=None,
+                    symbol=args.ibkr_symbol,
+                    require_live_ibkr=args.require_ibkr and not args.skip_ibkr,
                 )
             )
         results.append(_check_mcp_unauthorized_local(db))
