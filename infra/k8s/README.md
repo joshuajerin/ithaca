@@ -54,6 +54,10 @@ active live-data trigger evaluations will return provider errors until configure
 Run `ibkr-smoke --symbol AAPL --json` from the deployed image, or call
 `GET /api/ops/ibkr-smoke?symbol=AAPL`, to verify the read-only quote route,
 source, entitlement class, and freshness before enabling live-data triggers.
+Run `launch-gate --mode local --require-postgres --require-ibkr --json` from
+the app image after rollout for the broader customer-handoff gate: platform
+schema, REST auth, sessions, SSE replay, artifact reads, MCP auth rejection,
+ops status, and provider smoke.
 
 The REST and control-plane containers also receive the IBKR order endpoint and
 execution safety knobs:

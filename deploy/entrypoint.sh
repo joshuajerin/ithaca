@@ -14,6 +14,7 @@
 #   live-runner      -> python -m doomberg_runtime.live_runner
 #   platform-migrate -> python scripts/migrate_platform.py
 #   ibkr-smoke       -> python scripts/ibkr_smoke.py
+#   launch-gate      -> python scripts/launch_gate.py
 #   archive-load     -> python scripts/import_v1_archive.py   (Stream 1's loader)
 #   shell            -> exec a shell (debug)
 #
@@ -64,6 +65,10 @@ case "${ROLE}" in
   ibkr-smoke)
     # Read-only provider handoff check. Does not touch broker order endpoints.
     exec python scripts/ibkr_smoke.py "$@"
+    ;;
+  launch-gate)
+    # Customer-handoff readiness gate over DB, REST, MCP auth, artifacts, SSE, and providers.
+    exec python scripts/launch_gate.py "$@"
     ;;
   archive-load)
     # Stream 1's one-shot archive loader (seeds archive.* on first deploy).

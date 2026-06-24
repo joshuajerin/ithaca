@@ -260,6 +260,26 @@ kubectl -n doomberg-workers run ibkr-smoke --rm -it --restart=Never \
   --image="${IMAGE}" -- ibkr-smoke --symbol AAPL --json
 ```
 
+Run the full customer-handoff gate after rollout. This creates a synthetic
+launch-gate tenant/session/artifact, verifies REST auth rejection, ops status,
+SSE replay, artifact fetch, MCP unauthenticated rejection, and the IBKR quote
+smoke when required:
+
+```bash
+kubectl -n doomberg-gateway run launch-gate --rm -it --restart=Never \
+  --image="${IMAGE}" -- launch-gate --mode local --require-postgres --require-ibkr --json
+```
+
+For an external check through ingress, provide the public REST/MCP URLs and an
+issued API key:
+
+```bash
+DOOMBERG_REST_URL=https://app.doomberg.me \
+DOOMBERG_MCP_URL=https://mcp.doomberg.me/mcp \
+DOOMBERG_API_KEY=dmbg_... \
+python scripts/launch_gate.py --mode http --require-postgres --require-ibkr --require-mcp --json
+```
+
 For live broker submission through the deterministic execution gateway, set the
 same engine URL plus the explicit live-execution switch and limits:
 
