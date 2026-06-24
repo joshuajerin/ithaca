@@ -5,12 +5,21 @@ import { useAsync } from "../hooks/useAsync";
 import { useRunEvents } from "../hooks/useRunEvents";
 import { reduceEvents, reduceUpTo } from "../timeline";
 import { buildWorkflowItems, promptMeta, type WorkflowItem } from "../sessionWorkflow";
+import { MCP_BASE } from "../config";
 import type { RunRow } from "../types";
 import { Panel } from "../panels/registry";
 import { fmtClock, fmtTime, shortId, stateClass } from "../lib/format";
 
-const MCP_URL = "https://mcp.doomberg.me/mcp";
-const MCP_SCOPES = ["data:read", "strategy:author", "deploy:backtest", "deploy:paper"];
+const MCP_SCOPES = [
+  "data:read",
+  "strategy:author",
+  "runs:write",
+  "runs:cancel",
+  "approvals:read",
+  "artifacts:read",
+  "deploy:backtest",
+  "deploy:paper",
+];
 
 export function SessionDetail() {
   const { id } = useParams<{ id: string }>();
@@ -114,7 +123,7 @@ export function SessionDetail() {
         <div className="handoff-grid compact">
           <div className="handoff-block">
             <div className="set-h">MCP</div>
-            <div className="kv"><span className="k">endpoint</span> {MCP_URL}</div>
+            <div className="kv"><span className="k">endpoint</span> {MCP_BASE}</div>
             <div className="kv"><span className="k">session</span> {id}</div>
             <div className="set-actions">
               <button className="btn" onClick={() => copy("session", id ?? "")}>

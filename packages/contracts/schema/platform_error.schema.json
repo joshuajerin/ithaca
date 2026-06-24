@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://doomberg.dev/contracts/platform_error.schema.json",
+  "title": "PlatformError",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["code", "message", "recovery_action"],
+  "properties": {
+    "code": {
+      "type": "string",
+      "enum": [
+        "AUTH_REQUIRED",
+        "BROKER_CONNECTION_REQUIRED",
+        "ENTITLEMENT_REQUIRED",
+        "DATA_STALE",
+        "PROVIDER_DEGRADED",
+        "RATE_LIMITED",
+        "INVALID_SYMBOL",
+        "MARKET_CLOSED",
+        "JOB_QUEUED",
+        "JOB_BUDGET_EXCEEDED",
+        "POLICY_DENIED",
+        "APPROVAL_REQUIRED",
+        "ORDER_STATE_CONFLICT",
+        "DUPLICATE_IDEMPOTENCY_KEY"
+      ]
+    },
+    "message": { "type": "string" },
+    "recovery_action": { "type": "string" },
+    "details": { "type": "object", "default": {} }
+  }
+}

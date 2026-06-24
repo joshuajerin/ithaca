@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://doomberg.dev/contracts/execution.schema.json",
+  "title": "ExecutionRecord",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tenant_id", "run_id", "intent_id", "state", "payload", "created_at", "updated_at"],
+  "properties": {
+    "tenant_id": { "type": "string", "format": "uuid" },
+    "run_id": { "type": "string", "format": "uuid" },
+    "intent_id": { "type": "string", "format": "uuid" },
+    "strategy_id": { "type": ["string", "null"] },
+    "account_ref": { "type": ["string", "null"] },
+    "state": { "type": "string", "enum": ["proposed", "policy_denied", "approval_required", "approved", "submitted", "partially_filled", "filled", "cancelled", "rejected"] },
+    "payload": { "type": "object" },
+    "risk_decision": { "type": ["object", "null"] },
+    "idempotency_key": { "type": ["string", "null"] },
+    "orders": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Order" },
+      "default": []
+    },
+    "fills": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Fill" },
+      "default": []
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "Order": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["order_id", "intent_id", "broker", "client_order_id", "state", "payload"],
+      "properties": {
+        "order_id": { "type": "string", "format": "uuid" },
+        "intent_id": { "type": "string", "format": "uuid" },
+        "broker": { "type": "string" },
+        "broker_order_id": { "type": ["string", "null"] },
+        "client_order_id": { "type": "string" },
+        "state": { "type": "string" },
+        "payload": { "type": "object" }
+      }
+    },
+    "Fill": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fill_id", "order_id", "payload", "event_time"],
+      "properties": {
+        "fill_id": { "type": "string", "format": "uuid" },
+        "order_id": { "type": "string", "format": "uuid" },
+        "broker_fill_id": { "type": ["string", "null"] },
+        "payload": { "type": "object" },
+        "event_time": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

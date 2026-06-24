@@ -1,10 +1,19 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
+import { MCP_BASE } from "../config";
 import type { RunRow } from "../types";
 
-const MCP_URL = "https://mcp.doomberg.me/mcp";
-const MCP_SCOPES = ["data:read", "strategy:author", "deploy:backtest", "deploy:paper"];
+const MCP_SCOPES = [
+  "data:read",
+  "strategy:author",
+  "runs:write",
+  "runs:cancel",
+  "approvals:read",
+  "artifacts:read",
+  "deploy:backtest",
+  "deploy:paper",
+];
 
 export function NewSession() {
   const [title, setTitle] = useState("NVDA scan");
@@ -119,7 +128,7 @@ export function NewSession() {
             <div className="handoff-block">
               <div className="set-h">Session</div>
               <div className="kv"><span className="k">id</span> {created.id}</div>
-              <div className="kv"><span className="k">endpoint</span> {MCP_URL}</div>
+              <div className="kv"><span className="k">endpoint</span> {MCP_BASE}</div>
               <div className="kv"><span className="k">stream</span> /sessions/{created.id}</div>
               <div className="set-actions">
                 <button className="btn" onClick={() => copy("session", created.id)}>
@@ -168,7 +177,7 @@ export function NewSession() {
           <span>MCP</span>
         </div>
         <div className="mcp-lines">
-          <div className="kv"><span className="k">endpoint</span> {MCP_URL}</div>
+          <div className="kv"><span className="k">endpoint</span> {MCP_BASE}</div>
           <div className="kv"><span className="k">auth</span> Authorization: Bearer dmbg_...</div>
           <div className="kv"><span className="k">context</span> call session_context with this session id after opening</div>
           <div className="kv"><span className="k">trace</span> tool calls stream into Sessions in real time</div>

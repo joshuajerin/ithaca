@@ -1,9 +1,4 @@
-"""Skill-catalog tests: each archive-backed skill's shape + provenance envelope + pit flag.
-
-Every skill must return ``{data, provenance:{source:"doomberg-v1-archive", freshness, pit}, warnings}``.
-``pit`` is True ONLY for fundamentals.pit. The FakeArchive supplies tiny deterministic fixtures so
-these run with no network and no Postgres.
-"""
+"""Skill-catalog tests: each archive-backed skill's shape + provenance envelope + pit flag."""
 from __future__ import annotations
 
 import pytest
@@ -19,11 +14,14 @@ def skills() -> SkillSet:
 
 # ----------------------------- envelope invariants -----------------------------
 def _assert_envelope(out: dict, *, pit: bool = False) -> None:
-    assert set(out) >= {"data", "provenance", "warnings"}
+    assert set(out) >= {"data", "provenance", "partial", "warnings"}
     prov = out["provenance"]
     assert prov["source"] == "doomberg-v1-archive"
-    assert prov["pit"] is pit
-    assert "freshness" in prov
+    assert prov["pit"] == ("true" if pit else "false")
+    assert prov["freshness"] == "stale"
+    assert "as_of" in prov
+    assert "coverage" in prov
+    assert "cost" in prov
     assert isinstance(out["warnings"], list)
 
 
@@ -83,7 +81,7 @@ def test_market_news_shapes_items_and_sentiment(skills):
     items = out["data"]["items"]
     assert items and items[0]["headline"] == "NVDA beats earnings"
     assert out["data"]["sentimentMix"]["positive"] == 1
-    assert out["provenance"]["freshness"] == "2024-05-23T13:00:00Z"  # max fetched_at
+    assert out["provenance"]["as_of"] == "2024-05-23T13:00:00Z"  # max fetched_at
 
 
 def test_screener_joins_returns_and_ranks_by_mcap(skills):
@@ -105,7 +103,7 @@ def test_fundamentals_get_metric_cards(skills):
     labels = {m["label"] for m in out["data"]["metrics"]}
     assert {"Market Cap", "P/E (TTM)", "Revenue (TTM)", "Beta"} <= labels
     assert out["data"]["latestReport"]["eps"] == pytest.approx(5.16)
-    assert out["provenance"]["pit"] is False  # headline metrics are restated
+    assert out["provenance"]["pit"] == "false"  # headline metrics are restated
 
 
 def test_fundamentals_compare_table(skills):
@@ -125,7 +123,7 @@ def test_fundamentals_pit_is_point_in_time(skills):
     out = skills.fundamentals_pit({"symbol": "NVDA", "as_of": "2024-01-01"})
     _assert_envelope(out, pit=True)
     assert out["data"]["report"]["reportDate"] == "2023-11-21"
-    assert out["provenance"]["pit"] is True
+    assert out["provenance"]["pit"] == "true"
 
 
 def test_fundamentals_pit_picks_latest_known_report(skills):
@@ -137,7 +135,7 @@ def test_fundamentals_pit_no_report_warns(skills):
     out = skills.fundamentals_pit({"symbol": "NVDA", "as_of": "2000-01-01"})
     assert out["data"]["report"] is None
     assert out["warnings"][0]["code"] == "PARTIAL_COVERAGE"
-    assert out["provenance"]["pit"] is True  # capability flag stays true even when empty
+    assert out["provenance"]["pit"] == "true"  # capability flag stays true even when empty
 
 
 def test_analyst_ratings_consensus_and_target(skills):

@@ -55,7 +55,11 @@
         },
         "coverage": { "$ref": "#/$defs/Coverage" },
         "cost": { "$ref": "#/$defs/Cost" },
-        "cache_hit": { "type": "boolean", "default": false }
+        "cache_hit": { "type": "boolean", "default": false },
+        "inputs": {
+          "type": "string",
+          "description": "Optional source class for computed results, e.g. 'agent' or 'doomberg-v1-archive'."
+        }
       }
     },
     "Coverage": {

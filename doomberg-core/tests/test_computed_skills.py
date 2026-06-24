@@ -11,10 +11,9 @@ from __future__ import annotations
 
 import math
 
-import numpy as np
 import pytest
 
-from doomberg_core import SKILLS, SkillSet
+from doomberg_core import SkillSet
 from doomberg_core.skills import compute
 from fake_archive import FakeArchive
 
@@ -25,11 +24,14 @@ def skills() -> SkillSet:
 
 
 def _assert_computed(out: dict, *, inputs: str | None = None) -> None:
-    assert set(out) >= {"data", "provenance", "warnings"}
+    assert set(out) >= {"data", "provenance", "partial", "warnings"}
     prov = out["provenance"]
     assert prov["source"] == "computed"
-    assert prov["pit"] is False
-    assert "freshness" in prov
+    assert prov["pit"] == "false"
+    assert prov["freshness"] in {"live", "stale"}
+    assert "as_of" in prov
+    assert "coverage" in prov
+    assert "cost" in prov
     if inputs is not None:
         assert prov.get("inputs") == inputs
     assert isinstance(out["warnings"], list)

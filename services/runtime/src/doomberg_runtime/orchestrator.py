@@ -21,18 +21,21 @@ Both expose a single-shot method (``poll_once`` / ``tick_once``) for tests and C
 from __future__ import annotations
 
 import threading
+import uuid
 from datetime import datetime
 from typing import Any, Callable
 
-from doomberg_core import Core
+from doomberg_core import Core, CoreContext
+from doomberg_core.skills import SKILLS, SkillSet
 
+from ._trace import emit
 from .backtest_runner import DEFAULT_BUDGET_MS as BACKTEST_BUDGET_MS
 from .backtest_runner import run_backtest_job
 from .calendar import MarketCalendar
 from .live_runner import DEFAULT_BUDGET_MS as PAPER_BUDGET_MS
 from .live_runner import DEFAULT_MAX_STALENESS_S, run_paper_tick
 
-__all__ = ["BacktestWorker", "PaperScheduler", "ApplyDelta"]
+__all__ = ["BacktestWorker", "TriggerJobWorker", "PaperScheduler", "ApplyDelta"]
 
 # (tenant_id, run_id, proposal) -> apply result dict. The control plane provides this.
 ApplyDelta = Callable[[str, str, dict[str, Any]], dict[str, Any]]
@@ -53,6 +56,7 @@ class BacktestWorker:
         self.core = core
         self.budget_ms = budget_ms
         self.batch = batch
+        self.worker_id = f"backtest-{uuid.uuid4().hex[:12]}"
 
     def poll_once(self) -> dict[str, Any]:
         """Claim + run all currently-queued backtests. Returns a summary, never raises.
@@ -61,6 +65,16 @@ class BacktestWorker:
         failed lands in ``skipped`` — the job itself has already audited a hard failure with
         an ``error`` trace, so the loop must not die on it.
         """
+        jobs = getattr(self.platform, "jobs", None)
+        if jobs is not None:
+            claimed = jobs.claim_available(
+                profiles=("backtest",),
+                kinds=("backtest",),
+                worker_id=self.worker_id,
+                limit=self.batch,
+            )
+            return self._run_claimed_jobs(claimed)
+
         claimed = self.platform.runs.claim_queued(("backtest",), limit=self.batch)
         succeeded: list[str] = []
         skipped: list[dict[str, Any]] = []
@@ -79,7 +93,224 @@ class BacktestWorker:
                 skipped.append({"run_id": run_id, "error": type(exc).__name__})
         return {"claimed": len(claimed), "succeeded": succeeded, "skipped": skipped}
 
+    def _run_claimed_jobs(self, claimed: list[dict[str, Any]]) -> dict[str, Any]:
+        succeeded: list[str] = []
+        skipped: list[dict[str, Any]] = []
+        for job in claimed:
+            tenant_id, run_id = job["tenant_id"], job["run_id"]
+            try:
+                run = run_backtest_job(
+                    tenant_id,
+                    run_id,
+                    platform=self.platform,
+                    core=self.core,
+                    budget_ms=self.budget_ms,
+                    job_id=job["job_id"],
+                    worker_id=self.worker_id,
+                )
+                if run and run.get("state") == "succeeded":
+                    succeeded.append(run_id)
+                else:
+                    skipped.append({
+                        "run_id": run_id,
+                        "job_id": job["job_id"],
+                        "state": run.get("state") if run else None,
+                    })
+            except Exception as exc:  # noqa: BLE001 — lost race / audited failure; keep looping.
+                skipped.append({"run_id": run_id, "job_id": job["job_id"],
+                                "error": type(exc).__name__})
+        return {"claimed": len(claimed), "succeeded": succeeded, "skipped": skipped}
+
     def run_forever(self, *, interval_s: float = 1.0, stop: threading.Event | None = None) -> None:
+        stop = stop or threading.Event()
+        while not stop.is_set():
+            self.poll_once()
+            stop.wait(interval_s)
+
+
+class TriggerJobWorker:
+    """Executes non-inline trigger analysis jobs.
+
+    The trigger engine completes quote/snapshot actions inline because it already holds the
+    live quote. Richer read/analysis actions are queued as ``kind=trigger`` and claimed here so
+    they cannot sit forever. This worker never submits broker orders; execution remains an
+    approval-gated gateway concern.
+    """
+
+    def __init__(
+        self,
+        platform: Any,
+        core: Core,
+        *,
+        archive: Any | None = None,
+        batch: int = 16,
+    ) -> None:
+        self.platform = platform
+        self.core = core
+        self.skills = SkillSet(archive)
+        self.batch = batch
+        self.worker_id = f"trigger-{uuid.uuid4().hex[:12]}"
+
+    def poll_once(self) -> dict[str, Any]:
+        jobs = getattr(self.platform, "jobs", None)
+        if jobs is None:
+            return {"claimed": 0, "succeeded": [], "failed": []}
+        claimed = jobs.claim_available(
+            profiles=("interactive",),
+            kinds=("trigger",),
+            worker_id=self.worker_id,
+            limit=self.batch,
+        )
+        succeeded: list[str] = []
+        failed: list[dict[str, Any]] = []
+        for job in claimed:
+            try:
+                run = self._run_job(job)
+                if run and run.get("state") == "succeeded":
+                    succeeded.append(job["run_id"])
+                else:
+                    failed.append({
+                        "run_id": job["run_id"],
+                        "job_id": job["job_id"],
+                        "state": run.get("state") if run else None,
+                    })
+            except Exception as exc:  # noqa: BLE001 - audited inside _run_job when possible.
+                failed.append({
+                    "run_id": job["run_id"],
+                    "job_id": job["job_id"],
+                    "error": type(exc).__name__,
+                })
+        return {"claimed": len(claimed), "succeeded": succeeded, "failed": failed}
+
+    def _run_job(self, job: dict[str, Any]) -> dict[str, Any] | None:
+        jobs = self.platform.jobs
+        tenant_id = job["tenant_id"]
+        run_id = job["run_id"]
+        job_id = job["job_id"]
+        jobs.mark_running(tenant_id, job_id, worker_id=self.worker_id)
+        run = self.platform.runs.get(tenant_id, run_id)
+        if run is None:
+            jobs.fail(
+                tenant_id,
+                job_id,
+                worker_id=self.worker_id,
+                error={"code": "INVALID_SYMBOL", "detail": "run not found"},
+            )
+            return None
+
+        running = run
+        if run.get("state") == "queued":
+            running = self.platform.runs.transition(
+                tenant_id,
+                run_id,
+                "running",
+                expect=run["version"],
+            )
+            emit(
+                self.platform.trace,
+                tenant_id=tenant_id,
+                run_id=run_id,
+                type="run_transition",
+                actor={"kind": "system", "id": self.worker_id},
+                data={"from": "queued", "to": "running", "job_id": job_id},
+            )
+
+        payload = job.get("payload") or {}
+        action = payload.get("action") if isinstance(payload.get("action"), dict) else {}
+        context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+        skill_id = str(action.get("run_skill") or "market.get_ohlcv")
+        params = dict(action.get("input") or action.get("args") or {})
+        symbol = context.get("symbol")
+        if symbol:
+            params.setdefault("symbol", symbol)
+            params.setdefault("ticker", symbol)
+
+        emit(
+            self.platform.trace,
+            tenant_id=tenant_id,
+            run_id=run_id,
+            type="tool_call",
+            actor={"kind": "system", "id": self.worker_id},
+            data={"name": skill_id, "args": params, "job_id": job_id},
+        )
+
+        try:
+            result = self._call_skill(skill_id, params, tenant_id=tenant_id)
+        except Exception as exc:  # noqa: BLE001 - materialized in run result + trace.
+            err = {
+                "code": "PROVIDER_DEGRADED",
+                "message": f"{skill_id} failed: {type(exc).__name__}",
+                "recovery_action": "Inspect the trigger run trace and retry after provider or input repair.",
+                "details": {"detail": str(exc)[:500], "skill_id": skill_id},
+            }
+            self.platform.runs.set_result(tenant_id, run_id, {"error": err})
+            jobs.fail(tenant_id, job_id, worker_id=self.worker_id, error=err)
+            cur = self.platform.runs.get(tenant_id, run_id)
+            if cur and cur.get("state") == "running":
+                self.platform.runs.transition(tenant_id, run_id, "failed", expect=cur["version"])
+            emit(
+                self.platform.trace,
+                tenant_id=tenant_id,
+                run_id=run_id,
+                type="error",
+                actor={"kind": "system", "id": self.worker_id},
+                data={"stage": "trigger_job", "error": type(exc).__name__, "detail": str(exc)[:500]},
+            )
+            emit(
+                self.platform.trace,
+                tenant_id=tenant_id,
+                run_id=run_id,
+                type="run_transition",
+                actor={"kind": "system", "id": self.worker_id},
+                data={"from": "running", "to": "failed", "job_id": job_id},
+            )
+            return self.platform.runs.get(tenant_id, run_id)
+
+        self.platform.runs.set_result(tenant_id, run_id, result)
+        jobs.complete(tenant_id, job_id, worker_id=self.worker_id, result={"skill_id": skill_id})
+        self.platform.runs.transition(tenant_id, run_id, "succeeded", expect=running["version"])
+        emit(
+            self.platform.trace,
+            tenant_id=tenant_id,
+            run_id=run_id,
+            type="tool_result",
+            actor={"kind": "system", "id": self.worker_id},
+            data={"name": skill_id, "job_id": job_id, "summary": self._summary(result)},
+        )
+        emit(
+            self.platform.trace,
+            tenant_id=tenant_id,
+            run_id=run_id,
+            type="run_transition",
+            actor={"kind": "system", "id": self.worker_id},
+            data={"from": "running", "to": "succeeded", "job_id": job_id},
+        )
+        return self.platform.runs.get(tenant_id, run_id)
+
+    def _call_skill(self, skill_id: str, params: dict[str, Any], *, tenant_id: str) -> dict[str, Any]:
+        if skill_id == "market.get_ohlcv":
+            return self.core.run_tool(
+                "market.get_ohlcv",
+                params,
+                CoreContext(tenant_id=tenant_id, actor_id=self.worker_id),
+            )
+        method = SKILLS.get(skill_id)
+        if method is None:
+            raise ValueError(f"unsupported trigger skill: {skill_id}")
+        return getattr(self.skills, method)(params)
+
+    @staticmethod
+    def _summary(result: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(result, dict):
+            return {"type": type(result).__name__}
+        data = result.get("data") if isinstance(result.get("data"), dict) else result
+        return {
+            "source": (result.get("provenance") or {}).get("source"),
+            "keys": sorted(list(data.keys()))[:8] if isinstance(data, dict) else [],
+            "warnings": len(result.get("warnings") or []),
+        }
+
+    def run_forever(self, *, interval_s: float = 2.0, stop: threading.Event | None = None) -> None:
         stop = stop or threading.Event()
         while not stop.is_set():
             self.poll_once()

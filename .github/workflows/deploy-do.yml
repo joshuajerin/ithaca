@@ -104,6 +104,10 @@ jobs:
           sleep 5
           docker logs "$cid" | grep -q "doomberg conductor up"
           docker rm -f "$cid"
+          cid="$(docker run -d -e DOOMBERG_DB=:memory: doomberg:ci trigger-engine)"
+          sleep 5
+          docker logs "$cid" | grep -q "doomberg trigger engine up"
+          docker rm -f "$cid"
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -227,6 +231,9 @@ jobs:
           GITHUB_CLIENT_SECRET: ${{ secrets.OAUTH_GITHUB_CLIENT_SECRET }}
           DOOMBERG_ADMIN_TOKEN: ${{ secrets.DOOMBERG_ADMIN_TOKEN }}
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          DOOMBERG_IBKR_ENGINE_URL: ${{ vars.DOOMBERG_IBKR_ENGINE_URL }}
+          DOOMBERG_IBKR_ENGINE_TOKEN: ${{ secrets.DOOMBERG_IBKR_ENGINE_TOKEN }}
+          DOOMBERG_IBKR_QUOTE_PATH: ${{ vars.DOOMBERG_IBKR_QUOTE_PATH }}
         run: bash deploy/deploy_services.sh
 
       - name: HTTP health checks

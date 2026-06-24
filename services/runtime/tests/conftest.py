@@ -25,6 +25,7 @@ _ROOT = Path(__file__).resolve().parents[3]
 for p in (
     _ROOT / "doomberg-core" / "src",
     _ROOT / "packages" / "contracts" / "py",
+    _ROOT / "services" / "platform" / "src",
 ):
     sp = str(p)
     if p.exists() and sp not in sys.path:
@@ -32,6 +33,7 @@ for p in (
 
 from doomberg_contracts import TraceEvent  # noqa: E402
 from doomberg_core import Core, DataGateway  # noqa: E402
+from doomberg_platform import Platform as DurablePlatform  # noqa: E402
 
 
 # --- synthetic, deterministic price source (replicated pattern) ------------------
@@ -266,6 +268,11 @@ class Platform:
 @pytest.fixture
 def platform() -> Platform:
     return Platform()
+
+
+@pytest.fixture
+def durable_platform() -> DurablePlatform:
+    return DurablePlatform(":memory:")
 
 
 @pytest.fixture

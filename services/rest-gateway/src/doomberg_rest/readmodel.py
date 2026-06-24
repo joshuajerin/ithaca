@@ -85,8 +85,12 @@ def shape_run(
                              "panelType": _derive_panel_type(tool_name, data),
                              "data": data.get("data") or data,
                              "provenance": data.get("provenance")})
-        elif etype in ("run_transition", "run_progress", "denial", "error", "session_open",
-                       "session_close"):
+        elif etype in (
+            "run_transition", "run_progress", "job_queued", "job_leased", "job_heartbeat",
+            "artifact_created", "approval_requested", "approval_decided", "order_intent",
+            "order_submitted", "order_cancelled", "fill_reconciled", "provider_status",
+            "trigger_fired", "denial", "error", "session_open", "session_close",
+        ):
             timeline.append({"seq": seq, "ts": ts, "kind": etype, "data": data})
         elif etype in ("mark", "fill"):
             timeline.append({"seq": seq, "ts": ts, "kind": etype, "data": data})

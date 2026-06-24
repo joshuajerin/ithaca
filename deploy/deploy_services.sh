@@ -54,6 +54,9 @@ MCP_ALLOWED_HOSTS="${MCP_ALLOWED_HOSTS:-${MCP_HOST},${MCP_HOST}:443}"
 
 : "${DOOMBERG_ARCHIVE_URL:?DOOMBERG_ARCHIVE_URL must be set for ${DEPLOY_ENV}}"
 : "${DOOMBERG_SESSION_SECRET:?DOOMBERG_SESSION_SECRET must be set for ${DEPLOY_ENV}}"
+if [[ -z "${DOOMBERG_IBKR_ENGINE_URL:-}" ]]; then
+  echo "WARN: DOOMBERG_IBKR_ENGINE_URL is unset; trigger-engine will stay up, but active live-data trigger policies will report provider errors until configured." >&2
+fi
 
 render_manifest() {
   local file="$1"
@@ -86,6 +89,9 @@ kubectl -n "${K8S_GATEWAY_NAMESPACE}" create secret generic doomberg-db \
   --from-literal=github_client_secret="${GITHUB_CLIENT_SECRET:-}" \
   --from-literal=admin_token="${DOOMBERG_ADMIN_TOKEN:-}" \
   --from-literal=fmp_api_key="${FMP_API_KEY:-}" \
+  --from-literal=ibkr_engine_url="${DOOMBERG_IBKR_ENGINE_URL:-}" \
+  --from-literal=ibkr_engine_token="${DOOMBERG_IBKR_ENGINE_TOKEN:-}" \
+  --from-literal=ibkr_quote_path="${DOOMBERG_IBKR_QUOTE_PATH:-}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 echo "==> persistent state"

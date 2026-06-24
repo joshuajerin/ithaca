@@ -8,16 +8,28 @@ generated code.
 
 from .generated import (
     AuthPrincipal,
+    ExecutionRecord,
+    PlatformError,
+    PlatformRun,
     ProvenanceEnvelope,
+    ProviderEntitlement,
+    SkillManifest,
     StrategySpec,
     TenantContext,
     TraceEvent,
+    TriggerPolicy,
 )
 
 __all__ = [
     "AuthPrincipal",
+    "ExecutionRecord",
+    "PlatformError",
+    "PlatformRun",
     "ProvenanceEnvelope",
+    "ProviderEntitlement",
+    "SkillManifest",
     "StrategySpec",
     "TenantContext",
     "TraceEvent",
+    "TriggerPolicy",
 ]

@@ -136,9 +136,9 @@ def test_computed_skill_traces_with_computed_source(archive_toolset):
 def test_pit_skill_marks_pit_true_in_summary(archive_toolset):
     out = archive_toolset.call_skill("fundamentals.pit", {"symbol": "NVDA", "as_of": "2024-05-01"},
                                      _ctx={"run_id": R})
-    assert out["provenance"]["pit"] is True
+    assert out["provenance"]["pit"] == "true"
     result = archive_toolset.sink.events(R)[-1]
-    assert result["data"]["summary"]["pit"] is True
+    assert result["data"]["summary"]["pit"] == "true"
 
 
 def test_unknown_skill_raises(archive_toolset):

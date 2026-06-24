@@ -1,11 +1,11 @@
-# Always-on app pod: rest-gateway + control-plane + conductor.
+# Always-on app pod: rest-gateway + control-plane + conductor + trigger-engine.
 #
-# These THREE roles of the single doomberg image share one pod so they share the
-# SQLite system-of-record (DOOMBERG_DB=/data/doomberg.db on an emptyDir). A run
+# These roles of the single doomberg image share one pod so they share the
+# SQLite system-of-record (DOOMBERG_DB=/data/doomberg.db on the RWO PVC). A run
 # created via the control-plane/rest-gateway is therefore visible to the
-# conductor's BacktestWorker, which executes it to `succeeded` (the Phase 6 smoke
-# test). The archive (read-only reference data) is read separately over Postgres
-# via DOOMBERG_ARCHIVE_URL.
+# conductor's BacktestWorker and the trigger engine, which creates durable runs
+# from live provider events. The archive (read-only reference data) is read
+# separately over Postgres via DOOMBERG_ARCHIVE_URL.
 #
 # Single replica by design (SQLite single-writer + pod-local emptyDir). Pinned to
 # the selected workload pool. ${WORKER_IMAGE} is substituted by deploy_services.sh.
@@ -205,6 +205,8 @@ spec:
             # Tighter loops so a queued backtest is picked up quickly.
             - name: DOOMBERG_BACKTEST_INTERVAL_S
               value: "2"
+            - name: DOOMBERG_TRIGGER_JOB_INTERVAL_S
+              value: "2"
             - name: DOOMBERG_PAPER_INTERVAL_S
               value: "60"
             - name: FMP_API_KEY
@@ -213,6 +215,40 @@ spec:
           resources:
             requests: { cpu: "200m", memory: 320Mi }
             limits: { cpu: "2", memory: 2Gi }
+          volumeMounts:
+            - { name: state, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+        # --- trigger-engine: polls active trigger policies and creates runs.
+        # Uses the user's IBKR engine on a VPS as a connected-account live-data
+        # source. It never submits broker orders directly.
+        - name: trigger-engine
+          image: ${WORKER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args: ["trigger-engine"]
+          env:
+            - name: DOOMBERG_ENV
+              value: "${DOOMBERG_ENV}"
+            - name: DOOMBERG_DB
+              value: /data/doomberg.db
+            - name: DOOMBERG_TRIGGER_INTERVAL_S
+              value: "5"
+            - name: DOOMBERG_IBKR_ENGINE_URL
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_engine_url, optional: true }
+            - name: DOOMBERG_IBKR_ENGINE_TOKEN
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_engine_token, optional: true }
+            - name: DOOMBERG_IBKR_QUOTE_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_quote_path, optional: true }
+          resources:
+            requests: { cpu: "100m", memory: 192Mi }
+            limits: { cpu: "500m", memory: 512Mi }
           volumeMounts:
             - { name: state, mountPath: /data }
             - { name: tmp, mountPath: /tmp }

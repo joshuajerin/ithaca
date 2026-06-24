@@ -36,6 +36,7 @@ def emit(
     run_id: str,
     type: str,
     data: dict[str, Any],
+    actor: dict[str, str] | None = None,
     session_id: str | None = None,
     origin_session_id: str | None = None,
     span_id: str | None = None,
@@ -52,7 +53,7 @@ def emit(
         "ts": now_iso(),
         "type": type,
         "tenant_id": str(tenant_id),
-        "actor": dict(_WORKER_ACTOR),
+        "actor": dict(actor or _WORKER_ACTOR),
         "data": data,
     }
     if session_id is not None:

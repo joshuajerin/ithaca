@@ -50,9 +50,10 @@ class Toolset:
     run_id. Without ``runs`` (unit tests), behavior is unchanged — an ephemeral per-call run.
     """
 
-    def __init__(self, core: Core | None = None, sink=None, runs=None, archive=None):
+    def __init__(self, core: Core | None = None, sink=None, runs=None, archive=None, platform=None):
         self.core = core or Core()
         self.sink = sink or InMemoryTrace()
+        self.platform = platform
         self.runs = runs  # optional RunStore-like; enables persistent research sessions
         # The archive-backed Skill catalog. ``archive`` is duck-typed to ArchiveGateway; None is
         # fine (skills then return an ARCHIVE_UNAVAILABLE warning instead of crashing).
@@ -103,6 +104,15 @@ class Toolset:
         tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
         agent_id = ctx.get("agent_id")
         if self.runs is not None:
+            explicit_run = ctx.get("run_id")
+            if explicit_run:
+                try:
+                    run = self.runs.get(tenant_id, str(explicit_run))
+                except TypeError:
+                    run = None
+                if run is not None:
+                    return Tracer(self.sink, run_id=str(explicit_run), tenant_id=tenant_id,
+                                  session_id=str(explicit_run), actor_id=agent_id)
             active = self._agent_active_sessions.get(self._agent_session_key(tenant_id, agent_id))
             session = str(ctx.get("session_id") or active or self._proc_session)
             run_id = self._research_run(tenant_id, session, agent_id)
@@ -192,6 +202,288 @@ class Toolset:
         tr.tool_result(tool, span, _provenance_summary(out))
         return out
 
+    def search_skills(self, query: str = "", asset_class: str | None = None,
+                      intent: str | None = None) -> dict:
+        """Progressive skill discovery: small catalog entries, not all tools as context."""
+        q = (query or "").strip().lower()
+        entries = [
+            {"skill_id": "market.get_ohlcv", "name": "Market OHLCV",
+             "description": "Fetch OHLCV price history with provenance.",
+             "runtime_profile": "interactive", "source_classes": ["community"]},
+            {"skill_id": "backtest.run", "name": "Backtest Run",
+             "description": "Queue a durable backtest from a declarative StrategySpec.",
+             "runtime_profile": "backtest", "source_classes": ["community", "computed"]},
+        ]
+        for skill_id, method in sorted(SKILLS.items()):
+            group = skill_id.split(".", 1)[0]
+            entries.append({
+                "skill_id": skill_id,
+                "name": skill_id.replace(".", " ").title(),
+                "description": f"Archive/computed Doomberg skill implemented by {method}.",
+                "runtime_profile": "interactive",
+                "asset_class": group,
+                "source_classes": ["community" if group not in {"options", "vol"} else "computed"],
+            })
+        if q:
+            entries = [
+                e for e in entries
+                if q in e["skill_id"].lower()
+                or q in e["name"].lower()
+                or q in e["description"].lower()
+            ]
+        if asset_class:
+            entries = [e for e in entries if e.get("asset_class") == asset_class]
+        if intent:
+            qi = intent.lower()
+            entries = [
+                e for e in entries
+                if qi in e["skill_id"].lower() or qi in e["description"].lower()
+            ]
+        return {"skills": entries[:50], "count": len(entries), "truncated": len(entries) > 50}
+
+    def describe_skill(self, skill_id: str, version: str | None = None) -> dict:
+        """Return a compact manifest-like description for a skill."""
+        skill_id = self._canonical_skill_id(skill_id)
+        if skill_id == "market.get_ohlcv":
+            return {
+                "skill_id": skill_id,
+                "version": version or "0.1.0",
+                "runtime_profile": "interactive",
+                "permissions": {"datasets": ["prices"], "broker": [], "network": []},
+                "input": {"symbol": "string", "range": "string?", "interval": "string?"},
+                "output": "ProvenanceEnvelope",
+                "trigger_compatible": True,
+            }
+        if skill_id == "backtest.run":
+            return {
+                "skill_id": skill_id,
+                "version": version or "0.1.0",
+                "runtime_profile": "backtest",
+                "permissions": {"datasets": ["prices"], "broker": [], "network": []},
+                "input": {"spec": "StrategySpec", "range": "string?"},
+                "output": "durable run id + artifacts/result",
+                "trigger_compatible": True,
+            }
+        if skill_id not in SKILLS:
+            return self._typed_error("INVALID_SYMBOL", f"unknown skill: {skill_id}",
+                                     "Call search_skills and use a returned skill_id.")
+        return {
+            "skill_id": skill_id,
+            "version": version or "0.1.0",
+            "runtime_profile": "interactive",
+            "permissions": {"datasets": ["doomberg-v1-archive"], "broker": [], "network": []},
+            "input": "skill-specific declarative JSON object",
+            "output": "ProvenanceEnvelope",
+            "trigger_compatible": True,
+            "method": SKILLS[skill_id],
+        }
+
+    def run_skill(self, skill_id: str, input: dict | None = None, mode: str = "auto",
+                  idempotency_key: str | None = None, _ctx: dict | None = None) -> dict:
+        """Create a durable Doomberg run for a skill.
+
+        Long work (`backtest.run`) is queued and returns immediately. Interactive skills run
+        to completion inside a short-lived run so the caller still receives a run_id, trace,
+        result, and replayable audit row.
+        """
+        params = dict(input or {})
+        skill_id = self._canonical_skill_id(skill_id)
+        ctx = dict(_ctx or {})
+        tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
+        agent_id = ctx.get("agent_id")
+        if self.platform is None:
+            if skill_id == "backtest.run":
+                return self.backtest_run(params.get("spec") or params, params.get("range", "1y"), _ctx=_ctx)
+            if skill_id == "market.get_ohlcv":
+                return self.market_get_ohlcv(params["symbol"], params.get("range", "6mo"),
+                                             params.get("interval", "1d"), _ctx=_ctx)
+            return self.call_skill(skill_id, params, _ctx=_ctx)
+
+        jobs = getattr(self.platform, "jobs", None)
+        if idempotency_key and jobs is not None:
+            existing = jobs.get_by_idempotency(tenant_id, idempotency_key)
+            if existing is not None:
+                run = self.platform.runs.get(tenant_id, existing["run_id"])
+                return {
+                    "run_id": existing["run_id"],
+                    "job_id": existing["job_id"],
+                    "status": run.get("state") if run else existing["state"],
+                    "status_url": f"/api/runs/{existing['run_id']}",
+                    "estimated_profile": existing["profile"],
+                    "idempotent": True,
+                }
+
+        if skill_id == "backtest.run":
+            spec = params.get("spec")
+            if not isinstance(spec, dict):
+                return self._typed_error("JOB_BUDGET_EXCEEDED", "backtest.run requires input.spec",
+                                         "Pass a StrategySpec under input.spec.")
+            range_ = params.get("range", "1y")
+            run_spec = dict(spec)
+            run_id = self.platform.runs.create(tenant_id, "backtest", None, run_spec)
+            queued = self.platform.runs.transition(tenant_id, run_id, "queued", expect=0)
+            job = jobs.create_for_run(
+                tenant_id, run_id, kind="backtest", profile="backtest",
+                payload={"skill_id": skill_id, "spec": run_spec, "range": range_},
+                idempotency_key=idempotency_key,
+            ) if jobs is not None else None
+            Tracer(self.sink, run_id=run_id, tenant_id=tenant_id, session_id=run_id,
+                   actor_id=agent_id).event(
+                "run_transition",
+                {"from": "draft", "to": "queued", "skill_id": skill_id,
+                 "job_id": job.get("job_id") if job else None, "profile": "backtest"},
+            )
+            return {
+                "run_id": run_id,
+                "status": queued["state"],
+                "status_url": f"/api/runs/{run_id}",
+                "estimated_profile": "backtest",
+                "job_id": job.get("job_id") if job else None,
+                "approval_required": False,
+            }
+
+        run_id = self.platform.runs.create(tenant_id, "interactive", None,
+                                           {"skill_id": skill_id, "input": params, "mode": mode})
+        self.platform.runs.transition(tenant_id, run_id, "queued", expect=0)
+        running = self.platform.runs.transition(tenant_id, run_id, "running", expect=1)
+        run_ctx = {**ctx, "run_id": run_id, "session_id": run_id}
+        tr = Tracer(self.sink, run_id=run_id, tenant_id=tenant_id, session_id=run_id,
+                    actor_id=agent_id)
+        tr.event("run_transition", {"from": "draft", "to": "running", "skill_id": skill_id})
+        try:
+            if skill_id == "market.get_ohlcv":
+                out = self.market_get_ohlcv(params["symbol"], params.get("range", "6mo"),
+                                            params.get("interval", "1d"), _ctx=run_ctx)
+            else:
+                out = self.call_skill(skill_id, params, _ctx=run_ctx)
+        except Exception as exc:  # noqa: BLE001 - return typed error in run result.
+            err = self._typed_error("PROVIDER_DEGRADED", type(exc).__name__,
+                                    "Inspect the run trace and retry when the provider recovers.",
+                                    {"detail": str(exc)[:300]})
+            self.platform.runs.set_result(tenant_id, run_id, err)
+            self.platform.runs.transition(tenant_id, run_id, "failed", expect=running["version"])
+            tr.event("error", {"stage": "run_skill", "error": type(exc).__name__,
+                               "detail": str(exc)[:300]})
+            return {"run_id": run_id, "status": "failed", "error": err,
+                    "status_url": f"/api/runs/{run_id}"}
+        self.platform.runs.set_result(tenant_id, run_id, out)
+        self.platform.runs.transition(tenant_id, run_id, "succeeded", expect=running["version"])
+        tr.event("run_transition", {"from": "running", "to": "succeeded", "skill_id": skill_id})
+        return {
+            "run_id": run_id,
+            "status": "succeeded",
+            "status_url": f"/api/runs/{run_id}",
+            "estimated_profile": "interactive",
+            "result": out,
+            "approval_required": False,
+        }
+
+    def get_run(self, run_id: str, _ctx: dict | None = None) -> dict:
+        if self.platform is None:
+            return self._typed_error("JOB_QUEUED", "durable runs are unavailable in this toolset",
+                                     "Use the hosted MCP endpoint or REST API.")
+        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
+        run = self.platform.runs.get(tenant_id, run_id)
+        if run is None:
+            return self._typed_error("INVALID_SYMBOL", "run not found",
+                                     "Check the run_id and tenant credential.")
+        return {
+            "run": run,
+            "jobs": self.platform.jobs.list_by_run(tenant_id, run_id),
+            "artifacts": self.platform.artifacts.list_by_run(tenant_id, run_id),
+            "events": self.platform.trace.events(tenant_id, run_id),
+        }
+
+    def subscribe_run(self, run_id: str, cursor: int = -1, _ctx: dict | None = None) -> dict:
+        if self.platform is None:
+            return self._typed_error("JOB_QUEUED", "durable runs are unavailable in this toolset",
+                                     "Use the hosted MCP endpoint or REST API.")
+        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
+        events = self.platform.trace.events(tenant_id, run_id, after_seq=int(cursor))
+        next_cursor = events[-1]["seq"] if events else int(cursor)
+        return {"run_id": run_id, "cursor": next_cursor, "events": events}
+
+    def cancel_run(self, run_id: str, reason: str | None = None, _ctx: dict | None = None) -> dict:
+        if self.platform is None:
+            return self._typed_error("JOB_QUEUED", "durable runs are unavailable in this toolset",
+                                     "Use the hosted MCP endpoint or REST API.")
+        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
+        run = self.platform.runs.get(tenant_id, run_id)
+        if run is None:
+            return self._typed_error("INVALID_SYMBOL", "run not found",
+                                     "Check the run_id and tenant credential.")
+        cancelled_jobs = self.platform.jobs.cancel_by_run(tenant_id, run_id, reason=reason)
+        if run["state"] not in {"succeeded", "failed", "timeout", "cancelled", "promoted",
+                                "live", "paused", "retired"}:
+            self.platform.runs.cancel(tenant_id, run_id, expect=run["version"])
+        Tracer(self.sink, run_id=run_id, tenant_id=tenant_id, session_id=run_id,
+               actor_id=(_ctx or {}).get("agent_id")).event(
+            "run_transition",
+            {"from": run["state"], "to": "cancelled", "reason": reason,
+             "cancelled_jobs": [j["job_id"] for j in cancelled_jobs]},
+        )
+        return {"run_id": run_id, "status": "cancelled",
+                "cancelled_jobs": [j["job_id"] for j in cancelled_jobs]}
+
+    def list_approvals(self, _ctx: dict | None = None) -> dict:
+        if self.platform is None:
+            return {"approvals": []}
+        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
+        return {"approvals": self.platform.approvals.list_pending(tenant_id)}
+
+    def decide_approval(self, approval_id: str, decision: str, reason: str | None = None,
+                        _ctx: dict | None = None) -> dict:
+        if self.platform is None:
+            return self._typed_error("APPROVAL_REQUIRED", "approvals are unavailable",
+                                     "Use the hosted MCP endpoint or REST API.")
+        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
+        agent_id = (_ctx or {}).get("agent_id")
+        if (_ctx or {}).get("actor_kind") not in {"human", "user"}:
+            return self._typed_error(
+                "APPROVAL_REQUIRED",
+                "approval decisions require a human actor",
+                "Open the Doomberg dashboard and approve or deny the request there.",
+            )
+        try:
+            return self.platform.approvals.decide(
+                tenant_id, approval_id, decision=decision, decided_by=agent_id, reason=reason
+            )
+        except Exception as exc:
+            return self._typed_error("ORDER_STATE_CONFLICT", "approval cannot be decided",
+                                     "Refresh approvals and retry a pending approval id.",
+                                     {"detail": str(exc)[:200]})
+
+    def get_artifact(self, artifact_id: str, _ctx: dict | None = None) -> dict:
+        if self.platform is None:
+            return self._typed_error("JOB_QUEUED", "artifacts are unavailable",
+                                     "Use the hosted MCP endpoint or REST API.")
+        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
+        artifact = self.platform.artifacts.get(tenant_id, artifact_id)
+        if artifact is None:
+            return self._typed_error("INVALID_SYMBOL", "artifact not found",
+                                     "Check the artifact_id and tenant credential.")
+        return artifact
+
+    @staticmethod
+    def _canonical_skill_id(skill_id: str) -> str:
+        if skill_id == "market_get_ohlcv":
+            return "market.get_ohlcv"
+        if skill_id == "backtest_run":
+            return "backtest.run"
+        return str(skill_id).replace("_", ".") if str(skill_id).replace("_", ".") in SKILLS else str(skill_id)
+
+    @staticmethod
+    def _typed_error(code: str, message: str, recovery_action: str,
+                     details: dict | None = None) -> dict:
+        return {
+            "error": {
+                "code": code,
+                "message": message,
+                "recovery_action": recovery_action,
+                "details": details or {},
+            }
+        }
+
 
 def _build_archive():
     """Lazily build the real archive gateway from ``DOOMBERG_ARCHIVE_URL``.
@@ -233,6 +525,7 @@ def _platform_backed_toolset() -> Toolset:
         sink=PlatformTraceSink(platform.trace),
         runs=platform.runs,
         archive=_build_archive(),
+        platform=platform,
     )
 
 
@@ -294,6 +587,45 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     def call_skill(tool: str, params: dict) -> dict:
         """Skill-catalog dispatch that injects the per-request tenant ``_ctx`` (HTTP mode)."""
         return ts.call_skill(tool, params, _ctx=_ctx())
+
+    @mcp.tool(description="Search Doomberg skills without loading the full catalog into context.")
+    def search_skills(query: str = "", asset_class: str | None = None,
+                      intent: str | None = None) -> dict:
+        return ts.search_skills(query=query, asset_class=asset_class, intent=intent)
+
+    @mcp.tool(description="Describe one Doomberg skill: input/output, runtime profile and permissions.")
+    def describe_skill(skill_id: str, version: str | None = None) -> dict:
+        return ts.describe_skill(skill_id, version=version)
+
+    @mcp.tool(description="Create a durable Doomberg run for a skill. Backtests are queued and return a run id.")
+    def run_skill(skill_id: str, input: dict | None = None, mode: str = "auto",
+                  idempotency_key: str | None = None) -> dict:
+        return ts.run_skill(skill_id, input=input, mode=mode,
+                            idempotency_key=idempotency_key, _ctx=_ctx())
+
+    @mcp.tool(description="Get a durable run with jobs, artifacts and replayable trace events.")
+    def get_run(run_id: str) -> dict:
+        return ts.get_run(run_id, _ctx=_ctx())
+
+    @mcp.tool(description="Poll run events after a sequence cursor. Use repeatedly to follow progress.")
+    def subscribe_run(run_id: str, cursor: int = -1) -> dict:
+        return ts.subscribe_run(run_id, cursor=cursor, _ctx=_ctx())
+
+    @mcp.tool(description="Cancel a queued or running durable run and its outstanding worker jobs.")
+    def cancel_run(run_id: str, reason: str | None = None) -> dict:
+        return ts.cancel_run(run_id, reason=reason, _ctx=_ctx())
+
+    @mcp.tool(description="List pending Doomberg approvals for this tenant.")
+    def list_approvals() -> dict:
+        return ts.list_approvals(_ctx=_ctx())
+
+    @mcp.tool(description="Approve or deny a pending approval request.")
+    def decide_approval(approval_id: str, decision: str, reason: str | None = None) -> dict:
+        return ts.decide_approval(approval_id, decision, reason=reason, _ctx=_ctx())
+
+    @mcp.tool(description="Fetch artifact metadata by id. Artifact content is addressed by returned URI.")
+    def get_artifact(artifact_id: str) -> dict:
+        return ts.get_artifact(artifact_id, _ctx=_ctx())
 
     @mcp.tool(description="Attach a user prompt/title and optional Doomberg session id to this MCP trace.")
     def session_context(prompt: str | None = None, title: str | None = None,

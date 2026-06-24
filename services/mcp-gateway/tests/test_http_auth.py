@@ -46,11 +46,18 @@ def tenant(platform) -> str:
 def keys(platform, tenant) -> dict[str, str]:
     """A spread of minted keys for the policy matrix."""
     full, _ = platform.auth.mint_key(tenant, ["data:read", "strategy:author"])
+    run_only, _ = platform.auth.mint_key(tenant, ["data:read", "runs:write"])
     read_only, _ = platform.auth.mint_key(tenant, ["data:read"])
     no_scope, _ = platform.auth.mint_key(tenant, [])  # a tenant key with no capabilities
     revoked, revoked_id = platform.auth.mint_key(tenant, ["data:read"])
     platform.auth.revoke_key(revoked_id)
-    return {"full": full, "read_only": read_only, "no_scope": no_scope, "revoked": revoked}
+    return {
+        "full": full,
+        "run_only": run_only,
+        "read_only": read_only,
+        "no_scope": no_scope,
+        "revoked": revoked,
+    }
 
 
 def _det_core() -> Core:
@@ -92,14 +99,23 @@ def test_scope_policy_recognizes_calls():
     # a market call: tools/call, needs data:read only (extra == "")
     body = json.dumps({"method": "tools/call", "params": {"name": "market_get_ohlcv"}}).encode()
     assert _is_tool_call(body) is True
-    assert _scope_needed(body) == ""
+    assert _scope_needed(body) == set()
     # propose_strategy: tools/call + the extra strategy:author scope
     body = json.dumps({"method": "tools/call", "params": {"name": "propose_strategy"}}).encode()
-    assert _scope_needed(body) == "strategy:author"
+    assert _scope_needed(body) == {"strategy:author"}
+    # durable run creation needs the run-write scope
+    body = json.dumps({"method": "tools/call", "params": {"name": "run_skill"}}).encode()
+    assert _scope_needed(body) == {"runs:write"}
+    # batches need the union of every tool-specific scope
+    body = json.dumps([
+        {"method": "tools/call", "params": {"name": "run_skill"}},
+        {"method": "tools/call", "params": {"name": "decide_approval"}},
+    ]).encode()
+    assert _scope_needed(body) == {"runs:write", "approvals:decide"}
     # a handshake/discovery message: not a tool call, no scope gate
     body = json.dumps({"method": "tools/list"}).encode()
     assert _is_tool_call(body) is False
-    assert _scope_needed(body) == ""
+    assert _scope_needed(body) == set()
     # garbage body: never raises, gates nothing extra
     assert _scope_needed(b"not json") is None
 
@@ -197,6 +213,19 @@ def test_tool_call_requires_data_read_scope(middleware, keys):
 def test_propose_requires_strategy_author_scope(middleware, keys):
     # read-only key can read but cannot propose -> 403
     out = _run_mw(middleware, token=keys["read_only"], body=PROPOSE)
+    assert out["status"] == 403 and out["passed"] is False
+
+
+def test_batch_requires_all_tool_specific_scopes(middleware, keys):
+    body = [
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+         "params": {"name": "run_skill", "arguments": {}}},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+         "params": {"name": "decide_approval", "arguments": {}}},
+    ]
+
+    out = _run_mw(middleware, token=keys["run_only"], body=body)
+
     assert out["status"] == 403 and out["passed"] is False
 
 

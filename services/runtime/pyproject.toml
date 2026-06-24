@@ -3,7 +3,7 @@ name = "doomberg-runtime"
 version = "0.0.0"
 description = "DO workers: backtest_runner + live_runner. Out-of-process; imports doomberg-core."
 requires-python = ">=3.11"
-dependencies = ["doomberg-core", "doomberg-contracts"]
+dependencies = ["doomberg-core", "doomberg-contracts", "doomberg-platform"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
@@ -21,3 +21,4 @@ testpaths = ["tests"]
 [tool.uv.sources]
 doomberg-core = { workspace = true }
 doomberg-contracts = { workspace = true }
+doomberg-platform = { workspace = true }

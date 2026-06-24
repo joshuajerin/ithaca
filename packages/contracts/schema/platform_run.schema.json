@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://doomberg.dev/contracts/platform_run.schema.json",
+  "title": "PlatformRun",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tenant_id", "run_id", "kind", "state", "version", "created_at", "updated_at"],
+  "properties": {
+    "tenant_id": { "type": "string", "format": "uuid" },
+    "run_id": { "type": "string", "format": "uuid" },
+    "kind": { "type": "string", "enum": ["research", "interactive", "scan", "backtest", "optimization", "stream", "paper", "trigger"] },
+    "strategy_id": { "type": ["string", "null"] },
+    "state": { "$ref": "#/$defs/RunState" },
+    "version": { "type": "integer", "minimum": 0 },
+    "spec": { "type": ["object", "null"] },
+    "result": { "type": ["object", "null"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "job": { "$ref": "#/$defs/Job" },
+    "attempts": { "type": "array", "items": { "$ref": "#/$defs/RunAttempt" }, "default": [] },
+    "artifacts": { "type": "array", "items": { "$ref": "#/$defs/Artifact" }, "default": [] }
+  },
+  "$defs": {
+    "RunState": {
+      "type": "string",
+      "enum": ["draft", "queued", "running", "succeeded", "failed", "timeout", "cancelled", "promoted", "live", "paused", "retired"]
+    },
+    "JobState": {
+      "type": "string",
+      "enum": ["queued", "leased", "running", "checkpointing", "succeeded", "failed", "cancelled", "timed_out"]
+    },
+    "Job": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_id", "run_id", "kind", "profile", "state", "attempts", "created_at", "updated_at"],
+      "properties": {
+        "job_id": { "type": "string", "format": "uuid" },
+        "run_id": { "type": "string", "format": "uuid" },
+        "kind": { "type": "string" },
+        "profile": { "type": "string", "enum": ["interactive", "scan", "backtest", "optimization", "stream"] },
+        "state": { "$ref": "#/$defs/JobState" },
+        "payload": { "type": "object", "default": {} },
+        "idempotency_key": { "type": ["string", "null"] },
+        "attempts": { "type": "integer", "minimum": 0 },
+        "max_attempts": { "type": "integer", "minimum": 1 },
+        "worker_id": { "type": ["string", "null"] },
+        "lease_expires_at": { "type": ["string", "null"], "format": "date-time" },
+        "heartbeat_at": { "type": ["string", "null"], "format": "date-time" },
+        "checkpoint_ref": { "type": ["string", "null"] },
+        "result": { "type": ["object", "null"] },
+        "error": { "type": ["object", "null"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "RunAttempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempt_id", "run_id", "status", "started_at"],
+      "properties": {
+        "attempt_id": { "type": "string", "format": "uuid" },
+        "run_id": { "type": "string", "format": "uuid" },
+        "job_id": { "type": ["string", "null"], "format": "uuid" },
+        "worker_id": { "type": ["string", "null"] },
+        "status": { "type": "string" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "ended_at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "Artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "run_id", "kind", "uri", "created_at"],
+      "properties": {
+        "artifact_id": { "type": "string", "format": "uuid" },
+        "run_id": { "type": "string", "format": "uuid" },
+        "job_id": { "type": ["string", "null"], "format": "uuid" },
+        "kind": { "type": "string" },
+        "uri": { "type": "string" },
+        "media_type": { "type": ["string", "null"] },
+        "bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "metadata": { "type": "object", "default": {} },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

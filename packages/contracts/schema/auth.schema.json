@@ -39,6 +39,13 @@
       "enum": [
         "data:read",
         "strategy:author",
+        "runs:write",
+        "runs:cancel",
+        "approvals:read",
+        "approvals:decide",
+        "providers:write",
+        "triggers:write",
+        "artifacts:read",
         "deploy:backtest",
         "deploy:paper"
       ]

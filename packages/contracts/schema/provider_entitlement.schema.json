@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://doomberg.dev/contracts/provider_entitlement.schema.json",
+  "title": "ProviderEntitlement",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tenant_id", "provider", "dataset", "entitlement_class", "permitted_use", "freshness_class"],
+  "properties": {
+    "tenant_id": { "type": "string", "format": "uuid" },
+    "connection_id": { "type": ["string", "null"], "format": "uuid" },
+    "provider": { "type": "string" },
+    "source_account": { "type": ["string", "null"] },
+    "dataset": { "type": "string" },
+    "entitlement_class": { "type": "string", "enum": ["public_delayed", "connected_account", "doomberg_licensed", "internal_dev"] },
+    "permitted_use": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["display", "non_display", "derived", "backtest", "redistribution"] },
+      "minItems": 1
+    },
+    "freshness_class": { "type": "string", "enum": ["live", "delayed", "end_of_day", "historical", "unknown"] },
+    "retention_days": { "type": ["integer", "null"], "minimum": 0 },
+    "redistribution_allowed": { "type": "boolean", "default": false },
+    "terms_ref": { "type": ["string", "null"] },
+    "as_of": { "type": ["string", "null"], "format": "date-time" }
+  }
+}

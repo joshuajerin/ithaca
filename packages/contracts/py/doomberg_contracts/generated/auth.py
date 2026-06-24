@@ -28,6 +28,13 @@ class Scope(Enum):
 
     data_read = "data:read"
     strategy_author = "strategy:author"
+    runs_write = "runs:write"
+    runs_cancel = "runs:cancel"
+    approvals_read = "approvals:read"
+    approvals_decide = "approvals:decide"
+    providers_write = "providers:write"
+    triggers_write = "triggers:write"
+    artifacts_read = "artifacts:read"
     deploy_backtest = "deploy:backtest"
     deploy_paper = "deploy:paper"
 

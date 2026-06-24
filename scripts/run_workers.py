@@ -20,7 +20,7 @@ import threading
 from doomberg_control.money import make_applier
 from doomberg_core import Core
 from doomberg_platform import Platform
-from doomberg_runtime import AlwaysOpen, BacktestWorker, PaperScheduler, RegularHoursCalendar
+from doomberg_runtime import AlwaysOpen, BacktestWorker, PaperScheduler, RegularHoursCalendar, TriggerJobWorker
 
 
 def main() -> int:
@@ -32,17 +32,21 @@ def main() -> int:
     core = Core()  # live data gateway (free sources); offline cores are injected in tests/demos
 
     backtest_interval = float(os.environ.get("DOOMBERG_BACKTEST_INTERVAL_S", "2"))
+    trigger_job_interval = float(os.environ.get("DOOMBERG_TRIGGER_JOB_INTERVAL_S", "2"))
     paper_interval = float(os.environ.get("DOOMBERG_PAPER_INTERVAL_S", "60"))
     # Honor market hours only if asked; daily-close paper + the staleness gate default to always-on.
     calendar = RegularHoursCalendar() if os.environ.get("DOOMBERG_MARKET_HOURS") == "1" else AlwaysOpen()
 
     worker = BacktestWorker(platform, core)
+    trigger_worker = TriggerJobWorker(platform, core)
     scheduler = PaperScheduler(platform, core, make_applier(platform), calendar=calendar)
 
     stop = threading.Event()
     threads = [
         threading.Thread(target=worker.run_forever, kwargs={"interval_s": backtest_interval, "stop": stop},
                          name="backtest-worker", daemon=True),
+        threading.Thread(target=trigger_worker.run_forever, kwargs={"interval_s": trigger_job_interval, "stop": stop},
+                         name="trigger-job-worker", daemon=True),
         threading.Thread(target=scheduler.run_forever, kwargs={"interval_s": paper_interval, "stop": stop},
                          name="paper-scheduler", daemon=True),
     ]
@@ -51,7 +55,8 @@ def main() -> int:
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
 
     print(f"doomberg conductor up — db={db}, backtest every {backtest_interval}s, "
-          f"paper every {paper_interval}s, calendar={type(calendar).__name__}")
+          f"trigger jobs every {trigger_job_interval}s, paper every {paper_interval}s, "
+          f"calendar={type(calendar).__name__}")
     for t in threads:
         t.start()
     stop.wait()

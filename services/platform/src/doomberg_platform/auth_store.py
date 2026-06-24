@@ -41,7 +41,19 @@ KEY_PREFIX = "dmbg"
 # The launch capability set. deploy:live is deliberately absent (paper-only by construction);
 # minting it raises so the contract cannot be violated through this store.
 VALID_SCOPES: frozenset[str] = frozenset(
-    {"data:read", "strategy:author", "deploy:backtest", "deploy:paper"}
+    {
+        "data:read",
+        "strategy:author",
+        "runs:write",
+        "runs:cancel",
+        "approvals:read",
+        "approvals:decide",
+        "providers:write",
+        "triggers:write",
+        "artifacts:read",
+        "deploy:backtest",
+        "deploy:paper",
+    }
 )
 
 

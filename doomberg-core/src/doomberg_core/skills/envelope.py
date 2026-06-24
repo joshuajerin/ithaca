@@ -1,16 +1,7 @@
-"""Provenance envelope + small shaping helpers shared across the skill catalog.
-
-The envelope here is the lightweight skill-result shape mandated by the data-layer contract:
-
-    {"data": ..., "provenance": {"source": "doomberg-v1-archive", "freshness": <ts|None>,
-     "pit": <bool>}, "warnings": [...]}
-
-``source`` is always ``doomberg-v1-archive`` (the imported v1 reference data). ``freshness`` is the
-max ``updated_at`` / ``fetched_at`` of the rows actually used (None when nothing resolved). ``pit``
-is True only for the point-in-time fundamentals skill.
-"""
+"""Provenance envelope + small shaping helpers shared across the skill catalog."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Iterable
 
 SOURCE = "doomberg-v1-archive"
@@ -41,17 +32,60 @@ def freshness_of(rows: Iterable[dict] | None) -> str | None:
     return max(stamps) if stamps else None
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _as_of(ts: str | None) -> str:
+    """Return a contract-valid data timestamp.
+
+    Archive rows usually carry `updated_at`/`fetched_at`; when a skill has no resolved rows
+    we still need a valid timestamp for the envelope and mark the result partial/stale.
+    """
+    return str(ts) if ts else _now_iso()
+
+
+def _pit(pit: bool | str) -> str:
+    if isinstance(pit, str):
+        return pit
+    return "true" if pit else "false"
+
+
+def _coverage(data: Any) -> dict[str, Any]:
+    if data is None:
+        return {"requested": 1, "resolved": 0, "missing": []}
+    if isinstance(data, list):
+        return {"requested": len(data), "resolved": len(data), "missing": []}
+    return {"requested": 1, "resolved": 1, "missing": []}
+
+
+def _cost(source: str) -> dict[str, Any]:
+    return {"class": "cheap" if source == COMPUTED else "network", "credits": 0}
+
+
 def envelope(
     data: Any,
     *,
     freshness: str | None = None,
     pit: bool = False,
     warnings: list[dict] | None = None,
+    partial: bool | None = None,
 ) -> dict:
     """Wrap a skill payload in the canonical archive provenance envelope."""
+    resolved_partial = data is None or bool(warnings) if partial is None else bool(partial)
     return {
         "data": data,
-        "provenance": {"source": SOURCE, "freshness": freshness, "pit": pit},
+        "provenance": {
+            "source": SOURCE,
+            "as_of": _as_of(freshness),
+            "freshness": "stale",
+            "stale_age_sec": None,
+            "pit": _pit(pit),
+            "coverage": _coverage(data),
+            "cost": _cost(SOURCE),
+            "cache_hit": False,
+        },
+        "partial": resolved_partial,
         "warnings": warnings or [],
     }
 
@@ -62,6 +96,7 @@ def computed_envelope(
     freshness: str | None = None,
     inputs: str | None = None,
     warnings: list[dict] | None = None,
+    partial: bool | None = None,
 ) -> dict:
     """Wrap a pure-math (COMPUTED) skill payload.
 
@@ -72,10 +107,21 @@ def computed_envelope(
     computation reads archive series, pass that table's ``freshness`` through so the
     provenance still carries the data's age.
     """
-    prov = {"source": COMPUTED, "freshness": freshness, "pit": False}
+    prov = {
+        "source": COMPUTED,
+        "as_of": _as_of(freshness),
+        "freshness": "live" if freshness is None else "stale",
+        "stale_age_sec": None,
+        "pit": "false",
+        "coverage": _coverage(data),
+        "cost": _cost(COMPUTED),
+        "cache_hit": False,
+    }
     if inputs:
         prov["inputs"] = inputs
-    return {"data": data, "provenance": prov, "warnings": warnings or []}
+    resolved_partial = data is None or bool(warnings) if partial is None else bool(partial)
+    return {"data": data, "provenance": prov, "partial": resolved_partial,
+            "warnings": warnings or []}
 
 
 def warn(code: str, *, scope: str | None = None, detail: str | None = None) -> dict:

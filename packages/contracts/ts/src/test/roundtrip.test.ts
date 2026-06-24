@@ -5,14 +5,30 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { ZodTypeAny } from "zod";
-import { ProvenanceEnvelope, StrategySpec, TraceEvent } from "../generated/index";
+import {
+  ExecutionRecord,
+  PlatformError,
+  PlatformRun,
+  ProvenanceEnvelope,
+  ProviderEntitlement,
+  SkillManifest,
+  StrategySpec,
+  TraceEvent,
+  TriggerPolicy,
+} from "../generated/index";
 
 const FIXTURES = fileURLToPath(new URL("../../../fixtures/", import.meta.url));
 
 const DOMAINS: Record<string, ZodTypeAny> = {
+  execution: ExecutionRecord,
+  platform_error: PlatformError,
+  platform_run: PlatformRun,
   provenance: ProvenanceEnvelope,
+  provider_entitlement: ProviderEntitlement,
+  skill_manifest: SkillManifest,
   strategy_spec: StrategySpec,
   events: TraceEvent,
+  trigger_policy: TriggerPolicy,
 };
 
 function load(name: string): unknown {

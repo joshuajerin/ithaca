@@ -1,7 +1,7 @@
 """Run state machine row store, tenant-scoped, with an optimistic version guard.
 
 State machine (per INTERFACES.md / MASTER-PLAN):
-    draft -> queued -> running -> (succeeded | failed | timeout)
+    draft -> queued -> running -> (succeeded | failed | timeout | cancelled)
     paper deployments:  promoted -> live -> paused -> retired
 
 Every row carries an integer ``version`` bumped on each accepted transition.
@@ -34,13 +34,14 @@ class RunNotFound(KeyError):
 
 # Allowed transitions. Keys are source states; values are the set of legal targets.
 _TRANSITIONS: dict[str, set[str]] = {
-    "draft": {"queued"},
-    "queued": {"running"},
-    "running": {"succeeded", "failed", "timeout", "promoted"},
+    "draft": {"queued", "cancelled"},
+    "queued": {"running", "cancelled"},
+    "running": {"succeeded", "failed", "timeout", "cancelled", "promoted"},
     # Terminal backtest states.
     "succeeded": {"promoted"},
     "failed": set(),
     "timeout": set(),
+    "cancelled": set(),
     # Paper deployment lifecycle.
     "promoted": {"live", "retired"},
     "live": {"paused", "retired"},
@@ -269,3 +270,12 @@ class RunStore:
                 )
                 if cur.rowcount == 0:
                     raise RunNotFound(run_id)
+
+    def cancel(self, tenant_id: str, run_id: str, *, expect: int | None = None) -> dict[str, Any]:
+        """Move a cancellable run to ``cancelled``.
+
+        This is the durable user/API cancellation state. Workers are expected to check their
+        associated job row and stop cooperatively; this run transition gives observers an
+        immediate, auditable state even before a worker sees the cancel request.
+        """
+        return self.transition(tenant_id, run_id, "cancelled", expect=expect)

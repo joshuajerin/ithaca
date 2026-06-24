@@ -98,6 +98,10 @@ class Provenance(BaseModel):
     coverage: Coverage | None = None
     cost: Cost | None = None
     cache_hit: bool | None = False
+    inputs: str | None = None
+    """
+    Optional source class for computed results, e.g. 'agent' or 'doomberg-v1-archive'.
+    """
 
 
 class ProvenanceEnvelope(BaseModel):

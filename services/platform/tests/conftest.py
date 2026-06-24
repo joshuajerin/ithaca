@@ -29,6 +29,8 @@ def _ensure_importable() -> None:
 _ensure_importable()
 
 from doomberg_platform import (  # noqa: E402
+    JobStore,
+    Platform,
     RunStore,
     StrategyStore,
     TraceStore,
@@ -54,5 +56,15 @@ def run_store(db):
 
 
 @pytest.fixture()
+def job_store(db):
+    return JobStore(db)
+
+
+@pytest.fixture()
 def strategy_store(db):
     return StrategyStore(db)
+
+
+@pytest.fixture()
+def platform(db):
+    return Platform(db)

@@ -1,0 +1,8 @@
+{
+  "code": "ENTITLEMENT_REQUIRED",
+  "message": "Live options data requires a connected provider account.",
+  "recovery_action": "Connect a provider account with OPRA options permissions.",
+  "details": {
+    "dataset": "options.trades"
+  }
+}

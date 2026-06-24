@@ -78,6 +78,21 @@ def test_agent_key_with_deploy_paper_can_request_but_cannot_promote(client, plat
     assert "denial" in types
 
 
+def test_agent_key_cannot_spoof_human_actor_header(client, platform):
+    tid, key, _ = _mint(platform, ["strategy:author", "deploy:paper"])
+    sid = client.post("/strategies", json={"spec": valid_spec()},
+                      headers=_bearer(key)).json()["id"]
+    run_id = client.post("/runs", json={"strategy_id": sid, "kind": "paper"},
+                         headers=_bearer(key)).json()["run_id"]
+
+    resp = client.post(
+        f"/runs/{run_id}/promote",
+        headers={**_bearer(key), "X-Actor-Kind": "human", "X-Actor-Id": "spoof"},
+    )
+
+    assert resp.status_code == 403
+
+
 # ---- dev fallback still works (no bearer key) ------------------------------------------
 def test_x_tenant_id_dev_fallback_still_works(client):
     tid = str(uuid.uuid4())

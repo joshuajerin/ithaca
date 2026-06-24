@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://doomberg.dev/contracts/trigger_policy.schema.json",
+  "title": "TriggerPolicy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["trigger_id", "name", "state", "when", "condition", "controls", "action"],
+  "properties": {
+    "trigger_id": { "type": "string" },
+    "name": { "type": "string", "minLength": 1 },
+    "state": { "type": "string", "enum": ["draft", "active", "paused", "retired"] },
+    "when": { "type": "object" },
+    "condition": { "type": "object" },
+    "controls": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dedupe_key": { "type": ["string", "null"] },
+        "cooldown_seconds": { "type": ["integer", "null"], "minimum": 0 },
+        "max_runs_per_day": { "type": ["integer", "null"], "minimum": 0 },
+        "max_compute_cost_usd_per_day": { "type": ["number", "null"], "minimum": 0 },
+        "require_connected_live_data": { "type": "boolean", "default": false },
+        "approval_required": { "type": "boolean", "default": true }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_skill", "mode"],
+      "properties": {
+        "run_skill": { "type": "string" },
+        "mode": { "type": "string", "enum": ["observe", "analyze", "propose", "execute"] }
+      }
+    },
+    "notify": { "type": "object", "default": {} }
+  }
+}

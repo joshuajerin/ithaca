@@ -44,6 +44,11 @@ jobs:
           sleep 5
           docker logs "$cid" | grep -q "doomberg conductor up" && echo "conductor role OK"
           docker rm -f "$cid"
+          # the trigger-engine role starts and stays alive even before an IBKR URL is configured
+          cid="$(docker run -d -e DOOMBERG_DB=:memory: doomberg:ci trigger-engine)"
+          sleep 5
+          docker logs "$cid" | grep -q "doomberg trigger engine up" && echo "trigger-engine role OK"
+          docker rm -f "$cid"
 
   terraform-check:
     name: terraform • fmt + validate

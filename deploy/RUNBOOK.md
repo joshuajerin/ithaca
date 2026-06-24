@@ -196,14 +196,32 @@ re-applies don't re-seed.
 
 ## 7. Deploy the services
 
-Deploy `mcp-gateway`, `rest-gateway`, `control-plane` to the `doomberg-gateway`
-namespace (each **2+ replicas**, `nodeSelector: workload=paper`, toleration for
-the paper taint, NodePorts `30080`/`30808` for the LB), and the conductor /
-paper scheduler. The control plane renders per-run backtest Jobs from
-`manifests/backtest-job.yaml` and the scheduler renders
-`manifests/paper-tick-cronjob.yaml`. (Service manifests are owned by the platform
-stream; the LB forwarding rules + healthcheck in `loadbalancer.tf` expect
-NodePorts `30080` (rest) and `30808` (mcp).)
+Deploy the always-on app plane with `deploy/deploy_services.sh`. The current
+runtime topology is one single-replica `doomberg-app` pod in the
+`doomberg-gateway` namespace with these sidecars:
+
+- `rest-gateway`
+- `control-plane`
+- `conductor` (`BacktestWorker`, trigger-job worker, and paper scheduler)
+- `trigger-engine` (active trigger policy polling)
+- `mcp-gateway`
+
+Those containers intentionally share one RWO PVC-mounted SQLite file at
+`/data/doomberg.db`. NodePorts stay `30080` (rest/app) and `30808` (MCP), matching
+the load balancer rules in Terraform. The service manifest and `doomberg-db`
+Secret are rendered/applied by `deploy/deploy_services.sh`.
+
+For connected-account live trigger quotes, set:
+
+```bash
+export DOOMBERG_IBKR_ENGINE_URL=https://your-ibkr-vps.example.com
+export DOOMBERG_IBKR_ENGINE_TOKEN=...        # optional
+export DOOMBERG_IBKR_QUOTE_PATH=/quote?symbol={symbol}  # optional
+```
+
+If `DOOMBERG_IBKR_ENGINE_URL` is unset, the trigger sidecar still deploys and
+idles, but active live-data policies will emit provider errors until the VPS URL
+is configured.
 
 ```bash
 # Public ingress IP for DNS:

@@ -14,7 +14,8 @@ from .backtest_runner import result_hash, run_backtest_job
 from .calendar import AlwaysOpen, MarketCalendar, RegularHoursCalendar
 from .deadline import Deadline, DeadlineExceeded
 from .live_runner import DEFAULT_MAX_STALENESS_S, run_paper_tick
-from .orchestrator import BacktestWorker, PaperScheduler
+from .orchestrator import BacktestWorker, PaperScheduler, TriggerJobWorker
+from .trigger_engine import HttpQuoteClient, StaticQuoteClient, TriggerEngine
 
 __all__ = [
     "run_backtest_job",
@@ -25,7 +26,11 @@ __all__ = [
     "BACKTEST_BUDGET_MS",
     "DEFAULT_MAX_STALENESS_S",
     "BacktestWorker",
+    "TriggerJobWorker",
     "PaperScheduler",
+    "TriggerEngine",
+    "HttpQuoteClient",
+    "StaticQuoteClient",
     "MarketCalendar",
     "RegularHoursCalendar",
     "AlwaysOpen",

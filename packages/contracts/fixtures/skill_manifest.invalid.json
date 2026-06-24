@@ -1,0 +1,15 @@
+{
+  "skill_id": "options.greeks",
+  "version": "1.0",
+  "name": "Options Greeks",
+  "description": "Compute model-explicit option greeks from supplied inputs.",
+  "source_classes": null,
+  "runtime": {
+    "profile": "interactive",
+    "image": "registry.digitalocean.com/doomberg/doomberg:latest",
+    "timeout_seconds": 30
+  },
+  "permissions": {},
+  "input_schema": {},
+  "output_schema": {}
+}

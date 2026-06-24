@@ -5,6 +5,7 @@ import { SessionDetail } from "./pages/SessionDetail";
 import { NewSession } from "./pages/NewSession";
 import { Docs } from "./pages/Docs";
 import { RunsList } from "./pages/RunsList";
+import { RunDetail } from "./pages/RunDetail";
 import { Deploys } from "./pages/Deploys";
 import { Trades } from "./pages/Trades";
 import { Ideas } from "./pages/Ideas";
@@ -17,6 +18,10 @@ const NAV: { to: string; label: string; cta?: boolean }[] = [
   { to: "/new-session", label: "New Session", cta: true },
   { to: "/dashboard", label: "Dashboard" },
   { to: "/sessions", label: "Sessions" },
+  { to: "/runs", label: "Runs" },
+  { to: "/deploys", label: "Deploys" },
+  { to: "/trades", label: "Trades" },
+  { to: "/ideas", label: "Ideas" },
   { to: "/docs", label: "Docs" },
   { to: "/settings", label: "Settings" },
 ];
@@ -90,7 +95,7 @@ export function App() {
           <Route path="/sessions/:id" element={<SessionDetail />} />
           <Route path="/docs" element={<Docs />} />
           <Route path="/runs" element={<RunsList />} />
-          <Route path="/runs/:id" element={<SessionDetail />} />
+          <Route path="/runs/:id" element={<RunDetail />} />
           <Route path="/deploys" element={<Deploys />} />
           <Route path="/trades" element={<Trades />} />
           <Route path="/ideas" element={<Ideas />} />

@@ -42,7 +42,14 @@ _PRINCIPAL: contextvars.ContextVar["Principal | None"] = contextvars.ContextVar(
 
 # Scope policy (kept here, next to enforcement, so it reads as one unit).
 SCOPE_TOOL_CALL = "data:read"  # required for any tools/call
-SCOPE_BY_TOOL = {"propose_strategy": "strategy:author"}  # extra scope per tool name
+SCOPE_BY_TOOL = {
+    "propose_strategy": "strategy:author",
+    "run_skill": "runs:write",
+    "cancel_run": "runs:cancel",
+    "list_approvals": "approvals:read",
+    "decide_approval": "approvals:decide",
+    "get_artifact": "artifacts:read",
+}  # extra scope per tool name
 
 
 @dataclass(frozen=True)
@@ -58,7 +65,7 @@ class Principal:
 
     def ctx(self) -> dict:
         """The ``_ctx`` the Toolset expects (tenant-scopes the trace + research session)."""
-        return {"tenant_id": self.tenant_id, "agent_id": self.key_id}
+        return {"tenant_id": self.tenant_id, "agent_id": self.key_id, "actor_kind": "agent"}
 
 
 def current_principal() -> Principal | None:
@@ -77,16 +84,14 @@ def _bearer(headers) -> str | None:
     return None
 
 
-def _scope_needed(body: bytes) -> str | None:
-    """The single extra scope a tool-specific call needs, or None.
+def _scope_needed(body: bytes) -> set[str] | None:
+    """Extra scopes a JSON-RPC body needs, or None when it cannot be inspected.
 
     Best-effort parse of the JSON-RPC body: a ``tools/call`` always needs ``data:read``;
-    ``propose_strategy`` additionally needs ``strategy:author``. A non-tools/call request
-    (initialize, tools/list, ping, notifications) needs no scope beyond a valid key, so we
-    don't gate discovery/handshake — only the actual data + proposal tools.
-
-    We return at most one *additional* scope; the caller always checks ``data:read`` for any
-    ``tools/call`` first. Returns None for anything that isn't a tools/call.
+    tool-specific calls add all scopes required by every call in the body. A batch request
+    therefore gets the union of required scopes instead of the first arbitrary set member.
+    A non-tools/call request (initialize, tools/list, ping, notifications) returns an empty
+    set and only requires a valid key.
     """
     try:
         msg = json.loads(body)
@@ -105,10 +110,8 @@ def _scope_needed(body: bytes) -> str | None:
         if name in SCOPE_BY_TOOL:
             needs.add(SCOPE_BY_TOOL[name])
     if not is_tool_call:
-        return ""  # sentinel: a recognized request that needs no tool scope
-    # Return the extra scope if any (only ever one in our policy); else "" meaning
-    # "tools/call, only data:read required".
-    return next(iter(needs)) if needs else ""
+        return set()
+    return needs
 
 
 def _json_error(status: int, message: str):
@@ -164,19 +167,15 @@ class TenantAuthMiddleware:
         # Buffer the body once so we can both inspect it (scope policy) and replay it to the
         # downstream app. MCP requests are small JSON-RPC envelopes.
         body, more = await _read_body(receive)
-        extra = _scope_needed(body)
-        if extra is not None:
-            # A recognized request. "" => a tools/call (data:read) or a no-scope handshake;
-            # a non-empty string => an additional tool-specific scope.
-            # First gate: any tools/call needs data:read. We can tell a tools/call apart
-            # because _scope_needed returns "" for BOTH a no-scope request and a bare
-            # tools/call; re-derive precisely here to apply the data:read gate only to calls.
+        extra_scopes = _scope_needed(body)
+        if extra_scopes is not None:
             if _is_tool_call(body) and not principal.has(SCOPE_TOOL_CALL):
                 await _json_error(403, f"missing scope: {SCOPE_TOOL_CALL}")(scope, receive, send)
                 return
-            if extra and not principal.has(extra):
-                await _json_error(403, f"missing scope: {extra}")(scope, receive, send)
-                return
+            for extra in sorted(extra_scopes):
+                if not principal.has(extra):
+                    await _json_error(403, f"missing scope: {extra}")(scope, receive, send)
+                    return
 
         token_ctx = _PRINCIPAL.set(principal)
         try:

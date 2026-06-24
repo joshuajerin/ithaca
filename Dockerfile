@@ -8,6 +8,7 @@
 #   rest-gateway    :  doomberg-rest       (uvicorn doomberg_rest.app:app)  REST + SSE
 #   control-plane   :  doomberg-control    (uvicorn doomberg_control.app)   money-path writer
 #   conductor       :  doomberg-conductor  (python scripts/run_workers.py)  backtest worker + paper scheduler
+#   trigger-engine  :  doomberg-trigger    (python -m doomberg_runtime.trigger_engine)
 #   backtest-runner :  doomberg-backtest   (python -m doomberg_runtime.backtest_runner)
 #   live-runner     :  doomberg-live       (python -m doomberg_runtime.live_runner)
 #   archive-load    :  doomberg-archive-load (python scripts/import_v1_archive.py)

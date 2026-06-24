@@ -1,0 +1,20 @@
+{
+  "trigger_id": "trg_nvda_price",
+  "name": "NVDA live review",
+  "state": "active",
+  "when": {
+    "event": "price.threshold",
+    "universe": ["NVDA"]
+  },
+  "condition": {
+    "price": { "gte": 900 }
+  },
+  "controls": {
+    "approval_required": true,
+    "unexpected": true
+  },
+  "action": {
+    "run_skill": "market.quote",
+    "mode": "autotrade"
+  }
+}

@@ -9,6 +9,7 @@ the rest-gateway), and translate :class:`ActionError` into an HTTP error. All th
 Endpoints (all require ``X-Tenant-Id`` → :class:`Ctx`):
 - ``POST /strategies``            propose a spec (validate → persist draft → trace).
 - ``POST /runs``                  create a run (``backtest``|``paper``), land it ``queued``.
+- ``POST /runs/{id}/cancel``      cancel a queued/running run and its worker jobs.
 - ``POST /runs/{id}/promote``     HUMAN. Paper only. Compliance + risk gate, then promote.
 - ``POST /runs/{id}/activate``    HUMAN. ``promoted``/``paused`` → ``live`` (scheduler ticks it).
 - ``POST /runs/{id}/pause``       HUMAN. ``live`` → ``paused``.
@@ -42,6 +43,11 @@ class CreateRunBody(BaseModel):
     strategy_id: str
     kind: Literal["backtest", "paper"]
     range: str = Field(default="1y")
+    idempotency_key: str | None = None
+
+
+class CancelRunBody(BaseModel):
+    reason: str | None = None
 
 
 class CreateTenantBody(BaseModel):
@@ -100,7 +106,20 @@ def create_app() -> FastAPI:
     ) -> dict[str, Any]:
         try:
             return actions.create_run(platform, ctx, strategy_id=body.strategy_id,
-                                      kind=body.kind, range_=body.range)
+                                      kind=body.kind, range_=body.range,
+                                      idempotency_key=body.idempotency_key)
+        except ActionError as err:
+            _raise(err)
+
+    @app.post("/runs/{run_id}/cancel")
+    def cancel_run(
+        run_id: str,
+        body: CancelRunBody | None = None,
+        ctx: Ctx = Depends(get_ctx),
+        platform: Platform = Depends(get_platform),
+    ) -> dict[str, Any]:
+        try:
+            return actions.cancel_run(platform, ctx, run_id, reason=body.reason if body else None)
         except ActionError as err:
             _raise(err)
 

@@ -12,7 +12,9 @@ from __future__ import annotations
 
 from .auth_store import VALID_SCOPES, AuthStore, hash_secret
 from .book_store import BookConflict, BookNotFound, BookStore
+from .control_store import ApprovalStore, ArtifactStore, ExecutionStore, ProviderStore, TriggerStore
 from .db import Db, open_db
+from .job_store import JobConflict, JobNotFound, JobStore
 from .platform import Platform
 from .run_store import (
     RunNotFound,
@@ -33,11 +35,19 @@ __all__ = [
     "StrategyStore",
     "BookStore",
     "AuthStore",
+    "JobStore",
+    "ArtifactStore",
+    "ApprovalStore",
+    "ProviderStore",
+    "ExecutionStore",
+    "TriggerStore",
     "VALID_SCOPES",
     "hash_secret",
     "TransitionError",
     "TransitionConflict",
     "RunNotFound",
+    "JobConflict",
+    "JobNotFound",
     "BookConflict",
     "BookNotFound",
     "UserStore",

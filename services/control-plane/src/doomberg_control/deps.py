@@ -29,11 +29,17 @@ from fastapi import Depends, Header, HTTPException
 from doomberg_core import Core
 from doomberg_platform import (
     VALID_SCOPES,
+    ApprovalStore,
+    ArtifactStore,
     AuthStore,
     BookStore,
+    ExecutionStore,
+    JobStore,
+    ProviderStore,
     RunStore,
     StrategyStore,
     TraceStore,
+    TriggerStore,
     open_db,
 )
 
@@ -89,6 +95,12 @@ class Platform:
         self.traces = TraceStore(self.db)
         self.books = BookStore(self.db)
         self.auth = AuthStore(self.db)
+        self.jobs = JobStore(self.db)
+        self.artifacts = ArtifactStore(self.db)
+        self.approvals = ApprovalStore(self.db)
+        self.providers = ProviderStore(self.db)
+        self.execution = ExecutionStore(self.db)
+        self.triggers = TriggerStore(self.db)
         # the runtime worker expects the trace store as `.trace`; expose both names so a
         # control-plane Platform can be handed straight to run_backtest_job/run_paper_tick.
         self.trace = self.traces
@@ -142,9 +154,10 @@ def resolve_ctx(
         if principal is None:
             raise HTTPException(status_code=401, detail="invalid or revoked API key")
         # An API key is a BYO agent principal: it may author + request but never self-promote.
-        # Audit attributes to the stable key_id.
-        actor_kind = (x_actor_kind or "agent").strip().lower()
-        actor_id = (x_actor_id or "").strip() or principal["key_id"]
+        # Do not honor actor override headers for bearer credentials; those are a dev-only
+        # convenience and would let an agent spoof the human-only money path.
+        actor_kind = "agent"
+        actor_id = principal["key_id"]
         return Ctx(
             tenant_id=principal["tenant_id"],
             actor_kind=actor_kind,

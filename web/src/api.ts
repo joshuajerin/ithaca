@@ -1,5 +1,16 @@
 import { API_BASE, API_KEY, TENANT_ID } from "./config";
-import type { RunRow, SessionRow, StrategyRow } from "./types";
+import type {
+  ApprovalRow,
+  ArtifactRow,
+  DatasetSnapshotRow,
+  JobRow,
+  OrderIntentRow,
+  ProviderConnectionRow,
+  RunRow,
+  SessionRow,
+  StrategyRow,
+  TriggerRow,
+} from "./types";
 
 // Thin REST client over the rest-gateway. The browser NEVER speaks MCP; this is the only
 // backend it knows. Two auth modes, resolved at the gateway's single front door:
@@ -96,6 +107,50 @@ export const api = {
     return unwrapList<StrategyRow>(raw, "strategies");
   },
 
+  async listJobs(signal?: AbortSignal): Promise<JobRow[]> {
+    const raw = await getJson<unknown>(`/jobs`, signal);
+    return unwrapList<JobRow>(raw, "jobs");
+  },
+
+  async listArtifacts(signal?: AbortSignal): Promise<ArtifactRow[]> {
+    const raw = await getJson<unknown>(`/artifacts`, signal);
+    return unwrapList<ArtifactRow>(raw, "artifacts");
+  },
+
+  async listApprovals(signal?: AbortSignal): Promise<ApprovalRow[]> {
+    const raw = await getJson<unknown>(`/approvals`, signal);
+    return unwrapList<ApprovalRow>(raw, "approvals");
+  },
+
+  async decideApproval(id: string, decision: "approved" | "denied", reason?: string, signal?: AbortSignal) {
+    return postJson<ApprovalRow>(
+      `/approvals/${encodeURIComponent(id)}/decide`,
+      { decision, reason },
+      signal,
+    );
+  },
+
+  async listProviders(signal?: AbortSignal): Promise<{
+    connections: ProviderConnectionRow[];
+    snapshots: DatasetSnapshotRow[];
+  }> {
+    const raw = await getJson<{ connections?: ProviderConnectionRow[]; snapshots?: DatasetSnapshotRow[] }>(
+      `/providers`,
+      signal,
+    );
+    return { connections: raw.connections ?? [], snapshots: raw.snapshots ?? [] };
+  },
+
+  async listOrderIntents(signal?: AbortSignal): Promise<OrderIntentRow[]> {
+    const raw = await getJson<unknown>(`/order-intents`, signal);
+    return unwrapList<OrderIntentRow>(raw, "order_intents");
+  },
+
+  async listTriggers(signal?: AbortSignal): Promise<TriggerRow[]> {
+    const raw = await getJson<unknown>(`/triggers`, signal);
+    return unwrapList<TriggerRow>(raw, "triggers");
+  },
+
   // The /api/runs/{id}/events SSE URL. EventSource cannot set headers, so the tenant
   // is passed as a query param in local dev. Signed-in users pass the session token as
   // access_token so the stream resolves to the same tenant/account as normal REST calls.
@@ -135,7 +190,7 @@ export const api = {
 
   async runAction(
     id: string,
-    action: "promote" | "activate" | "pause" | "resume" | "retire",
+    action: "cancel" | "promote" | "activate" | "pause" | "resume" | "retire",
     signal?: AbortSignal,
   ): Promise<RunRow> {
     return postJson<RunRow>(`/runs/${encodeURIComponent(id)}/${action}`, {}, signal);

@@ -22,9 +22,15 @@ FIXTURE_DIR = CONTRACTS_ROOT / "fixtures"
 
 # domain -> pydantic model
 DOMAINS = {
+    "execution": contracts.ExecutionRecord,
+    "platform_error": contracts.PlatformError,
+    "platform_run": contracts.PlatformRun,
     "provenance": contracts.ProvenanceEnvelope,
+    "provider_entitlement": contracts.ProviderEntitlement,
+    "skill_manifest": contracts.SkillManifest,
     "strategy_spec": contracts.StrategySpec,
     "events": contracts.TraceEvent,
+    "trigger_policy": contracts.TriggerPolicy,
 }
 
 
@@ -70,8 +76,14 @@ def test_strategy_spec_rejects_free_form_code() -> None:
 def test_models_importable() -> None:
     assert set(contracts.__all__) == {
         "AuthPrincipal",
+        "ExecutionRecord",
+        "PlatformError",
+        "PlatformRun",
         "ProvenanceEnvelope",
+        "ProviderEntitlement",
+        "SkillManifest",
         "StrategySpec",
         "TenantContext",
         "TraceEvent",
+        "TriggerPolicy",
     }

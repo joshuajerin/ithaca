@@ -4,6 +4,9 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from doomberg_mcp import PlatformTraceSink, Toolset
+from doomberg_platform import Platform
+
 R1 = "11111111-1111-1111-1111-111111111111"
 R2 = "22222222-2222-2222-2222-222222222222"
 R3 = "33333333-3333-3333-3333-333333333333"
@@ -58,3 +61,61 @@ async def test_server_registers_three_tools(toolset):
     tools = await mcp.list_tools()
     names = {t.name for t in tools}
     assert {"market_get_ohlcv", "backtest_run", "propose_strategy"} <= names
+    assert {"search_skills", "describe_skill", "run_skill", "get_run", "subscribe_run",
+            "cancel_run", "list_approvals", "decide_approval", "get_artifact"} <= names
+
+
+def test_run_skill_queues_durable_backtest(toolset_core, sample_spec):
+    platform = Platform(":memory:")
+    tenant = platform.auth.create_tenant("mcp")
+    ts = Toolset(
+        core=toolset_core,
+        sink=PlatformTraceSink(platform.trace),
+        runs=platform.runs,
+        platform=platform,
+    )
+
+    out = ts.run_skill(
+        "backtest.run",
+        input={"spec": sample_spec, "range": "1y"},
+        idempotency_key="same-backtest",
+        _ctx={"tenant_id": tenant, "agent_id": "agent"},
+    )
+
+    assert out["status"] == "queued"
+    assert out["job_id"]
+    run = platform.runs.get(tenant, out["run_id"])
+    assert run["kind"] == "backtest"
+    assert run["state"] == "queued"
+    assert platform.jobs.get(tenant, out["job_id"])["idempotency_key"] == "same-backtest"
+
+    again = ts.run_skill(
+        "backtest.run",
+        input={"spec": sample_spec, "range": "1y"},
+        idempotency_key="same-backtest",
+        _ctx={"tenant_id": tenant, "agent_id": "agent"},
+    )
+    assert again["run_id"] == out["run_id"]
+    assert again["idempotent"] is True
+
+
+def test_run_skill_interactive_persists_result_and_trace(toolset_core):
+    platform = Platform(":memory:")
+    tenant = platform.auth.create_tenant("mcp")
+    ts = Toolset(
+        core=toolset_core,
+        sink=PlatformTraceSink(platform.trace),
+        runs=platform.runs,
+        platform=platform,
+    )
+
+    out = ts.run_skill(
+        "market.get_ohlcv",
+        input={"symbol": "AAA", "range": "1y"},
+        _ctx={"tenant_id": tenant, "agent_id": "agent"},
+    )
+
+    assert out["status"] == "succeeded"
+    got = ts.get_run(out["run_id"], _ctx={"tenant_id": tenant})
+    assert got["run"]["result"]["provenance"]["source"] == "yahoo-chart"
+    assert any(e["type"] == "tool_result" for e in got["events"])

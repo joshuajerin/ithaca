@@ -77,13 +77,23 @@ uv run --package doomberg-rest-gateway  uvicorn doomberg_rest.app:app   --port 8
 # the deploy-layer conductor: pulls the backtest queue + ticks live paper deployments
 uv run python scripts/run_workers.py
 
+# trigger engine: polls active trigger policies and creates durable runs.
+# For live quotes, point it at the user-run IBKR engine on the VPS.
+export DOOMBERG_IBKR_ENGINE_URL=https://your-ibkr-engine.example.com
+export DOOMBERG_IBKR_ENGINE_TOKEN=replace-with-bearer-token   # optional if the VPS is otherwise private
+# Optional when the VPS does not expose GET /quote?symbol=NVDA.
+# export DOOMBERG_IBKR_QUOTE_PATH=/v1/market/quote/{symbol}
+uv run --package doomberg-runtime python -m doomberg_runtime.trigger_engine
+
 # observability UI (proxies /api -> :8000)
 pnpm --filter @doomberg/web dev
 ```
 
-All five processes share the one SQLite system-of-record via `DOOMBERG_DB`. The browser talks only to the
+All six local processes share the one SQLite system-of-record via `DOOMBERG_DB`. The browser talks only to the
 rest-gateway (`:8000`); its human money-path actions (promote/activate/pause/resume/retire) call the same
 `doomberg_control.actions` the control plane exposes, so there is one money-path implementation, two transports.
+The trigger engine also shares `DOOMBERG_DB`, uses the IBKR engine only as a per-user connected-account data
+source, and never submits broker orders directly.
 
 ### Contracts (the frozen source of truth)
 

@@ -88,6 +88,8 @@ def test_create_run_returns_queued(client, tenant_a):
     body = resp.json()
     assert body["state"] == "queued"
     assert body["kind"] == "backtest"
+    assert body["job_id"]
+    assert body["profile"] == "backtest"
     assert uuid.UUID(body["run_id"])  # valid UUID
 
 
@@ -98,10 +100,26 @@ def test_create_run_unknown_strategy_404(client, tenant_a):
 
 def test_create_run_emits_transition_trace(client, platform, tenant_a):
     sid = _propose(client, tenant_a).json()["id"]
-    run_id = _create_run(client, tenant_a, sid, kind="paper").json()["run_id"]
+    body = _create_run(client, tenant_a, sid, kind="paper").json()
+    run_id = body["run_id"]
+    assert platform.jobs.get(tenant_a, body["job_id"])["run_id"] == run_id
     events = platform.traces.events(tenant_a, run_id)
     assert [e["type"] for e in events] == ["run_transition"]
     assert events[0]["data"]["to"] == "queued"
+
+
+def test_cancel_run_cancels_run_and_job(client, platform, tenant_a):
+    sid = _propose(client, tenant_a).json()["id"]
+    body = _create_run(client, tenant_a, sid, kind="backtest").json()
+    resp = client.post(
+        f"/runs/{body['run_id']}/cancel",
+        json={"reason": "user requested"},
+        headers=human_headers(tenant_a),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "cancelled"
+    assert platform.runs.get(tenant_a, body["run_id"])["state"] == "cancelled"
+    assert platform.jobs.get(tenant_a, body["job_id"])["state"] == "cancelled"
 
 
 # ----------------------------------------------------------------------------------------

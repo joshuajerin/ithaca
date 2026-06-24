@@ -28,6 +28,7 @@ __all__ = [
     "ActionError",
     "propose_strategy",
     "create_run",
+    "cancel_run",
     "promote_run",
     "activate_run",
     "pause_run",
@@ -120,7 +121,7 @@ _CREATE_SCOPE = {"backtest": "deploy:backtest", "paper": "deploy:paper"}
 
 
 def create_run(platform: Any, ctx: Ctx, *, strategy_id: str, kind: str,
-               range_: str = "1y") -> dict[str, Any]:
+               range_: str = "1y", idempotency_key: str | None = None) -> dict[str, Any]:
     # Authoring a backtest needs deploy:backtest; requesting a paper deployment needs
     # deploy:paper (which is "may REQUEST" — promotion still requires a human).
     required = _CREATE_SCOPE.get(kind)
@@ -131,15 +132,89 @@ def create_run(platform: Any, ctx: Ctx, *, strategy_id: str, kind: str,
     if strategy is None:
         raise ActionError(404, "strategy not found")
 
-    spec = strategy["spec"]
+    jobs = getattr(platform, "jobs", None)
+    if idempotency_key and jobs is not None:
+        existing = jobs.get_by_idempotency(ctx.tenant_id, idempotency_key)
+        if existing is not None:
+            existing_run = platform.runs.get(ctx.tenant_id, existing["run_id"])
+            if existing_run is None:
+                raise ActionError(409, "idempotency key points to missing run")
+            return {"run_id": existing["run_id"], "state": existing_run["state"],
+                    "kind": existing_run["kind"], "job_id": existing["job_id"],
+                    "profile": existing["profile"], "idempotent": True}
+
+    spec = dict(strategy["spec"])
     run_id = platform.runs.create(ctx.tenant_id, kind, strategy_id, spec)
     run = platform.runs.transition(ctx.tenant_id, run_id, "queued", expect=0)
+    profile = "backtest" if kind == "backtest" else "interactive"
+    job = None
+    if jobs is not None:
+        job = jobs.create_for_run(
+            ctx.tenant_id,
+            run_id,
+            kind=kind,
+            profile=profile,
+            payload={"spec": spec, "range": range_, "strategy_id": strategy_id},
+            idempotency_key=idempotency_key,
+        )
+        if job.get("run_id") != run_id:
+            try:
+                platform.runs.cancel(ctx.tenant_id, run_id, expect=run["version"])
+            except Exception as exc:
+                _emit(
+                    platform,
+                    ctx=ctx,
+                    run_id=run_id,
+                    event_type="error",
+                    data={
+                        "action": "create_run",
+                        "reason": "duplicate idempotency cleanup failed",
+                        "detail": str(exc),
+                    },
+                )
+                raise ActionError(409, "duplicate idempotency cleanup failed") from exc
+            existing_run = platform.runs.get(ctx.tenant_id, job["run_id"])
+            if existing_run is None:
+                raise ActionError(409, "idempotency key points to missing run")
+            return {
+                "run_id": job["run_id"],
+                "state": existing_run["state"],
+                "kind": existing_run["kind"],
+                "job_id": job["job_id"],
+                "profile": job["profile"],
+                "idempotent": True,
+            }
     origin = spec.get("origin_session_id") if isinstance(spec, dict) else None
     _emit(platform, ctx=ctx, run_id=run_id, event_type="run_transition",
           data={"from": "draft", "to": "queued", "kind": kind, "range": range_,
-                "strategy_id": strategy_id},
+                "strategy_id": strategy_id, "job_id": job.get("job_id") if job else None,
+                "profile": profile},
           origin_session_id=str(origin) if origin else None)
-    return {"run_id": run_id, "state": run["state"], "kind": run["kind"]}
+    return {"run_id": run_id, "state": run["state"], "kind": run["kind"],
+            "job_id": job.get("job_id") if job else None, "profile": profile}
+
+
+def cancel_run(platform: Any, ctx: Ctx, run_id: str, *, reason: str | None = None) -> dict[str, Any]:
+    run = platform.runs.get(ctx.tenant_id, run_id)
+    if run is None:
+        raise ActionError(404, "run not found")
+    _require_scope(platform, ctx, run_id, "cancel", "runs:cancel")
+    if run["state"] in {"succeeded", "failed", "timeout", "cancelled", "promoted", "live",
+                        "paused", "retired"}:
+        raise ActionError(409, f"run in state {run['state']!r} cannot be cancelled")
+    jobs = getattr(platform, "jobs", None)
+    cancelled_jobs = jobs.cancel_by_run(ctx.tenant_id, run_id, reason=reason) if jobs else []
+    try:
+        updated = platform.runs.cancel(ctx.tenant_id, run_id, expect=run["version"])
+    except Exception as exc:
+        _emit(platform, ctx=ctx, run_id=run_id, event_type="error",
+              data={"action": "cancel", "reason": "transition failed", "detail": str(exc)})
+        raise ActionError(409, "cancel transition failed") from exc
+    _emit(platform, ctx=ctx, run_id=run_id, event_type="run_transition",
+          data={"from": run["state"], "to": "cancelled", "action": "cancel",
+                "reason": reason, "cancelled_jobs": [j["job_id"] for j in cancelled_jobs]})
+    return {"run_id": run_id, "state": updated["state"],
+            "cancelled_jobs": [j["job_id"] for j in cancelled_jobs]}
 
 
 # ----------------------------------------------------------------------------------------

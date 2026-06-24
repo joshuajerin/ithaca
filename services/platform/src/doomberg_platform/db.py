@@ -157,6 +157,204 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions (user_id);
+
+-- Durable compute jobs. A run can own multiple jobs over time, but the first cut creates
+-- one job per queued run. The lease columns let workers recover jobs abandoned by a dead
+-- worker without relying on an MCP/client process staying alive.
+CREATE TABLE IF NOT EXISTS jobs (
+    tenant_id          TEXT NOT NULL,
+    job_id             TEXT NOT NULL,
+    run_id             TEXT NOT NULL,
+    kind               TEXT NOT NULL,
+    profile            TEXT NOT NULL,
+    state              TEXT NOT NULL,
+    payload            TEXT NOT NULL,
+    idempotency_key    TEXT,
+    attempts           INTEGER NOT NULL DEFAULT 0,
+    max_attempts       INTEGER NOT NULL DEFAULT 3,
+    worker_id          TEXT,
+    lease_expires_at   TEXT,
+    heartbeat_at       TEXT,
+    checkpoint_ref     TEXT,
+    result             TEXT,
+    error              TEXT,
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, job_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_run
+    ON jobs (tenant_id, run_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_claim
+    ON jobs (state, profile, created_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_idempotency
+    ON jobs (tenant_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
+-- Large outputs live outside trace_events; trace rows point at artifact ids.
+CREATE TABLE IF NOT EXISTS artifacts (
+    tenant_id    TEXT NOT NULL,
+    artifact_id  TEXT NOT NULL,
+    run_id       TEXT NOT NULL,
+    job_id       TEXT,
+    kind         TEXT NOT NULL,
+    uri          TEXT NOT NULL,
+    media_type   TEXT,
+    bytes        INTEGER,
+    metadata     TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, artifact_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifacts_run
+    ON artifacts (tenant_id, run_id, created_at);
+
+-- Approval records for future risk-gated execution and trigger workflows.
+CREATE TABLE IF NOT EXISTS approvals (
+    tenant_id     TEXT NOT NULL,
+    approval_id   TEXT NOT NULL,
+    run_id        TEXT NOT NULL,
+    kind          TEXT NOT NULL,
+    state         TEXT NOT NULL,
+    request       TEXT NOT NULL,
+    decision      TEXT,
+    requested_by  TEXT,
+    decided_by    TEXT,
+    expires_at    TEXT,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, approval_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_approvals_run
+    ON approvals (tenant_id, run_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_approvals_state
+    ON approvals (tenant_id, state, created_at);
+
+-- Provider/data entitlement state. Credentials stay outside this table; credential_ref
+-- points to Keychain/secret-manager/libsecret/etc.
+CREATE TABLE IF NOT EXISTS provider_connections (
+    tenant_id          TEXT NOT NULL,
+    connection_id      TEXT NOT NULL,
+    provider           TEXT NOT NULL,
+    account_ref        TEXT,
+    credential_ref     TEXT,
+    state              TEXT NOT NULL,
+    capabilities       TEXT NOT NULL,
+    entitlements       TEXT NOT NULL,
+    retention_policy   TEXT,
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, connection_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_connections_provider
+    ON provider_connections (tenant_id, provider, state);
+
+CREATE TABLE IF NOT EXISTS dataset_snapshots (
+    tenant_id          TEXT NOT NULL,
+    snapshot_id        TEXT NOT NULL,
+    provider           TEXT NOT NULL,
+    dataset            TEXT NOT NULL,
+    entitlement_class  TEXT NOT NULL,
+    as_of              TEXT NOT NULL,
+    uri                TEXT,
+    manifest           TEXT NOT NULL,
+    created_at         TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, snapshot_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_dataset_snapshots_lookup
+    ON dataset_snapshots (tenant_id, provider, dataset, as_of);
+
+-- Trigger policy skeleton for the next phase. The policy document is typed at the
+-- contract layer; this table gives the control plane a durable home for it.
+CREATE TABLE IF NOT EXISTS trigger_policies (
+    tenant_id    TEXT NOT NULL,
+    trigger_id   TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    state        TEXT NOT NULL,
+    policy       TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, trigger_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trigger_policies_state
+    ON trigger_policies (tenant_id, state, name);
+
+-- Trigger firings are the stateful dedupe/cooldown/budget memory for the trigger engine.
+-- They deliberately point at the run created by the trigger, so Sessions can replay the
+-- exact market event -> analysis run lineage.
+CREATE TABLE IF NOT EXISTS trigger_firings (
+    tenant_id    TEXT NOT NULL,
+    firing_id    TEXT NOT NULL,
+    trigger_id   TEXT NOT NULL,
+    run_id       TEXT NOT NULL,
+    dedupe_key   TEXT,
+    event_time   TEXT NOT NULL,
+    payload      TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, firing_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trigger_firings_lookup
+    ON trigger_firings (tenant_id, trigger_id, dedupe_key, event_time);
+
+-- Execution records. Live submission remains disabled until the execution gateway is
+-- complete; these rows establish the deterministic order-intent audit surface.
+CREATE TABLE IF NOT EXISTS order_intents (
+    tenant_id        TEXT NOT NULL,
+    intent_id        TEXT NOT NULL,
+    run_id           TEXT NOT NULL,
+    strategy_id      TEXT,
+    account_ref      TEXT,
+    state            TEXT NOT NULL,
+    payload          TEXT NOT NULL,
+    risk_decision    TEXT,
+    idempotency_key  TEXT,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, intent_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_order_intents_idempotency
+    ON order_intents (tenant_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS orders (
+    tenant_id        TEXT NOT NULL,
+    order_id         TEXT NOT NULL,
+    intent_id        TEXT NOT NULL,
+    broker           TEXT NOT NULL,
+    broker_order_id  TEXT,
+    client_order_id  TEXT NOT NULL,
+    state            TEXT NOT NULL,
+    payload          TEXT NOT NULL,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, order_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_client_order
+    ON orders (tenant_id, broker, client_order_id);
+
+CREATE TABLE IF NOT EXISTS fills (
+    tenant_id        TEXT NOT NULL,
+    fill_id          TEXT NOT NULL,
+    order_id         TEXT NOT NULL,
+    broker_fill_id   TEXT,
+    payload          TEXT NOT NULL,
+    event_time       TEXT NOT NULL,
+    created_at       TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, fill_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fills_order
+    ON fills (tenant_id, order_id, event_time);
 """
 
 

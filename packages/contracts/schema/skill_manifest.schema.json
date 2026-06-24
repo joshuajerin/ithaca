@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://doomberg.dev/contracts/skill_manifest.schema.json",
+  "title": "SkillManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["skill_id", "version", "name", "description", "runtime", "permissions", "input_schema", "output_schema"],
+  "properties": {
+    "skill_id": { "type": "string", "pattern": "^[a-z0-9_.-]+$" },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string", "minLength": 1 },
+    "source_classes": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["community", "connected_account", "doomberg_licensed", "computed"] },
+      "default": []
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "image", "timeout_seconds"],
+      "properties": {
+        "profile": { "type": "string", "enum": ["interactive", "scan", "backtest", "optimization", "stream"] },
+        "image": { "type": "string", "minLength": 1 },
+        "cpu": { "type": "number", "minimum": 0 },
+        "memory_mb": { "type": "integer", "minimum": 0 },
+        "timeout_seconds": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "datasets": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "broker": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "network": { "type": "array", "items": { "type": "string" }, "default": [] }
+      }
+    },
+    "input_schema": { "type": "object" },
+    "output_schema": { "type": "object" },
+    "freshness_requirement_seconds": { "type": ["integer", "null"], "minimum": 0 },
+    "trigger_compatible": { "type": "boolean", "default": false },
+    "determinism": { "type": "string", "enum": ["deterministic", "seeded", "nondeterministic"], "default": "deterministic" },
+    "artifact_types": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "deprecated": { "type": "boolean", "default": false }
+  }
+}

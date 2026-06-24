@@ -13,7 +13,7 @@ SAME ``doomberg_control.actions`` functions the control plane exposes, over the 
 there is one implementation of every write no matter which surface a human used:
   - ``POST /api/strategies``                  propose a spec.
   - ``POST /api/runs``                         create a run (queued).
-  - ``POST /api/runs/{id}/{promote|activate|pause|resume|retire}``  paper lifecycle.
+  - ``POST /api/runs/{id}/{cancel|promote|activate|pause|resume|retire}`` run lifecycle.
 
 Tenant isolation: ``X-Tenant-Id`` (header) or ``?tenant_id=`` (EventSource can't set headers)
 is required and threaded into every store call as the first arg. No unscoped read path exists.
@@ -26,6 +26,7 @@ import json as _json
 import os
 import urllib.parse
 import urllib.request
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -38,15 +39,21 @@ from pydantic import BaseModel
 
 from doomberg_control import actions
 from doomberg_control.actions import ActionError
-from doomberg_control.deps import Ctx
+from doomberg_control.deps import HUMAN_ACTOR_KINDS, Ctx
 from doomberg_core import Core
 from doomberg_platform import (
     AuthStore,
+    ApprovalStore,
+    ArtifactStore,
     BookStore,
+    ExecutionStore,
+    JobStore,
+    ProviderStore,
     RunStore,
     SessionError,
     StrategyStore,
     TraceStore,
+    TriggerStore,
     UserStore,
     open_db,
 )
@@ -71,6 +78,12 @@ class Stores:
         self.books = BookStore(db)
         self.auth = AuthStore(db)
         self.users = UserStore(db)
+        self.jobs = JobStore(db)
+        self.artifacts = ArtifactStore(db)
+        self.approvals = ApprovalStore(db)
+        self.providers = ProviderStore(db)
+        self.execution = ExecutionStore(db)
+        self.triggers = TriggerStore(db)
         self.core = Core()
 
 
@@ -82,6 +95,37 @@ class CreateRunBody(BaseModel):
     strategy_id: str
     kind: str = "backtest"
     range: str = "1y"
+    idempotency_key: str | None = None
+
+
+class CancelRunBody(BaseModel):
+    reason: str | None = None
+
+
+class DecideApprovalBody(BaseModel):
+    decision: str
+    reason: str | None = None
+
+
+class CreateTriggerBody(BaseModel):
+    name: str
+    policy: dict[str, Any]
+    state: str = "draft"
+
+
+class SetTriggerStateBody(BaseModel):
+    state: str
+
+
+class CreateProviderConnectionBody(BaseModel):
+    provider: str
+    capabilities: list[str] = []
+    entitlements: list[dict[str, Any]] = []
+    state: str = "connected"
+    connection_id: str | None = None
+    account_ref: str | None = None
+    credential_ref: str | None = None
+    retention_policy: str | None = None
 
 
 class CreateSessionBody(BaseModel):
@@ -142,7 +186,19 @@ def _verify_bearer(request: Request, authorization: str | None) -> dict[str, Any
         return {
             "tenant_id": user["tenant_id"],
             "key_id": user["id"],
-            "scopes": ["data:read", "strategy:author", "deploy:backtest", "deploy:paper"],
+            "scopes": [
+                "data:read",
+                "strategy:author",
+                "runs:write",
+                "runs:cancel",
+                "approvals:read",
+                "approvals:decide",
+                "providers:write",
+                "triggers:write",
+                "artifacts:read",
+                "deploy:backtest",
+                "deploy:paper",
+            ],
             "actor_kind": "user",
         }
     except SessionError:
@@ -152,6 +208,14 @@ def _verify_bearer(request: Request, authorization: str | None) -> dict[str, Any
     if principal is None:
         raise HTTPException(status_code=401, detail="invalid or revoked token")
     return {**principal, "actor_kind": "agent"}
+
+
+def _validate_tenant_id(value: str) -> str:
+    try:
+        uuid.UUID(str(value))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="tenant_id must be a UUID") from exc
+    return str(value)
 
 
 def require_tenant(
@@ -177,7 +241,7 @@ def require_tenant(
     resolved = x_tenant_id or tenant_id
     if not resolved:
         raise HTTPException(status_code=400, detail="X-Tenant-Id header (or ?tenant_id=) is required")
-    return resolved
+    return _validate_tenant_id(resolved)
 
 
 def _ctx(
@@ -199,13 +263,14 @@ def _ctx(
     if principal is not None:
         return Ctx(
             tenant_id=principal["tenant_id"],
-            actor_kind=(x_actor_kind or principal.get("actor_kind") or "agent").strip().lower(),
-            actor_id=(x_actor_id or "").strip() or principal["key_id"],
+            actor_kind=(principal.get("actor_kind") or "agent").strip().lower(),
+            actor_id=principal["key_id"],
             scopes=frozenset(principal["scopes"]),
         )
     resolved = x_tenant_id or tenant_id
     if not resolved:
         raise HTTPException(status_code=400, detail="X-Tenant-Id header (or ?tenant_id=) is required")
+    resolved = _validate_tenant_id(resolved)
     return Ctx(
         tenant_id=resolved,
         actor_kind=(x_actor_kind or "user").strip().lower(),
@@ -218,6 +283,11 @@ def _do(fn, *args) -> dict[str, Any]:
         return fn(*args)
     except ActionError as err:
         raise HTTPException(status_code=err.status, detail=err.detail) from err
+
+
+def _require_scope(ctx: Ctx, scope: str) -> None:
+    if not ctx.has_scope(scope):
+        raise HTTPException(status_code=403, detail=f"missing required scope: {scope}")
 
 
 def _session_summary(row: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -585,7 +655,16 @@ def create_app(db: Any | None = None) -> FastAPI:
                 pass
         raise HTTPException(status_code=401, detail="sign in to manage API keys")
 
-    _DEFAULT_KEY_SCOPES = ["data:read", "strategy:author", "deploy:backtest", "deploy:paper"]
+    _DEFAULT_KEY_SCOPES = [
+        "data:read",
+        "strategy:author",
+        "runs:write",
+        "runs:cancel",
+        "approvals:read",
+        "artifacts:read",
+        "deploy:backtest",
+        "deploy:paper",
+    ]
 
     @app.post("/api/auth/keys", status_code=201)
     def mint_api_key(
@@ -662,8 +741,8 @@ def create_app(db: Any | None = None) -> FastAPI:
         principal = _verify_bearer(request, authorization)
         if principal is not None:
             resolved_tenant = principal["tenant_id"]
-            actor_kind = (x_actor_kind or principal.get("actor_kind") or "user").strip().lower()
-            actor_id = (x_actor_id or principal.get("key_id") or "ui").strip() or "ui"
+            actor_kind = (principal.get("actor_kind") or "user").strip().lower()
+            actor_id = (principal.get("key_id") or "ui").strip() or "ui"
         else:
             resolved_tenant = x_tenant_id or tenant_id
             if not resolved_tenant:
@@ -671,6 +750,7 @@ def create_app(db: Any | None = None) -> FastAPI:
                     status_code=400,
                     detail="X-Tenant-Id header (or ?tenant_id=) is required",
                 )
+            resolved_tenant = _validate_tenant_id(resolved_tenant)
             actor_kind = (x_actor_kind or "user").strip().lower()
             actor_id = (x_actor_id or "ui").strip() or "ui"
 
@@ -698,7 +778,10 @@ def create_app(db: Any | None = None) -> FastAPI:
         })
         run = stores.runs.get(resolved_tenant, run_id)
         events = stores.trace.events(resolved_tenant, run_id)
-        return shape_run(run, events)
+        shaped = shape_run(run, events)
+        shaped["jobs"] = stores.jobs.list_by_run(resolved_tenant, run_id)
+        shaped["artifacts"] = stores.artifacts.list_by_run(resolved_tenant, run_id)
+        return shaped
 
     # ---- reads -------------------------------------------------------------------------
     @app.get("/api/runs")
@@ -720,7 +803,10 @@ def create_app(db: Any | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="run not found")
         events = stores.trace.events(tenant_id, run_id)
         book = stores.books.get(tenant_id, run_id) if run.get("kind") == "paper" else None
-        return shape_run(run, events, book=book)
+        shaped = shape_run(run, events, book=book)
+        shaped["jobs"] = stores.jobs.list_by_run(tenant_id, run_id)
+        shaped["artifacts"] = stores.artifacts.list_by_run(tenant_id, run_id)
+        return shaped
 
     @app.get("/api/runs/{run_id}/book")
     def get_book(
@@ -740,6 +826,202 @@ def create_app(db: Any | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         return {"strategies": stores.strategies.list(tenant_id)}
 
+    @app.get("/api/jobs")
+    def list_jobs(
+        run_id: str | None = None,
+        state: str | None = None,
+        profile: str | None = None,
+        limit: int = 100,
+        tenant_id: str = Depends(require_tenant),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        return {
+            "jobs": stores.jobs.list(
+                tenant_id, run_id=run_id, state=state, profile=profile, limit=limit
+            )
+        }
+
+    @app.get("/api/artifacts")
+    def list_artifacts(
+        run_id: str | None = None,
+        kind: str | None = None,
+        limit: int = 100,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        _require_scope(ctx, "artifacts:read")
+        return {"artifacts": stores.artifacts.list(ctx.tenant_id, run_id=run_id, kind=kind, limit=limit)}
+
+    @app.get("/api/artifacts/{artifact_id}")
+    def get_artifact(
+        artifact_id: str,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        _require_scope(ctx, "artifacts:read")
+        artifact = stores.artifacts.get(ctx.tenant_id, artifact_id)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="artifact not found")
+        return artifact
+
+    @app.get("/api/approvals")
+    def list_approvals(
+        run_id: str | None = None,
+        state: str | None = None,
+        limit: int = 100,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        _require_scope(ctx, "approvals:read")
+        return {"approvals": stores.approvals.list(ctx.tenant_id, run_id=run_id, state=state, limit=limit)}
+
+    @app.post("/api/approvals/{approval_id}/decide")
+    def decide_approval(
+        approval_id: str,
+        body: DecideApprovalBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        _require_scope(ctx, "approvals:decide")
+        if ctx.actor_kind not in HUMAN_ACTOR_KINDS:
+            raise HTTPException(status_code=403, detail="decide_approval requires a human actor")
+        try:
+            approval = stores.approvals.decide(
+                ctx.tenant_id,
+                approval_id,
+                decision=body.decision,
+                decided_by=ctx.actor_id,
+                reason=body.reason,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="approval not found or already decided") from exc
+        if approval is None:
+            raise HTTPException(status_code=404, detail="approval not found")
+        stores.trace.append({
+            "run_id": approval["run_id"],
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "type": "approval_decided",
+            "tenant_id": ctx.tenant_id,
+            "actor": {"kind": ctx.actor_kind, "id": ctx.actor_id},
+            "data": {
+                "approval_id": approval_id,
+                "decision": body.decision,
+                "reason": body.reason,
+            },
+        })
+        return approval
+
+    @app.get("/api/providers")
+    def list_providers(
+        tenant_id: str = Depends(require_tenant),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        return {
+            "connections": stores.providers.list_connections(tenant_id),
+            "snapshots": stores.providers.list_snapshots(tenant_id, limit=25),
+        }
+
+    @app.post("/api/providers", status_code=201)
+    def upsert_provider_connection(
+        body: CreateProviderConnectionBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        _require_scope(ctx, "providers:write")
+        return stores.providers.upsert_connection(
+            ctx.tenant_id,
+            provider=body.provider,
+            capabilities=body.capabilities,
+            entitlements=body.entitlements,
+            state=body.state,
+            connection_id=body.connection_id,
+            account_ref=body.account_ref,
+            credential_ref=body.credential_ref,
+            retention_policy=body.retention_policy,
+        )
+
+    @app.get("/api/dataset-snapshots")
+    def list_dataset_snapshots(
+        provider: str | None = None,
+        dataset: str | None = None,
+        limit: int = 100,
+        tenant_id: str = Depends(require_tenant),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        return {
+            "snapshots": stores.providers.list_snapshots(
+                tenant_id, provider=provider, dataset=dataset, limit=limit
+            )
+        }
+
+    @app.get("/api/order-intents")
+    def list_order_intents(
+        run_id: str | None = None,
+        state: str | None = None,
+        limit: int = 100,
+        tenant_id: str = Depends(require_tenant),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        return {"order_intents": stores.execution.list_intents(tenant_id, run_id=run_id, state=state, limit=limit)}
+
+    @app.get("/api/triggers")
+    def list_triggers(
+        state: str | None = None,
+        limit: int = 100,
+        tenant_id: str = Depends(require_tenant),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        return {"triggers": stores.triggers.list(tenant_id, state=state, limit=limit)}
+
+    @app.get("/api/trigger-firings")
+    def list_trigger_firings(
+        trigger_id: str | None = None,
+        limit: int = 100,
+        tenant_id: str = Depends(require_tenant),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        return {
+            "firings": stores.triggers.list_firings(
+                tenant_id,
+                trigger_id=trigger_id,
+                limit=limit,
+            )
+        }
+
+    @app.post("/api/triggers", status_code=201)
+    def create_trigger(
+        body: CreateTriggerBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        _require_scope(ctx, "triggers:write")
+        try:
+            return stores.triggers.create(
+                ctx.tenant_id,
+                name=body.name,
+                policy=body.policy,
+                state=body.state,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/triggers/{trigger_id}/state")
+    def set_trigger_state(
+        trigger_id: str,
+        body: SetTriggerStateBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        _require_scope(ctx, "triggers:write")
+        try:
+            return stores.triggers.set_state(ctx.tenant_id, trigger_id, body.state)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="trigger not found") from exc
+
     # ---- human money-path actions (shared control-plane implementation) ----------------
     @app.post("/api/strategies", status_code=201)
     def propose(
@@ -757,7 +1039,20 @@ def create_app(db: Any | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         try:
             return actions.create_run(stores, ctx, strategy_id=body.strategy_id,
-                                      kind=body.kind, range_=body.range)
+                                      kind=body.kind, range_=body.range,
+                                      idempotency_key=body.idempotency_key)
+        except ActionError as err:
+            raise HTTPException(status_code=err.status, detail=err.detail) from err
+
+    @app.post("/api/runs/{run_id}/cancel")
+    def cancel_run(
+        run_id: str,
+        body: CancelRunBody | None = None,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        try:
+            return actions.cancel_run(stores, ctx, run_id, reason=body.reason if body else None)
         except ActionError as err:
             raise HTTPException(status_code=err.status, detail=err.detail) from err
 

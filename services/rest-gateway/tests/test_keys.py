@@ -40,13 +40,72 @@ def test_signed_in_user_mints_lists_and_uses_key(client, stores):
     assert "api_key" not in listed[0]
 
 
-def test_mint_defaults_to_full_issuable_scope_set(client):
+def test_mint_defaults_to_agent_operational_scope_set(client):
     token, _ = _signup(client)
     r = client.post("/api/auth/keys", json={}, headers=_bearer(token))
     assert r.status_code == 201, r.text
     assert set(r.json()["scopes"]) == {
-        "data:read", "strategy:author", "deploy:backtest", "deploy:paper",
+        "data:read",
+        "strategy:author",
+        "runs:write",
+        "runs:cancel",
+        "approvals:read",
+        "artifacts:read",
+        "deploy:backtest",
+        "deploy:paper",
     }
+
+
+def test_agent_key_cannot_decide_approval_even_with_scope_or_actor_header(client, stores):
+    token, tenant_id = _signup(client)
+    api_key = client.post(
+        "/api/auth/keys",
+        json={"scopes": ["data:read", "approvals:read", "approvals:decide"]},
+        headers=_bearer(token),
+    ).json()["api_key"]
+    run_id = stores.runs.create(tenant_id, "trigger", None, {"name": "approval-test"})
+    approval = stores.approvals.create(
+        tenant_id,
+        run_id,
+        kind="trigger_action",
+        request={"symbol": "NVDA"},
+        requested_by="agent",
+    )
+
+    resp = client.post(
+        f"/api/approvals/{approval['approval_id']}/decide",
+        json={"decision": "approved"},
+        headers={**_bearer(api_key), "X-Actor-Kind": "human"},
+    )
+
+    assert resp.status_code == 403
+    assert stores.approvals.list_pending(tenant_id)[0]["approval_id"] == approval["approval_id"]
+
+
+def test_agent_key_needs_explicit_provider_and_trigger_write_scopes(client):
+    token, _ = _signup(client)
+    api_key = client.post(
+        "/api/auth/keys",
+        json={"scopes": ["data:read"]},
+        headers=_bearer(token),
+    ).json()["api_key"]
+
+    provider = client.post(
+        "/api/providers",
+        json={"provider": "ibkr-engine", "capabilities": ["quote"]},
+        headers=_bearer(api_key),
+    )
+    trigger = client.post(
+        "/api/triggers",
+        json={
+            "name": "nvda",
+            "policy": {"when": {"event": "price.threshold"}, "action": {"run_skill": "market.quote"}},
+        },
+        headers=_bearer(api_key),
+    )
+
+    assert provider.status_code == 403
+    assert trigger.status_code == 403
 
 
 def test_unissuable_scope_is_422(client):
