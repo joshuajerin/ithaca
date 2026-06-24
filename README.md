@@ -129,9 +129,11 @@ MCP clients can also read the progressive-discovery resources
 `doomberg://skills/catalog`, `doomberg://skills/{skill_id}/{version}`,
 `doomberg://runs/{run_id}`, `doomberg://policies/current`, `doomberg://accounts`,
 and `doomberg://data/providers`; hosted HTTP resource reads require `data:read` and
-return tenant-scoped, credential-redacted JSON. The customer-handoff launch gate
-also proves that hosted MCP can queue a durable `backtest.run`, read it back through
-`doomberg://runs/{run_id}`, cancel it, and observe the cancelled run/job state.
+return tenant-scoped, credential-redacted JSON. REST provider responses follow the
+same boundary: they expose `credential_configured`, never `credential_ref`. The
+customer-handoff launch gate also proves that hosted MCP can queue a durable
+`backtest.run`, read it back through `doomberg://runs/{run_id}`, cancel it, and
+observe the cancelled run/job state.
 
 ### Contracts (the frozen source of truth)
 

@@ -880,12 +880,21 @@ def _check_realtime_trigger(
     assert provider is not None
     if provider.get("connection_id") != connection_id or provider.get("state") != "connected":
         return [_fail("trigger provider register", "IBKR provider connection was not registered", body=provider)]
+    if "credential_ref" in provider or provider.get("credential_configured") is not True:
+        return [
+            _fail(
+                "trigger provider register",
+                "provider response did not redact credential_ref correctly",
+                body=provider,
+            )
+        ]
     results.append(
         _pass(
             "trigger provider register",
-            "connected IBKR quote provider registered for trigger readiness",
+            "connected IBKR quote provider registered with credential reference redacted",
             connection_id=connection_id,
             provider=provider.get("provider"),
+            credential_configured=provider.get("credential_configured"),
         )
     )
 

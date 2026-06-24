@@ -268,7 +268,8 @@ enqueue/read/cancel cleanup, MCP no-scope resource denial, and the IBKR quote
 smoke when required. The trigger probe creates a synthetic quote-only trigger,
 fires it once, verifies the durable run and firing history, then retires it;
 with `--require-ibkr`, it reads the configured IBKR engine instead of the
-offline static quote:
+offline static quote. Provider responses are also checked for credential
+redaction: REST/MCP expose `credential_configured`, never `credential_ref`:
 
 ```bash
 kubectl -n doomberg-gateway run launch-gate --rm -it --restart=Never \

@@ -148,6 +148,7 @@ def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tena
         provider="alpaca",
         capabilities=["bars", "orders"],
         entitlements=[{"dataset": "equities", "entitlement_class": "connected_account"}],
+        credential_ref="secret://tenant-a/alpaca",
     )
     snapshot = stores.providers.create_snapshot(
         tenant_a,
@@ -191,6 +192,8 @@ def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tena
 
     providers = client.get("/api/providers", headers=_h(tenant_a)).json()
     assert providers["connections"][0]["connection_id"] == connection["connection_id"]
+    assert providers["connections"][0]["credential_configured"] is True
+    assert "credential_ref" not in json.dumps(providers)
     assert providers["snapshots"][0]["snapshot_id"] == snapshot["snapshot_id"]
     created_provider = client.post(
         "/api/providers",
@@ -205,11 +208,17 @@ def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tena
                 }
             ],
             "account_ref": "ibkr-paper",
+            "credential_ref": "env:DOOMBERG_IBKR_ENGINE_TOKEN",
         },
         headers=_h(tenant_a),
     )
     assert created_provider.status_code == 201, created_provider.text
-    assert created_provider.json()["provider"] == "ibkr-engine"
+    created_provider_body = created_provider.json()
+    assert created_provider_body["provider"] == "ibkr-engine"
+    assert created_provider_body["credential_configured"] is True
+    assert "credential_ref" not in json.dumps(created_provider_body)
+    stored_provider = stores.providers.get_connection(tenant_a, created_provider_body["connection_id"])
+    assert stored_provider["credential_ref"] == "env:DOOMBERG_IBKR_ENGINE_TOKEN"
     assert client.get("/api/dataset-snapshots", headers=_h(tenant_a)).json()["snapshots"][0]["dataset"] == "prices"
 
     intents = client.get("/api/order-intents", headers=_h(tenant_a)).json()["order_intents"]

@@ -101,6 +101,7 @@ export interface ProviderConnectionRow {
   capabilities: string[];
   entitlements: Array<Record<string, unknown>>;
   retention_policy?: string | null;
+  credential_configured?: boolean;
   created_at?: string | null;
   updated_at?: string | null;
 }

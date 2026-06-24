@@ -254,6 +254,23 @@ def _has_capability(connection: dict[str, Any], names: set[str]) -> bool:
     return bool(caps.intersection(names))
 
 
+def _public_provider_connection(connection: dict[str, Any]) -> dict[str, Any]:
+    """Return a REST-safe provider connection view without credential references."""
+    return {
+        "tenant_id": connection.get("tenant_id"),
+        "connection_id": connection.get("connection_id"),
+        "provider": connection.get("provider"),
+        "account_ref": connection.get("account_ref"),
+        "state": connection.get("state"),
+        "capabilities": connection.get("capabilities") or [],
+        "entitlements": connection.get("entitlements") or [],
+        "retention_policy": connection.get("retention_policy"),
+        "credential_configured": bool(connection.get("credential_ref")),
+        "created_at": connection.get("created_at"),
+        "updated_at": connection.get("updated_at"),
+    }
+
+
 def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
     connections = stores.providers.list_connections(tenant_id)
     snapshots = stores.providers.list_snapshots(tenant_id, limit=25)
@@ -1092,7 +1109,10 @@ def create_app(db: Any | None = None) -> FastAPI:
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
         return {
-            "connections": stores.providers.list_connections(tenant_id),
+            "connections": [
+                _public_provider_connection(connection)
+                for connection in stores.providers.list_connections(tenant_id)
+            ],
             "snapshots": stores.providers.list_snapshots(tenant_id, limit=25),
         }
 
@@ -1103,7 +1123,7 @@ def create_app(db: Any | None = None) -> FastAPI:
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
         _require_scope(ctx, "providers:write")
-        return stores.providers.upsert_connection(
+        connection = stores.providers.upsert_connection(
             ctx.tenant_id,
             provider=body.provider,
             capabilities=body.capabilities,
@@ -1114,6 +1134,7 @@ def create_app(db: Any | None = None) -> FastAPI:
             credential_ref=body.credential_ref,
             retention_policy=body.retention_policy,
         )
+        return _public_provider_connection(connection)
 
     @app.get("/api/dataset-snapshots")
     def list_dataset_snapshots(
