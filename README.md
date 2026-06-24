@@ -100,7 +100,8 @@ uv run --package doomberg-runtime python -m doomberg_runtime.trigger_engine
 # export DOOMBERG_EXECUTION_MAX_NOTIONAL_USD=10000
 
 # customer-handoff launch gate: migrations, REST auth, sessions, SSE replay,
-# artifact reads, MCP auth/resource checks, ops status, and optional IBKR smoke.
+# artifact reads, MCP auth/resource checks, MCP run create/cancel, ops status,
+# and optional IBKR smoke.
 uv run python scripts/launch_gate.py --mode local --skip-ibkr
 
 # observability UI (proxies /api -> :8000)
@@ -124,7 +125,9 @@ MCP clients can also read the progressive-discovery resources
 `doomberg://skills/catalog`, `doomberg://skills/{skill_id}/{version}`,
 `doomberg://runs/{run_id}`, `doomberg://policies/current`, `doomberg://accounts`,
 and `doomberg://data/providers`; hosted HTTP resource reads require `data:read` and
-return tenant-scoped, credential-redacted JSON.
+return tenant-scoped, credential-redacted JSON. The customer-handoff launch gate
+also proves that hosted MCP can queue a durable `backtest.run`, read it back through
+`doomberg://runs/{run_id}`, cancel it, and observe the cancelled run/job state.
 
 ### Contracts (the frozen source of truth)
 

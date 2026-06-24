@@ -33,6 +33,17 @@ ALL_GATE_SCOPES = [
     "deploy:paper",
 ]
 
+_LAUNCH_GATE_BACKTEST_SPEC = {
+    "spec_version": "1.0",
+    "name": "launch-gate-backtest",
+    "universe": {"symbols": ["AAA", "BBB", "CCC"], "source": "prices"},
+    "strategy": {"id": "momentum", "params": {"lookback": 60}},
+    "construction": {"scheme": "rank_weight", "long_only": True, "gross": 1.0},
+    "risk": {"max_gross": 1.0, "max_net": 1.0, "max_name_pct": 0.5},
+    "execution": {"cost_bps": 5, "algo": "vwap", "rebalance": "monthly@close"},
+    "seed": 42,
+}
+
 
 @dataclass
 class GateResult:
@@ -311,6 +322,203 @@ def _mcp_content_json(body: dict[str, Any]) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+def _mcp_tool_json(body: dict[str, Any]) -> dict[str, Any] | None:
+    result = (body.get("result") or {})
+    structured = result.get("structuredContent")
+    if isinstance(structured, dict):
+        return structured
+    contents = result.get("content") or []
+    if not contents:
+        return None
+    text = contents[0].get("text")
+    if not isinstance(text, str):
+        return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _mcp_call_tool(
+    send,
+    *,
+    token: str,
+    session_id: str,
+    tool_name: str,
+    arguments: dict[str, Any],
+    gate_name: str,
+    mid: int,
+) -> tuple[dict[str, Any] | None, GateResult | None]:
+    response = send(
+        method="tools/call",
+        params={"name": tool_name, "arguments": arguments},
+        token=token,
+        session_id=session_id,
+        mid=mid,
+    )
+    body = _mcp_json_from_text(response.text)
+    if response.status_code != 200:
+        return None, _fail(gate_name, f"unexpected HTTP {response.status_code}", body=response.text[:500])
+    result = (body or {}).get("result") or {}
+    if result.get("isError"):
+        return None, _fail(gate_name, "MCP tool returned an error", body=body)
+    parsed = _mcp_tool_json(body or {})
+    if parsed is None:
+        return None, _fail(gate_name, "MCP tool response was not parseable JSON", body=response.text[:500])
+    return parsed, None
+
+
+def _mcp_read_resource(
+    send,
+    *,
+    token: str,
+    session_id: str,
+    uri: str,
+    gate_name: str,
+    mid: int,
+) -> tuple[dict[str, Any] | None, GateResult | None]:
+    response = send(
+        method="resources/read",
+        params={"uri": uri},
+        token=token,
+        session_id=session_id,
+        mid=mid,
+    )
+    body = _mcp_json_from_text(response.text)
+    if response.status_code != 200:
+        return None, _fail(gate_name, f"unexpected HTTP {response.status_code}", body=response.text[:500])
+    parsed = _mcp_content_json(body or {})
+    if parsed is None:
+        return None, _fail(gate_name, "MCP resource response was not parseable JSON", body=response.text[:500])
+    return parsed, None
+
+
+def _check_mcp_durable_run(send, *, token: str, session_id: str) -> list[GateResult]:
+    results: list[GateResult] = []
+    idempotency_key = f"launch-gate:{uuid.uuid4()}"
+    created, failure = _mcp_call_tool(
+        send,
+        token=token,
+        session_id=session_id,
+        tool_name="run_skill",
+        arguments={
+            "skill_id": "backtest.run",
+            "input": {"spec": _LAUNCH_GATE_BACKTEST_SPEC, "range": "1y"},
+            "mode": "backtest",
+            "idempotency_key": idempotency_key,
+        },
+        gate_name="mcp durable run create",
+        mid=5,
+    )
+    if failure:
+        return [failure]
+    assert created is not None
+    run_id = str(created.get("run_id") or "")
+    job_id = str(created.get("job_id") or "")
+    if created.get("status") != "queued" or not run_id or not job_id:
+        return [_fail("mcp durable run create", "run_skill did not return a queued durable run", body=created)]
+    results.append(
+        _pass(
+            "mcp durable run create",
+            "run_skill queued a durable backtest run",
+            run_id=run_id,
+            job_id=job_id,
+            estimated_profile=created.get("estimated_profile"),
+        )
+    )
+
+    run_body, failure = _mcp_read_resource(
+        send,
+        token=token,
+        session_id=session_id,
+        uri=f"doomberg://runs/{run_id}",
+        gate_name="mcp durable run resource",
+        mid=6,
+    )
+    if failure:
+        results.append(failure)
+    else:
+        run = (run_body or {}).get("run") or {}
+        jobs = (run_body or {}).get("jobs") or []
+        events = (run_body or {}).get("events") or []
+        if run.get("run_id") != run_id or not any(job.get("job_id") == job_id for job in jobs):
+            results.append(
+                _fail("mcp durable run resource", "run resource did not include created run/job", body=run_body)
+            )
+        elif run.get("state") != "queued":
+            results.append(_fail("mcp durable run resource", "created run was not queued", body=run_body))
+        else:
+            results.append(
+                _pass(
+                    "mcp durable run resource",
+                    "doomberg://runs/{run_id} exposed the queued run, job, and trace",
+                    run_id=run_id,
+                    job_id=job_id,
+                    events=len(events),
+                )
+            )
+
+    cancelled, failure = _mcp_call_tool(
+        send,
+        token=token,
+        session_id=session_id,
+        tool_name="cancel_run",
+        arguments={"run_id": run_id, "reason": "launch gate cleanup"},
+        gate_name="mcp durable run cancel",
+        mid=7,
+    )
+    if failure:
+        results.append(failure)
+        return results
+    assert cancelled is not None
+    if cancelled.get("status") != "cancelled":
+        results.append(_fail("mcp durable run cancel", "cancel_run did not return cancelled", body=cancelled))
+        return results
+    results.append(
+        _pass(
+            "mcp durable run cancel",
+            "cancel_run cancelled the launch-gate run",
+            run_id=run_id,
+            cancelled_jobs=cancelled.get("cancelled_jobs") or [],
+        )
+    )
+
+    run_body, failure = _mcp_read_resource(
+        send,
+        token=token,
+        session_id=session_id,
+        uri=f"doomberg://runs/{run_id}",
+        gate_name="mcp durable run cleanup",
+        mid=8,
+    )
+    if failure:
+        results.append(failure)
+        return results
+    run = (run_body or {}).get("run") or {}
+    jobs = (run_body or {}).get("jobs") or []
+    job_states = {job.get("job_id"): job.get("state") for job in jobs}
+    if run.get("state") != "cancelled" or job_states.get(job_id) != "cancelled":
+        results.append(
+            _fail(
+                "mcp durable run cleanup",
+                "cancelled run/job state was not visible through the run resource",
+                run_state=run.get("state"),
+                job_states=job_states,
+            )
+        )
+    else:
+        results.append(
+            _pass(
+                "mcp durable run cleanup",
+                "run resource reflects cancelled run and job state",
+                run_id=run_id,
+                job_id=job_id,
+            )
+        )
+    return results
+
+
 def _check_mcp_resources(send, *, token: str, no_scope_token: str | None = None) -> list[GateResult]:
     session_id, init_result = _mcp_initialize(send, token=token)
     results = [init_result] if init_result else []
@@ -378,12 +586,14 @@ def _check_mcp_resources(send, *, token: str, no_scope_token: str | None = None)
             )
         )
 
+    results.extend(_check_mcp_durable_run(send, token=token, session_id=session_id))
+
     if no_scope_token:
         response = send(
             method="resources/read",
             params={"uri": "doomberg://skills/catalog"},
             token=no_scope_token,
-            mid=5,
+            mid=20,
         )
         if response.status_code == 403:
             results.append(_pass("mcp resource scope denial", "no-scope key was denied resource read", status=403))

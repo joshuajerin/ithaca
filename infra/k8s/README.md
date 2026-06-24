@@ -57,7 +57,8 @@ source, entitlement class, and freshness before enabling live-data triggers.
 Run `launch-gate --mode local --require-postgres --require-ibkr --json` from
 the app image after rollout for the broader customer-handoff gate: platform
 schema, REST auth, sessions, SSE replay, artifact reads, MCP auth rejection,
-MCP resource reads, MCP resource scope denial, ops status, and provider smoke.
+MCP resource reads, MCP durable run create/cancel, MCP resource scope denial,
+ops status, and provider smoke.
 
 The REST and control-plane containers also receive the IBKR order endpoint and
 execution safety knobs:

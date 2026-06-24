@@ -42,10 +42,17 @@ def test_launch_gate_local_mode_passes_without_external_services(capsys, monkeyp
     assert statuses["mcp resource list"] == "pass"
     assert statuses["mcp resource templates"] == "pass"
     assert statuses["mcp resource catalog"] == "pass"
+    assert statuses["mcp durable run create"] == "pass"
+    assert statuses["mcp durable run resource"] == "pass"
+    assert statuses["mcp durable run cancel"] == "pass"
+    assert statuses["mcp durable run cleanup"] == "pass"
     assert statuses["mcp resource scope denial"] == "pass"
     assert statuses["ibkr smoke"] == "skip"
     catalog = next(row for row in body["results"] if row["name"] == "mcp resource catalog")
     assert catalog["evidence"]["count"] >= 50
+    created = next(row for row in body["results"] if row["name"] == "mcp durable run create")
+    cleanup = next(row for row in body["results"] if row["name"] == "mcp durable run cleanup")
+    assert cleanup["evidence"]["run_id"] == created["evidence"]["run_id"]
 
 
 def test_launch_gate_can_require_ibkr_smoke(capsys, monkeypatch):
