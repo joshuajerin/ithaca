@@ -18,6 +18,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import platform as py_platform
+import sys
+from pathlib import Path
 from typing import Any
 
 from doomberg_core import Core, CoreContext
@@ -39,6 +43,211 @@ def result_hash(result: dict[str, Any]) -> str:
     """
     canonical = json.dumps(result, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _json_bytes(payload: Any) -> bytes:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+
+
+def _sha256_bytes(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def _artifact_uri(tenant_id: str, run_id: str, filename: str, content: bytes, sha256: str) -> tuple[str, bool]:
+    root = os.environ.get("DOOMBERG_ARTIFACT_DIR", "").strip()
+    if not root:
+        return f"memory://backtests/{tenant_id}/{run_id}/{filename}#sha256={sha256}", False
+    path = Path(root).expanduser().resolve() / tenant_id / run_id / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    return path.as_uri(), True
+
+
+def _html_report(summary: dict[str, Any], metrics: dict[str, Any]) -> bytes:
+    title = f"Doomberg backtest {summary['run_id']}"
+    body = json.dumps({"summary": summary, "metrics": metrics}, sort_keys=True, indent=2, default=str)
+    html = (
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        f"<title>{title}</title></head><body>"
+        f"<h1>{title}</h1><pre>{body}</pre></body></html>"
+    )
+    return html.encode("utf-8")
+
+
+def _backtest_artifact_payloads(
+    *,
+    tenant_id: str,
+    run_id: str,
+    job_id: str | None,
+    worker_id: str | None,
+    spec: dict[str, Any] | None,
+    range_: str,
+    as_of: Any,
+    data: dict[str, Any],
+    envelope: dict[str, Any],
+    rhash: str,
+) -> list[dict[str, Any]]:
+    metrics = data.get("stats") if isinstance(data.get("stats"), dict) else {}
+    equity_curve = data.get("equityCurve") if isinstance(data.get("equityCurve"), list) else []
+    final_weights = data.get("finalWeights") if isinstance(data.get("finalWeights"), dict) else {}
+    positions = [
+        {"symbol": str(symbol), "weight": float(weight)}
+        for symbol, weight in sorted(final_weights.items())
+    ]
+    summary = {
+        "tenant_id": tenant_id,
+        "run_id": run_id,
+        "job_id": job_id,
+        "result_hash": rhash,
+        "range": range_,
+        "as_of": as_of,
+        "bars": data.get("bars"),
+        "symbols": data.get("symbols") or [],
+        "partial": bool(envelope.get("partial")),
+        "warning_count": len(envelope.get("warnings") or []),
+    }
+    data_manifest = {
+        "range": range_,
+        "as_of": as_of,
+        "provenance": envelope.get("provenance") or [],
+        "warnings": envelope.get("warnings") or [],
+        "spec_hash": result_hash(spec or {}),
+        "result_hash": rhash,
+    }
+    environment_lock = {
+        "python": sys.version.split()[0],
+        "platform": py_platform.platform(),
+        "core_class": "doomberg_core.Core",
+        "runtime": "doomberg_runtime.backtest_runner",
+        "worker_id": worker_id,
+    }
+    run_trace = {
+        "tenant_id": tenant_id,
+        "run_id": run_id,
+        "job_id": job_id,
+        "worker_id": worker_id,
+        "terminal_state": "succeeded",
+        "result_hash": rhash,
+    }
+    artifacts = [
+        {
+            "filename": "summary.json",
+            "kind": "summary",
+            "media_type": "application/json",
+            "content": _json_bytes(summary),
+        },
+        {
+            "filename": "metrics.json",
+            "kind": "metrics",
+            "media_type": "application/json",
+            "content": _json_bytes(metrics),
+        },
+        {
+            "filename": "equity_curve.json",
+            "kind": "equity_curve",
+            "media_type": "application/json",
+            "content": _json_bytes(equity_curve),
+        },
+        {
+            "filename": "positions.json",
+            "kind": "positions",
+            "media_type": "application/json",
+            "content": _json_bytes(positions),
+        },
+        {
+            "filename": "data_manifest.json",
+            "kind": "data_manifest",
+            "media_type": "application/json",
+            "content": _json_bytes(data_manifest),
+        },
+        {
+            "filename": "environment_lock.json",
+            "kind": "environment_lock",
+            "media_type": "application/json",
+            "content": _json_bytes(environment_lock),
+        },
+        {
+            "filename": "run_trace.json",
+            "kind": "run_trace",
+            "media_type": "application/json",
+            "content": _json_bytes(run_trace),
+        },
+        {
+            "filename": "report.html",
+            "kind": "report",
+            "media_type": "text/html",
+            "content": _html_report(summary, metrics),
+        },
+    ]
+    return artifacts
+
+
+def _record_backtest_artifacts(
+    *,
+    platform: Any,
+    trace: Any,
+    tenant_id: str,
+    run_id: str,
+    job_id: str | None,
+    worker_id: str | None,
+    spec: dict[str, Any] | None,
+    range_: str,
+    as_of: Any,
+    data: dict[str, Any],
+    envelope: dict[str, Any],
+    rhash: str,
+) -> list[dict[str, Any]]:
+    artifacts_store = getattr(platform, "artifacts", None)
+    if artifacts_store is None:
+        return []
+    recorded: list[dict[str, Any]] = []
+    for payload in _backtest_artifact_payloads(
+        tenant_id=tenant_id,
+        run_id=run_id,
+        job_id=job_id,
+        worker_id=worker_id,
+        spec=spec if isinstance(spec, dict) else None,
+        range_=range_,
+        as_of=as_of,
+        data=data,
+        envelope=envelope,
+        rhash=rhash,
+    ):
+        content = payload["content"]
+        sha256 = _sha256_bytes(content)
+        uri, stored = _artifact_uri(tenant_id, run_id, payload["filename"], content, sha256)
+        artifact = artifacts_store.create(
+            tenant_id,
+            run_id,
+            job_id=job_id,
+            kind=payload["kind"],
+            uri=uri,
+            media_type=payload["media_type"],
+            bytes_=len(content),
+            metadata={
+                "bundle": "backtest.v1",
+                "filename": payload["filename"],
+                "sha256": sha256,
+                "result_hash": rhash,
+                "stored": stored,
+            },
+        )
+        recorded.append(artifact)
+        emit(
+            trace,
+            tenant_id=tenant_id,
+            run_id=run_id,
+            type="artifact_created",
+            data={
+                "artifact_id": artifact["artifact_id"],
+                "kind": artifact["kind"],
+                "filename": payload["filename"],
+                "sha256": sha256,
+                "bytes": len(content),
+                "uri": uri,
+            },
+        )
+    return recorded
 
 
 def run_backtest_job(
@@ -181,12 +390,35 @@ def run_backtest_job(
             return runs.get(tenant_id, run_id)
 
         rhash = result_hash(data)
+        artifacts = _record_backtest_artifacts(
+            platform=platform,
+            trace=trace,
+            tenant_id=tenant_id,
+            run_id=run_id,
+            job_id=job_id,
+            worker_id=worker_id,
+            spec=spec if isinstance(spec, dict) else None,
+            range_=range_,
+            as_of=as_of,
+            data=data,
+            envelope=envelope,
+            rhash=rhash,
+        )
         stored = {
             "data": data,
             "provenance": envelope.get("provenance"),
             "partial": bool(envelope.get("partial")),
             "warnings": envelope.get("warnings") or [],
             "result_hash": rhash,
+            "artifacts": [
+                {
+                    "artifact_id": artifact["artifact_id"],
+                    "kind": artifact["kind"],
+                    "uri": artifact["uri"],
+                    "sha256": artifact["metadata"].get("sha256"),
+                }
+                for artifact in artifacts
+            ],
         }
         emit(
             trace, tenant_id=tenant_id, run_id=run_id, type="run_progress",
@@ -194,7 +426,15 @@ def run_backtest_job(
         )
         runs.set_result(tenant_id, run_id, stored)
         if jobs is not None and job_id is not None:
-            jobs.complete(tenant_id, job_id, worker_id=worker_id, result={"result_hash": rhash})
+            jobs.complete(
+                tenant_id,
+                job_id,
+                worker_id=worker_id,
+                result={
+                    "result_hash": rhash,
+                    "artifact_ids": [artifact["artifact_id"] for artifact in artifacts],
+                },
+            )
         runs.transition(tenant_id, run_id, "succeeded", expect=running["version"])
         emit(
             trace, tenant_id=tenant_id, run_id=run_id, type="run_transition",

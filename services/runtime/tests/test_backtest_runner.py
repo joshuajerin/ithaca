@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import urllib.parse
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -29,6 +32,59 @@ def test_backtest_writes_result_and_succeeds(platform, tenant_id, spec, core):
     assert "run_progress" in types
     assert types[-1] == "run_transition"
     assert platform.trace.events_by_run[run_id][-1]["data"]["to"] == "succeeded"
+
+
+def test_backtest_records_canonical_artifact_bundle(durable_platform, tenant_id, spec, core, tmp_path, monkeypatch):
+    monkeypatch.setenv("DOOMBERG_ARTIFACT_DIR", str(tmp_path))
+    run_id = seed_queued_run(durable_platform, tenant_id, spec)
+    job = durable_platform.jobs.create_for_run(
+        tenant_id,
+        run_id,
+        kind="backtest",
+        profile="backtest",
+        payload={"spec": spec, "range": "1y"},
+    )
+
+    row = run_backtest_job(
+        tenant_id,
+        run_id,
+        platform=durable_platform,
+        core=core,
+        job_id=job["job_id"],
+        worker_id="worker-artifacts",
+    )
+
+    assert row["state"] == "succeeded"
+    artifacts = durable_platform.artifacts.list_by_run(tenant_id, run_id)
+    by_file = {artifact["metadata"]["filename"]: artifact for artifact in artifacts}
+    assert set(by_file) == {
+        "summary.json",
+        "metrics.json",
+        "equity_curve.json",
+        "positions.json",
+        "data_manifest.json",
+        "environment_lock.json",
+        "run_trace.json",
+        "report.html",
+    }
+    assert row["result"]["artifacts"]
+    assert {item["artifact_id"] for item in row["result"]["artifacts"]} == {
+        artifact["artifact_id"] for artifact in artifacts
+    }
+    for artifact in artifacts:
+        parsed = urllib.parse.urlparse(artifact["uri"])
+        assert parsed.scheme == "file"
+        path = Path(urllib.parse.unquote(parsed.path))
+        content = path.read_bytes()
+        assert path.is_file()
+        assert len(content) == artifact["bytes"]
+        assert hashlib.sha256(content).hexdigest() == artifact["metadata"]["sha256"]
+        assert artifact["metadata"]["bundle"] == "backtest.v1"
+        assert artifact["metadata"]["stored"] is True
+    events = durable_platform.trace.events(tenant_id, run_id)
+    assert [event["type"] for event in events].count("artifact_created") == len(artifacts)
+    done_job = durable_platform.jobs.get(tenant_id, job["job_id"])
+    assert set(done_job["result"]["artifact_ids"]) == {artifact["artifact_id"] for artifact in artifacts}
 
 
 def test_backtest_is_deterministic_same_spec_seed_window(platform, tenant_id, spec, core):

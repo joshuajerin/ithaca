@@ -80,6 +80,9 @@ uv run --package doomberg-control-plane uvicorn doomberg_control.app:app --port 
 uv run --package doomberg-rest-gateway  uvicorn doomberg_rest.app:app   --port 8000
 
 # the deploy-layer conductor: pulls the backtest queue + ticks live paper deployments
+# Optional: persist worker-generated backtest artifacts as local files. If unset,
+# artifact records still carry deterministic memory:// URIs, byte counts, and SHA-256 hashes.
+# export DOOMBERG_ARTIFACT_DIR=/var/lib/doomberg/artifacts
 uv run python scripts/run_workers.py
 
 # trigger engine: polls active trigger policies and creates durable runs.
@@ -100,7 +103,8 @@ uv run --package doomberg-runtime python -m doomberg_runtime.trigger_engine
 # export DOOMBERG_EXECUTION_MAX_NOTIONAL_USD=10000
 
 # customer-handoff launch gate: migrations, REST auth, sessions, SSE replay,
-# artifact reads, trigger-to-run readiness, MCP auth/resource checks,
+# worker-generated hashed backtest artifact bundles, artifact reads,
+# trigger-to-run readiness, MCP auth/resource checks,
 # MCP run create/cancel, ops status, and optional IBKR smoke.
 uv run python scripts/launch_gate.py --mode local --skip-ibkr
 

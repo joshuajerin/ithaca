@@ -16,7 +16,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
@@ -38,10 +38,10 @@ _LAUNCH_GATE_BACKTEST_SPEC = {
     "spec_version": "1.0",
     "name": "launch-gate-backtest",
     "universe": {"symbols": ["AAA", "BBB", "CCC"], "source": "prices"},
-    "strategy": {"id": "momentum", "params": {"lookback": 60}},
-    "construction": {"scheme": "rank_weight", "long_only": True, "gross": 1.0},
-    "risk": {"max_gross": 1.0, "max_net": 1.0, "max_name_pct": 0.5},
-    "execution": {"cost_bps": 5, "algo": "vwap", "rebalance": "monthly@close"},
+    "strategy": {"id": "rank_returns", "params": {"lookback": 60, "top": 2}},
+    "construction": {"scheme": "equal_weight", "long_only": True, "gross": 1.0},
+    "risk": {"max_gross": 1.0, "max_net": 1.0, "max_name_pct": 0.6},
+    "execution": {"cost_bps": 5, "algo": "market", "rebalance": "monthly@close"},
     "seed": 42,
 }
 
@@ -790,6 +790,128 @@ def _check_artifacts(
     return [_pass("artifact fetch", "existing artifact metadata fetched by id", artifact_id=artifact_id)]
 
 
+def _launch_gate_fetch_history(symbols: list[str]):
+    del symbols
+    prices = {
+        "AAA": [100.0 + i * 0.35 for i in range(260)],
+        "BBB": [80.0 + i * 0.08 for i in range(260)],
+        "CCC": [120.0 - i * 0.05 for i in range(260)],
+    }
+    dates = [
+        (datetime(2025, 1, 1, tzinfo=timezone.utc) + timedelta(days=i)).date().isoformat()
+        for i in range(400)
+    ]
+    trading_days = [day for day in dates if datetime.fromisoformat(day).weekday() < 5][:260]
+
+    def _fetch(symbol: str, range_: str = "1y", interval: str = "1d") -> dict[str, Any]:
+        del range_, interval
+        sym = symbol.upper()
+        closes = prices[sym]
+        return {
+            "points": [
+                {"d": trading_days[i], "o": close, "h": close, "l": close, "c": close, "v": 1_000_000}
+                for i, close in enumerate(closes)
+            ],
+            "quote": {"symbol": sym, "price": closes[-1], "asOf": trading_days[-1] + "T20:00:00Z"},
+        }
+
+    return _fetch
+
+
+def _check_backtest_artifact_bundle(
+    rest: RestClient,
+    *,
+    token: str,
+    tenant_id: str,
+    local_stores: Any,
+) -> list[GateResult]:
+    from doomberg_core import Core, DataGateway
+    from doomberg_runtime import run_backtest_job
+
+    run_id = local_stores.runs.create(tenant_id, "backtest", None, _LAUNCH_GATE_BACKTEST_SPEC)
+    local_stores.runs.transition(tenant_id, run_id, "queued", expect=0)
+    job = local_stores.jobs.create_for_run(
+        tenant_id,
+        run_id,
+        kind="backtest",
+        profile="backtest",
+        payload={"spec": _LAUNCH_GATE_BACKTEST_SPEC, "range": "1y"},
+        idempotency_key=f"launch-gate-artifacts:{run_id}",
+    )
+    core = Core(gateway=DataGateway(fetch_history=_launch_gate_fetch_history(["AAA", "BBB", "CCC"])))
+    run = run_backtest_job(
+        tenant_id,
+        run_id,
+        platform=local_stores,
+        core=core,
+        job_id=job["job_id"],
+        worker_id="launch-gate-artifacts",
+    )
+    if run.get("state") != "succeeded":
+        return [_fail("backtest artifact bundle", "worker run did not succeed", run=run)]
+
+    artifacts = local_stores.artifacts.list_by_run(tenant_id, run_id)
+    by_file = {artifact.get("metadata", {}).get("filename"): artifact for artifact in artifacts}
+    required = {
+        "summary.json",
+        "metrics.json",
+        "equity_curve.json",
+        "positions.json",
+        "data_manifest.json",
+        "environment_lock.json",
+        "run_trace.json",
+        "report.html",
+    }
+    missing = sorted(required - set(by_file))
+    if missing:
+        return [_fail("backtest artifact bundle", "worker did not record the full artifact bundle", missing=missing)]
+    bad_hashes = [
+        artifact["artifact_id"]
+        for artifact in artifacts
+        if not artifact.get("metadata", {}).get("sha256") or artifact.get("bytes") is None
+    ]
+    if bad_hashes:
+        return [_fail("backtest artifact bundle", "artifact metadata missing hashes or byte counts", artifacts=bad_hashes)]
+
+    summary = by_file["summary.json"]
+    body, failure = _get_json(
+        rest,
+        f"/api/artifacts/{urllib.parse.quote(summary['artifact_id'])}",
+        token=token,
+        tenant_id=None,
+        name="backtest artifact fetch",
+    )
+    if failure:
+        return [failure]
+    if not body or body.get("artifact_id") != summary["artifact_id"]:
+        return [_fail("backtest artifact fetch", "REST did not return the generated summary artifact", body=body)]
+
+    event_count = len([
+        event
+        for event in local_stores.trace.events(tenant_id, run_id)
+        if event.get("type") == "artifact_created"
+    ])
+    if event_count != len(artifacts):
+        return [
+            _fail(
+                "backtest artifact bundle",
+                "trace did not emit one artifact_created event per artifact",
+                artifacts=len(artifacts),
+                events=event_count,
+            )
+        ]
+    return [
+        _pass(
+            "backtest artifact bundle",
+            "worker produced canonical hashed artifact bundle",
+            run_id=run_id,
+            artifact_count=len(artifacts),
+            summary_artifact_id=summary["artifact_id"],
+            result_hash=run.get("result", {}).get("result_hash"),
+        )
+    ]
+
+
 def _check_ibkr(
     rest: RestClient,
     *,
@@ -1303,6 +1425,14 @@ def _run_local(args: argparse.Namespace) -> list[GateResult]:
                     local_stores=stores,
                     run_id=run_id,
                     require_artifact=True,
+                )
+            )
+            results.extend(
+                _check_backtest_artifact_bundle(
+                    rest,
+                    token=token,
+                    tenant_id=tenant_id,
+                    local_stores=stores,
                 )
             )
             results.append(
