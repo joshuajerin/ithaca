@@ -69,6 +69,7 @@
         "job_queued",
         "job_leased",
         "job_heartbeat",
+        "checkpoint_created",
         "artifact_created",
         "approval_requested",
         "approval_decided",

@@ -17,6 +17,15 @@ from .book_store import BookConflict, BookNotFound, BookStore
 from .control_store import ApprovalStore, ArtifactStore, ExecutionStore, ProviderStore, TriggerStore
 from .db import Db, open_db
 from .job_store import JobConflict, JobNotFound, JobStore
+from .job_profiles import (
+    JOB_PROFILES,
+    JobProfile,
+    UnknownJobProfile,
+    admission_metadata,
+    all_job_profile_manifests,
+    get_job_profile,
+    job_profile_manifest,
+)
 from .lease_store import LeaseConflict, LeaseStore
 from .platform import Platform
 from .run_store import (
@@ -39,6 +48,13 @@ __all__ = [
     "BookStore",
     "AuthStore",
     "JobStore",
+    "JOB_PROFILES",
+    "JobProfile",
+    "UnknownJobProfile",
+    "admission_metadata",
+    "all_job_profile_manifests",
+    "get_job_profile",
+    "job_profile_manifest",
     "LeaseStore",
     "ArtifactStore",
     "ApprovalStore",

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timezone
 
 from doomberg_control.actions import ActionError
 from doomberg_control.deps import Ctx
@@ -83,6 +84,27 @@ def _provenance_summary(envelope: dict) -> dict:
     if warnings:
         summary["warnings"] = [w.get("code") for w in warnings if isinstance(w, dict)]
     return summary
+
+
+def _ibkr_skill_envelope(data: dict, *, as_of: str | None = None) -> dict:
+    """Wrap connected-account IBKR data in the same envelope shape as catalog skills."""
+
+    as_of = as_of or datetime.now(timezone.utc).isoformat()
+    return {
+        "data": data,
+        "provenance": {
+            "source": "ibkr-engine",
+            "as_of": as_of,
+            "freshness": "live",
+            "stale_age_sec": None,
+            "pit": "false",
+            "coverage": {"requested": 1, "resolved": 1, "missing": []},
+            "cost": {"class": "connected_account", "credits": 0},
+            "cache_hit": False,
+        },
+        "partial": False,
+        "warnings": [],
+    }
 
 
 class Toolset:
@@ -205,6 +227,86 @@ class Toolset:
         tr.tool_result("market.get_ohlcv", span, _provenance_summary(out))
         return out
 
+    def market_quote(
+        self,
+        symbol: str,
+        *,
+        max_freshness_ms: int | None = None,
+        _ctx: dict | None = None,
+    ) -> dict:
+        """Entitlement-aware connected-account realtime quote via the IBKR engine."""
+
+        ctx = dict(_ctx or {})
+        tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
+        tr = self._tracer(_ctx)
+        span = tr.tool_call("market.quote", {"symbol": symbol, "max_freshness_ms": max_freshness_ms})
+        client = IbkrEngineClient()
+        diagnosis = client.diagnose_quote(
+            symbol=symbol,
+            tenant_id=tenant_id,
+            max_freshness_ms=max_freshness_ms,
+        )
+        if not diagnosis.get("ok"):
+            out = self._typed_error(
+                diagnosis.get("code") or "PROVIDER_DEGRADED",
+                diagnosis.get("error") or diagnosis.get("status") or "IBKR quote failed",
+                diagnosis.get("recovery_action") or "Check the IBKR engine and connected-account data entitlements.",
+                {"diagnosis": {k: v for k, v in diagnosis.items() if k != "quote"}},
+            )
+            tr.tool_result("market.quote", span, {"source": "ibkr-engine", "ok": False,
+                                                  "code": out["error"]["code"]})
+            return out
+        quote = diagnosis["quote"]
+        out = _ibkr_skill_envelope(
+            {
+                **quote,
+                "provider": "ibkr-engine",
+                "diagnostics": {
+                    "latency_ms": diagnosis.get("latency_ms"),
+                    "invariants": diagnosis.get("invariants") or [],
+                },
+            },
+            as_of=quote.get("event_time"),
+        )
+        tr.tool_result("market.quote", span, _provenance_summary(out))
+        return out
+
+    def broker_accounts(self, _ctx: dict | None = None) -> dict:
+        ctx = dict(_ctx or {})
+        tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
+        tr = self._tracer(_ctx)
+        span = tr.tool_call("broker.accounts", {})
+        out = _ibkr_skill_envelope(IbkrEngineClient().accounts(tenant_id=tenant_id))
+        tr.tool_result("broker.accounts", span, _provenance_summary(out))
+        return out
+
+    def broker_positions(self, account: str | None = None, _ctx: dict | None = None) -> dict:
+        ctx = dict(_ctx or {})
+        tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
+        tr = self._tracer(_ctx)
+        span = tr.tool_call("broker.positions", {"account": account})
+        out = _ibkr_skill_envelope(IbkrEngineClient().positions(account=account, tenant_id=tenant_id))
+        tr.tool_result("broker.positions", span, _provenance_summary(out))
+        return out
+
+    def broker_orders(self, account: str | None = None, _ctx: dict | None = None) -> dict:
+        ctx = dict(_ctx or {})
+        tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
+        tr = self._tracer(_ctx)
+        span = tr.tool_call("broker.orders", {"account": account})
+        out = _ibkr_skill_envelope(IbkrEngineClient().orders(account=account, tenant_id=tenant_id))
+        tr.tool_result("broker.orders", span, _provenance_summary(out))
+        return out
+
+    def ops_provider_status(
+        self,
+        symbol: str = "AAPL",
+        max_freshness_ms: int | None = None,
+        _ctx: dict | None = None,
+    ) -> dict:
+        result = self.ibkr_smoke(symbol=symbol, max_freshness_ms=max_freshness_ms, _ctx=_ctx)
+        return _ibkr_skill_envelope({"provider": "ibkr-engine", **result})
+
     def backtest_run(self, spec: dict, range: str = "1y", _ctx: dict | None = None) -> dict:
         tr = self._tracer(_ctx)
         span = tr.tool_call("backtest.run", {"spec": spec, "range": range})
@@ -238,6 +340,25 @@ class Toolset:
         skill never executes agent code. tool_call / tool_result events are emitted on the same
         gap-free, research-session-aware tracer the existing tools use.
         """
+        tool = self._canonical_skill_id(tool)
+        if tool == "market.quote":
+            return self.market_quote(
+                params["symbol"],
+                max_freshness_ms=params.get("max_freshness_ms"),
+                _ctx=_ctx,
+            )
+        if tool == "broker.accounts":
+            return self.broker_accounts(_ctx=_ctx)
+        if tool == "broker.positions":
+            return self.broker_positions(params.get("account"), _ctx=_ctx)
+        if tool == "broker.orders":
+            return self.broker_orders(params.get("account"), _ctx=_ctx)
+        if tool == "ops.provider_status":
+            return self.ops_provider_status(
+                params.get("symbol", "AAPL"),
+                max_freshness_ms=params.get("max_freshness_ms"),
+                _ctx=_ctx,
+            )
         method = SKILLS.get(tool)
         if method is None:
             raise ValueError(f"unknown skill: {tool!r} (have {sorted(SKILLS)})")
@@ -404,6 +525,24 @@ class Toolset:
             if skill_id == "market.get_ohlcv":
                 return self.market_get_ohlcv(params["symbol"], params.get("range", "6mo"),
                                              params.get("interval", "1d"), _ctx=_ctx)
+            if skill_id == "market.quote":
+                return self.market_quote(
+                    params["symbol"],
+                    max_freshness_ms=params.get("max_freshness_ms"),
+                    _ctx=_ctx,
+                )
+            if skill_id == "broker.accounts":
+                return self.broker_accounts(_ctx=_ctx)
+            if skill_id == "broker.positions":
+                return self.broker_positions(params.get("account"), _ctx=_ctx)
+            if skill_id == "broker.orders":
+                return self.broker_orders(params.get("account"), _ctx=_ctx)
+            if skill_id == "ops.provider_status":
+                return self.ops_provider_status(
+                    params.get("symbol", "AAPL"),
+                    max_freshness_ms=params.get("max_freshness_ms"),
+                    _ctx=_ctx,
+                )
             return self.call_skill(skill_id, params, _ctx=_ctx)
 
         jobs = getattr(self.platform, "jobs", None)
@@ -461,6 +600,24 @@ class Toolset:
             if skill_id == "market.get_ohlcv":
                 out = self.market_get_ohlcv(params["symbol"], params.get("range", "6mo"),
                                             params.get("interval", "1d"), _ctx=run_ctx)
+            elif skill_id == "market.quote":
+                out = self.market_quote(
+                    params["symbol"],
+                    max_freshness_ms=params.get("max_freshness_ms"),
+                    _ctx=run_ctx,
+                )
+            elif skill_id == "broker.accounts":
+                out = self.broker_accounts(_ctx=run_ctx)
+            elif skill_id == "broker.positions":
+                out = self.broker_positions(params.get("account"), _ctx=run_ctx)
+            elif skill_id == "broker.orders":
+                out = self.broker_orders(params.get("account"), _ctx=run_ctx)
+            elif skill_id == "ops.provider_status":
+                out = self.ops_provider_status(
+                    params.get("symbol", "AAPL"),
+                    max_freshness_ms=params.get("max_freshness_ms"),
+                    _ctx=run_ctx,
+                )
             else:
                 out = self.call_skill(skill_id, params, _ctx=run_ctx)
         except Exception as exc:  # noqa: BLE001 - return typed error in run result.

@@ -5,7 +5,9 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from doomberg_platform import LeaseConflict
+import pytest
+
+from doomberg_platform import LeaseConflict, UnknownJobProfile
 
 
 def test_job_store_idempotent_enqueue_and_lease(platform):
@@ -36,10 +38,21 @@ def test_job_store_idempotent_enqueue_and_lease(platform):
     )
     assert [j["job_id"] for j in claimed] == [first["job_id"]]
     assert claimed[0]["state"] == "leased"
+    assert claimed[0]["payload"]["admission"]["profile"] == "backtest"
+    assert claimed[0]["payload"]["admission"]["limits"]["max_duration_seconds"] == 7200
     running = platform.jobs.heartbeat(tenant, first["job_id"], worker_id="worker-1")
     assert running["state"] == "running"
     done = platform.jobs.complete(tenant, first["job_id"], worker_id="worker-1", result={"ok": True})
     assert done["state"] == "succeeded"
+
+
+def test_job_store_rejects_unknown_compute_profile(platform):
+    tenant = platform.auth.create_tenant("jobs")
+    run_id = platform.runs.create(tenant, "backtest", None, {"name": "demo"})
+    platform.runs.transition(tenant, run_id, "queued", expect=0)
+
+    with pytest.raises(UnknownJobProfile):
+        platform.jobs.create_for_run(tenant, run_id, kind="backtest", profile="gpu-magic")
 
 
 def test_job_store_terminal_writes_require_lease_owner(platform):
@@ -51,7 +64,6 @@ def test_job_store_terminal_writes_require_lease_owner(platform):
         profiles=("backtest",), kinds=("backtest",), worker_id="worker-1", limit=1
     )
 
-    import pytest
     from doomberg_platform.job_store import JobConflict
 
     with pytest.raises(JobConflict):

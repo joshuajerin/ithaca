@@ -31,18 +31,26 @@ class _QuoteServer:
             def do_GET(self) -> None:  # noqa: N802
                 owner.requests.append({"path": self.path, "tenant": self.headers.get("X-Tenant-Id")})
                 now = datetime.now(timezone.utc).isoformat()
-                raw = json.dumps({
-                    "data": {
-                        "quote": {
-                            "symbol": "AAPL",
-                            "price": 212.45,
-                            "event_time": now,
-                            "received_time": now,
-                            "source": "ibkr-engine",
-                            "entitlement_class": "connected_account",
+                if self.path.startswith("/accounts"):
+                    payload = {"accounts": [{"account_id": "DU12345", "type": "paper", "token": "secret"}]}
+                elif self.path.startswith("/positions"):
+                    payload = {"positions": [{"symbol": "AAPL", "quantity": 3, "secret": "x"}]}
+                elif self.path.startswith("/orders"):
+                    payload = {"orders": [{"order_id": "100", "symbol": "AAPL", "status": "Submitted"}]}
+                else:
+                    payload = {
+                        "data": {
+                            "quote": {
+                                "symbol": "AAPL",
+                                "price": 212.45,
+                                "event_time": now,
+                                "received_time": now,
+                                "source": "ibkr-engine",
+                                "entitlement_class": "connected_account",
+                            }
                         }
                     }
-                }).encode("utf-8")
+                raw = json.dumps(payload).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(raw)))
@@ -272,6 +280,45 @@ def test_ibkr_smoke_returns_diagnosis_and_traces_provider_status(toolset, monkey
     assert event["type"] == "provider_status"
     assert event["data"]["provider"] == "ibkr-engine"
     assert event["data"]["ok"] is True
+
+
+def test_run_skill_exposes_ibkr_realtime_and_broker_read_skills(toolset_core, monkeypatch):
+    platform = Platform(":memory:")
+    tenant = platform.auth.create_tenant("mcp-ibkr")
+    ts = Toolset(
+        core=toolset_core,
+        sink=PlatformTraceSink(platform.trace),
+        runs=platform.runs,
+        platform=platform,
+    )
+    with _QuoteServer() as server:
+        monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
+        monkeypatch.setenv("DOOMBERG_IBKR_QUOTE_PATH", "/quote/{symbol}")
+        monkeypatch.setenv("DOOMBERG_IBKR_ACCOUNTS_PATH", "/accounts")
+        monkeypatch.setenv("DOOMBERG_IBKR_POSITIONS_PATH", "/positions?account={account}")
+
+        quote = ts.run_skill(
+            "market.quote",
+            input={"symbol": "AAPL", "max_freshness_ms": 10_000},
+            _ctx={"tenant_id": tenant, "agent_id": "agent"},
+        )
+        positions = ts.run_skill(
+            "broker.positions",
+            input={"account": "DU12345"},
+            _ctx={"tenant_id": tenant, "agent_id": "agent"},
+        )
+
+    assert quote["status"] == "succeeded"
+    assert quote["result"]["data"]["symbol"] == "AAPL"
+    assert quote["result"]["provenance"]["source"] == "ibkr-engine"
+    assert positions["status"] == "succeeded"
+    assert positions["result"]["data"]["positions"] == [{"symbol": "AAPL", "quantity": 3}]
+    assert [request["path"] for request in server.requests] == [
+        "/quote/AAPL",
+        "/positions?account=DU12345",
+    ]
+    got = ts.get_run(positions["run_id"], _ctx={"tenant_id": tenant})
+    assert any(event["type"] == "tool_result" for event in got["events"])
 
 
 def test_run_skill_queues_durable_backtest(toolset_core, sample_spec):

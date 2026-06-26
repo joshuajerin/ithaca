@@ -53,6 +53,50 @@ def _sha256_bytes(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
+def _checkpoint_ref(
+    *,
+    tenant_id: str,
+    run_id: str,
+    job_id: str | None,
+    phase: str,
+    payload: dict[str, Any],
+) -> str:
+    digest = result_hash({"phase": phase, "payload": payload})
+    job_part = job_id or "no-job"
+    return f"memory://checkpoints/{tenant_id}/{run_id}/{job_part}/{phase}.json#sha256={digest}"
+
+
+def _checkpoint(
+    *,
+    platform: Any,
+    tenant_id: str,
+    run_id: str,
+    job_id: str | None,
+    worker_id: str | None,
+    phase: str,
+    payload: dict[str, Any],
+) -> str | None:
+    jobs = getattr(platform, "jobs", None)
+    if jobs is None or job_id is None:
+        return None
+    ref = _checkpoint_ref(
+        tenant_id=tenant_id,
+        run_id=run_id,
+        job_id=job_id,
+        phase=phase,
+        payload=payload,
+    )
+    jobs.heartbeat(tenant_id, job_id, worker_id=worker_id, checkpoint_ref=ref)
+    emit(
+        platform.trace,
+        tenant_id=tenant_id,
+        run_id=run_id,
+        type="checkpoint_created",
+        data={"job_id": job_id, "phase": phase, "checkpoint_ref": ref},
+    )
+    return ref
+
+
 def _artifact_uri(tenant_id: str, run_id: str, filename: str, content: bytes, sha256: str) -> tuple[str, bool]:
     root = os.environ.get("DOOMBERG_ARTIFACT_DIR", "").strip()
     if not root:
@@ -343,8 +387,15 @@ def run_backtest_job(
         dl.check("backtest:start")
         if _cancel_if_requested("backtest:start"):
             return runs.get(tenant_id, run_id)
-        if jobs is not None and job_id is not None:
-            jobs.heartbeat(tenant_id, job_id, worker_id=worker_id)
+        _checkpoint(
+            platform=platform,
+            tenant_id=tenant_id,
+            run_id=run_id,
+            job_id=job_id,
+            worker_id=worker_id,
+            phase="loading",
+            payload={"range": range_, "as_of": as_of},
+        )
         emit(
             trace, tenant_id=tenant_id, run_id=run_id, type="run_progress",
             data={"phase": "loading", "pct": 5, "remaining_ms": dl.remaining_ms()},
@@ -353,8 +404,15 @@ def run_backtest_job(
         ctx = CoreContext(tenant_id=tenant_id, deadline_ms=dl.remaining_ms())
         if _cancel_if_requested("backtest:precompute"):
             return runs.get(tenant_id, run_id)
-        if jobs is not None and job_id is not None:
-            jobs.heartbeat(tenant_id, job_id, worker_id=worker_id)
+        _checkpoint(
+            platform=platform,
+            tenant_id=tenant_id,
+            run_id=run_id,
+            job_id=job_id,
+            worker_id=worker_id,
+            phase="precompute",
+            payload={"range": range_, "as_of": as_of},
+        )
         emit(
             trace, tenant_id=tenant_id, run_id=run_id, type="run_progress",
             data={"phase": "computing", "pct": 40, "remaining_ms": dl.remaining_ms()},
@@ -390,6 +448,15 @@ def run_backtest_job(
             return runs.get(tenant_id, run_id)
 
         rhash = result_hash(data)
+        _checkpoint(
+            platform=platform,
+            tenant_id=tenant_id,
+            run_id=run_id,
+            job_id=job_id,
+            worker_id=worker_id,
+            phase="postcompute",
+            payload={"result_hash": rhash},
+        )
         artifacts = _record_backtest_artifacts(
             platform=platform,
             trace=trace,
@@ -420,6 +487,18 @@ def run_backtest_job(
                 for artifact in artifacts
             ],
         }
+        _checkpoint(
+            platform=platform,
+            tenant_id=tenant_id,
+            run_id=run_id,
+            job_id=job_id,
+            worker_id=worker_id,
+            phase="persisted",
+            payload={
+                "result_hash": rhash,
+                "artifact_ids": [artifact["artifact_id"] for artifact in artifacts],
+            },
+        )
         emit(
             trace, tenant_id=tenant_id, run_id=run_id, type="run_progress",
             data={"phase": "persisting", "pct": 90, "remaining_ms": dl.remaining_ms()},

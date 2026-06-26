@@ -14,10 +14,19 @@ from .skillset import SKILLS
 SKILL_VERSION = "0.1.0"
 RUNTIME_IMAGE = "doomberg/skill-runtime:0.1.0"
 
-CORE_SKILL_IDS = ("market.get_ohlcv", "backtest.run")
+CORE_SKILL_IDS = (
+    "backtest.run",
+    "broker.accounts",
+    "broker.orders",
+    "broker.positions",
+    "market.get_ohlcv",
+    "market.quote",
+    "ops.provider_status",
+)
 
 _GROUP_DESCRIPTIONS = {
     "analyst": "Archive-backed analyst consensus, targets, and rating-change intelligence.",
+    "broker": "Connected-account broker read models for accounts, positions, and order state.",
     "commodity": "Community commodity price snapshots and recent changes.",
     "congress": "STOCK Act congressional trading disclosures and derived screens.",
     "correlation": "Computed correlation analytics over archive return series.",
@@ -38,6 +47,7 @@ _GROUP_DESCRIPTIONS = {
     "market": "Market data and market-structure archive analytics with provenance.",
     "montecarlo": "Seeded Monte Carlo scenario simulation.",
     "options": "Computed options valuation primitives from declared inputs.",
+    "ops": "Provider health and platform operations diagnostics.",
     "politician": "Estimated politician portfolio analytics from disclosed trades.",
     "portfolio": "Computed portfolio construction and optimization primitives.",
     "risk": "Computed portfolio stress and risk diagnostics.",
@@ -90,6 +100,14 @@ def _group(skill_id: str) -> str:
 
 def _source_classes(skill_id: str) -> list[str]:
     group = _group(skill_id)
+    if skill_id in {
+        "broker.accounts",
+        "broker.orders",
+        "broker.positions",
+        "market.quote",
+        "ops.provider_status",
+    }:
+        return ["connected_account"]
     if skill_id == "market.get_ohlcv":
         return ["community"]
     if group in _COMPUTED_GROUPS:
@@ -101,6 +119,14 @@ def _source_classes(skill_id: str) -> list[str]:
 
 def _datasets(skill_id: str) -> list[str]:
     group = _group(skill_id)
+    if skill_id in {
+        "broker.accounts",
+        "broker.orders",
+        "broker.positions",
+        "market.quote",
+        "ops.provider_status",
+    }:
+        return []
     if skill_id == "market.get_ohlcv":
         return ["prices"]
     if group in _COMPUTED_GROUPS and group != "portfolio":
@@ -129,6 +155,35 @@ def _runtime(skill_id: str) -> dict[str, Any]:
 
 
 def _input_schema(skill_id: str) -> dict[str, Any]:
+    if skill_id == "market.quote":
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["symbol"],
+            "properties": {
+                "symbol": {"type": "string", "minLength": 1},
+                "max_freshness_ms": {"type": "integer", "minimum": 0},
+            },
+        }
+    if skill_id == "broker.accounts":
+        return {"type": "object", "additionalProperties": False, "properties": {}}
+    if skill_id in {"broker.positions", "broker.orders"}:
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "account": {"type": "string", "minLength": 1},
+            },
+        }
+    if skill_id == "ops.provider_status":
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "symbol": {"type": "string", "default": "AAPL"},
+                "max_freshness_ms": {"type": "integer", "minimum": 0},
+            },
+        }
     if skill_id == "market.get_ohlcv":
         return {
             "type": "object",
@@ -156,6 +211,13 @@ def _input_schema(skill_id: str) -> dict[str, Any]:
 def _manifest(skill_id: str) -> dict[str, Any]:
     group = _group(skill_id)
     description = _GROUP_DESCRIPTIONS.get(group, f"Runnable Doomberg skill: {_title(skill_id)}.")
+    broker_permissions: list[str] = []
+    network_permissions: list[str] = [] if "computed" in _source_classes(skill_id) else ["archive"]
+    if skill_id in {"market.quote", "broker.accounts", "broker.positions", "broker.orders"}:
+        broker_permissions = ["read"]
+        network_permissions = ["ibkr-engine"]
+    elif skill_id == "ops.provider_status":
+        network_permissions = ["ibkr-engine"]
     return {
         "skill_id": skill_id,
         "version": SKILL_VERSION,
@@ -165,12 +227,12 @@ def _manifest(skill_id: str) -> dict[str, Any]:
         "runtime": _runtime(skill_id),
         "permissions": {
             "datasets": _datasets(skill_id),
-            "broker": [],
-            "network": [] if "computed" in _source_classes(skill_id) else ["archive"],
+            "broker": broker_permissions,
+            "network": network_permissions,
         },
         "input_schema": _input_schema(skill_id),
         "output_schema": {"type": "object"},
-        "freshness_requirement_seconds": 900 if skill_id == "market.get_ohlcv" else None,
+        "freshness_requirement_seconds": 10 if skill_id == "market.quote" else 900 if skill_id == "market.get_ohlcv" else None,
         "trigger_compatible": group in {"market", "options", "risk", "technical", "vol"},
         "determinism": "seeded" if skill_id in _SEEDED else "deterministic",
         "artifact_types": ["report", "metrics", "orders", "fills"] if "backtest" in _runtime(skill_id)["profile"] else [],

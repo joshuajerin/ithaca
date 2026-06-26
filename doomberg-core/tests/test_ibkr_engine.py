@@ -70,6 +70,52 @@ class _Server:
             self._thread.join(timeout=2)
 
 
+class _RouteServer:
+    def __init__(self, routes: dict[str, dict[str, Any]]) -> None:
+        self.routes = routes
+        self.requests: list[dict[str, Any]] = []
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                owner.requests.append({
+                    "method": "GET",
+                    "path": self.path,
+                    "tenant": self.headers.get("X-Tenant-Id"),
+                    "authorization": self.headers.get("Authorization"),
+                })
+                payload = owner.routes.get(self.path, {})
+                raw = json.dumps(payload).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def log_message(self, *_args: Any) -> None:
+                return
+
+        self._handler = Handler
+        self._server: ThreadingHTTPServer | None = None
+        self._thread: threading.Thread | None = None
+        self.url = ""
+
+    def __enter__(self) -> "_RouteServer":
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler)
+        host, port = self._server.server_address
+        self.url = f"http://{host}:{port}"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+
+
 def _quote_payload(
     event_time: datetime,
     *,
@@ -132,6 +178,48 @@ def test_ibkr_quote_client_normalizes_smoke_and_submit_order() -> None:
     assert server.requests[0]["tenant"] == "tenant-1"
     assert server.requests[0]["authorization"] == "Bearer secret-token"
     assert server.requests[-1]["body"]["client_order_id"] == "client-1"
+
+
+def test_ibkr_read_models_are_redacted_and_account_scoped() -> None:
+    routes = {
+        "/v1/accounts": {
+            "accounts": [
+                {"account_id": "DU12345", "type": "paper", "token": "secret"},
+            ],
+        },
+        "/v1/positions?account=DU12345": {
+            "positions": [
+                {"symbol": "AAPL", "quantity": 2, "session": "secret-session"},
+            ],
+        },
+        "/v1/orders?account=DU12345": {
+            "orders": [
+                {"order_id": "100", "symbol": "AAPL", "status": "Submitted", "secret": "x"},
+            ],
+        },
+    }
+    with _RouteServer(routes) as server:
+        client = IbkrEngineClient(
+            base_url=server.url,
+            token="secret-token",
+            accounts_path="/v1/accounts",
+            positions_path="/v1/positions?account={account}",
+            orders_path="/v1/orders?account={account}",
+        )
+
+        accounts = client.accounts(tenant_id="tenant-1")
+        positions = client.positions(account="DU12345", tenant_id="tenant-1")
+        orders = client.orders(account="DU12345", tenant_id="tenant-1")
+
+    assert accounts["accounts"] == [{"account_id": "DU12345", "type": "paper"}]
+    assert positions["positions"] == [{"symbol": "AAPL", "quantity": 2}]
+    assert orders["orders"] == [{"order_id": "100", "symbol": "AAPL", "status": "Submitted"}]
+    assert [request["path"] for request in server.requests] == [
+        "/v1/accounts",
+        "/v1/positions?account=DU12345",
+        "/v1/orders?account=DU12345",
+    ]
+    assert {request["tenant"] for request in server.requests} == {"tenant-1"}
 
 
 def test_ibkr_diagnose_reports_stale_quote_when_limit_is_enforced() -> None:

@@ -23,4 +23,7 @@ def test_manifest_catalog_is_sorted_and_discovery_ready():
             "optimization",
             "stream",
         }
-        assert manifest["permissions"]["broker"] == []
+        assert set(manifest["permissions"]["broker"]) <= {"read"}
+    assert ALL_SKILL_MANIFESTS["market.quote"]["permissions"]["broker"] == ["read"]
+    assert ALL_SKILL_MANIFESTS["market.quote"]["source_classes"] == ["connected_account"]
+    assert ALL_SKILL_MANIFESTS["broker.positions"]["permissions"]["network"] == ["ibkr-engine"]

@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .db import Db
+from .job_profiles import admission_metadata, get_job_profile
 
 TERMINAL_STATES = {"succeeded", "failed", "cancelled", "timed_out"}
 
@@ -84,9 +85,13 @@ class JobStore:
             if existing is not None:
                 return existing
 
+        profile_manifest = get_job_profile(profile)
+        profile = profile_manifest.name
         job_id = str(uuid.uuid4())
         now = _now()
-        payload_json = json.dumps(payload or {})
+        payload_with_admission = dict(payload or {})
+        payload_with_admission.setdefault("admission", admission_metadata(profile))
+        payload_json = json.dumps(payload_with_admission)
         with self._db.write_lock:
             with self._db.conn as conn:
                 try:

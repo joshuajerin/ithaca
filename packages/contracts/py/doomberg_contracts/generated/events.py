@@ -41,6 +41,7 @@ class EventType(Enum):
     job_queued = "job_queued"
     job_leased = "job_leased"
     job_heartbeat = "job_heartbeat"
+    checkpoint_created = "checkpoint_created"
     artifact_created = "artifact_created"
     approval_requested = "approval_requested"
     approval_decided = "approval_decided"

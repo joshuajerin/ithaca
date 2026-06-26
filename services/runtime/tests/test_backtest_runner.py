@@ -83,8 +83,18 @@ def test_backtest_records_canonical_artifact_bundle(durable_platform, tenant_id,
         assert artifact["metadata"]["stored"] is True
     events = durable_platform.trace.events(tenant_id, run_id)
     assert [event["type"] for event in events].count("artifact_created") == len(artifacts)
+    checkpoints = [event for event in events if event["type"] == "checkpoint_created"]
+    assert [event["data"]["phase"] for event in checkpoints] == [
+        "loading",
+        "precompute",
+        "postcompute",
+        "persisted",
+    ]
     done_job = durable_platform.jobs.get(tenant_id, job["job_id"])
     assert set(done_job["result"]["artifact_ids"]) == {artifact["artifact_id"] for artifact in artifacts}
+    assert done_job["checkpoint_ref"].startswith(
+        f"memory://checkpoints/{tenant_id}/{run_id}/{job['job_id']}/persisted.json"
+    )
 
 
 def test_backtest_is_deterministic_same_spec_seed_window(platform, tenant_id, spec, core):

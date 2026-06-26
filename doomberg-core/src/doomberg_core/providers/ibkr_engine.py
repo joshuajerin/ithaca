@@ -1,7 +1,8 @@
 """Shared client for the user-run IBKR engine.
 
 The IBKR engine is a connected-account boundary. This client intentionally exposes only
-read-only quote diagnostics and explicit order-submission calls used by the execution gateway.
+read-only account/market-data routes and explicit order-submission calls used by the execution
+gateway.
 """
 
 from __future__ import annotations
@@ -162,6 +163,47 @@ def public_quote(quote: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in quote.items() if k != "raw"}
 
 
+def _payload_list(raw: Any, *names: str) -> list[Any]:
+    """Extract common list shapes from an IBKR engine response."""
+
+    if isinstance(raw, list):
+        return raw
+    if not isinstance(raw, dict):
+        return []
+    for container in (raw, raw.get("data") if isinstance(raw.get("data"), dict) else None):
+        if not isinstance(container, dict):
+            continue
+        for name in names:
+            value = container.get(name)
+            if isinstance(value, list):
+                return value
+    return []
+
+
+def _redacted_item(item: Any) -> dict[str, Any]:
+    """Return a JSON-safe item view without common credential/session fields."""
+
+    if not isinstance(item, dict):
+        return {"value": item}
+    blocked = {
+        "authorization",
+        "cookie",
+        "cookies",
+        "credential",
+        "credential_ref",
+        "password",
+        "secret",
+        "session",
+        "session_id",
+        "token",
+    }
+    return {
+        str(key): value
+        for key, value in item.items()
+        if str(key).lower() not in blocked
+    }
+
+
 class IbkrEngineClient:
     """Small HTTP client for the user-run IBKR engine."""
 
@@ -172,6 +214,9 @@ class IbkrEngineClient:
         token: str | None = None,
         quote_path: str | None = None,
         order_path: str | None = None,
+        accounts_path: str | None = None,
+        positions_path: str | None = None,
+        orders_path: str | None = None,
         timeout_s: float = 5.0,
     ) -> None:
         resolved_url = base_url if base_url is not None else os.environ.get("DOOMBERG_IBKR_ENGINE_URL")
@@ -179,6 +224,17 @@ class IbkrEngineClient:
         self.token = token if token is not None else os.environ.get("DOOMBERG_IBKR_ENGINE_TOKEN")
         self.quote_path = quote_path or os.environ.get("DOOMBERG_IBKR_QUOTE_PATH") or "/quote?symbol={symbol}"
         self.order_path = order_path or os.environ.get("DOOMBERG_IBKR_ORDER_PATH") or "/orders"
+        self.accounts_path = (
+            accounts_path or os.environ.get("DOOMBERG_IBKR_ACCOUNTS_PATH") or "/accounts"
+        )
+        self.positions_path = (
+            positions_path or os.environ.get("DOOMBERG_IBKR_POSITIONS_PATH")
+            or "/positions?account={account}"
+        )
+        self.orders_path = (
+            orders_path or os.environ.get("DOOMBERG_IBKR_ORDERS_PATH")
+            or "/orders?account={account}"
+        )
         self.timeout_s = float(timeout_s)
 
     @property
@@ -191,7 +247,13 @@ class IbkrEngineClient:
     def configured(self) -> bool:
         return bool(self.base_url)
 
-    def url_for_path(self, path: str, *, symbol: str | None = None) -> str:
+    def url_for_path(
+        self,
+        path: str,
+        *,
+        symbol: str | None = None,
+        account: str | None = None,
+    ) -> str:
         if not self.base_url:
             raise IbkrEngineConnectionError("DOOMBERG_IBKR_ENGINE_URL is not configured")
         resolved = path
@@ -202,6 +264,13 @@ class IbkrEngineClient:
             else:
                 sep = "&" if "?" in resolved else "?"
                 resolved = f"{resolved}{sep}symbol={encoded}"
+        if account is not None:
+            encoded = urllib.parse.quote(str(account))
+            if "{account}" in resolved:
+                resolved = resolved.replace("{account}", encoded)
+            else:
+                sep = "&" if "?" in resolved else "?"
+                resolved = f"{resolved}{sep}account={encoded}"
         if urllib.parse.urlparse(resolved).scheme:
             return resolved
         return f"{self.base_url}{resolved if resolved.startswith('/') else '/' + resolved}"
@@ -216,6 +285,66 @@ class IbkrEngineClient:
         if not isinstance(raw, dict):
             raise IbkrQuoteInvariantError(f"quote for {symbol.upper()} did not include a JSON object")
         return normalize_quote(raw, symbol=symbol, source="ibkr-engine")
+
+    def accounts(self, *, tenant_id: str | None = None) -> dict[str, Any]:
+        """Return a redacted read-only account summary from the user-run IBKR engine."""
+
+        raw = self._request_json(
+            "GET",
+            self.url_for_path(self.accounts_path),
+            tenant_id=tenant_id,
+            user_agent="doomberg-ibkr-accounts",
+        )
+        accounts = [_redacted_item(item) for item in _payload_list(raw, "accounts", "accountSummaries")]
+        if not accounts and isinstance(raw, dict):
+            account_id = raw.get("account") or raw.get("account_id") or raw.get("accountId")
+            if account_id:
+                accounts = [_redacted_item(raw)]
+        return {
+            "provider": "ibkr-engine",
+            "source": "ibkr-engine",
+            "entitlement_class": "connected_account",
+            "accounts": accounts,
+            "raw_count": len(accounts),
+        }
+
+    def positions(self, *, account: str | None = None, tenant_id: str | None = None) -> dict[str, Any]:
+        """Return redacted read-only positions from the user-run IBKR engine."""
+
+        raw = self._request_json(
+            "GET",
+            self.url_for_path(self.positions_path, account=account),
+            tenant_id=tenant_id,
+            user_agent="doomberg-ibkr-positions",
+        )
+        positions = [_redacted_item(item) for item in _payload_list(raw, "positions", "items")]
+        return {
+            "provider": "ibkr-engine",
+            "source": "ibkr-engine",
+            "source_account": account,
+            "entitlement_class": "connected_account",
+            "positions": positions,
+            "raw_count": len(positions),
+        }
+
+    def orders(self, *, account: str | None = None, tenant_id: str | None = None) -> dict[str, Any]:
+        """Return redacted read-only order state from the user-run IBKR engine."""
+
+        raw = self._request_json(
+            "GET",
+            self.url_for_path(self.orders_path, account=account),
+            tenant_id=tenant_id,
+            user_agent="doomberg-ibkr-orders",
+        )
+        orders = [_redacted_item(item) for item in _payload_list(raw, "orders", "items")]
+        return {
+            "provider": "ibkr-engine",
+            "source": "ibkr-engine",
+            "source_account": account,
+            "entitlement_class": "connected_account",
+            "orders": orders,
+            "raw_count": len(orders),
+        }
 
     def submit_order(
         self,
