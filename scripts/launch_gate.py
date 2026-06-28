@@ -416,6 +416,29 @@ def _mcp_read_resource(
 
 def _check_mcp_durable_run(send, *, token: str, session_id: str) -> list[GateResult]:
     results: list[GateResult] = []
+    started, failure = _mcp_call_tool(
+        send,
+        token=token,
+        session_id=session_id,
+        tool_name="start_research_session",
+        arguments={
+            "prompt": "Launch-gate MCP smoke: queue and cancel a durable backtest.",
+            "title": "Launch gate",
+        },
+        gate_name="mcp research session start",
+        mid=5,
+    )
+    if failure:
+        return [failure]
+    if not started or started.get("status") != "ok" or not started.get("session_id"):
+        return [_fail("mcp research session start", "start_research_session did not return a session", body=started)]
+    results.append(
+        _pass(
+            "mcp research session start",
+            "MCP research session opened before direct workflow tools",
+            session_id=started.get("session_id"),
+        )
+    )
     idempotency_key = f"launch-gate:{uuid.uuid4()}"
     created, failure = _mcp_call_tool(
         send,
@@ -429,7 +452,7 @@ def _check_mcp_durable_run(send, *, token: str, session_id: str) -> list[GateRes
             "idempotency_key": idempotency_key,
         },
         gate_name="mcp durable run create",
-        mid=5,
+        mid=6,
     )
     if failure:
         return [failure]
@@ -454,7 +477,7 @@ def _check_mcp_durable_run(send, *, token: str, session_id: str) -> list[GateRes
         session_id=session_id,
         uri=f"doomberg://runs/{run_id}",
         gate_name="mcp durable run resource",
-        mid=6,
+        mid=7,
     )
     if failure:
         results.append(failure)
@@ -486,7 +509,7 @@ def _check_mcp_durable_run(send, *, token: str, session_id: str) -> list[GateRes
         tool_name="cancel_run",
         arguments={"run_id": run_id, "reason": "launch gate cleanup"},
         gate_name="mcp durable run cancel",
-        mid=7,
+        mid=8,
     )
     if failure:
         results.append(failure)
@@ -510,7 +533,7 @@ def _check_mcp_durable_run(send, *, token: str, session_id: str) -> list[GateRes
         session_id=session_id,
         uri=f"doomberg://runs/{run_id}",
         gate_name="mcp durable run cleanup",
-        mid=8,
+        mid=9,
     )
     if failure:
         results.append(failure)
@@ -1367,6 +1390,22 @@ def _check_mcp_resources_local(db: Any, *, token: str, no_scope_token: str) -> l
                 count=catalog.get("count"),
             )
         )
+
+    started = toolset.start_research_session(
+        "Launch-gate MCP smoke: queue and cancel a durable backtest.",
+        title="Launch gate",
+        _ctx=ctx,
+    )
+    if started.get("status") != "ok" or not started.get("session_id"):
+        results.append(_fail("mcp research session start", "start_research_session did not return a session", body=started))
+        return results
+    results.append(
+        _pass(
+            "mcp research session start",
+            "MCP research session opened before direct workflow tools",
+            session_id=started.get("session_id"),
+        )
+    )
 
     idempotency_key = f"launch-gate:{uuid.uuid4()}"
     created = toolset.run_skill(

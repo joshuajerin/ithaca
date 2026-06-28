@@ -219,6 +219,9 @@ def main(argv: list[str] | None = None) -> int:
     if key_id:
         print(f"Key id: {key_id}")
     print(f"Token env: {ENV_FILE}")
+    print("Each MCP request is authenticated with this key automatically.")
+    print("Agent flow: call start_research_session with the user prompt, then call direct tools.")
+    print("Direct tools include: market_tide, sentiment_get, market_news, vix_term_structure, backtest_run.")
     print("Restart Codex desktop if it was already open so it picks up the launchd env.")
     return 0
 

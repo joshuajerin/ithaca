@@ -42,7 +42,6 @@ from pydantic import BaseModel
 from doomberg_control import actions
 from doomberg_control.actions import ActionError
 from doomberg_control.deps import HUMAN_ACTOR_KINDS, Ctx
-from doomberg_control.execution_gateway import ExecutionGateway
 from doomberg_core import Core
 from doomberg_core.providers import PUBLIC_DATA_SOURCE, PUBLIC_ENTITLEMENT_CLASS, IbkrEngineClient
 from doomberg_platform import (
@@ -889,8 +888,8 @@ def create_app(db: Any | None = None) -> FastAPI:
         """Open a research-session run.
 
         The web UI may start a realtime run before the user prompt exists in this service.
-        In that flow the agent later calls MCP ``session_context`` with the actual prompt,
-        and the trace updates live under the same run id.
+        In that flow the agent later calls MCP ``start_research_session`` with the actual
+        prompt, and the trace updates live under the same run id.
         """
         prompt = body.prompt.strip()
 

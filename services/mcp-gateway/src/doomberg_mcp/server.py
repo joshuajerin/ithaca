@@ -33,6 +33,7 @@ _TYPED_ERROR_CODES = [
     "DATA_STALE",
     "PROVIDER_DEGRADED",
     "RATE_LIMITED",
+    "SESSION_CONTEXT_REQUIRED",
     "INVALID_SYMBOL",
     "MARKET_CLOSED",
     "JOB_QUEUED",
@@ -222,6 +223,54 @@ class Toolset:
                        actor_id=agent_id).event("session_open", {"agentSession": session})
         return run_id
 
+    def _active_research_session(self, ctx: dict | None) -> str | None:
+        """Return the active research session for this tenant+agent, if one exists."""
+        if self.runs is None:
+            return None
+        ctx = dict(ctx or {})
+        tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
+        agent_id = ctx.get("agent_id")
+        explicit_run = ctx.get("run_id")
+        if explicit_run:
+            try:
+                run = self.runs.get(tenant_id, str(explicit_run))
+            except TypeError:
+                run = None
+            if run is not None:
+                return str(explicit_run)
+        explicit_session = ctx.get("session_id")
+        if explicit_session:
+            existing = self._existing_research_run(tenant_id, str(explicit_session))
+            if existing is not None:
+                self._agent_active_sessions[self._agent_session_key(tenant_id, agent_id)] = existing
+                return existing
+        active = self._agent_active_sessions.get(self._agent_session_key(tenant_id, agent_id))
+        if active:
+            return active
+        return None
+
+    def _with_active_session(self, ctx: dict | None) -> dict:
+        """Copy ctx and attach the active research session id when one is known."""
+        out = dict(ctx or {})
+        active = self._active_research_session(out)
+        if active is not None and not out.get("run_id") and not out.get("session_id"):
+            out["session_id"] = active
+        return out
+
+    def _session_context_required(self) -> dict:
+        return self._typed_error(
+            "SESSION_CONTEXT_REQUIRED",
+            "start a Doomberg research session before calling data or workflow tools",
+            "Call start_research_session with the user's prompt, then call direct tools.",
+        )
+
+    def _require_research_session(self, ctx: dict | None) -> dict | None:
+        if self.runs is None:
+            return None
+        if self._active_research_session(ctx) is not None:
+            return None
+        return self._session_context_required()
+
     def _tracer(self, ctx: dict | None) -> Tracer:
         ctx = ctx or {}
         tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
@@ -250,33 +299,77 @@ class Toolset:
             actor_id=agent_id,
         )
 
-    def session_context(self, prompt: str | None = None, title: str | None = None,
-                        session_id: str | None = None, _ctx: dict | None = None) -> dict:
-        """Attach prompt/session metadata to the current agent trace.
+    def start_research_session(self, prompt: str, title: str | None = None,
+                               session_id: str | None = None, _ctx: dict | None = None) -> dict:
+        """Start or attach the required research session for direct tool calls.
 
         If ``session_id`` is an existing research-run UUID opened by the web UI, future calls
-        from the same tenant+agent key are grouped into that run. If omitted, this opens or
-        reuses the agent's default research run and records the prompt as a reasoning event.
+        from the same tenant+agent key are grouped into that run. If omitted, this opens a
+        new research run and records the user prompt on the visible session trace.
         """
         ctx = dict(_ctx or {})
         tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
         agent_id = ctx.get("agent_id")
+        prompt = str(prompt or "").strip()
+        if not prompt:
+            return self._typed_error(
+                "SESSION_CONTEXT_REQUIRED",
+                "start_research_session requires the user's prompt",
+                "Pass the full user prompt before calling direct tools.",
+            )
+
+        if self.runs is None:
+            run_id = str(session_id or ctx.get("run_id") or uuid.uuid4())
+            self._agent_active_sessions[self._agent_session_key(tenant_id, agent_id)] = run_id
+            tr = Tracer(self.sink, run_id=run_id, tenant_id=tenant_id,
+                        session_id=run_id, actor_id=agent_id)
+            tr.event("session_open", _without_none({
+                "kind": "research_session",
+                "prompt": prompt,
+                "text": prompt,
+                "title": title,
+            }))
+            return {"status": "ok", "session_id": run_id, "prompt_captured": True}
+
+        existing = self._existing_research_run(tenant_id, str(session_id)) if session_id else None
+        created = existing is None
+        run_id = existing or self.runs.create_research(tenant_id)
         if session_id:
-            ctx["session_id"] = str(session_id)
-            self._agent_active_sessions[self._agent_session_key(tenant_id, agent_id)] = str(session_id)
-        tr = self._tracer(ctx)
-        data = {"kind": "session_context"}
-        if prompt is not None:
-            data["prompt"] = prompt
-            data["text"] = prompt
+            self._sessions[(tenant_id, str(session_id))] = run_id
+        self._sessions[(tenant_id, run_id)] = run_id
+        self._agent_active_sessions[self._agent_session_key(tenant_id, agent_id)] = run_id
+
+        tr = Tracer(self.sink, run_id=run_id, tenant_id=tenant_id,
+                    session_id=run_id, actor_id=agent_id)
+        data = {
+            "kind": "research_session",
+            "prompt": prompt,
+            "text": prompt,
+        }
         if title is not None:
             data["title"] = title
-        if prompt is not None or title is not None:
+        if created:
+            tr.event("session_open", data)
+        else:
             tr.event("reasoning", data)
-        return {"status": "ok", "session_id": tr.run_id, "prompt_captured": prompt is not None}
+        return {"status": "ok", "session_id": run_id, "prompt_captured": True}
+
+    def session_context(self, prompt: str | None = None, title: str | None = None,
+                        session_id: str | None = None, _ctx: dict | None = None) -> dict:
+        """Backward-compatible alias for start_research_session."""
+        return self.start_research_session(
+            prompt=prompt or "",
+            title=title,
+            session_id=session_id,
+            _ctx=_ctx,
+        )
 
     def market_get_ohlcv(self, symbol: str, range: str = "6mo", interval: str = "1d",
                          _ctx: dict | None = None) -> dict:
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
+        _ctx = self._with_active_session(_ctx)
         tr = self._tracer(_ctx)
         span = tr.tool_call("market.get_ohlcv", {"symbol": symbol, "range": range, "interval": interval})
         ctx = dict(_ctx or {})
@@ -316,6 +409,10 @@ class Toolset:
     ) -> dict:
         """Entitlement-aware realtime quote via the private live-data engine."""
 
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
+        _ctx = self._with_active_session(_ctx)
         ctx = dict(_ctx or {})
         tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
         tr = self._tracer(_ctx)
@@ -382,6 +479,10 @@ class Toolset:
         return _ibkr_skill_envelope({"provider": PUBLIC_DATA_SOURCE, **result})
 
     def backtest_run(self, spec: dict, range: str = "1y", _ctx: dict | None = None) -> dict:
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
+        _ctx = self._with_active_session(_ctx)
         tr = self._tracer(_ctx)
         span = tr.tool_call("backtest.run", {"spec": spec, "range": range})
         out = self.core.run_tool("backtest.run", {"spec": spec, "range": range})
@@ -400,6 +501,10 @@ class Toolset:
         machine live in the control plane — here we validate, stamp a draft id, and emit
         the strategy_proposed event so the proposal shows up in the agent's trace.
         """
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
+        _ctx = self._with_active_session(_ctx)
         tr = self._tracer(_ctx)
         validated = self.core.validate_spec(spec)  # raises on closed-schema violation
         strategy_id = "stg_" + uuid.uuid4().hex[:12]
@@ -414,6 +519,10 @@ class Toolset:
         skill never executes agent code. tool_call / tool_result events are emitted on the same
         gap-free, research-session-aware tracer the existing tools use.
         """
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
+        _ctx = self._with_active_session(_ctx)
         tool = self._canonical_skill_id(tool)
         if tool == "market.quote":
             return self.market_quote(
@@ -652,48 +761,73 @@ class Toolset:
         """
         params = dict(input or {})
         skill_id = self._canonical_skill_id(skill_id)
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
+        _ctx = self._with_active_session(_ctx)
         ctx = dict(_ctx or {})
         tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
         agent_id = ctx.get("agent_id")
+        session_tr = self._tracer(_ctx) if self.runs is not None else None
+        session_span = (
+            session_tr.tool_call("run_skill", {"skill_id": skill_id, "mode": mode})
+            if session_tr is not None
+            else None
+        )
+
+        def traced(payload: dict) -> dict:
+            if session_tr is not None and session_span is not None:
+                summary = {
+                    "skill_id": skill_id,
+                    "status": payload.get("status"),
+                    "run_id": payload.get("run_id"),
+                    "job_id": payload.get("job_id"),
+                }
+                error = payload.get("error")
+                if isinstance(error, dict):
+                    summary["error"] = error.get("code")
+                session_tr.tool_result("run_skill", session_span, summary)
+            return payload
+
         if self.platform is None:
             if skill_id == "backtest.run":
-                return self.backtest_run(params.get("spec") or params, params.get("range", "1y"), _ctx=_ctx)
+                return traced(self.backtest_run(params.get("spec") or params, params.get("range", "1y"), _ctx=_ctx))
             if skill_id == "market.get_ohlcv":
-                return self.market_get_ohlcv(params["symbol"], params.get("range", "6mo"),
-                                             params.get("interval", "1d"), _ctx=_ctx)
+                return traced(self.market_get_ohlcv(params["symbol"], params.get("range", "6mo"),
+                                                    params.get("interval", "1d"), _ctx=_ctx))
             if skill_id == "market.quote":
-                return self.market_quote(
+                return traced(self.market_quote(
                     params["symbol"],
                     max_freshness_ms=params.get("max_freshness_ms"),
                     _ctx=_ctx,
-                )
+                ))
             if skill_id in {"broker.accounts", "broker.positions", "broker.orders", "ops.provider_status"}:
-                return self._typed_error(
+                return traced(self._typed_error(
                     "POLICY_DENIED",
                     "this skill is disabled",
                     "Use market.quote for live data and backtest.run for analysis.",
-                )
-            return self.call_skill(skill_id, params, _ctx=_ctx)
+                ))
+            return traced(self.call_skill(skill_id, params, _ctx=_ctx))
 
         jobs = getattr(self.platform, "jobs", None)
         if idempotency_key and jobs is not None:
             existing = jobs.get_by_idempotency(tenant_id, idempotency_key)
             if existing is not None:
                 run = self.platform.runs.get(tenant_id, existing["run_id"])
-                return {
+                return traced({
                     "run_id": existing["run_id"],
                     "job_id": existing["job_id"],
                     "status": run.get("state") if run else existing["state"],
                     "status_url": f"/api/runs/{existing['run_id']}",
                     "estimated_profile": existing["profile"],
                     "idempotent": True,
-                }
+                })
 
         if skill_id == "backtest.run":
             spec = params.get("spec")
             if not isinstance(spec, dict):
-                return self._typed_error("JOB_BUDGET_EXCEEDED", "backtest.run requires input.spec",
-                                         "Pass a StrategySpec under input.spec.")
+                return traced(self._typed_error("JOB_BUDGET_EXCEEDED", "backtest.run requires input.spec",
+                                                "Pass a StrategySpec under input.spec."))
             range_ = params.get("range", "1y")
             run_spec = dict(spec)
             run_id = self.platform.runs.create(tenant_id, "backtest", None, run_spec)
@@ -709,14 +843,14 @@ class Toolset:
                 {"from": "draft", "to": "queued", "skill_id": skill_id,
                  "job_id": job.get("job_id") if job else None, "profile": "backtest"},
             )
-            return {
+            return traced({
                 "run_id": run_id,
                 "status": queued["state"],
                 "status_url": f"/api/runs/{run_id}",
                 "estimated_profile": "backtest",
                 "job_id": job.get("job_id") if job else None,
                 "approval_required": False,
-            }
+            })
 
         run_id = self.platform.runs.create(tenant_id, "interactive", None,
                                            {"skill_id": skill_id, "input": params, "mode": mode})
@@ -748,12 +882,12 @@ class Toolset:
                 self.platform.runs.set_result(tenant_id, run_id, out)
                 self.platform.runs.transition(tenant_id, run_id, "failed", expect=running["version"])
                 tr.event("error", {"stage": "run_skill", "error": "POLICY_DENIED"})
-                return {
+                return traced({
                     "run_id": run_id,
                     "status": "failed",
                     "error": out["error"],
                     "status_url": f"/api/runs/{run_id}",
-                }
+                })
         except Exception as exc:  # noqa: BLE001 - return typed error in run result.
             err = self._typed_error("PROVIDER_DEGRADED", type(exc).__name__,
                                     "Inspect the run trace and retry when the provider recovers.",
@@ -762,19 +896,19 @@ class Toolset:
             self.platform.runs.transition(tenant_id, run_id, "failed", expect=running["version"])
             tr.event("error", {"stage": "run_skill", "error": type(exc).__name__,
                                "detail": str(exc)[:300]})
-            return {"run_id": run_id, "status": "failed", "error": err,
-                    "status_url": f"/api/runs/{run_id}"}
+            return traced({"run_id": run_id, "status": "failed", "error": err,
+                           "status_url": f"/api/runs/{run_id}"})
         self.platform.runs.set_result(tenant_id, run_id, out)
         self.platform.runs.transition(tenant_id, run_id, "succeeded", expect=running["version"])
         tr.event("run_transition", {"from": "running", "to": "succeeded", "skill_id": skill_id})
-        return {
+        return traced({
             "run_id": run_id,
             "status": "succeeded",
             "status_url": f"/api/runs/{run_id}",
             "estimated_profile": "interactive",
             "result": out,
             "approval_required": False,
-        }
+        })
 
     def get_run(self, run_id: str, _ctx: dict | None = None) -> dict:
         if self.platform is None:
@@ -805,6 +939,10 @@ class Toolset:
         if self.platform is None:
             return self._typed_error("JOB_QUEUED", "durable runs are unavailable in this toolset",
                                      "Use the hosted MCP endpoint or REST API.")
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
+        _ctx = self._with_active_session(_ctx)
         tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
         run = self.platform.runs.get(tenant_id, run_id)
         if run is None:
@@ -834,6 +972,9 @@ class Toolset:
     def list_approvals(self, _ctx: dict | None = None) -> dict:
         if self.platform is None:
             return {"approvals": []}
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
         tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
         return {"approvals": self.platform.approvals.list_pending(tenant_id)}
 
@@ -842,6 +983,10 @@ class Toolset:
         if self.platform is None:
             return self._typed_error("APPROVAL_REQUIRED", "approvals are unavailable",
                                      "Use the hosted MCP endpoint or REST API.")
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
+        _ctx = self._with_active_session(_ctx)
         tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
         agent_id = (_ctx or {}).get("agent_id")
         if (_ctx or {}).get("actor_kind") not in {"human", "user"}:
@@ -863,6 +1008,9 @@ class Toolset:
         if self.platform is None:
             return self._typed_error("JOB_QUEUED", "artifacts are unavailable",
                                      "Use the hosted MCP endpoint or REST API.")
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
         tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
         artifact = self.platform.artifacts.get(tenant_id, artifact_id)
         if artifact is None:
@@ -1169,16 +1317,16 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     def data_providers_resource() -> str:
         return _json_resource(ts.data_providers_resource(_ctx=_ctx()))
 
-    @mcp.tool(description="Search Doomberg skills without loading the full catalog into context.")
+    @mcp.tool(description="Optional helper only: search Doomberg skills when no direct named tool fits.")
     def search_skills(query: str = "", asset_class: str | None = None,
                       intent: str | None = None) -> dict:
         return ts.search_skills(query=query, asset_class=asset_class, intent=intent)
 
-    @mcp.tool(description="Describe one Doomberg skill: input/output, runtime profile and permissions.")
+    @mcp.tool(description="Optional helper only: inspect one skill schema when a direct tool's inputs are unclear.")
     def describe_skill(skill_id: str, version: str | None = None) -> dict:
         return ts.describe_skill(skill_id, version=version)
 
-    @mcp.tool(description="Create a durable Doomberg run for a skill. Backtests are queued and return a run id.")
+    @mcp.tool(description="Create a durable Doomberg run for a skill after start_research_session. Backtests are queued and return a run id.")
     def run_skill(skill_id: str, input: dict | None = None, mode: str = "auto",
                   idempotency_key: str | None = None) -> dict:
         return ts.run_skill(skill_id, input=input, mode=mode,
@@ -1208,20 +1356,25 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     def get_artifact(artifact_id: str) -> dict:
         return ts.get_artifact(artifact_id, _ctx=_ctx())
 
-    @mcp.tool(description="Attach a user prompt/title and optional Doomberg session id to this MCP trace.")
+    @mcp.tool(description="Required first step: start a visible Doomberg research session with the user's prompt before direct tool calls.")
+    def start_research_session(prompt: str, title: str | None = None,
+                               session_id: str | None = None) -> dict:
+        return ts.start_research_session(prompt=prompt, title=title, session_id=session_id, _ctx=_ctx())
+
+    @mcp.tool(description="Compatibility alias for start_research_session. Prefer start_research_session.")
     def session_context(prompt: str | None = None, title: str | None = None,
                         session_id: str | None = None) -> dict:
         return ts.session_context(prompt=prompt, title=title, session_id=session_id, _ctx=_ctx())
 
-    @mcp.tool(description="Fetch OHLCV price history for one symbol, with a provenance envelope.")
+    @mcp.tool(description="Direct tool after start_research_session: fetch OHLCV price history for one symbol, with provenance.")
     def market_get_ohlcv(symbol: str, range: str = "6mo", interval: str = "1d") -> dict:
         return ts.market_get_ohlcv(symbol, range, interval, _ctx=_ctx())
 
-    @mcp.tool(description="Run a price/technical backtest from a declarative StrategySpec.")
+    @mcp.tool(description="Direct tool after start_research_session: run a price/technical backtest from a declarative StrategySpec.")
     def backtest_run(spec: dict, range: str = "1y") -> dict:
         return ts.backtest_run(spec, range, _ctx=_ctx())
 
-    @mcp.tool(description="Validate and register a StrategySpec as a draft (no deploy, no money).")
+    @mcp.tool(description="Direct tool after start_research_session: validate and register a StrategySpec draft. No deploy, no money.")
     def propose_strategy(spec: dict) -> dict:
         return ts.propose_strategy(spec, _ctx=_ctx())
 

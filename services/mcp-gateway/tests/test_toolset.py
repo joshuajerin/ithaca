@@ -127,7 +127,8 @@ async def test_server_registers_three_tools(toolset):
     tools = await mcp.list_tools()
     names = {t.name for t in tools}
     assert {"market_get_ohlcv", "backtest_run", "propose_strategy"} <= names
-    assert {"search_skills", "describe_skill", "run_skill", "get_run", "subscribe_run",
+    assert {"start_research_session", "session_context", "search_skills", "describe_skill",
+            "run_skill", "get_run", "subscribe_run",
             "cancel_run", "list_approvals", "decide_approval", "get_artifact"} <= names
     assert {"create_order_intent", "preview_order_intent", "get_order_intent",
             "submit_order_intent"}.isdisjoint(names)
@@ -295,6 +296,9 @@ def test_run_skill_exposes_live_quote_and_blocks_broker_read_skills(toolset_core
         runs=platform.runs,
         platform=platform,
     )
+    ctx = {"tenant_id": tenant, "agent_id": "agent"}
+    started = ts.start_research_session("check live quote and broker policy", _ctx=ctx)
+    assert started["status"] == "ok"
     with _QuoteServer() as server:
         monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
         monkeypatch.setenv("DOOMBERG_IBKR_QUOTE_PATH", "/quote/{symbol}")
@@ -304,12 +308,12 @@ def test_run_skill_exposes_live_quote_and_blocks_broker_read_skills(toolset_core
         quote = ts.run_skill(
             "market.quote",
             input={"symbol": "AAPL", "max_freshness_ms": 10_000},
-            _ctx={"tenant_id": tenant, "agent_id": "agent"},
+            _ctx=ctx,
         )
         positions = ts.run_skill(
             "broker.positions",
             input={"account": "DU12345"},
-            _ctx={"tenant_id": tenant, "agent_id": "agent"},
+            _ctx=ctx,
         )
 
     assert quote["status"] == "succeeded"
@@ -334,12 +338,14 @@ def test_run_skill_queues_durable_backtest(toolset_core, sample_spec):
         runs=platform.runs,
         platform=platform,
     )
+    ctx = {"tenant_id": tenant, "agent_id": "agent"}
+    ts.start_research_session("queue durable backtest", _ctx=ctx)
 
     out = ts.run_skill(
         "backtest.run",
         input={"spec": sample_spec, "range": "1y"},
         idempotency_key="same-backtest",
-        _ctx={"tenant_id": tenant, "agent_id": "agent"},
+        _ctx=ctx,
     )
 
     assert out["status"] == "queued"
@@ -353,7 +359,7 @@ def test_run_skill_queues_durable_backtest(toolset_core, sample_spec):
         "backtest.run",
         input={"spec": sample_spec, "range": "1y"},
         idempotency_key="same-backtest",
-        _ctx={"tenant_id": tenant, "agent_id": "agent"},
+        _ctx=ctx,
     )
     assert again["run_id"] == out["run_id"]
     assert again["idempotent"] is True
@@ -368,11 +374,13 @@ def test_run_skill_interactive_persists_result_and_trace(toolset_core):
         runs=platform.runs,
         platform=platform,
     )
+    ctx = {"tenant_id": tenant, "agent_id": "agent"}
+    ts.start_research_session("run interactive ohlcv", _ctx=ctx)
 
     out = ts.run_skill(
         "market.get_ohlcv",
         input={"symbol": "AAA", "range": "1y"},
-        _ctx={"tenant_id": tenant, "agent_id": "agent"},
+        _ctx=ctx,
     )
 
     assert out["status"] == "succeeded"

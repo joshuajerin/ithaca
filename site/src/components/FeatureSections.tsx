@@ -24,11 +24,11 @@ const BLOCKS: Block[] = [
         <br /> to the markets
       </>
     ),
-    copy: "Your agent connects over MCP, discovers a catalog of vetted research tools, and calls them. Every result comes back typed, with a mandatory provenance block.",
+    copy: "Your agent connects over MCP, starts a visible research session with the prompt, then calls vetted financial tools directly. Every result comes back typed, with a mandatory provenance block.",
     side: "right",
     illustration: "map",
     features: [
-      { icon: <IconNodes />, title: "Discover tools over MCP", body: "OHLCV, fundamentals, signals, news, filings, order-book replay." },
+      { icon: <IconNodes />, title: "Direct tools over MCP", body: "OHLCV, fundamentals, signals, news, filings, order-book replay." },
       { icon: <IconDoc />, title: "Typed I/O with provenance", body: "Source, as-of, freshness, PIT, coverage, cost on every call." },
       { icon: <IconClock />, title: "Per-call deadlines & budgets", body: "Sessions carry an aggregate wall-clock cap — no runaway runs." },
     ],

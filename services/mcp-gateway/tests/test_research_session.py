@@ -62,16 +62,19 @@ def _platform_toolset(core):
 
 def test_session_groups_calls_into_one_research_run(toolset_core):
     ts = _platform_toolset(toolset_core)
-    ctx = {"tenant_id": TENANT, "session_id": "agent-sess-1", "agent_id": "claude"}
+    ctx = {"tenant_id": TENANT, "agent_id": "claude"}
 
+    started = ts.start_research_session("compare AAA and BBB", _ctx=ctx)
     ts.market_get_ohlcv("AAA", range="1y", _ctx=ctx)
     ts.market_get_ohlcv("BBB", range="1y", _ctx=ctx)
 
+    assert started["status"] == "ok"
     assert len(ts.runs.created) == 1  # both calls share ONE research run
     run_id = ts.runs.created[0]
     events = ts.sink.events(run_id)
     types = [e["type"] for e in events]
     assert types[0] == "session_open"
+    assert events[0]["data"]["prompt"] == "compare AAA and BBB"
     assert types.count("tool_call") == 2 and types.count("tool_result") == 2
     # gap-free seq within the run
     assert [e["seq"] for e in events] == list(range(len(events)))
@@ -82,9 +85,19 @@ def test_session_groups_calls_into_one_research_run(toolset_core):
 
 def test_distinct_sessions_get_distinct_runs(toolset_core):
     ts = _platform_toolset(toolset_core)
-    ts.market_get_ohlcv("AAA", _ctx={"tenant_id": TENANT, "session_id": "s1"})
-    ts.market_get_ohlcv("AAA", _ctx={"tenant_id": TENANT, "session_id": "s2"})
+    ts.start_research_session("first", _ctx={"tenant_id": TENANT, "agent_id": "a1"})
+    ts.start_research_session("second", _ctx={"tenant_id": TENANT, "agent_id": "a2"})
     assert len(ts.runs.created) == 2
+
+
+def test_direct_tool_requires_started_research_session(toolset_core):
+    ts = _platform_toolset(toolset_core)
+
+    out = ts.market_get_ohlcv("AAA", _ctx={"tenant_id": TENANT, "agent_id": "claude"})
+
+    assert out["error"]["code"] == "SESSION_CONTEXT_REQUIRED"
+    assert ts.runs.created == []
+    assert ts.sink.events() == []
 
 
 def test_session_context_can_attach_to_precreated_research_run(toolset_core):

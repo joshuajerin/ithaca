@@ -312,7 +312,7 @@ def test_http_low_scope_propose_is_403(http_app, keys):
         assert r.status_code == 403
 
 
-def test_http_authenticated_tool_call_traces_under_tenant(http_app, keys, tenant):
+def test_http_authenticated_direct_tool_requires_and_uses_session(http_app, keys, tenant):
     app, ts = http_app
     with TestClient(app) as client:
         init = _post(client, "initialize",
@@ -332,6 +332,21 @@ def test_http_authenticated_tool_call_traces_under_tenant(http_app, keys, tenant
                   {"name": "market_get_ohlcv", "arguments": {"symbol": "AAA", "range": "6mo"}},
                   key=keys["full"], sid=sid, mid=2)
         assert r.status_code == 200
+        assert "SESSION_CONTEXT_REQUIRED" in r.text
+        start = _post(client, "tools/call",
+                      {"name": "start_research_session",
+                       "arguments": {"prompt": "what does AAA look like", "title": "AAA"}},
+                      key=keys["full"], sid=sid, mid=3)
+        assert start.status_code == 200
+        r = _post(client, "tools/call",
+                  {"name": "market_get_ohlcv", "arguments": {"symbol": "AAA", "range": "6mo"}},
+                  key=keys["full"], sid=sid, mid=4)
+        assert r.status_code == 200
+        assert "SESSION_CONTEXT_REQUIRED" not in r.text
     # the verified tenant (not the stdio default-tenant zeros) owns the trace
     tenants = {e.get("tenant_id") for e in ts.sink.events()}
     assert tenants == {tenant}
+    types = [e["type"] for e in ts.sink.events()]
+    assert types[0] == "session_open"
+    assert types.count("tool_call") == 1
+    assert types.count("tool_result") == 1
