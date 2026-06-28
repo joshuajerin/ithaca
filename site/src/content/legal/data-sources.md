@@ -1,6 +1,6 @@
 # Third-Party Data Sources
 
-> **Draft — review before publishing.** Contains fill-in token: `[LEGAL CONTACT EMAIL]`. The **Interactive Brokers (IBKR)** market-data usage terms are intentionally **not** included in this draft and remain to be added — see Section 6. Confirm each provider's required attribution and redistribution language against your current data-licensing agreements before publishing.
+> **Draft — review before publishing.** Contains fill-in token: `[LEGAL CONTACT EMAIL]`. Confirm each provider's required attribution and redistribution language against your current data-licensing agreements before publishing.
 
 Doomberg, operated by **Ithaca**, integrates market and reference data from third-party providers. This page describes those providers and the limitations that apply to data made available through the Service. Data is provided on an **"as is"** basis for research and simulated ("paper") use only; see our [Risk Disclosures](/disclosures).
 
@@ -27,10 +27,6 @@ Supplementary reference and fundamentals data may be sourced via **Financial Mod
 - Data may be delayed, incomplete, or revised, and is provided without warranty of accuracy or fitness for any purpose.
 - Provider attributions are owned by their respective owners; all trademarks belong to their respective holders.
 
-## 6. Interactive Brokers (IBKR) — to be added
-
-> Interactive Brokers (IBKR) market-data usage terms are addressed separately and are **not yet covered** by this document. `[IBKR DATA USAGE — TO BE ADDED]`
-
-## 7. Contact
+## 6. Contact
 
 Questions about data sourcing or attribution: `[LEGAL CONTACT EMAIL]`.
