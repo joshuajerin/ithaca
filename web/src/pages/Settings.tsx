@@ -1,21 +1,12 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
-import type { Provider } from "../auth/AuthContext";
-import { GoogleIcon, GithubIcon } from "../auth/icons";
 import { api } from "../api";
-import { MCP_BASE } from "../config";
 
-const PROVIDERS: { id: Provider; label: string; icon: () => JSX.Element; blurb: string }[] = [
-  { id: "google", label: "Google", icon: GoogleIcon, blurb: "Sign-in & identity" },
-  { id: "github", label: "GitHub", icon: GithubIcon, blurb: "Sign-in & repo-linked strategies" },
-];
-
-// The issuable agent scopes. Trading scopes are intentionally absent.
 const SCOPES: { id: string; label: string }[] = [
-  { id: "data:read", label: "Read market & research data" },
-  { id: "strategy:author", label: "Author / propose strategies" },
-  { id: "runs:write", label: "Create durable runs" },
-  { id: "runs:cancel", label: "Cancel durable runs" },
+  { id: "data:read", label: "Read market data" },
+  { id: "strategy:author", label: "Author strategies" },
+  { id: "runs:write", label: "Create runs" },
+  { id: "runs:cancel", label: "Cancel runs" },
   { id: "approvals:read", label: "Read approvals" },
   { id: "artifacts:read", label: "Read artifacts" },
   { id: "deploy:backtest", label: "Run backtests" },
@@ -29,7 +20,7 @@ function fmtDate(v: string | number): string {
 }
 
 export function Settings() {
-  const { user, integrations, manageAccount, signOut } = useAuth();
+  const { user, manageAccount, signOut } = useAuth();
 
   const [keys, setKeys] = useState<KeyRow[]>([]);
   const [loadingKeys, setLoadingKeys] = useState(true);
@@ -45,7 +36,11 @@ export function Settings() {
     try {
       setKeys(await api.listKeys());
     } catch (e) {
-      setKeysError(e instanceof Error ? e.message : String(e));
+      if (isUnauthorized(e)) {
+        setKeys([]);
+      } else {
+        setKeysError("Could not update keys.");
+      }
     } finally {
       setLoadingKeys(false);
     }
@@ -70,7 +65,7 @@ export function Settings() {
       setFreshKey({ api_key: res.api_key, key_id: res.key_id });
       await loadKeys();
     } catch (e) {
-      setKeysError(e instanceof Error ? e.message : String(e));
+      setKeysError(settingsError(e));
     } finally {
       setMinting(false);
     }
@@ -83,7 +78,7 @@ export function Settings() {
       if (freshKey?.key_id === keyId) setFreshKey(null);
       await loadKeys();
     } catch (e) {
-      setKeysError(e instanceof Error ? e.message : String(e));
+      setKeysError(settingsError(e));
     }
   }
 
@@ -104,11 +99,9 @@ export function Settings() {
       <div className="page-head">
         <div>
           <div className="page-title">Settings</div>
-          <div className="page-sub">account · integrations · access</div>
         </div>
       </div>
 
-      {/* Profile */}
       <section className="set-section">
         <div className="set-h">Profile</div>
         <div className="set-card profile-row">
@@ -119,49 +112,15 @@ export function Settings() {
             <div className="profile-name">{user.name}</div>
             <div className="profile-email">{user.email}</div>
           </div>
-          <span className="badge">{user.provider}</span>
+          <button className="btn" onClick={manageAccount}>
+            Manage
+          </button>
         </div>
       </section>
 
-      {/* Clerk-connected social accounts */}
       <section className="set-section">
-        <div className="set-h">Connected accounts</div>
+        <div className="set-h">Agent access</div>
         <div className="set-card">
-          {PROVIDERS.map(({ id, label, icon: Icon, blurb }) => {
-            const connected = integrations[id];
-            return (
-              <div key={id} className="integration-row">
-                <span className="int-icon"><Icon /></span>
-                <div className="int-meta">
-                  <div className="int-name">{label}</div>
-                  <div className="int-blurb">{blurb}</div>
-                </div>
-                <span className={`int-status ${connected ? "on" : "off"}`}>
-                  {connected ? "Connected" : "Not connected"}
-                </span>
-                <button className={`btn ${connected ? "" : "primary"}`} onClick={manageAccount}>
-                  Manage
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* API / MCP access — mint bearer keys for BYO agents */}
-      <section className="set-section">
-        <div className="set-h">Agent access (MCP)</div>
-        <div className="set-card">
-          <div className="set-field">
-            <label>Tenant</label>
-            <code className="mono set-value">{api.tenantId}</code>
-          </div>
-          <div className="set-field">
-            <label>Endpoint</label>
-            <code className="mono set-value">{MCP_BASE}</code>
-          </div>
-
-          {/* Scope picker + generate */}
           <div className="set-field">
             <label>Scopes</label>
             <div className="scope-grid">
@@ -183,15 +142,14 @@ export function Settings() {
                 onClick={generateKey}
                 disabled={minting || selectedScopes.length === 0}
               >
-                {minting ? "Generating…" : "Generate MCP key"}
+                {minting ? "Generating..." : "Generate key"}
               </button>
             </div>
           </div>
 
-          {/* Freshly-minted plaintext — shown ONCE */}
           {freshKey && (
             <div className="set-field key-fresh">
-              <label>New key — copy it now, it won't be shown again</label>
+              <label>New key</label>
               <code className="mono set-value key-plain">{freshKey.api_key}</code>
               <div className="set-actions">
                 <button className="btn primary" onClick={copyFresh}>
@@ -203,13 +161,12 @@ export function Settings() {
 
           {keysError && <div className="set-hint err">{keysError}</div>}
 
-          {/* Existing keys */}
           <div className="set-field">
             <label>Active keys</label>
             {loadingKeys ? (
-              <div className="set-hint">Loading…</div>
+              <div className="set-hint">Loading...</div>
             ) : activeKeys.length === 0 ? (
-              <div className="set-hint">No keys yet — generate one above for your agent.</div>
+              <div className="set-hint">No keys.</div>
             ) : (
               <div className="key-list">
                 {activeKeys.map((k) => (
@@ -225,16 +182,9 @@ export function Settings() {
               </div>
             )}
           </div>
-
-          <div className="set-hint">
-            Hand this key to your agent as the <code>Authorization: Bearer</code> token against{" "}
-            <code>{MCP_BASE}</code>. Keys can read data, author strategies, and run
-            backtests. Trading is disabled in this workspace.
-          </div>
         </div>
       </section>
 
-      {/* Danger / session */}
       <section className="set-section">
         <div className="set-h">Session</div>
         <div className="set-card set-row-end">
@@ -246,4 +196,15 @@ export function Settings() {
       </section>
     </div>
   );
+}
+
+function settingsError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/401|unauthorized|sign in/i.test(message)) return "Keys unavailable.";
+  return "Could not update keys.";
+}
+
+function isUnauthorized(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /401|unauthorized|sign in/i.test(message);
 }

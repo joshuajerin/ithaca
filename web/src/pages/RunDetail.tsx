@@ -6,7 +6,7 @@ import { useRunEvents } from "../hooks/useRunEvents";
 import { reduceEvents, reduceUpTo, type TimelineNode } from "../timeline";
 import type { RunRow } from "../types";
 import { Panel } from "../panels/registry";
-import { fmtClock, fmtTime, shortId, stateClass } from "../lib/format";
+import { fmtClock, shortId, stateClass } from "../lib/format";
 
 export function RunDetail() {
   const { id } = useParams<{ id: string }>();
@@ -43,18 +43,9 @@ export function RunDetail() {
             </Link>{" "}
             / {shortId(id)}
           </div>
-          <div className="page-sub">
-            {run ? (
-              <>
-                {run.kind} · <span className={`badge ${stateClass(run.state)}`}>{run.state}</span> · strategy{" "}
-                {shortId(run.strategy_id)} · {fmtTime(run.created_at)}
-              </>
-            ) : (
-              "loading run…"
-            )}
-          </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {run && <span className={`badge ${stateClass(run.state)}`}>{run.state}</span>}
           <span className={`conn ${conn}`}>● {conn}</span>
           <button className="btn" onClick={reloadAll}>
             Refresh
@@ -86,9 +77,6 @@ export function RunDetail() {
           value={replaySeq ?? maxSeq}
           onChange={(e) => setReplaySeq(Number(e.target.value))}
         />
-        <span className="page-sub">
-          seq {replaySeq ?? maxSeq} / {maxSeq}
-        </span>
       </div>
 
       <div className={`run-grid ${reasoningEmpty && !reasonOpen ? "no-reason" : ""}`}>
@@ -107,7 +95,7 @@ export function RunDetail() {
           {reasonOpen && (
             <div className="col-body">
               {reasoningEmpty ? (
-                <div className="empty">No reasoning emitted (typical for BYO agents).</div>
+                <div className="empty">No reasoning.</div>
               ) : (
                 state.reasoning.map((r) => (
                   <div className="reason-entry" key={r.seq}>
@@ -128,7 +116,7 @@ export function RunDetail() {
           </div>
           <div className="col-body">
             {state.nodes.length === 0 ? (
-              <div className="empty">No tool calls yet.</div>
+              <div className="empty">No calls.</div>
             ) : (
               state.nodes.map((n) => (
                 <div
@@ -176,9 +164,9 @@ export function RunDetail() {
           </div>
           <div className="col-body">
             {!selected ? (
-              <div className="empty">Select a tool call to inspect its result.</div>
+              <div className="empty">Select a call.</div>
             ) : selected.status === "pending" ? (
-              <div className="empty">{selected.name} is still running…</div>
+              <div className="empty">Running.</div>
             ) : selected.status === "denied" ? (
               <>
                 <div className="banner">Denied: {String((selected.result?.data as Record<string, unknown>)?.reason ?? "refused by gate")}</div>

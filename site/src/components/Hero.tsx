@@ -62,11 +62,11 @@ export default function Hero() {
   return (
     <section
       id="top"
-      className="relative isolate flex min-h-[82svh] items-center overflow-hidden pb-16 pt-28 sm:pt-32 lg:pb-10 lg:pt-26"
+      className="relative isolate flex min-h-[82svh] items-start overflow-hidden pb-14 pt-24 sm:pt-28 lg:items-center lg:pb-10 lg:pt-26"
     >
       <HeroBackdrop />
 
-      <div className="relative mx-auto grid w-full max-w-[1260px] grid-cols-1 items-center gap-8 px-5 lg:grid-cols-[1.1fr_0.9fr] lg:gap-4">
+      <div className="relative mx-auto grid w-full max-w-[1260px] grid-cols-1 items-center gap-7 px-5 sm:gap-8 lg:grid-cols-[1.1fr_0.9fr] lg:gap-4">
         {/* LEFT — header + interactive layer legend */}
         <motion.div
           variants={container}
@@ -80,14 +80,14 @@ export default function Hero() {
 
           <motion.h1
             variants={item}
-            className="display mx-auto mt-6 max-w-[15ch] text-[2.85rem] leading-[1.0] text-ink sm:text-[3.5rem] lg:mx-0 lg:text-[4.2rem] lg:leading-[0.98]"
+            className="display mx-auto mt-6 max-w-[15ch] text-[2.6rem] leading-[1.0] text-ink sm:text-[3.2rem] lg:mx-0 lg:text-[4.2rem] lg:leading-[0.98]"
           >
             The tool-platform for the agent economy
           </motion.h1>
 
           <motion.p
             variants={item}
-            className="mx-auto mt-5 max-w-[44ch] text-[1.05rem] leading-relaxed text-muted sm:text-[1.15rem] lg:mx-0"
+            className="mx-auto mt-5 max-w-[44ch] text-[1rem] leading-relaxed text-muted sm:text-[1.08rem] lg:mx-0 lg:text-[1.15rem]"
           >
             Doomberg gives autonomous agents vetted market tools, honest
             backtesting, and paper-trading on trusted infrastructure — recorded
@@ -109,7 +109,7 @@ export default function Hero() {
 
           <motion.p
             variants={item}
-            className="mt-5 font-mono text-[0.72rem] uppercase tracking-[0.16em] text-gold-deep"
+            className="mt-5 font-mono text-[0.68rem] uppercase tracking-[0.14em] text-gold-deep sm:text-[0.72rem] sm:tracking-[0.16em]"
           >
             Never runs your agent · Never executes agent-authored code
           </motion.p>
@@ -123,7 +123,7 @@ export default function Hero() {
           className="relative flex items-center justify-center lg:justify-end"
         >
           <div
-            className="w-full max-w-[420px] lg:max-w-[440px]"
+            className="hero-stack-stage relative mx-auto mt-6 h-[280px] w-full max-w-[280px] sm:mt-7 sm:h-[330px] sm:max-w-[320px] md:h-[370px] md:max-w-[360px] lg:mt-0 lg:h-auto lg:max-w-[440px]"
             onMouseMove={(e) => {
               const rect = e.currentTarget.getBoundingClientRect();
               const y = (e.clientY - rect.top) / rect.height;
@@ -135,11 +135,13 @@ export default function Hero() {
             }}
             onMouseLeave={() => setActive(null)}
           >
-            <IsometricStack
-              focus={{ top: focusTop, mid: focusMid, bot: focusBot }}
-              separation={separation}
-              idle
-            />
+            <div className="absolute left-1/2 top-[56%] w-full -translate-x-1/2 -translate-y-1/2 lg:static lg:translate-x-0 lg:translate-y-0">
+              <IsometricStack
+                focus={{ top: focusTop, mid: focusMid, bot: focusBot }}
+                separation={separation}
+                idle
+              />
+            </div>
           </div>
         </motion.div>
       </div>

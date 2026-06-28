@@ -20,9 +20,6 @@ export function AnalysisPanel({ data }: { data: AnalysisData }) {
     <div className="flex flex-col h-full relative">
       <div className="flex justify-between items-start mb-4 shrink-0 border-b border-border pb-4">
         <div className="min-w-0">
-          <div className="editorial-label text-[9px] text-muted-foreground mb-2">
-            {data.scope} Analysis
-          </div>
           <h3 className="font-serif text-2xl leading-tight">{data.headline}</h3>
         </div>
         
@@ -30,9 +27,6 @@ export function AnalysisPanel({ data }: { data: AnalysisData }) {
           <div className={`flex items-center gap-1.5 px-2 py-1 border editorial-label text-[9px] ${stance.color}`}>
             <StanceIcon className="w-3 h-3" strokeWidth={1.75} />
             {data.stance}
-          </div>
-          <div className="editorial-label text-[8.5px] text-muted-foreground">
-            Conf <span className="nums-tabular">{(data.confidence * 100).toFixed(0)}%</span>
           </div>
         </div>
       </div>

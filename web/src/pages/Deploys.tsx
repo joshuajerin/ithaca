@@ -5,7 +5,7 @@ import { useAsync } from "../hooks/useAsync";
 import type { BacktestResult, RunRow } from "../types";
 import { EquityCurve } from "../panels/EquityCurve";
 import { RiskBadge } from "../panels/RiskBadge";
-import { fmtTime, shortId, stateClass } from "../lib/format";
+import { shortId, stateClass } from "../lib/format";
 
 type Tab = "backtest" | "paper";
 
@@ -19,7 +19,6 @@ export function Deploys() {
       <div className="page-head">
         <div>
           <div className="page-title">Deploys</div>
-          <div className="page-sub">equity curve · stats · risk badge</div>
         </div>
       </div>
 
@@ -62,7 +61,6 @@ function DeployCard({ run, onOpen }: { run: RunRow; onOpen: () => void }) {
           <span className={`badge ${stateClass(run.state)}`}>{run.state}</span>{" "}
           <span style={{ color: "var(--muted-dim)" }}>strategy {shortId(run.strategy_id)}</span>
         </div>
-        <span className="page-sub">{fmtTime(run.created_at)}</span>
       </div>
 
       {curve.length > 1 ? (
@@ -83,7 +81,7 @@ function DeployCard({ run, onOpen }: { run: RunRow; onOpen: () => void }) {
           </div>
         </>
       ) : (
-        <div className="empty">No result artifact yet — open the run to watch it stream.</div>
+        <div className="empty">No result.</div>
       )}
     </div>
   );

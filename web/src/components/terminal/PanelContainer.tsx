@@ -93,19 +93,6 @@ interface PanelContainerProps {
   onBuildOption?: (sel: { symbol: string; strike: number; expiry: string; iv: number }) => void;
 }
 
-function formatAsOf(asOf?: string | null): string {
-  if (!asOf) return "live";
-  const then = new Date(asOf).getTime();
-  if (Number.isNaN(then)) return "live";
-  const secs = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (secs < 60) return `${secs}s ago`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
-
 export function PanelContainer({ panel, sessionId, onRefined, highlighted, onBuildOption }: PanelContainerProps) {
   const [isRefining, setIsRefining] = useState(false);
   const [refineText, setRefineText] = useState("");
@@ -416,21 +403,9 @@ export function PanelContainer({ panel, sessionId, onRefined, highlighted, onBui
     >
       <div className="shrink-0 border-b border-border flex items-start justify-between px-4 pt-3 pb-2.5">
         <div className="flex flex-col gap-1 overflow-hidden min-w-0">
-          <span className="editorial-label text-[8.5px] text-muted-foreground shrink-0">{panel.type.replace('_', ' ')}</span>
           <span className="font-serif text-base leading-none truncate">{panel.title}</span>
         </div>
         <div className="flex items-center gap-2 shrink-0 mt-0.5">
-          {panel.source && (
-            <span
-              title={panel.asOf ? `As of ${new Date(panel.asOf).toLocaleString()}` : undefined}
-              className="flex items-center gap-1 text-[9px] uppercase tracking-widest text-muted-foreground"
-            >
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${panel.source === "live" ? "bg-emerald-400" : "bg-muted-foreground/50"}`}
-              />
-              {panel.source === "live" ? formatAsOf(panel.asOf) : panel.source}
-            </span>
-          )}
           {canExport && (
             <div className="relative">
               <button

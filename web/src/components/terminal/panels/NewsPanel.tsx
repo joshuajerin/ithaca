@@ -51,9 +51,6 @@ export function NewsPanel({ data }: { data: NewsData }) {
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between gap-2 mb-3 shrink-0">
-        <div className="editorial-label text-[9px] text-muted-foreground">
-          Scope · {data.scope}
-        </div>
         <div className="editorial-label text-[9px] text-muted-foreground nums-tabular">
           {filtered.length}
           {filtered.length !== data.items.length ? ` / ${data.items.length}` : ""}
