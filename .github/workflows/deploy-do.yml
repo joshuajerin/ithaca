@@ -243,6 +243,7 @@ jobs:
             VITE_API_BASE=/api
 
       - name: Build and push immutable IBKR engine image
+        if: needs.classify.outputs.deploy_env == 'prod'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -324,6 +325,8 @@ jobs:
           CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
           DOOMBERG_ADMIN_TOKEN: ${{ secrets.DOOMBERG_ADMIN_TOKEN }}
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          IBKR_ENGINE_ENABLED: ${{ vars.IBKR_ENGINE_ENABLED }}
+          SHARED_IBKR_NAMESPACE: ${{ vars.SHARED_IBKR_NAMESPACE }}
           DOOMBERG_IBKR_ENGINE_URL: ${{ vars.DOOMBERG_IBKR_ENGINE_URL }}
           DOOMBERG_IBKR_ENGINE_TOKEN: ${{ secrets.DOOMBERG_IBKR_ENGINE_TOKEN }}
           DOOMBERG_IBKR_QUOTE_PATH: ${{ vars.DOOMBERG_IBKR_QUOTE_PATH }}
@@ -334,6 +337,8 @@ jobs:
           IBKR_SIGNIN_PUBLIC: ${{ vars.IBKR_SIGNIN_PUBLIC }}
           IBKR_SIGNIN_HOST: ${{ vars.IBKR_SIGNIN_HOST }}
           IBKR_SIGNIN_REMOTE_IPS: ${{ vars.IBKR_SIGNIN_REMOTE_IPS }}
+          APPLY_CADDY: ${{ vars.APPLY_CADDY }}
+          CADDY_APPLY_ENV: ${{ vars.CADDY_APPLY_ENV }}
           DOOMBERG_ENABLE_LIVE_EXECUTION: ${{ vars.DOOMBERG_ENABLE_LIVE_EXECUTION }}
           DOOMBERG_EXECUTION_MAX_NOTIONAL_USD: ${{ vars.DOOMBERG_EXECUTION_MAX_NOTIONAL_USD }}
           DOOMBERG_EXECUTION_MAX_QUANTITY: ${{ vars.DOOMBERG_EXECUTION_MAX_QUANTITY }}
