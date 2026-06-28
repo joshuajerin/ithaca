@@ -243,7 +243,7 @@ jobs:
             VITE_API_BASE=/api
 
       - name: Build and push immutable IBKR engine image
-        if: needs.classify.outputs.deploy_env == 'prod'
+        if: needs.classify.outputs.deploy_env == 'prod' && vars.IBKR_ENGINE_ENABLED != '0'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -358,6 +358,7 @@ jobs:
         env:
           DOOMBERG_SMOKE_API_KEY: ${{ secrets.DOOMBERG_SMOKE_API_KEY }}
           DOOMBERG_SMOKE_NO_SCOPE_API_KEY: ${{ secrets.DOOMBERG_SMOKE_NO_SCOPE_API_KEY }}
+          LAUNCH_GATE_REQUIRE_IBKR: ${{ vars.LAUNCH_GATE_REQUIRE_IBKR }}
         run: |
           set -euo pipefail
           if [[ -z "${DOOMBERG_SMOKE_API_KEY}" ]]; then
@@ -367,6 +368,10 @@ jobs:
             fi
             echo "WARN: skipping authenticated launch gate; DOOMBERG_SMOKE_API_KEY is unset" >&2
             exit 0
+          fi
+          ibkr_args=()
+          if [[ "${LAUNCH_GATE_REQUIRE_IBKR:-0}" == "1" ]]; then
+            ibkr_args+=(--require-ibkr)
           fi
           kubectl -n "${K8S_GATEWAY_NAMESPACE}" exec deploy/doomberg-app -c mcp-gateway -- \
             env \
@@ -378,8 +383,8 @@ jobs:
                 --mcp-url "https://${MCP_HOST}/mcp" \
                 --require-postgres \
                 --require-active-worker \
-                --require-ibkr \
                 --require-mcp \
+                "${ibkr_args[@]}" \
                 --json
 
   mark-latest:
@@ -405,10 +410,14 @@ jobs:
         run: doctl registry login --expiry-seconds 1200
 
       - name: Move latest to deployed prod image
+        env:
+          IBKR_ENGINE_ENABLED: ${{ vars.IBKR_ENGINE_ENABLED }}
         run: |
           docker buildx imagetools create \
             -t "registry.digitalocean.com/${REGISTRY_NAME}/doomberg:latest" \
             "registry.digitalocean.com/${REGISTRY_NAME}/doomberg:${{ needs.classify.outputs.image_tag }}"
-          docker buildx imagetools create \
-            -t "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:latest" \
-            "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:${{ needs.classify.outputs.image_tag }}"
+          if [[ "${IBKR_ENGINE_ENABLED:-1}" != "0" ]]; then
+            docker buildx imagetools create \
+              -t "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:latest" \
+              "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:${{ needs.classify.outputs.image_tag }}"
+          fi
