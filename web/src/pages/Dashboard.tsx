@@ -7,8 +7,7 @@ import type {
   ArtifactRow,
   DatasetSnapshotRow,
   JobRow,
-  IbkrSmokeStatus,
-  OrderIntentRow,
+  LiveDataSmokeStatus,
   OpsStatus,
   ProviderConnectionRow,
   RunRow,
@@ -28,7 +27,6 @@ interface DashboardData {
   approvals: ApprovalRow[];
   providers: ProviderConnectionRow[];
   snapshots: DatasetSnapshotRow[];
-  orderIntents: OrderIntentRow[];
   triggers: TriggerRow[];
 }
 
@@ -39,15 +37,11 @@ export function Dashboard() {
   const [triggerPrice, setTriggerPrice] = useState("");
   const [triggerOp, setTriggerOp] = useState<"gte" | "lte">("gte");
   const [triggerDryRun, setTriggerDryRun] = useState<TriggerDryRunResult | null>(null);
-  const [orderRunId, setOrderRunId] = useState("");
-  const [orderSymbol, setOrderSymbol] = useState("AAPL");
-  const [orderQuantity, setOrderQuantity] = useState("1");
-  const [orderLimit, setOrderLimit] = useState("");
-  const [ibkrSmokeSymbol, setIbkrSmokeSymbol] = useState("AAPL");
-  const [ibkrSmoke, setIbkrSmoke] = useState<IbkrSmokeStatus | null>(null);
+  const [liveDataSmokeSymbol, setLiveDataSmokeSymbol] = useState("AAPL");
+  const [liveDataSmoke, setLiveDataSmoke] = useState<LiveDataSmokeStatus | null>(null);
   const { data, loading, error, reload } = useAsync<DashboardData>(
     async (signal) => {
-      const [runs, sessions, strategies, jobs, ops, artifacts, approvals, providers, orderIntents, triggers] = await Promise.all([
+      const [runs, sessions, strategies, jobs, ops, artifacts, approvals, providers, triggers] = await Promise.all([
         api.listRuns(undefined, signal),
         api.listSessions(signal),
         api.listStrategies(signal),
@@ -56,7 +50,6 @@ export function Dashboard() {
         api.listArtifacts(signal),
         api.listApprovals(signal),
         api.listProviders(signal),
-        api.listOrderIntents(signal),
         api.listTriggers(signal),
       ]);
       return {
@@ -69,7 +62,6 @@ export function Dashboard() {
         approvals,
         providers: providers.connections,
         snapshots: providers.snapshots,
-        orderIntents,
         triggers,
       };
     },
@@ -85,33 +77,27 @@ export function Dashboard() {
   const approvals = data?.approvals ?? [];
   const providers = data?.providers ?? [];
   const snapshots = data?.snapshots ?? [];
-  const orderIntents = data?.orderIntents ?? [];
   const triggers = data?.triggers ?? [];
   const queued = runs.filter((run) => run.state === "queued").length;
   const running = runs.filter((run) => run.state === "running").length;
-  const live = runs.filter((run) => run.state === "live").length;
   const failed = runs.filter((run) => ["failed", "timeout", "timed_out", "cancelled"].includes(run.state)).length;
   const queuedJobs = jobs.filter((job) => job.state === "queued").length;
   const leasedJobs = jobs.filter((job) => job.state === "leased" || job.state === "running").length;
   const pendingApprovals = approvals.filter((approval) => approval.state === "pending").length;
   const connectedProviders = providers.filter((provider) => provider.state === "connected").length;
   const activeTriggers = triggers.filter((trigger) => trigger.state === "active").length;
-  const proposedIntents = orderIntents.filter((intent) => intent.state === "proposed").length;
   const latestRuns = [...runs].sort(byUpdatedDesc).slice(0, 6);
   const latestSessions = [...sessions].sort(byUpdatedDesc).slice(0, 5);
   const latestStrategies = [...strategies].sort(byCreatedDesc).slice(0, 8);
   const latestJobs = [...jobs].sort(byUpdatedDesc).slice(0, 5);
   const pendingApprovalRows = approvals.filter((approval) => approval.state === "pending").slice(0, 4);
-  const latestIntents = [...orderIntents].sort(byUpdatedDesc).slice(0, 4);
   const readinessRows = ops?.readiness ?? [];
   const entitlementRecords = ops?.providers.entitlement_records
     ?? providers.reduce((sum, provider) => sum + provider.entitlements.length, 0);
   const archiveDataLabel = ops?.platform.archive_configured
     ? "archive configured"
     : `${snapshots.length} snapshot${snapshots.length === 1 ? "" : "s"}`;
-  const executionGatewayDetail = ops?.execution.live_enabled
-    ? "Live submission enabled behind policy checks."
-    : "Paper execution only.";
+  const executionGatewayDetail = "Trading is disabled. This workspace is data and backtest only.";
 
   async function runAction(label: string, fn: () => Promise<unknown>) {
     setBusy(label);
@@ -126,40 +112,37 @@ export function Dashboard() {
     }
   }
 
-  function connectIbkr() {
+  function connectLiveData() {
     return runAction("provider", () =>
       api.upsertProviderConnection({
-        provider: "ibkr",
-        connection_id: "ibkr-vps",
-        account_ref: "ibkr-vps",
-        credential_ref: "env:DOOMBERG_IBKR_ENGINE_TOKEN",
-        capabilities: ["quotes", "orders", "trading", "execution"],
+        provider: "doomberg-live-data",
+        connection_id: "live-market-data",
+        capabilities: ["quotes", "market_data"],
         entitlements: [
           {
             dataset: "equities-options",
-            entitlement_class: "connected_account",
-            source_account: "ibkr-vps",
+            entitlement_class: "doomberg_live",
             freshness: "real_time",
             permitted_use: "tenant_runtime",
           },
         ],
         state: "connected",
-        retention_policy: "connected-account",
+        retention_policy: "live-data",
       }),
     );
   }
 
-  function smokeIbkr(event: FormEvent<HTMLFormElement>) {
+  function smokeLiveData(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const symbol = ibkrSmokeSymbol.trim().toUpperCase();
+    const symbol = liveDataSmokeSymbol.trim().toUpperCase();
     if (!symbol) {
-      setActionError("Enter a symbol for the IBKR smoke.");
+      setActionError("Enter a symbol for the live data smoke.");
       return;
     }
-    setIbkrSmokeSymbol(symbol);
-    return runAction("ibkr-smoke", async () => {
-      const result = await api.ibkrSmoke(symbol);
-      setIbkrSmoke(result);
+    setLiveDataSmokeSymbol(symbol);
+    return runAction("live-data-smoke", async () => {
+      const result = await api.liveDataSmoke(symbol);
+      setLiveDataSmoke(result);
     });
   }
 
@@ -224,37 +207,6 @@ export function Dashboard() {
     );
   }
 
-  function createPaperIntent(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const runId = orderRunId.trim() || latestRuns[0]?.run_id || latestRuns[0]?.id;
-    const symbol = orderSymbol.trim().toUpperCase();
-    const quantity = Number(orderQuantity);
-    const limitPrice = Number(orderLimit);
-    if (!runId || !symbol || !Number.isFinite(quantity) || quantity <= 0) {
-      setActionError("Enter a run, symbol, and positive quantity.");
-      return;
-    }
-    if (!Number.isFinite(limitPrice) || limitPrice <= 0) {
-      setActionError("Enter a positive limit price for paper fill preview.");
-      return;
-    }
-    return runAction("intent", () =>
-      api.createOrderIntent({
-        run_id: runId,
-        payload: {
-          broker: "paper",
-          symbol,
-          side: "buy",
-          quantity,
-          order_type: "limit",
-          limit_price: limitPrice,
-          freshness_ms: 0,
-        },
-        idempotency_key: `ui:${runId}:${symbol}:${Date.now()}`,
-      }),
-    );
-  }
-
   return (
     <div className="page live-dashboard-page">
       <div className="live-hero">
@@ -277,7 +229,7 @@ export function Dashboard() {
         <Metric label="runs" value={runs.length} tone={runs.length ? "ok" : undefined} note="total" />
         <Metric label="queued" value={queued} tone={queued ? "warn" : undefined} note="awaiting worker" />
         <Metric label="running" value={running + leasedJobs} tone={running || leasedJobs ? "ok" : undefined} note="active compute" />
-        <Metric label="live" value={live} tone={live ? "ok" : undefined} note="paper deployments" />
+        <Metric label="data" value={ops?.live_data.engine_configured ? 1 : 0} tone={ops?.live_data.engine_configured ? "ok" : undefined} note="live market data" />
         <Metric label="approvals" value={pendingApprovals} tone={pendingApprovals ? "warn" : undefined} note="pending" />
         <Metric label="exceptions" value={failed} tone={failed ? "warn" : undefined} note="terminal failures" />
       </section>
@@ -362,33 +314,33 @@ export function Dashboard() {
               <span>{entitlementRecords} entitlement record{entitlementRecords === 1 ? "" : "s"}</span>
             </div>
             <div className="data-row">
-              <strong>IBKR engine</strong>
-              <span>{ops?.ibkr.engine_configured ? ops.ibkr.engine_host ?? "configured" : "unset"}</span>
+              <strong>Live market data</strong>
+              <span>{ops?.live_data.engine_configured ? "configured" : "unset"}</span>
             </div>
           </div>
-          {ibkrSmoke ? (
+          {liveDataSmoke ? (
             <div className="warning-list">
               <StatusRow
-                state={ibkrSmoke.ok ? "succeeded" : "failed"}
-                title={`IBKR smoke / ${ibkrSmoke.status}`}
-                detail={`${ibkrSmoke.symbol} ${formatOptionalNumber(ibkrSmoke.quote?.price)} · freshness ${formatOptionalNumber(ibkrSmoke.quote?.freshness_ms)}ms · latency ${formatOptionalNumber(ibkrSmoke.latency_ms)}ms`}
+                state={liveDataSmoke.ok ? "succeeded" : "failed"}
+                title={`Live data smoke / ${liveDataSmoke.status}`}
+                detail={`${liveDataSmoke.symbol} ${formatOptionalNumber(liveDataSmoke.quote?.price)} · freshness ${formatOptionalNumber(liveDataSmoke.quote?.freshness_ms)}ms · latency ${formatOptionalNumber(liveDataSmoke.latency_ms)}ms`}
               />
             </div>
           ) : null}
           <div className="ops-actions">
-            <button className="btn" type="button" onClick={connectIbkr} disabled={busy === "provider"}>
-              Connect IBKR VPS
+            <button className="btn" type="button" onClick={connectLiveData} disabled={busy === "provider"}>
+              Connect Live Data
             </button>
           </div>
-          <form className="ops-form" onSubmit={smokeIbkr}>
+          <form className="ops-form" onSubmit={smokeLiveData}>
             <input
               className="ops-input"
-              value={ibkrSmokeSymbol}
-              onChange={(e) => setIbkrSmokeSymbol(e.target.value)}
+              value={liveDataSmokeSymbol}
+              onChange={(e) => setLiveDataSmokeSymbol(e.target.value)}
               placeholder="symbol"
             />
-            <button className="btn" type="submit" disabled={busy === "ibkr-smoke"}>
-              Smoke IBKR
+            <button className="btn" type="submit" disabled={busy === "live-data-smoke"}>
+              Smoke Live Data
             </button>
           </form>
           <div className="mini-list">
@@ -398,29 +350,21 @@ export function Dashboard() {
                   <strong>{provider.provider}</strong>
                   <p>{provider.state} · {provider.capabilities.join(", ") || "no capabilities"}</p>
                 </span>
-                <em>{provider.account_ref ?? provider.connection_id}</em>
+                <em>{provider.connection_id}</em>
               </div>
             ))}
           </div>
         </Panel>
 
-        <Panel title="Approvals And Execution" meta={`${pendingApprovals} pending`}>
+        <Panel title="Approvals And Controls" meta={`${pendingApprovals} pending`}>
           <div className="warning-list">
             <StatusRow state={pendingApprovals ? "pending" : "succeeded"} title="Approval queue" detail={`${pendingApprovals} pending approval${pendingApprovals === 1 ? "" : "s"}.`} />
-            <StatusRow state={proposedIntents ? "pending" : "succeeded"} title="Order intents" detail={`${proposedIntents} proposed intent${proposedIntents === 1 ? "" : "s"} awaiting policy or approval.`} />
             <StatusRow
-              state={ops?.execution.live_enabled ? "succeeded" : "paused"}
-              title="Execution gateway"
+              state="paused"
+              title="Trading"
               detail={executionGatewayDetail}
             />
           </div>
-          <form className="ops-form" onSubmit={createPaperIntent}>
-            <input className="ops-input wide" value={orderRunId} onChange={(e) => setOrderRunId(e.target.value)} placeholder="run id" />
-            <input className="ops-input" value={orderSymbol} onChange={(e) => setOrderSymbol(e.target.value)} placeholder="symbol" />
-            <input className="ops-input" value={orderQuantity} onChange={(e) => setOrderQuantity(e.target.value)} placeholder="qty" inputMode="decimal" />
-            <input className="ops-input" value={orderLimit} onChange={(e) => setOrderLimit(e.target.value)} placeholder="limit" inputMode="decimal" />
-            <button className="btn" type="submit" disabled={busy === "intent"}>Create Intent</button>
-          </form>
           <div className="mini-list">
             {pendingApprovalRows.map((approval) => (
               <div className="mini-row" key={approval.approval_id}>
@@ -431,18 +375,6 @@ export function Dashboard() {
                 <div className="mini-actions">
                   <button className="btn" type="button" onClick={() => runAction("approval", () => api.decideApproval(approval.approval_id, "approved"))} disabled={busy === "approval"}>Approve</button>
                   <button className="btn" type="button" onClick={() => runAction("approval", () => api.decideApproval(approval.approval_id, "denied"))} disabled={busy === "approval"}>Deny</button>
-                </div>
-              </div>
-            ))}
-            {latestIntents.map((intent) => (
-              <div className="mini-row" key={intent.intent_id}>
-                <span>
-                  <strong>{String(intent.payload.symbol ?? "intent")} / {intent.state}</strong>
-                  <p>{intent.intent_id}</p>
-                </span>
-                <div className="mini-actions">
-                  <button className="btn" type="button" onClick={() => runAction("intent", () => api.previewOrderIntent(intent.intent_id))} disabled={busy === "intent"}>Preview</button>
-                  <button className="btn" type="button" onClick={() => runAction("intent", () => api.submitOrderIntent(intent.intent_id))} disabled={busy === "intent"}>Submit</button>
                 </div>
               </div>
             ))}

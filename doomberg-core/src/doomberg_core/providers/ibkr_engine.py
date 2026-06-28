@@ -1,8 +1,7 @@
-"""Shared client for the user-run IBKR engine.
+"""Shared client for the live market-data engine.
 
-The IBKR engine is a connected-account boundary. This client intentionally exposes only
-read-only account/market-data routes and explicit order-submission calls used by the execution
-gateway.
+This adapter talks to the private upstream bridge, but public API/MCP payloads must not expose
+the upstream vendor or any broker/order capability.
 """
 
 from __future__ import annotations
@@ -17,8 +16,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
+PUBLIC_DATA_SOURCE = "doomberg-live-data"
+PUBLIC_ENTITLEMENT_CLASS = "doomberg_live"
+
+
 class IbkrEngineError(RuntimeError):
-    """Base error for the user-run IBKR engine adapter."""
+    """Base error for the private live market-data adapter."""
 
 
 class IbkrEngineConnectionError(IbkrEngineError):
@@ -31,7 +34,7 @@ class IbkrEngineHttpError(IbkrEngineError):
     def __init__(self, status: int, detail: str = "") -> None:
         self.status = int(status)
         self.detail = detail[:1000]
-        super().__init__(f"IBKR engine HTTP {self.status}")
+        super().__init__(f"live data engine HTTP {self.status}")
 
 
 class IbkrQuoteInvariantError(IbkrEngineError):
@@ -96,8 +99,8 @@ def _env_int(name: str) -> int | None:
     return max(0, value)
 
 
-def normalize_quote(raw: dict[str, Any], *, symbol: str, source: str = "ibkr-engine") -> dict[str, Any]:
-    """Normalize common IBKR-engine quote shapes into the canonical trigger quote contract."""
+def normalize_quote(raw: dict[str, Any], *, symbol: str, source: str = PUBLIC_DATA_SOURCE) -> dict[str, Any]:
+    """Normalize common live quote shapes into the canonical trigger quote contract."""
 
     payload = raw.get("data") if isinstance(raw.get("data"), dict) else raw
     payload = payload.get("quote") if isinstance(payload.get("quote"), dict) else payload
@@ -140,15 +143,17 @@ def normalize_quote(raw: dict[str, Any], *, symbol: str, source: str = "ibkr-eng
         quality_flags.append("RECEIVED_TIME_DEFAULTED")
         received_time = _now()
     freshness_ms = max(0, int((received_time - event_time).total_seconds() * 1000))
+    entitlement_class = payload.get("entitlement_class") or (
+        PUBLIC_ENTITLEMENT_CLASS if source == PUBLIC_DATA_SOURCE else "unknown"
+    )
     return {
         "symbol": str(payload.get("symbol") or symbol).upper(),
         "price": price,
         "last": price,
         "bid": _first_number(payload, ("bid", "bid_price", "bidPrice")),
         "ask": _first_number(payload, ("ask", "ask_price", "askPrice")),
-        "source": str(payload.get("source") or source),
-        "source_account": payload.get("source_account") or payload.get("account") or "ibkr-vps",
-        "entitlement_class": payload.get("entitlement_class") or "connected_account",
+        "source": source,
+        "entitlement_class": entitlement_class,
         "event_time": event_time.isoformat(),
         "received_time": received_time.isoformat(),
         "freshness_ms": freshness_ms,
@@ -196,6 +201,13 @@ def _redacted_item(item: Any) -> dict[str, Any]:
         "session",
         "session_id",
         "token",
+        "account",
+        "accountid",
+        "account_id",
+        "accountvan",
+        "acctid",
+        "acct_id",
+        "id",
     }
     return {
         str(key): value
@@ -205,7 +217,7 @@ def _redacted_item(item: Any) -> dict[str, Any]:
 
 
 class IbkrEngineClient:
-    """Small HTTP client for the user-run IBKR engine."""
+    """Small HTTP client for the private live market-data engine."""
 
     def __init__(
         self,
@@ -286,11 +298,11 @@ class IbkrEngineClient:
             "GET",
             self.url_for_path(self.quote_path, symbol=symbol),
             tenant_id=tenant_id,
-            user_agent="doomberg-ibkr-quote",
+            user_agent="doomberg-live-data-quote",
         )
         if not isinstance(raw, dict):
             raise IbkrQuoteInvariantError(f"quote for {symbol.upper()} did not include a JSON object")
-        return normalize_quote(raw, symbol=symbol, source="ibkr-engine")
+        return normalize_quote(raw, symbol=symbol, source=PUBLIC_DATA_SOURCE)
 
     def history(
         self,
@@ -307,7 +319,7 @@ class IbkrEngineClient:
             "GET",
             url,
             tenant_id=tenant_id,
-            user_agent="doomberg-ibkr-history",
+            user_agent="doomberg-live-data-history",
         )
         return raw if isinstance(raw, dict) else {"points": raw}
 
@@ -327,7 +339,7 @@ class IbkrEngineClient:
             "GET",
             f"{url}{sep}{urllib.parse.urlencode(params)}",
             tenant_id=tenant_id,
-            user_agent="doomberg-ibkr-news",
+            user_agent="doomberg-live-data-news",
         )
         return raw if isinstance(raw, dict) else {"items": raw}
 
@@ -344,18 +356,18 @@ class IbkrEngineClient:
             "GET",
             f"{url}{sep}{urllib.parse.urlencode({'scan_type': scan_type, 'limit': str(limit)})}",
             tenant_id=tenant_id,
-            user_agent="doomberg-ibkr-scanner",
+            user_agent="doomberg-live-data-scanner",
         )
         return raw if isinstance(raw, dict) else {"rows": raw}
 
     def accounts(self, *, tenant_id: str | None = None) -> dict[str, Any]:
-        """Return a redacted read-only account summary from the user-run IBKR engine."""
+        """Return a redacted read-only account summary from the private engine."""
 
         raw = self._request_json(
             "GET",
             self.url_for_path(self.accounts_path),
             tenant_id=tenant_id,
-            user_agent="doomberg-ibkr-accounts",
+            user_agent="doomberg-live-data-accounts",
         )
         accounts = [_redacted_item(item) for item in _payload_list(raw, "accounts", "accountSummaries")]
         if not accounts and isinstance(raw, dict):
@@ -363,47 +375,53 @@ class IbkrEngineClient:
             if account_id:
                 accounts = [_redacted_item(raw)]
         return {
-            "provider": "ibkr-engine",
-            "source": "ibkr-engine",
-            "entitlement_class": "connected_account",
-            "accounts": accounts,
+            "provider": PUBLIC_DATA_SOURCE,
+            "source": PUBLIC_DATA_SOURCE,
+            "entitlement_class": PUBLIC_ENTITLEMENT_CLASS,
+            "accounts": [
+                {
+                    "label": f"Account {idx}",
+                    "type": item.get("type") or item.get("tradingType") or "data",
+                    "currency": item.get("currency"),
+                    "status": "connected",
+                }
+                for idx, item in enumerate(accounts, start=1)
+            ],
             "raw_count": len(accounts),
         }
 
     def positions(self, *, account: str | None = None, tenant_id: str | None = None) -> dict[str, Any]:
-        """Return redacted read-only positions from the user-run IBKR engine."""
+        """Return redacted read-only positions from the private engine."""
 
         raw = self._request_json(
             "GET",
             self.url_for_path(self.positions_path, account=account),
             tenant_id=tenant_id,
-            user_agent="doomberg-ibkr-positions",
+            user_agent="doomberg-live-data-positions",
         )
         positions = [_redacted_item(item) for item in _payload_list(raw, "positions", "items")]
         return {
-            "provider": "ibkr-engine",
-            "source": "ibkr-engine",
-            "source_account": account,
-            "entitlement_class": "connected_account",
+            "provider": PUBLIC_DATA_SOURCE,
+            "source": PUBLIC_DATA_SOURCE,
+            "entitlement_class": PUBLIC_ENTITLEMENT_CLASS,
             "positions": positions,
             "raw_count": len(positions),
         }
 
     def orders(self, *, account: str | None = None, tenant_id: str | None = None) -> dict[str, Any]:
-        """Return redacted read-only order state from the user-run IBKR engine."""
+        """Return redacted read-only order state from the private engine."""
 
         raw = self._request_json(
             "GET",
             self.url_for_path(self.orders_path, account=account),
             tenant_id=tenant_id,
-            user_agent="doomberg-ibkr-orders",
+            user_agent="doomberg-live-data-orders",
         )
         orders = [_redacted_item(item) for item in _payload_list(raw, "orders", "items")]
         return {
-            "provider": "ibkr-engine",
-            "source": "ibkr-engine",
-            "source_account": account,
-            "entitlement_class": "connected_account",
+            "provider": PUBLIC_DATA_SOURCE,
+            "source": PUBLIC_DATA_SOURCE,
+            "entitlement_class": PUBLIC_ENTITLEMENT_CLASS,
             "orders": orders,
             "raw_count": len(orders),
         }
@@ -461,8 +479,8 @@ class IbkrEngineClient:
                 "ok": False,
                 "status": "not_configured",
                 "code": "BROKER_CONNECTION_REQUIRED",
-                "error": "DOOMBERG_IBKR_ENGINE_URL is not configured",
-                "recovery_action": "Set DOOMBERG_IBKR_ENGINE_URL and rerun the IBKR smoke.",
+                "error": "live data engine is not configured",
+                "recovery_action": "Check live market-data configuration and rerun the smoke.",
             }
 
         started = time.perf_counter()
@@ -476,7 +494,7 @@ class IbkrEngineClient:
                 "code": "PROVIDER_DEGRADED",
                 "latency_ms": int((time.perf_counter() - started) * 1000),
                 "error": str(exc),
-                "recovery_action": "Inspect the IBKR engine quote response shape and normalizer contract.",
+                "recovery_action": "Inspect the live data quote response shape and normalizer contract.",
             }
         except IbkrEngineError as exc:
             return {
@@ -486,7 +504,7 @@ class IbkrEngineClient:
                 "code": "PROVIDER_DEGRADED",
                 "latency_ms": int((time.perf_counter() - started) * 1000),
                 "error": str(exc),
-                "recovery_action": "Check the VPS health, network path, token, and quote route.",
+                "recovery_action": "Check engine health, network path, token, and quote route.",
             }
 
         latency_ms = int((time.perf_counter() - started) * 1000)
@@ -534,15 +552,15 @@ class IbkrEngineClient:
             detail = exc.read().decode("utf-8", errors="replace")
             raise IbkrEngineHttpError(exc.code, detail) from exc
         except urllib.error.URLError as exc:
-            raise IbkrEngineConnectionError(f"IBKR engine unreachable: {exc.reason}") from exc
+            raise IbkrEngineConnectionError(f"live data engine unreachable: {exc.reason}") from exc
         except Exception as exc:
-            raise IbkrEngineError(f"IBKR engine request failed: {exc}") from exc
+            raise IbkrEngineError(f"live data engine request failed: {exc}") from exc
         if not raw:
             return {}
         try:
             return json.loads(raw.decode("utf-8"))
         except json.JSONDecodeError as exc:
-            raise IbkrEngineError("IBKR engine returned invalid JSON") from exc
+            raise IbkrEngineError("live data engine returned invalid JSON") from exc
 
     def _quote_invariants(
         self,
@@ -602,7 +620,7 @@ class IbkrEngineClient:
         check("source_present", bool(quote.get("source")), str(quote.get("source") or "missing"))
         check(
             "connected_account_entitlement",
-            quote.get("entitlement_class") == "connected_account",
+            quote.get("entitlement_class") == PUBLIC_ENTITLEMENT_CLASS,
             str(quote.get("entitlement_class") or "missing"),
         )
         return checks

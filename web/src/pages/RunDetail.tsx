@@ -13,14 +13,8 @@ export function RunDetail() {
   const { data: run, reload } = useAsync<RunRow>((s) => api.getRun(id!, s), [id]);
   const { events, conn, error } = useRunEvents(id);
 
-  const isPaper = run?.kind === "paper";
-  const { data: book, reload: reloadBook } = useAsync<Record<string, unknown> | null>(
-    (s) => (isPaper && id ? api.getBook(id, s) : Promise.resolve(null)),
-    [id, isPaper, run?.state],
-  );
   const reloadAll = () => {
     reload();
-    reloadBook();
   };
 
   // Replay scrubber: when set, render state as-of that seq; otherwise follow live.
@@ -65,12 +59,10 @@ export function RunDetail() {
           <button className="btn" onClick={reloadAll}>
             Refresh
           </button>
-          {run && <DeployControls run={run} onDone={reloadAll} />}
         </div>
       </div>
 
       {error && <div className="banner">Event stream error: {error}</div>}
-      {isPaper && book && <BookStrip book={book} />}
       {state.denials.length > 0 && (
         <div className="banner">
           {state.denials.length} denied action{state.denials.length > 1 ? "s" : ""} on the audited path — see the timeline.
@@ -203,85 +195,6 @@ export function RunDetail() {
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-type DeployAction = "promote" | "activate" | "pause" | "resume" | "retire";
-
-// The human money-path actions available from a paper run's CURRENT state. Backtests have none
-// (they run themselves); the control plane re-checks authority + the gate regardless of the UI.
-function actionsFor(run: RunRow): DeployAction[] {
-  if (run.kind !== "paper") return [];
-  switch (run.state) {
-    case "queued":
-    case "running":
-    case "succeeded":
-      return ["promote"];
-    case "promoted":
-      return ["activate", "retire"];
-    case "live":
-      return ["pause", "retire"];
-    case "paused":
-      return ["resume", "retire"];
-    default:
-      return [];
-  }
-}
-
-function DeployControls({ run, onDone }: { run: RunRow; onDone: () => void }) {
-  const available = actionsFor(run);
-  const [busy, setBusy] = useState<DeployAction | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  if (available.length === 0) return null;
-
-  const run_id = run.id ?? (run as { run_id?: string }).run_id;
-  return (
-    <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
-      {available.map((a) => (
-        <button
-          key={a}
-          className={`btn ${a === "promote" || a === "activate" || a === "resume" ? "primary" : ""}`}
-          disabled={busy !== null || !run_id}
-          onClick={async () => {
-            setBusy(a);
-            setErr(null);
-            try {
-              await api.runAction(run_id!, a);
-              onDone();
-            } catch (e) {
-              setErr(e instanceof Error ? e.message : String(e));
-            } finally {
-              setBusy(null);
-            }
-          }}
-        >
-          {busy === a ? `${a}…` : a.charAt(0).toUpperCase() + a.slice(1)}
-        </button>
-      ))}
-      {err && <span className="conn error" style={{ marginLeft: 6 }}>{err}</span>}
-    </span>
-  );
-}
-
-function BookStrip({ book }: { book: Record<string, unknown> }) {
-  const weights = (book.weights ?? {}) as Record<string, number>;
-  const entries = Object.entries(weights);
-  return (
-    <div className="toolbar" style={{ flexWrap: "wrap" }}>
-      <span className="page-sub">Paper book</span>
-      <span className="kv"><span className="k">gross</span> {String(book.gross ?? "—")}</span>
-      <span className="kv"><span className="k">cash</span> {String(book.cash ?? "—")}</span>
-      <span className="kv"><span className="k">v</span> {String(book.version ?? "—")}</span>
-      {entries.length === 0 ? (
-        <span className="page-sub">flat (all cash)</span>
-      ) : (
-        entries.map(([sym, w]) => (
-          <span className="kv" key={sym}>
-            <span className="k">{sym}</span> {(Number(w) * 100).toFixed(1)}%
-          </span>
-        ))
-      )}
     </div>
   );
 }

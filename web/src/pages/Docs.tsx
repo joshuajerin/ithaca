@@ -25,7 +25,7 @@ const SKILLSET_DOCS: DocGroup[] = [
     heading: "Skillsets",
     entries: [
       { title: "market skillset", path: "docs/plans/dashboard-sessions-ui.md", note: "market dashboard/session tree reference" },
-      { title: "strategy skillset", path: "services/mcp-gateway/src/doomberg_mcp/_skillsets/strategy.py", note: "strategy authoring + backtest/paper lifecycle" },
+      { title: "strategy skillset", path: "services/mcp-gateway/src/doomberg_mcp/_skillsets/strategy.py", note: "strategy authoring + backtest lifecycle" },
       { title: "data skillset", path: "services/mcp-gateway/src/doomberg_mcp/_skillsets/data.py", note: "market/instrument fetch helpers and normalizations" },
       { title: "financials skillset", path: "services/mcp-gateway/src/doomberg_mcp/_skillsets/financials.py", note: "fundamentals, valuation surfaces, filings" },
     ],

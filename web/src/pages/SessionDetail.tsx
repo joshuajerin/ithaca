@@ -18,7 +18,6 @@ const MCP_SCOPES = [
   "approvals:read",
   "artifacts:read",
   "deploy:backtest",
-  "deploy:paper",
 ];
 
 export function SessionDetail() {

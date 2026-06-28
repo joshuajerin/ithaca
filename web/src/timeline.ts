@@ -50,7 +50,7 @@ export interface TimelineState {
   // honest surfacing of refused / errored actions on the audited path
   denials: TraceEvent[];
   errors: TraceEvent[];
-  // marks/fills for paper runs
+  // modeled marks/fills emitted by backtests or analysis workers
   marks: TraceEvent[];
   fills: TraceEvent[];
   // bookkeeping

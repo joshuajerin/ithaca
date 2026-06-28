@@ -188,7 +188,7 @@ export function StrategyMarketplacePanel({
         return;
       }
       const newName = json?.strategy?.name || sel?.name || "strategy";
-      setCloneState({ busy: false, ok: true, blocked: false, msg: `Cloned “${newName}” to your paper desk` });
+      setCloneState({ busy: false, ok: true, blocked: false, msg: `Cloned “${newName}” to your strategy desk` });
       setTimeout(() => setCloneState(s => (s.ok ? { ...s, ok: false, msg: null } : s)), 4000);
     } catch (e) {
       setCloneState({ busy: false, ok: false, blocked: false, msg: e instanceof Error ? e.message : "Clone failed" });
@@ -420,7 +420,7 @@ export function StrategyMarketplacePanel({
               className="flex items-center gap-1.5 border border-white bg-white/5 hover:bg-white/10 text-white text-[10px] uppercase tracking-wider px-3 py-1.5 transition-colors disabled:opacity-50"
             >
               {cloneState.busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Rocket className="w-3 h-3" strokeWidth={1.5} />}
-              Clone to paper desk
+              Clone to strategy desk
             </button>
 
             {isNaming ? (

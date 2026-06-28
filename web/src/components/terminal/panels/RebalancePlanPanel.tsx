@@ -218,8 +218,8 @@ export function RebalancePlanPanel({ data }: { data: RebalancePlanData }) {
       <div className="shrink-0 pt-1 border-t border-border/40">
         <span className="editorial-label text-[7.5px] text-muted-foreground">
           {data.applied
-            ? `Applied to ${data.strategyName}'s paper book — modeled cost debited from cash.`
-            : `Preview only. Say "apply" or "rebalance ${data.strategyName}" to execute these trades.`}
+            ? `Applied to ${data.strategyName}'s model book — modeled cost debited from cash.`
+            : `Preview only. This is a model rebalance plan and cannot submit orders.`}
         </span>
       </div>
     </div>
