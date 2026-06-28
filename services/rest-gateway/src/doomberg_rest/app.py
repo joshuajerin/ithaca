@@ -939,6 +939,34 @@ def create_app(db: Any | None = None) -> FastAPI:
         shaped["artifacts"] = stores.artifacts.list_by_run(resolved_tenant, run_id)
         return shaped
 
+    @app.post("/api/sessions/seed-demo", status_code=201)
+    def seed_demo(
+        tenant_id: str = Depends(require_tenant),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        """Seed a replayable demo research session if the tenant has none yet.
+
+        Powers the Welcome landing's "first glimpse" — a brand-new user gets one
+        deterministic demo session (agent researches NVDA, screens peers, proposes a
+        strategy, requests a backtest) so the replay viewer has something to play before
+        they start their own work. Idempotent: returns the existing demo if one exists.
+        """
+        from doomberg_platform import seed_demo_session
+
+        run_id = seed_demo_session(stores, tenant_id)
+        if run_id is None:
+            # Already seeded — return the first research run.
+            rows = stores.runs.list(tenant_id, kind="research")
+            if not rows:
+                raise HTTPException(status_code=409, detail="no research session and seeding failed")
+            run_id = rows[0]["run_id"]
+        run = stores.runs.get(tenant_id, run_id)
+        events = stores.trace.events(tenant_id, run_id)
+        shaped = shape_run(run, events)
+        shaped["jobs"] = stores.jobs.list_by_run(tenant_id, run_id)
+        shaped["artifacts"] = stores.artifacts.list_by_run(tenant_id, run_id)
+        return shaped
+
     # ---- reads -------------------------------------------------------------------------
     @app.get("/api/runs")
     def list_runs(

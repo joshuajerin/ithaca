@@ -106,8 +106,19 @@ export function AgentLink() {
               </button>
             </div>
             {status === "done" && (
-              <div className="set-hint">
-                Doomberg MCP is installed. You can close this tab and return to the coding agent.
+              <div className="agent-link-done">
+                <div className="set-hint">
+                  Doomberg MCP is installed. Your agent is connected and ready.
+                </div>
+                <div className="agent-link-starter">
+                  <div className="starter-label">Try asking your agent:</div>
+                  <pre className="starter-prompt">{"Use Doomberg to research NVDA — pull price history, screen peers, propose a momentum strategy, and backtest it."}</pre>
+                </div>
+                <div className="set-hint">
+                  The agent's research will stream live into the{" "}
+                  <a href="#/welcome">Doomberg web UI</a> as a replayable trace.
+                  You can close this tab and return to your agent.
+                </div>
               </div>
             )}
           </div>

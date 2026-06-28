@@ -134,6 +134,25 @@ async def test_server_registers_three_tools(toolset):
     assert "ibkr_smoke" not in names
 
 
+async def test_server_exposes_instructions_and_starter_prompt(toolset):
+    """The initial push: the agent reads instructions on connect + has a starter prompt."""
+    from doomberg_mcp import create_server
+
+    mcp, _ = create_server(toolset)
+
+    # The MCP initialize response carries `instructions` — the agent's first-read guidance.
+    assert mcp.instructions is not None
+    assert "Doomberg" in mcp.instructions
+    assert "session_context" in mcp.instructions  # tells the agent its first move
+    assert "propose_strategy" in mcp.instructions
+    assert "backtest_run" in mcp.instructions
+
+    # A named prompt the agent can call for a guided first-session template.
+    prompts = await mcp.list_prompts()
+    prompt_names = {p.name for p in prompts}
+    assert "starter_research" in prompt_names
+
+
 async def test_server_registers_control_plane_resources(toolset):
     from doomberg_mcp import create_server
 

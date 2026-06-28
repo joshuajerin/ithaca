@@ -10,11 +10,14 @@ import { Ideas } from "./pages/Ideas";
 import { Settings } from "./pages/Settings";
 import { AuthPage } from "./pages/AuthPage";
 import { AgentLink } from "./pages/AgentLink";
+import { Welcome } from "./pages/Welcome";
 import { useAuth } from "./auth/AuthContext";
+import { DoombergMark } from "./auth/icons";
 import { api } from "./api";
 
 const NAV: { to: string; label: string; cta?: boolean }[] = [
   { to: "/new-session", label: "New Session", cta: true },
+  { to: "/welcome", label: "Welcome" },
   { to: "/dashboard", label: "Dashboard" },
   { to: "/sessions", label: "Sessions" },
   { to: "/runs", label: "Runs" },
@@ -49,8 +52,11 @@ export function App() {
     <div className="app">
       <aside className="rail">
         <div className="rail-brand">
-          Doomberg
-          <small>Observability</small>
+          <DoombergMark size={22} />
+          <div>
+            Doomberg
+            <small>Observability</small>
+          </div>
         </div>
         <nav className="rail-nav">
           {NAV.map((n) => (
@@ -85,7 +91,8 @@ export function App() {
       </aside>
       <main className="main">
         <Routes>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/" element={<Navigate to="/welcome" replace />} />
+          <Route path="/welcome" element={<Welcome />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/new-session" element={<NewSession />} />
           <Route path="/sessions" element={<SessionsList />} />

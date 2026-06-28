@@ -1078,6 +1078,48 @@ def _transport_security():
     )
 
 
+# The "initial push": the instructions the agent reads the moment it connects to the
+# Doomberg MCP server (the MCP ``initialize`` response's ``instructions`` field). This is
+# what turns a flat list of ~30 tools into a guided workflow — the agent learns what
+# Doomberg is, what its first move should be, and the canonical research loop, before it
+# calls anything.
+_SERVER_INSTRUCTIONS = """\
+Doomberg is a quant research, backtest, and paper-trading observability platform. You are \
+connected to it over MCP as a tenant-scoped agent. Every tool call you make is traced and \
+replayable in the Doomberg web UI — the human can watch your research unfold in real time.
+
+Canonical workflow (follow this for every research session):
+
+1. session_context(prompt="your research question", title="short title") — ALWAYS call \
+this first. It opens a traced research session and attaches your question so the human \
+sees what you are working on.
+
+2. Research the opportunity. Use search_skills(query="…") to discover relevant data tools, \
+then call the specific tools (market_get_ohlcv, fundamentals_get, market_screener, \
+analyst_ratings, congress_trades, insider_activity, sentiment_get, macro_dashboard, etc.) \
+to gather evidence.
+
+3. propose_strategy(spec={…}) — when you have a thesis, register it as a declarative \
+StrategySpec (no money, no deploy). The spec is validated and stored as an immutable \
+versioned row.
+
+4. backtest_run(spec={…}, range="1y") — backtest the strategy. Returns a run_id. Poll \
+progress with subscribe_run(run_id, cursor). The result includes Sharpe, CAGR, \
+max drawdown, and a trade blotter.
+
+5. Report findings to the human. Summarize the thesis, the backtest results, and any \
+caveats. The human decides whether to promote to paper trading — you cannot deploy live.
+
+Key constraints:
+- You CANNOT deploy live capital. Paper trading promotion requires human approval \
+(list_approvals / decide_approval are for the human's workflow, not yours).
+- Every call is tenant-scoped and audited. You are operating inside a glass box.
+- Use search_skills before loading the full catalog — it keeps your context lean.
+- If you are unsure what data is available, start with search_skills(query="") to see \
+the full catalog, or universe_list() to see the tracked universe.
+"""
+
+
 def create_server(toolset: Toolset | None = None, *, http: bool = False):
     """Build the FastMCP server. Imported lazily so the toolset is testable without the SDK.
 
@@ -1089,7 +1131,11 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     from mcp.server.fastmcp import FastMCP
 
     ts = toolset or _platform_backed_toolset()
-    mcp = FastMCP("doomberg", transport_security=_transport_security() if http else None)
+    mcp = FastMCP(
+        "doomberg",
+        instructions=_SERVER_INSTRUCTIONS,
+        transport_security=_transport_security() if http else None,
+    )
 
     def _ctx() -> dict | None:
         """The per-request tenant ``_ctx`` in HTTP mode; None in stdio mode."""
@@ -1506,6 +1552,25 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     @mcp.tool(name="congress_screener", description="Politicians ranked by trading activity and win rate based on STOCK Act disclosures.")
     def congress_screener(min_trades: int = 5, limit: int = 50) -> dict:
         return call_skill("congress.screener", {"min_trades": min_trades, "limit": limit})
+
+    # ---- MCP prompts: guided entry points the agent can call for a starter template ----
+    @mcp.prompt(
+        name="starter_research",
+        description="A guided first-session template: research a ticker, propose a strategy, backtest it."
+    )
+    def starter_research(symbol: str = "NVDA", question: str = "") -> str:
+        q = question or f"What does {symbol} look like right now? Research the setup and propose a backtest."
+        return (
+            f"Research question: {q}\n\n"
+            "Follow the Doomberg canonical workflow:\n"
+            "1. Call session_context(prompt=<the question>, title=<short title>) to open a traced session.\n"
+            f"2. Research {symbol}: pull price history (market_get_ohlcv), fundamentals (fundamentals_get), "
+            "screen peers (market_screener), check sentiment and analyst ratings.\n"
+            "3. When you have a thesis, call propose_strategy with a declarative StrategySpec.\n"
+            "4. Call backtest_run with the spec, then subscribe_run to follow progress.\n"
+            "5. Summarize findings: thesis, backtest results (Sharpe/CAGR/drawdown), and caveats.\n"
+            "Remember: you cannot deploy live capital. The human decides on paper trading promotion."
+        )
 
     return mcp, ts
 

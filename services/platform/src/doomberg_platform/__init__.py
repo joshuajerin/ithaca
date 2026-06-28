@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from .auth_store import VALID_SCOPES, AuthStore, hash_secret
 from .book_store import BookConflict, BookNotFound, BookStore
+from .demo_seed import seed_demo_session
 from .control_store import ApprovalStore, ArtifactStore, ExecutionStore, ProviderStore, TriggerStore
 from .db import Db, open_db
 from .job_store import JobConflict, JobNotFound, JobStore
@@ -73,4 +74,5 @@ __all__ = [
     "BookNotFound",
     "UserStore",
     "SessionError",
+    "seed_demo_session",
 ]

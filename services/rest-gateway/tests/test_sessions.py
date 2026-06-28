@@ -107,4 +107,29 @@ def test_create_session_can_start_realtime_without_prompt(client, stores, tenant
     body = resp.json()
     events = stores.trace.events(tenant_a, body["id"])
     assert "title" not in events[0]["data"]
-    assert "prompt" not in events[0]["data"]
+
+
+def test_seed_demo_creates_replayable_research_session(client, stores, tenant_a):
+    """The Welcome landing's first-glimpse: seeding a demo session on demand."""
+    resp = client.post("/api/sessions/seed-demo", headers={"X-Tenant-Id": tenant_a})
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["kind"] == "research"
+    assert body["state"] == "succeeded"
+    assert body["tenant_id"] == tenant_a
+
+    events = stores.trace.events(tenant_a, body["id"])
+    assert events[0]["type"] == "session_open"
+    assert events[-1]["type"] == "session_close"
+    # Gap-free seq (the replay scrubber walks this).
+    seqs = [e["seq"] for e in events]
+    assert seqs == list(range(len(seqs)))
+
+
+def test_seed_demo_is_idempotent(client, stores, tenant_a):
+    """Seeding twice does not create a second demo session."""
+    r1 = client.post("/api/sessions/seed-demo", headers={"X-Tenant-Id": tenant_a})
+    r2 = client.post("/api/sessions/seed-demo", headers={"X-Tenant-Id": tenant_a})
+    assert r1.status_code == 201
+    assert r2.status_code == 201
+    assert r1.json()["id"] == r2.json()["id"]

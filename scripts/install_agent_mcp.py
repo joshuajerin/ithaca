@@ -215,10 +215,14 @@ def main(argv: list[str] | None = None) -> int:
     _install_codex_mcp(args.name, mcp_url)
 
     key_id = payload.get("key_id", "")
-    print(f"Doomberg MCP installed as '{args.name}' for Codex.")
+    print(f"\nDoomberg MCP installed as '{args.name}' for Codex.")
     if key_id:
         print(f"Key id: {key_id}")
     print(f"Token env: {ENV_FILE}")
+    print("\nNext step: open your agent and ask it to research something, e.g.:")
+    print('  "Use Doomberg to research NVDA — pull price history, screen peers,')
+    print('   propose a momentum strategy, and backtest it."')
+    print("\nThe agent will stream its work into the Doomberg web UI as a live trace.")
     print("Restart Codex desktop if it was already open so it picks up the launchd env.")
     return 0
 

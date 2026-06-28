@@ -16,6 +16,9 @@ export function AuthPage() {
             <small>Terminal</small>
           </div>
         </div>
+        <p className="auth-tagline">
+          The glass box your agent researches, backtests, and paper-trades in.
+        </p>
 
         <div className="auth-switch clerk-auth-switch">
           <button

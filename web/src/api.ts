@@ -120,6 +120,10 @@ export const api = {
     return postJson<RunRow>(`/sessions`, { prompt, title }, signal);
   },
 
+  async seedDemoSession(signal?: AbortSignal): Promise<RunRow> {
+    return postJson<RunRow>(`/sessions/seed-demo`, {}, signal);
+  },
+
   async listStrategies(signal?: AbortSignal): Promise<StrategyRow[]> {
     const raw = await getJson<unknown>(`/strategies`, signal);
     return unwrapList<StrategyRow>(raw, "strategies");
