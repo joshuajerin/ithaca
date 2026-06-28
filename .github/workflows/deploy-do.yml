@@ -250,6 +250,7 @@ jobs:
         env:
           LOAD_LOCAL_ENV: "0"
           DOOMBERG_ARCHIVE_URL: ${{ secrets.DOOMBERG_ARCHIVE_URL }}
+          DOOMBERG_PLATFORM_DB_URL: ${{ secrets.DOOMBERG_ARCHIVE_URL }}
           DOOMBERG_SESSION_SECRET: ${{ secrets.DOOMBERG_SESSION_SECRET }}
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
