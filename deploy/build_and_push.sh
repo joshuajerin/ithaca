@@ -46,7 +46,7 @@ if [[ -n "${EXTRA_IMAGE_TAGS:-}" ]]; then
 fi
 
 BUILD_ARGS=()
-for name in VITE_GOOGLE_CLIENT_ID VITE_GITHUB_CLIENT_ID VITE_OAUTH_REDIRECT VITE_API_BASE; do
+for name in VITE_CLERK_PUBLISHABLE_KEY VITE_API_BASE; do
   if [[ -n "${!name:-}" ]]; then
     BUILD_ARGS+=(--build-arg "${name}=${!name}")
   fi

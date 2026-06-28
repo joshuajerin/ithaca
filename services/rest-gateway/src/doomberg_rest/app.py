@@ -21,22 +21,21 @@ is required and threaded into every store call as the first arg. No unscoped rea
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import hmac
-import json as _json
 import os
 import secrets
 import urllib.parse
-import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from jwt import InvalidTokenError, PyJWKClient
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -56,7 +55,6 @@ from doomberg_platform import (
     LeaseStore,
     ProviderStore,
     RunStore,
-    SessionError,
     StrategyStore,
     TraceStore,
     TriggerStore,
@@ -154,27 +152,6 @@ class CreateSessionBody(BaseModel):
     title: str | None = None
 
 
-class GoogleExchangeBody(BaseModel):
-    code: str
-    redirect_uri: str
-
-
-class GitHubExchangeBody(BaseModel):
-    code: str
-    redirect_uri: str
-
-
-class SignupBody(BaseModel):
-    email: str
-    name: str
-    password: str
-
-
-class SigninBody(BaseModel):
-    email: str
-    password: str
-
-
 class MintKeyBody(BaseModel):
     # Optional scope selection; defaults to the full issuable agent set (deploy:live is
     # unissuable by the AuthStore). The UI lets the user narrow it.
@@ -195,6 +172,156 @@ def _bearer_key(authorization: str | None) -> str | None:
     return None
 
 
+def _csv_env(name: str) -> list[str]:
+    return [part.strip() for part in os.environ.get(name, "").split(",") if part.strip()]
+
+
+def _clerk_public_key() -> str | None:
+    raw = os.environ.get("CLERK_PEM_PUBLIC_KEY") or os.environ.get("CLERK_JWT_PUBLIC_KEY")
+    if not raw:
+        return None
+    raw = raw.replace("\\n", "\n").strip()
+    if "BEGIN PUBLIC KEY" in raw:
+        return raw
+    return f"-----BEGIN PUBLIC KEY-----\n{raw}\n-----END PUBLIC KEY-----"
+
+
+def _clerk_jwks_url() -> str | None:
+    explicit = os.environ.get("CLERK_JWKS_URL", "").strip()
+    if explicit:
+        return explicit
+    frontend_api = os.environ.get("CLERK_FRONTEND_API_URL", "").strip().rstrip("/")
+    if frontend_api:
+        return f"{frontend_api}/.well-known/jwks.json"
+    return None
+
+
+def _clerk_configured() -> bool:
+    return bool(_clerk_public_key() or _clerk_jwks_url())
+
+
+_CLERK_JWKS_CLIENTS: dict[str, PyJWKClient] = {}
+
+
+def _decode_clerk_token(token: str) -> dict[str, Any] | None:
+    if not _clerk_configured():
+        return None
+
+    try:
+        public_key = _clerk_public_key()
+        if public_key:
+            claims = jwt.decode(
+                token,
+                public_key,
+                algorithms=["RS256"],
+                options={"verify_aud": False},
+            )
+        else:
+            jwks_url = _clerk_jwks_url()
+            if not jwks_url:
+                return None
+            client = _CLERK_JWKS_CLIENTS.setdefault(jwks_url, PyJWKClient(jwks_url))
+            signing_key = client.get_signing_key_from_jwt(token)
+            claims = jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=["RS256"],
+                options={"verify_aud": False},
+            )
+    except InvalidTokenError as exc:
+        raise HTTPException(status_code=401, detail="invalid Clerk token") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="could not verify Clerk token") from exc
+
+    issuer = os.environ.get("CLERK_ISSUER", "").strip()
+    if issuer and claims.get("iss") != issuer:
+        raise HTTPException(status_code=401, detail="invalid Clerk issuer")
+
+    allowed_origins = set(_csv_env("CLERK_ALLOWED_ORIGINS"))
+    azp = claims.get("azp")
+    if allowed_origins and azp not in allowed_origins:
+        raise HTTPException(status_code=401, detail="invalid Clerk authorized party")
+
+    if claims.get("sts") == "pending":
+        raise HTTPException(status_code=401, detail="Clerk session is pending")
+
+    if not claims.get("sub"):
+        raise HTTPException(status_code=401, detail="Clerk token missing subject")
+
+    return claims
+
+
+def _upsert_clerk_user(stores: "Stores", claims: dict[str, Any]) -> dict[str, Any]:
+    sub = str(claims["sub"])
+    email = (
+        claims.get("email")
+        or claims.get("email_address")
+        or claims.get("primary_email_address")
+        or f"{sub}@clerk.doomberg.local"
+    )
+    email = str(email).strip().lower()
+    name = (
+        claims.get("name")
+        or claims.get("full_name")
+        or claims.get("username")
+        or claims.get("first_name")
+        or email
+    )
+    avatar_url = claims.get("picture") or claims.get("image_url")
+
+    existing_link = stores.db.conn.execute(
+        "SELECT user_id FROM oauth_accounts WHERE provider=? AND provider_id=?",
+        ("clerk", sub),
+    ).fetchone()
+    if existing_link:
+        existing_user = stores.users.get_by_id(existing_link["user_id"])
+        tenant_id = existing_user["tenant_id"] if existing_user else stores.auth.create_tenant(str(name))
+    else:
+        existing_by_email = stores.db.conn.execute(
+            "SELECT id, tenant_id FROM users WHERE email=?",
+            (email,),
+        ).fetchone()
+        tenant_id = (
+            existing_by_email["tenant_id"]
+            if existing_by_email
+            else stores.auth.create_tenant(str(name or email))
+        )
+
+    return stores.users.oauth_upsert("clerk", sub, email, str(name), avatar_url, tenant_id)
+
+
+def _human_scopes() -> list[str]:
+    return [
+        "data:read",
+        "strategy:author",
+        "runs:write",
+        "runs:cancel",
+        "approvals:read",
+        "approvals:decide",
+        "providers:write",
+        "triggers:write",
+        "artifacts:read",
+        "deploy:backtest",
+        "deploy:paper",
+    ]
+
+
+def _principal_from_user(user: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "tenant_id": user["tenant_id"],
+        "key_id": user["id"],
+        "scopes": _human_scopes(),
+        "actor_kind": "user",
+    }
+
+
+def _user_from_human_token(stores: "Stores", token: str) -> dict[str, Any] | None:
+    claims = _decode_clerk_token(token)
+    if claims is None:
+        return None
+    return _upsert_clerk_user(stores, claims)
+
+
 def _verify_bearer(request: Request, authorization: str | None) -> dict[str, Any] | None:
     """Verify a bearer token — either a session JWT (human) or a dmbg_ API key (agent).
 
@@ -205,34 +332,18 @@ def _verify_bearer(request: Request, authorization: str | None) -> dict[str, Any
     if key is None:
         return None
     stores = request.app.state.stores
-    # Session JWT (human users via email+password / OAuth).
-    try:
-        user = stores.users.verify_session(key)
-        return {
-            "tenant_id": user["tenant_id"],
-            "key_id": user["id"],
-            "scopes": [
-                "data:read",
-                "strategy:author",
-                "runs:write",
-                "runs:cancel",
-                "approvals:read",
-                "approvals:decide",
-                "providers:write",
-                "triggers:write",
-                "artifacts:read",
-                "deploy:backtest",
-                "deploy:paper",
-            ],
-            "actor_kind": "user",
-        }
-    except SessionError:
-        pass
     # API key (BYO agents).
-    principal = stores.auth.verify(key)
-    if principal is None:
-        raise HTTPException(status_code=401, detail="invalid or revoked token")
-    return {**principal, "actor_kind": "agent"}
+    if key.startswith("dmbg_"):
+        principal = stores.auth.verify(key)
+        if principal is None:
+            raise HTTPException(status_code=401, detail="invalid or revoked token")
+        return {**principal, "actor_kind": "agent"}
+
+    # Clerk session JWTs for human users.
+    user = _user_from_human_token(stores, key)
+    if user is not None:
+        return _principal_from_user(user)
+    raise HTTPException(status_code=401, detail="invalid or revoked token")
 
 
 def _validate_tenant_id(value: str) -> str:
@@ -605,6 +716,10 @@ def _web_dist_dir() -> Path | None:
     return candidate if candidate.is_dir() else None
 
 
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[4]
+
+
 def create_app(db: Any | None = None) -> FastAPI:
     if db is None:
         db = open_db(os.environ.get("DOOMBERG_DB", ":memory:"))
@@ -630,253 +745,6 @@ def create_app(db: Any | None = None) -> FastAPI:
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
-    # ---- OAuth helpers -----------------------------------------------------------------
-
-    def _http_post_form(url: str, params: dict[str, str],
-                        headers: dict[str, str] | None = None) -> dict[str, Any]:
-        data = urllib.parse.urlencode(params).encode("utf-8")
-        req = urllib.request.Request(url, data=data, method="POST")
-        req.add_header("Content-Type", "application/x-www-form-urlencoded")
-        for k, v in (headers or {}).items():
-            req.add_header(k, v)
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return _json.loads(resp.read())
-
-    def _http_post_json(url: str, payload: dict[str, str],
-                        headers: dict[str, str] | None = None) -> dict[str, Any]:
-        data = _json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(url, data=data, method="POST")
-        req.add_header("Content-Type", "application/json")
-        for k, v in (headers or {}).items():
-            req.add_header(k, v)
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return _json.loads(resp.read())
-
-    def _http_get(url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
-        req = urllib.request.Request(url, method="GET")
-        for k, v in (headers or {}).items():
-            req.add_header(k, v)
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return _json.loads(resp.read())
-
-    def _decode_jwt_payload(id_token: str) -> dict[str, Any]:
-        """Decode the middle (payload) segment of a JWT without verifying the signature."""
-        parts = id_token.split(".")
-        if len(parts) < 2:
-            raise ValueError("malformed id_token")
-        # Add padding to make it valid base64
-        segment = parts[1] + "=="
-        return _json.loads(base64.b64decode(segment).decode("utf-8"))
-
-    def _oauth_signin(
-        provider: str,
-        provider_id: str,
-        email: str,
-        name: str,
-        avatar_url: str | None,
-    ) -> dict[str, Any]:
-        """Upsert user via OAuth, create session JWT, return {user, token}."""
-        # Ensure a tenant exists for this user (create one if brand-new).
-        existing_user = None
-        existing_link = stores.db.conn.execute(
-            "SELECT user_id FROM oauth_accounts WHERE provider=? AND provider_id=?",
-            (provider, provider_id),
-        ).fetchone()
-        if existing_link:
-            existing_user = stores.users.get_by_id(existing_link["user_id"])
-
-        if existing_user:
-            tenant_id = existing_user["tenant_id"]
-        else:
-            # Check if the email already has a tenant (existing email+pw user).
-            existing_by_email = stores.db.conn.execute(
-                "SELECT id, tenant_id FROM users WHERE email=?",
-                (email.strip().lower(),),
-            ).fetchone()
-            tenant_id = (
-                existing_by_email["tenant_id"]
-                if existing_by_email
-                else stores.auth.create_tenant(name or email)
-            )
-
-        user = stores.users.oauth_upsert(provider, provider_id, email, name, avatar_url, tenant_id)
-        token = stores.users.create_session(user["id"])
-        return {
-            "user": {
-                "id": user["id"],
-                "name": user["name"],
-                "email": user["email"],
-                "avatarUrl": user.get("avatar_url"),
-                "provider": provider,
-                "tenantId": tenant_id,
-            },
-            "token": token,
-        }
-
-    # ---- auth: Google exchange ---------------------------------------------------------
-
-    @app.post("/api/auth/google/exchange")
-    def google_exchange(body: GoogleExchangeBody) -> dict[str, Any]:
-        client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
-        client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
-        if not client_id or not client_secret:
-            raise HTTPException(status_code=503, detail="provider not configured")
-        try:
-            token_resp = _http_post_form(
-                "https://oauth2.googleapis.com/token",
-                {
-                    "code": body.code,
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "redirect_uri": body.redirect_uri,
-                    "grant_type": "authorization_code",
-                },
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if "error" in token_resp:
-            raise HTTPException(status_code=400, detail=token_resp.get("error_description", token_resp["error"]))
-        id_token = token_resp.get("id_token", "")
-        if not id_token:
-            raise HTTPException(status_code=400, detail="no id_token in Google response")
-        try:
-            claims = _decode_jwt_payload(id_token)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"could not decode id_token: {exc}") from exc
-        provider_id = claims.get("sub", "")
-        email = claims.get("email", "")
-        name = claims.get("name", email)
-        avatar_url = claims.get("picture")
-        if not provider_id:
-            raise HTTPException(status_code=400, detail="missing sub in Google id_token")
-        try:
-            return _oauth_signin("google", provider_id, email, name, avatar_url)
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    # ---- auth: GitHub exchange ---------------------------------------------------------
-
-    @app.post("/api/auth/github/exchange")
-    def github_exchange(body: GitHubExchangeBody) -> dict[str, Any]:
-        client_id = os.environ.get("GITHUB_CLIENT_ID", "")
-        client_secret = os.environ.get("GITHUB_CLIENT_SECRET", "")
-        if not client_id or not client_secret:
-            raise HTTPException(status_code=503, detail="provider not configured")
-        # Step 1: exchange code for access_token
-        try:
-            token_resp = _http_post_json(
-                "https://github.com/login/oauth/access_token",
-                {
-                    "code": body.code,
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "redirect_uri": body.redirect_uri,
-                },
-                headers={"Accept": "application/json"},
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if "error" in token_resp:
-            raise HTTPException(status_code=400, detail=token_resp.get("error_description", token_resp["error"]))
-        access_token = token_resp.get("access_token", "")
-        if not access_token:
-            raise HTTPException(status_code=400, detail="no access_token in GitHub response")
-        # Step 2: fetch user profile
-        try:
-            user_resp = _http_get(
-                "https://api.github.com/user",
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/json",
-                    "User-Agent": "doomberg-rest-gateway",
-                },
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        provider_id = str(user_resp.get("id", ""))
-        name = user_resp.get("name") or user_resp.get("login", "")
-        email = user_resp.get("email") or ""
-        avatar_url = user_resp.get("avatar_url")
-        # Step 3: if email is missing, fetch from /user/emails
-        if not email:
-            try:
-                emails_resp = _http_get(
-                    "https://api.github.com/user/emails",
-                    headers={
-                        "Authorization": f"Bearer {access_token}",
-                        "Accept": "application/json",
-                        "User-Agent": "doomberg-rest-gateway",
-                    },
-                )
-                for entry in emails_resp:
-                    if entry.get("primary") and entry.get("verified"):
-                        email = entry.get("email", "")
-                        break
-                if not email and emails_resp:
-                    email = emails_resp[0].get("email", "")
-            except Exception:
-                pass  # email stays empty; not fatal
-        if not provider_id:
-            raise HTTPException(status_code=400, detail="missing id in GitHub user response")
-        try:
-            return _oauth_signin("github", provider_id, email, name, avatar_url)
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    # ---- auth: email+password ----------------------------------------------------------
-
-    @app.post("/api/auth/signup", status_code=201)
-    def signup(body: SignupBody, stores: Stores = Depends(get_stores)) -> dict[str, Any]:
-        try:
-            tenant_id = stores.auth.create_tenant(body.name or body.email)
-            user = stores.users.signup(body.email, body.name, body.password, tenant_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        token = stores.users.create_session(user["id"])
-        return {
-            "user": {
-                "id": user["id"],
-                "name": user["name"],
-                "email": user["email"],
-                "avatarUrl": None,
-                "provider": "email",
-                "tenantId": user["tenant_id"],
-            },
-            "token": token,
-        }
-
-    @app.post("/api/auth/signin")
-    def signin(body: SigninBody, stores: Stores = Depends(get_stores)) -> dict[str, Any]:
-        try:
-            user = stores.users.signin(body.email, body.password)
-        except ValueError as exc:
-            raise HTTPException(status_code=401, detail=str(exc)) from exc
-        token = stores.users.create_session(user["id"])
-        return {
-            "user": {
-                "id": user["id"],
-                "name": user["name"],
-                "email": user["email"],
-                "avatarUrl": user.get("avatar_url"),
-                "provider": "email",
-                "tenantId": user["tenant_id"],
-            },
-            "token": token,
-        }
-
-    @app.post("/api/auth/signout")
-    def signout(
-        authorization: str | None = Header(default=None, alias="Authorization"),
-        stores: Stores = Depends(get_stores),
-    ) -> dict[str, str]:
-        key = _bearer_key(authorization)
-        if key:
-            try:
-                stores.users.revoke_session(key)
-            except Exception:
-                pass
-        return {"status": "signed out"}
-
     @app.get("/api/auth/me")
     def me(
         authorization: str | None = Header(default=None, alias="Authorization"),
@@ -886,8 +754,8 @@ def create_app(db: Any | None = None) -> FastAPI:
         if not key:
             raise HTTPException(status_code=401, detail="not authenticated")
         # Try session JWT first, fall back to API key.
-        try:
-            user = stores.users.verify_session(key)
+        user = _user_from_human_token(stores, key)
+        if user is not None:
             return {
                 "id": user["id"],
                 "name": user["name"],
@@ -895,8 +763,6 @@ def create_app(db: Any | None = None) -> FastAPI:
                 "avatarUrl": user.get("avatar_url"),
                 "tenantId": user["tenant_id"],
             }
-        except SessionError:
-            pass
         # Try API key (BYO agents).
         principal = stores.auth.verify(key)
         if principal:
@@ -915,10 +781,9 @@ def create_app(db: Any | None = None) -> FastAPI:
     def _session_user(authorization: str | None, stores: "Stores") -> dict[str, Any]:
         key = _bearer_key(authorization)
         if key:
-            try:
-                return stores.users.verify_session(key)
-            except SessionError:
-                pass
+            user = _user_from_human_token(stores, key)
+            if user is not None:
+                return user
         raise HTTPException(status_code=401, detail="sign in to manage API keys")
 
     _DEFAULT_KEY_SCOPES = [
@@ -1509,13 +1374,12 @@ def create_app(db: Any | None = None) -> FastAPI:
         )
 
     # ---- serve the built web UI from the SAME backend (one LB for UI + API) -------------
-    @app.get("/auth/callback", include_in_schema=False)
-    def auth_callback_page() -> FileResponse:
-        dist = _web_dist_dir()
-        index = dist / "index.html" if dist is not None else None
-        if index is None or not index.is_file():
-            raise HTTPException(status_code=404, detail="web app not built")
-        return FileResponse(index)
+    @app.get("/install.py", include_in_schema=False)
+    def install_script() -> FileResponse:
+        script = _repo_root() / "scripts" / "install_agent_mcp.py"
+        if not script.is_file():
+            raise HTTPException(status_code=404, detail="installer not found")
+        return FileResponse(script, media_type="text/x-python")
 
     # Mounted LAST, so the explicit ``/api/*`` + ``/healthz`` routes above always win; the
     # SPA mount only catches everything else. ``html=True`` serves index.html for unknown

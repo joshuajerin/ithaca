@@ -7,7 +7,12 @@ existing ``X-Tenant-Id`` dev path is untouched.
 
 from __future__ import annotations
 
+import time
 import uuid
+
+import jwt
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 
 def _spec(name="UI Auth Momentum"):
@@ -25,6 +30,37 @@ def _spec(name="UI Auth Momentum"):
 
 def _bearer(key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {key}"}
+
+
+def _clerk_keypair() -> tuple[str, str]:
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+    public_pem = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode()
+    return private_pem, public_pem
+
+
+def _clerk_token(private_pem: str, *, sub: str = "user_clerk_123", azp: str = "http://localhost:5174") -> str:
+    now = int(time.time())
+    return jwt.encode(
+        {
+            "sub": sub,
+            "email": "clerk-user@example.com",
+            "name": "Clerk User",
+            "azp": azp,
+            "iat": now,
+            "nbf": now - 5,
+            "exp": now + 300,
+        },
+        private_pem,
+        algorithm="RS256",
+    )
 
 
 def test_bearer_key_binds_tenant_authoritatively(client, stores):
@@ -83,3 +119,45 @@ def test_query_access_token_is_not_a_rest_auth_path(client, stores, monkeypatch)
 
     assert resp.status_code == 401
     assert resp.json()["detail"] == "authentication required"
+
+
+def test_clerk_session_token_binds_tenant(client, stores, monkeypatch):
+    private_pem, public_pem = _clerk_keypair()
+    monkeypatch.setenv("CLERK_PEM_PUBLIC_KEY", public_pem)
+    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "http://localhost:5174,https://app.doomberg.me")
+
+    token = _clerk_token(private_pem)
+    resp = client.get("/api/runs", headers=_bearer(token))
+
+    assert resp.status_code == 200
+    assert resp.json()["runs"] == []
+
+    user = stores.db.conn.execute("SELECT * FROM users WHERE email=?", ("clerk-user@example.com",)).fetchone()
+    assert user is not None
+    assert stores.auth.get_tenant(user["tenant_id"]) is not None
+
+
+def test_clerk_session_can_mint_agent_key(client, monkeypatch):
+    private_pem, public_pem = _clerk_keypair()
+    monkeypatch.setenv("CLERK_PEM_PUBLIC_KEY", public_pem)
+    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "http://localhost:5174")
+
+    token = _clerk_token(private_pem)
+    resp = client.post("/api/auth/keys", json={}, headers=_bearer(token))
+
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["api_key"].startswith("dmbg_")
+    assert "data:read" in body["scopes"]
+
+
+def test_clerk_session_rejects_unapproved_origin(client, monkeypatch):
+    private_pem, public_pem = _clerk_keypair()
+    monkeypatch.setenv("CLERK_PEM_PUBLIC_KEY", public_pem)
+    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "https://app.doomberg.me")
+
+    token = _clerk_token(private_pem, azp="http://localhost:5174")
+    resp = client.get("/api/runs", headers=_bearer(token))
+
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "invalid Clerk authorized party"

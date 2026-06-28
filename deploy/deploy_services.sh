@@ -66,6 +66,7 @@ case "${DEPLOY_ENV}" in
 esac
 
 MCP_ALLOWED_HOSTS="${MCP_ALLOWED_HOSTS:-${MCP_HOST},${MCP_HOST}:443}"
+CLERK_ALLOWED_ORIGINS="${CLERK_ALLOWED_ORIGINS:-https://${APP_HOST}}"
 
 if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
   if [[ -z "${IBKR_GATEWAY_IMAGE:-}" ]]; then
@@ -97,6 +98,11 @@ fi
 : "${DOOMBERG_PLATFORM_DB_URL:?DOOMBERG_PLATFORM_DB_URL must be set for ${DEPLOY_ENV}}"
 : "${DOOMBERG_ARCHIVE_URL:?DOOMBERG_ARCHIVE_URL must be set for ${DEPLOY_ENV}}"
 : "${DOOMBERG_SESSION_SECRET:?DOOMBERG_SESSION_SECRET must be set for ${DEPLOY_ENV}}"
+: "${CLERK_ALLOWED_ORIGINS:?CLERK_ALLOWED_ORIGINS must be set for ${DEPLOY_ENV}}"
+if [[ -z "${CLERK_PEM_PUBLIC_KEY:-}" && -z "${CLERK_JWKS_URL:-}" ]]; then
+  echo "ERROR: CLERK_PEM_PUBLIC_KEY or CLERK_JWKS_URL must be set for ${DEPLOY_ENV}" >&2
+  exit 2
+fi
 if [[ -z "${DOOMBERG_IBKR_ENGINE_URL:-}" ]]; then
   echo "WARN: DOOMBERG_IBKR_ENGINE_URL is unset; trigger-engine worker will stay up, but active live-data trigger policies will report provider errors until configured." >&2
 fi
@@ -143,10 +149,10 @@ create_doomberg_secret() {
     --from-literal=platform_url="${DOOMBERG_PLATFORM_DB_URL}" \
     --from-literal=archive_url="${DOOMBERG_ARCHIVE_URL}" \
     --from-literal=session_secret="${DOOMBERG_SESSION_SECRET}" \
-    --from-literal=google_client_id="${GOOGLE_CLIENT_ID:-}" \
-    --from-literal=google_client_secret="${GOOGLE_CLIENT_SECRET:-}" \
-    --from-literal=github_client_id="${GITHUB_CLIENT_ID:-}" \
-    --from-literal=github_client_secret="${GITHUB_CLIENT_SECRET:-}" \
+    --from-literal=clerk_pem_public_key="${CLERK_PEM_PUBLIC_KEY:-}" \
+    --from-literal=clerk_jwks_url="${CLERK_JWKS_URL:-}" \
+    --from-literal=clerk_allowed_origins="${CLERK_ALLOWED_ORIGINS:-}" \
+    --from-literal=clerk_issuer="${CLERK_ISSUER:-}" \
     --from-literal=admin_token="${DOOMBERG_ADMIN_TOKEN:-}" \
     --from-literal=fmp_api_key="${FMP_API_KEY:-}" \
     --from-literal=ibkr_engine_url="${DOOMBERG_IBKR_ENGINE_URL:-}" \

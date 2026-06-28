@@ -7,11 +7,12 @@ def _bearer(tok: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {tok}"}
 
 
-def _signup(client, email="founder@sessions.test", name="Founder", password="hunter2hunter2"):
-    r = client.post("/api/auth/signup", json={"email": email, "name": name, "password": password})
-    assert r.status_code == 201, r.text
+def _clerk_session(client, clerk_auth, email="founder@sessions.test", name="Founder"):
+    token = clerk_auth(email=email, name=name)
+    r = client.get("/api/auth/me", headers=_bearer(token))
+    assert r.status_code == 200, r.text
     body = r.json()
-    return body["token"], body["user"]["tenantId"], body["user"]["id"]
+    return token, body["tenantId"], body["id"]
 
 
 def test_create_session_captures_prompt_for_dev_tenant(client, stores, tenant_a):
@@ -34,8 +35,8 @@ def test_create_session_captures_prompt_for_dev_tenant(client, stores, tenant_a)
     assert events[0]["actor"] == {"kind": "user", "id": "ui"}
 
 
-def test_create_session_uses_signed_in_users_tenant(client):
-    token, tenant_id, user_id = _signup(client)
+def test_create_session_uses_signed_in_users_tenant(client, clerk_auth):
+    token, tenant_id, user_id = _clerk_session(client, clerk_auth)
 
     resp = client.post(
         "/api/sessions",
@@ -51,8 +52,8 @@ def test_create_session_uses_signed_in_users_tenant(client):
     assert event["data"]["prompt"] == "screen semis with unusual volume"
 
 
-def test_signed_in_event_stream_uses_one_time_ticket(client):
-    token, tenant_id, _user_id = _signup(client, email="stream@sessions.test")
+def test_signed_in_event_stream_uses_one_time_ticket(client, clerk_auth):
+    token, tenant_id, _user_id = _clerk_session(client, clerk_auth, email="stream@sessions.test")
     created = client.post(
         "/api/sessions",
         json={"prompt": "stream this session"},
@@ -83,8 +84,8 @@ def test_signed_in_event_stream_uses_one_time_ticket(client):
     assert replay.status_code == 401
 
 
-def test_signed_in_event_stream_rejects_query_access_token(client):
-    token, _tenant_id, _user_id = _signup(client, email="query-token@sessions.test")
+def test_signed_in_event_stream_rejects_query_access_token(client, clerk_auth):
+    token, _tenant_id, _user_id = _clerk_session(client, clerk_auth, email="query-token@sessions.test")
     created = client.post(
         "/api/sessions",
         json={"prompt": "do not leak token in url"},

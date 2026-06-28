@@ -11,6 +11,7 @@ import { Trades } from "./pages/Trades";
 import { Ideas } from "./pages/Ideas";
 import { Settings } from "./pages/Settings";
 import { AuthPage } from "./pages/AuthPage";
+import { AgentLink } from "./pages/AgentLink";
 import { useAuth } from "./auth/AuthContext";
 import { api } from "./api";
 
@@ -38,7 +39,7 @@ function LogoutIcon() {
 export function App() {
   const { user, signOut } = useAuth();
 
-  // No session → the auth gate (Google / GitHub / demo) stands in for the app.
+  // No Clerk session -> show the auth gate.
   if (!user) return <AuthPage />;
 
   const initials = user.name
@@ -100,6 +101,7 @@ export function App() {
           <Route path="/trades" element={<Trades />} />
           <Route path="/ideas" element={<Ideas />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/agent-link" element={<AgentLink />} />
           <Route path="*" element={<div className="page"><div className="empty">Not found.</div></div>} />
         </Routes>
       </main>

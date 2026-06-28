@@ -66,18 +66,15 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # The built dist is copied into the runtime image; the rest-gateway serves it
 # as static files at / so the UI and the API share one LB endpoint.
 # VITE_* vars are baked into the JS bundle at build time (they are PUBLIC —
-# client IDs, not secrets). Pass them as build-args: --build-arg VITE_GOOGLE_CLIENT_ID=...
+# publishable keys / URLs, not secrets). Pass them as build-args:
+# --build-arg VITE_CLERK_PUBLISHABLE_KEY=...
 # ---------------------------------------------------------------------------
 FROM node:24-slim AS web-builder
 
-ARG VITE_GOOGLE_CLIENT_ID=""
-ARG VITE_GITHUB_CLIENT_ID=""
-ARG VITE_OAUTH_REDIRECT=""
+ARG VITE_CLERK_PUBLISHABLE_KEY=""
 ARG VITE_API_BASE="/api"
 
-ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID \
-    VITE_GITHUB_CLIENT_ID=$VITE_GITHUB_CLIENT_ID \
-    VITE_OAUTH_REDIRECT=$VITE_OAUTH_REDIRECT \
+ENV VITE_CLERK_PUBLISHABLE_KEY=$VITE_CLERK_PUBLISHABLE_KEY \
     VITE_API_BASE=$VITE_API_BASE
 
 # Install pnpm

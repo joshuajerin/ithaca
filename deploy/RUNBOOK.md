@@ -25,9 +25,10 @@ verifies that the deploying SHA still equals `origin/main`.
 
 Each GitHub environment owns its own secrets and variables. Required secrets are
 `DIGITALOCEAN_ACCESS_TOKEN`, `DOOMBERG_ARCHIVE_URL`, `DOOMBERG_SESSION_SECRET`,
-`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `OAUTH_GITHUB_CLIENT_ID`,
-`OAUTH_GITHUB_CLIENT_SECRET`, and `DOOMBERG_ADMIN_TOKEN`. Optional secrets include
-`FMP_API_KEY` and `DOOMBERG_SMOKE_API_KEY`.
+`CLERK_PUBLISHABLE_KEY`, and either `CLERK_PEM_PUBLIC_KEY` or the
+`CLERK_JWKS_URL` variable. Required variables include `CLERK_ALLOWED_ORIGINS`.
+Production also requires `DOOMBERG_ADMIN_TOKEN`, `DOOMBERG_SMOKE_API_KEY`, and
+`DOOMBERG_SMOKE_NO_SCOPE_API_KEY`. Optional secrets include `FMP_API_KEY`.
 
 Local scripts in this directory remain available as break-glass tooling. They now
 accept `DEPLOY_ENV=prod|dev` and render environment-specific Kubernetes
@@ -156,7 +157,7 @@ kubectl -n doomberg-workers create secret generic doomberg-db \
 ```
 
 > `deploy/deploy_services.sh` creates/updates the full `doomberg-db` Secret in
-> both namespaces, including OAuth/session/IBKR/execution keys. The manual
+> both namespaces, including Clerk/session/IBKR/execution keys. The manual
 > commands above are only for a minimal bootstrap or break-glass path. The DB
 > firewall already restricts Postgres to the cluster.
 

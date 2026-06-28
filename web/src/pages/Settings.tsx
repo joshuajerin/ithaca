@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
-import { beginOAuth, providerConfigured, type Provider } from "../auth/oauth";
+import type { Provider } from "../auth/AuthContext";
 import { GoogleIcon, GithubIcon } from "../auth/icons";
 import { api } from "../api";
 import { MCP_BASE } from "../config";
@@ -31,7 +31,7 @@ function fmtDate(v: string | number): string {
 }
 
 export function Settings() {
-  const { user, integrations, setIntegration, signOut } = useAuth();
+  const { user, integrations, manageAccount, signOut } = useAuth();
 
   const [keys, setKeys] = useState<KeyRow[]>([]);
   const [loadingKeys, setLoadingKeys] = useState(true);
@@ -125,7 +125,7 @@ export function Settings() {
         </div>
       </section>
 
-      {/* Connected accounts / OAuth integrations */}
+      {/* Clerk-connected social accounts */}
       <section className="set-section">
         <div className="set-h">Connected accounts</div>
         <div className="set-card">
@@ -141,17 +141,8 @@ export function Settings() {
                 <span className={`int-status ${connected ? "on" : "off"}`}>
                   {connected ? "Connected" : "Not connected"}
                 </span>
-                <button
-                  className={`btn ${connected ? "" : "primary"}`}
-                  onClick={() => {
-                    if (!connected && providerConfigured(id)) {
-                      beginOAuth(id, "link");
-                      return;
-                    }
-                    setIntegration(id, !connected);
-                  }}
-                >
-                  {connected ? "Disconnect" : "Connect"}
+                <button className={`btn ${connected ? "" : "primary"}`} onClick={manageAccount}>
+                  Manage
                 </button>
               </div>
             );

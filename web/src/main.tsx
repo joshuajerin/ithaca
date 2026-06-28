@@ -2,26 +2,46 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { HashRouter } from "react-router-dom";
 import { Analytics } from "@vercel/analytics/react";
+import { ClerkProvider } from "@clerk/react";
 import { App } from "./App";
 import { AuthProvider } from "./auth/AuthContext";
-import { AuthCallback } from "./pages/AuthCallback";
 import "./index.css";
 
-// OAuth providers redirect to a real path (/auth/callback), not a hash route.
-// Intercept it here, before the HashRouter mounts, to run the code exchange.
-const isCallback = window.location.pathname.replace(/\/+$/, "") === "/auth/callback";
+const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
+
+function MissingClerkConfig() {
+  return (
+    <div className="auth">
+      <div className="auth-bg" />
+      <div className="auth-card auth-callback">
+        <div className="auth-brand">
+          <div>
+            Doomberg
+            <small>Terminal</small>
+          </div>
+        </div>
+        <h1 className="auth-title">Clerk is not configured</h1>
+        <div className="banner">
+          Set <code>VITE_CLERK_PUBLISHABLE_KEY</code> for this environment.
+        </div>
+      </div>
+    </div>
+  );
+}
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <AuthProvider>
-      {isCallback ? (
-        <AuthCallback />
-      ) : (
+    {clerkPublishableKey ? (
+      <ClerkProvider publishableKey={clerkPublishableKey}>
+        <AuthProvider>
         <HashRouter>
           <App />
         </HashRouter>
-      )}
-      <Analytics />
-    </AuthProvider>
+        <Analytics />
+        </AuthProvider>
+      </ClerkProvider>
+    ) : (
+      <MissingClerkConfig />
+    )}
   </StrictMode>,
 );

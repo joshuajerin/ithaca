@@ -37,16 +37,22 @@ export interface OrderIntentInput {
 
 // Thin REST client over the rest-gateway. The browser NEVER speaks MCP; this is the only
 // backend it knows. Two auth modes, resolved at the gateway's single front door:
-//   - Prod:  browser session token or VITE_API_KEY -> `Authorization: Bearer <token>`;
+//   - Prod:  Clerk session token or VITE_API_KEY -> `Authorization: Bearer <token>`;
 //            the gateway derives the tenant from the credential.
 //   - Dev:   no token/key -> X-Tenant-Id carries the tenant only when the gateway's local
 //            dev fallback is enabled.
 
-function headers(): HeadersInit {
+let authTokenProvider: (() => Promise<string | null>) | null = null;
+
+export function setAuthTokenProvider(provider: (() => Promise<string | null>) | null): void {
+  authTokenProvider = provider;
+}
+
+async function headers(): Promise<HeadersInit> {
   const h: Record<string, string> = { "Content-Type": "application/json" };
-  const oauthToken = localStorage.getItem("doomberg.token");
-  if (oauthToken) {
-    h.Authorization = `Bearer ${oauthToken}`;
+  const clerkToken = authTokenProvider ? await authTokenProvider() : null;
+  if (clerkToken) {
+    h.Authorization = `Bearer ${clerkToken}`;
   } else if (API_KEY) {
     h.Authorization = `Bearer ${API_KEY}`;
   } else {
@@ -56,7 +62,7 @@ function headers(): HeadersInit {
 }
 
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { headers: headers(), signal });
+  const res = await fetch(`${API_BASE}${path}`, { headers: await headers(), signal });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`GET ${path} -> ${res.status} ${res.statusText}${body ? `: ${body}` : ""}`);
@@ -67,7 +73,7 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
 async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers: headers(),
+    headers: await headers(),
     body: JSON.stringify(body ?? {}),
     signal,
   });
@@ -79,7 +85,7 @@ async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): P
 }
 
 async function delJson<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { method: "DELETE", headers: headers(), signal });
+  const res = await fetch(`${API_BASE}${path}`, { method: "DELETE", headers: await headers(), signal });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`DELETE ${path} -> ${res.status} ${res.statusText}${text ? `: ${text}` : ""}`);
@@ -282,24 +288,6 @@ export const api = {
   },
 
   // ---- auth ------------------------------------------------------------------
-  async signUp(email: string, name: string, password: string) {
-    return postJson<{ user: Record<string, unknown>; token: string }>(
-      `/auth/signup`,
-      { email, name, password },
-    );
-  },
-
-  async signIn(email: string, password: string) {
-    return postJson<{ user: Record<string, unknown>; token: string }>(
-      `/auth/signin`,
-      { email, password },
-    );
-  },
-
-  async signOut() {
-    await postJson(`/auth/signout`, {}).catch(() => null);
-  },
-
   async me() {
     return getJson<Record<string, unknown>>(`/auth/me`);
   },

@@ -8,19 +8,20 @@ revocation is ownership-checked (no cross-tenant revoke).
 from __future__ import annotations
 
 
-def _signup(client, email="founder@acme.test", name="Founder", password="hunter2hunter2"):
-    r = client.post("/api/auth/signup", json={"email": email, "name": name, "password": password})
-    assert r.status_code == 201, r.text
-    body = r.json()
-    return body["token"], body["user"]["tenantId"]
-
-
 def _bearer(tok: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {tok}"}
 
 
-def test_signed_in_user_mints_lists_and_uses_key(client, stores):
-    token, tenant_id = _signup(client)
+def _clerk_session(client, clerk_auth, email="founder@acme.test", name="Founder"):
+    token = clerk_auth(email=email, name=name)
+    r = client.get("/api/auth/me", headers=_bearer(token))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    return token, body["tenantId"]
+
+
+def test_signed_in_user_mints_lists_and_uses_key(client, stores, clerk_auth):
+    token, tenant_id = _clerk_session(client, clerk_auth)
 
     # Mint with explicit scopes; plaintext returned once, bound to the user's tenant.
     r = client.post("/api/auth/keys", json={"scopes": ["data:read"]}, headers=_bearer(token))
@@ -40,8 +41,8 @@ def test_signed_in_user_mints_lists_and_uses_key(client, stores):
     assert "api_key" not in listed[0]
 
 
-def test_mint_defaults_to_agent_operational_scope_set(client):
-    token, _ = _signup(client)
+def test_mint_defaults_to_agent_operational_scope_set(client, clerk_auth):
+    token, _ = _clerk_session(client, clerk_auth)
     r = client.post("/api/auth/keys", json={}, headers=_bearer(token))
     assert r.status_code == 201, r.text
     assert set(r.json()["scopes"]) == {
@@ -56,8 +57,8 @@ def test_mint_defaults_to_agent_operational_scope_set(client):
     }
 
 
-def test_agent_key_cannot_decide_approval_even_with_scope_or_actor_header(client, stores):
-    token, tenant_id = _signup(client)
+def test_agent_key_cannot_decide_approval_even_with_scope_or_actor_header(client, stores, clerk_auth):
+    token, tenant_id = _clerk_session(client, clerk_auth)
     api_key = client.post(
         "/api/auth/keys",
         json={"scopes": ["data:read", "approvals:read", "approvals:decide"]},
@@ -82,8 +83,8 @@ def test_agent_key_cannot_decide_approval_even_with_scope_or_actor_header(client
     assert stores.approvals.list_pending(tenant_id)[0]["approval_id"] == approval["approval_id"]
 
 
-def test_agent_key_needs_explicit_provider_and_trigger_write_scopes(client):
-    token, _ = _signup(client)
+def test_agent_key_needs_explicit_provider_and_trigger_write_scopes(client, clerk_auth):
+    token, _ = _clerk_session(client, clerk_auth)
     api_key = client.post(
         "/api/auth/keys",
         json={"scopes": ["data:read"]},
@@ -108,15 +109,15 @@ def test_agent_key_needs_explicit_provider_and_trigger_write_scopes(client):
     assert trigger.status_code == 403
 
 
-def test_unissuable_scope_is_422(client):
-    token, _ = _signup(client)
+def test_unissuable_scope_is_422(client, clerk_auth):
+    token, _ = _clerk_session(client, clerk_auth)
     r = client.post("/api/auth/keys", json={"scopes": ["deploy:live"]}, headers=_bearer(token))
     assert r.status_code == 422
 
 
-def test_api_key_cannot_mint_more_keys(client, stores):
+def test_api_key_cannot_mint_more_keys(client, stores, clerk_auth):
     """Issuance requires a human session — a bare API key is rejected (401)."""
-    token, _ = _signup(client)
+    token, _ = _clerk_session(client, clerk_auth)
     api_key = client.post("/api/auth/keys", json={"scopes": ["data:read"]},
                           headers=_bearer(token)).json()["api_key"]
     r = client.post("/api/auth/keys", json={"scopes": ["data:read"]}, headers=_bearer(api_key))
@@ -128,8 +129,8 @@ def test_anonymous_cannot_manage_keys(client):
     assert client.post("/api/auth/keys", json={}).status_code == 401
 
 
-def test_revoke_then_key_is_dead(client):
-    token, _ = _signup(client)
+def test_revoke_then_key_is_dead(client, clerk_auth):
+    token, _ = _clerk_session(client, clerk_auth)
     minted = client.post("/api/auth/keys", json={"scopes": ["data:read"]},
                          headers=_bearer(token)).json()
     api_key, key_id = minted["api_key"], minted["key_id"]
@@ -144,9 +145,9 @@ def test_revoke_then_key_is_dead(client):
     assert active == []
 
 
-def test_cannot_revoke_another_tenants_key(client):
-    alice, _ = _signup(client, email="alice@acme.test", name="Alice")
-    bob, _ = _signup(client, email="bob@beta.test", name="Bob")
+def test_cannot_revoke_another_tenants_key(client, clerk_auth):
+    alice, _ = _clerk_session(client, clerk_auth, email="alice@acme.test", name="Alice")
+    bob, _ = _clerk_session(client, clerk_auth, email="bob@beta.test", name="Bob")
 
     bob_key_id = client.post("/api/auth/keys", json={"scopes": ["data:read"]},
                              headers=_bearer(bob)).json()["key_id"]

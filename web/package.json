@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@clerk/react": "^6.11.1",
     "@doomberg/contracts": "workspace:*",
     "@radix-ui/react-scroll-area": "^1.2.12",
     "@radix-ui/react-slider": "^1.4.1",

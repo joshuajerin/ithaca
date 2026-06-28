@@ -112,6 +112,19 @@ uv run python scripts/launch_gate.py --mode local --skip-ibkr
 pnpm --filter @doomberg/web dev
 ```
 
+### Install Doomberg MCP in Codex
+
+With the hosted app deployed, a user can link a coding agent in one command:
+
+```bash
+curl -fsSL https://app.doomberg.me/install.py | python3
+```
+
+The installer opens the Doomberg app, lets the user sign in or sign up with Clerk,
+then asks for approval to mint a scoped MCP key. After approval it
+registers the hosted streamable-HTTP MCP server with Codex as `doomberg` using
+`codex mcp add --url ... --bearer-token-env-var DOOMBERG_MCP_API_KEY`.
+
 All six local processes share the same platform system-of-record via `DOOMBERG_DB`. The browser talks only to the
 rest-gateway (`:8000`); its human money-path actions (promote/activate/pause/resume/retire) call the same
 `doomberg_control.actions` the control plane exposes, so there is one money-path implementation, two transports.
