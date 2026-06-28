@@ -8,12 +8,13 @@ dependencies = [
     "doomberg-contracts",
     "doomberg-platform",
     "doomberg-control-plane",
+    "doomberg-runtime",
     "fastapi>=0.110",
     "uvicorn>=0.27",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "httpx>=0.27"]
+dev = ["pytest>=8", "httpx>=0.27", "doomberg-mcp-gateway"]
 
 [build-system]
 requires = ["hatchling"]
@@ -30,3 +31,5 @@ doomberg-core = { workspace = true }
 doomberg-contracts = { workspace = true }
 doomberg-platform = { workspace = true }
 doomberg-control-plane = { workspace = true }
+doomberg-runtime = { workspace = true }
+doomberg-mcp-gateway = { workspace = true }

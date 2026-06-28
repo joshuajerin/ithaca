@@ -551,12 +551,14 @@ dependencies = [
     { name = "doomberg-control-plane" },
     { name = "doomberg-core" },
     { name = "doomberg-platform" },
+    { name = "doomberg-runtime" },
     { name = "fastapi" },
     { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
 dev = [
+    { name = "doomberg-mcp-gateway" },
     { name = "httpx" },
     { name = "pytest" },
 ]
@@ -566,7 +568,9 @@ requires-dist = [
     { name = "doomberg-contracts", editable = "packages/contracts/py" },
     { name = "doomberg-control-plane", editable = "services/control-plane" },
     { name = "doomberg-core", editable = "doomberg-core" },
+    { name = "doomberg-mcp-gateway", marker = "extra == 'dev'", editable = "services/mcp-gateway" },
     { name = "doomberg-platform", editable = "services/platform" },
+    { name = "doomberg-runtime", editable = "services/runtime" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
