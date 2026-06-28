@@ -234,20 +234,20 @@ export function IntradayChartPanel({
             <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" strokeWidth={1.5} />
           </div>
         )}
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={160}>
           <LineChart data={data.points} margin={{ top: 5, right: 0, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="1 3" stroke="#2a2a2a" vertical={false} />
             <XAxis
               dataKey="t"
               tickFormatter={fmtTime}
-              tick={{ fontSize: 9, fill: "#777", fontFamily: "Inter", letterSpacing: "0.08em" }}
+              tick={{ fontSize: 9, fill: "#777", fontFamily: "Arial, Helvetica, sans-serif" }}
               tickLine={false}
               axisLine={false}
               minTickGap={40}
             />
             <YAxis
               domain={["auto", "auto"]}
-              tick={{ fontSize: 10, fill: "#777", fontFamily: "Newsreader" }}
+              tick={{ fontSize: 10, fill: "#777", fontFamily: "Arial, Helvetica, sans-serif" }}
               tickLine={false}
               axisLine={false}
               tickFormatter={(val) => val.toFixed(1)}

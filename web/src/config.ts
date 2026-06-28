@@ -14,7 +14,6 @@ export const TENANT_ID: string =
 export const API_KEY: string | undefined =
   (import.meta.env.VITE_API_KEY as string | undefined) || undefined;
 
-// Hosted MCP endpoint remote agents connect to. The browser still never speaks MCP; this
-// value is shown in handoff/settings views for humans configuring their own agents.
+// Hosted MCP target for external agents.
 export const MCP_BASE: string =
   (import.meta.env.VITE_MCP_BASE as string | undefined) || "https://mcp.doomberg.me/mcp";

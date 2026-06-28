@@ -170,8 +170,7 @@ const PANEL_MOTION = {
   if (!dashboard.panels || dashboard.panels.length === 0) {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center gap-2 py-24 text-center">
-        <span className="font-serif text-xl text-muted-foreground">No active panels</span>
-        <span className="editorial-label text-[9px] text-muted-foreground">Enter a command to synthesize data</span>
+        <span className="font-serif text-xl text-muted-foreground">No panels.</span>
       </div>
     );
   }
