@@ -18,9 +18,10 @@ backtest_node_size = "c-4"
 backtest_node_min  = 1
 backtest_node_max  = 8
 
-# Always-on HA pool: gateways + scheduler. >=2 nodes (node-failover safe).
-paper_node_size  = "s-4vcpu-8gb"
-paper_node_count = 2
+# Always-on HA pool: gateways + scheduler. Four smaller nodes give rollout
+# surge capacity and better scheduling spread than two larger nodes.
+paper_node_size  = "s-2vcpu-4gb"
+paper_node_count = 4
 
 # Managed Postgres HA: node_count 2 = primary + standby (automatic failover).
 postgres_version    = "16"
