@@ -30,8 +30,8 @@ class _QuoteServer:
                         "last": 212.45,
                         "event_time": now,
                         "received_time": now,
-                        "source": "ibkr-engine",
-                        "entitlement_class": "connected_account",
+                        "source": "doomberg-live-data",
+                        "entitlement_class": "doomberg_live",
                     }
                 }
                 raw = json.dumps(body).encode("utf-8")
@@ -72,7 +72,7 @@ def test_dev_tenant_header_must_be_uuid(client):
     assert response.json()["detail"] == "tenant_id must be a UUID"
 
 
-def test_ops_status_reports_ibkr_and_execution_readiness(client, stores, tenant_a, monkeypatch):
+def test_ops_status_reports_live_data_and_disabled_execution(client, stores, tenant_a, monkeypatch):
     monkeypatch.setenv("DOOMBERG_ARCHIVE_URL", "postgresql://archive.example/db")
     monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", "https://ibkr.example")
     monkeypatch.setenv("DOOMBERG_IBKR_QUOTE_PATH", "/v1/quote/{symbol}")
@@ -85,7 +85,7 @@ def test_ops_status_reports_ibkr_and_execution_readiness(client, stores, tenant_
         tenant_a,
         provider="ibkr",
         capabilities=["quotes", "orders", "trading"],
-        entitlements=[{"dataset": "equities-options", "entitlement_class": "connected_account"}],
+        entitlements=[{"dataset": "equities-options", "entitlement_class": "doomberg_live"}],
         account_ref="ibkr-vps",
     )
 
@@ -93,24 +93,25 @@ def test_ops_status_reports_ibkr_and_execution_readiness(client, stores, tenant_
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["ibkr"]["engine_configured"] is True
-    assert body["ibkr"]["engine_host"] == "ibkr.example"
-    assert body["ibkr"]["connected_quote_provider"] is True
-    assert body["ibkr"]["connected_execution_provider"] is True
-    assert body["execution"]["live_enabled"] is True
+    assert "ibkr" not in body
+    assert body["live_data"]["engine_configured"] is True
+    assert body["live_data"]["connected_quote_provider"] is True
+    assert body["execution"]["live_enabled"] is False
+    assert body["execution"]["paper_enabled"] is False
+    assert body["execution"]["disabled"] is True
     assert body["jobs"]["queued"] == 1
     assert body["leases"][0]["lease_name"] == "trigger-engine"
-    assert any(row["name"] == "Live execution" and row["state"] == "succeeded"
+    assert any(row["name"] == "Trading" and row["state"] == "paused"
                for row in body["readiness"])
 
 
-def test_ibkr_smoke_route_calls_read_only_quote_engine(client, tenant_a, monkeypatch):
+def test_live_data_smoke_route_calls_read_only_quote_engine(client, tenant_a, monkeypatch):
     with _QuoteServer() as server:
         monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
         monkeypatch.setenv("DOOMBERG_IBKR_QUOTE_PATH", "/v1/quote/{symbol}")
 
         response = client.get(
-            "/api/ops/ibkr-smoke?symbol=aapl&max_freshness_ms=10000",
+            "/api/ops/live-data-smoke?symbol=aapl&max_freshness_ms=10000",
             headers=_h(tenant_a),
         )
 
@@ -153,8 +154,8 @@ def test_trigger_dry_run_route_has_no_side_effects(client, stores, tenant_a):
                 "price": 950,
                 "event_time": now,
                 "received_time": now,
-                "source": "ibkr-engine",
-                "entitlement_class": "connected_account",
+                "source": "doomberg-live-data",
+                "entitlement_class": "doomberg_live",
             },
         },
     )
@@ -170,7 +171,7 @@ def test_trigger_dry_run_route_has_no_side_effects(client, stores, tenant_a):
         "approval": False,
         "broker_order": False,
     }
-    assert body["context"]["source"] == "ibkr-engine"
+    assert body["context"]["source"] == "doomberg-live-data"
     assert stores.runs.list(tenant_a) == []
     assert stores.jobs.list(tenant_a) == []
     assert stores.approvals.list(tenant_a) == []
@@ -201,7 +202,7 @@ def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tena
         tenant_a,
         provider="alpaca",
         capabilities=["bars", "orders"],
-        entitlements=[{"dataset": "equities", "entitlement_class": "connected_account"}],
+        entitlements=[{"dataset": "equities", "entitlement_class": "doomberg_live"}],
         credential_ref="secret://tenant-a/alpaca",
     )
     snapshot = stores.providers.create_snapshot(
@@ -252,12 +253,12 @@ def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tena
     created_provider = client.post(
         "/api/providers",
         json={
-            "provider": "ibkr-engine",
+            "provider": "doomberg-live-data",
             "capabilities": ["quote", "bars"],
             "entitlements": [
                 {
                     "dataset": "us_equities",
-                    "entitlement_class": "connected_account",
+                    "entitlement_class": "doomberg_live",
                     "freshness_class": "live",
                 }
             ],
@@ -268,15 +269,15 @@ def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tena
     )
     assert created_provider.status_code == 201, created_provider.text
     created_provider_body = created_provider.json()
-    assert created_provider_body["provider"] == "ibkr-engine"
+    assert created_provider_body["provider"] == "doomberg-live-data"
     assert created_provider_body["credential_configured"] is True
     assert "credential_ref" not in json.dumps(created_provider_body)
+    assert "account_ref" not in json.dumps(created_provider_body)
     stored_provider = stores.providers.get_connection(tenant_a, created_provider_body["connection_id"])
     assert stored_provider["credential_ref"] == "env:DOOMBERG_IBKR_ENGINE_TOKEN"
     assert client.get("/api/dataset-snapshots", headers=_h(tenant_a)).json()["snapshots"][0]["dataset"] == "prices"
 
-    intents = client.get("/api/order-intents", headers=_h(tenant_a)).json()["order_intents"]
-    assert intents[0]["intent_id"] == intent["intent_id"]
+    assert client.get("/api/order-intents", headers=_h(tenant_a)).status_code == 403
     created_intent = client.post(
         "/api/order-intents",
         json={
@@ -293,18 +294,10 @@ def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tena
         },
         headers=_h(tenant_a),
     )
-    assert created_intent.status_code == 201, created_intent.text
-    rest_intent_id = created_intent.json()["intent_id"]
-    preview = client.post(f"/api/order-intents/{rest_intent_id}/preview", headers=_h(tenant_a))
-    assert preview.status_code == 200, preview.text
-    assert preview.json()["state"] == "approved"
-    submitted = client.post(f"/api/order-intents/{rest_intent_id}/submit", headers=_h(tenant_a))
-    assert submitted.status_code == 200, submitted.text
-    assert submitted.json()["state"] == "filled"
-    assert submitted.json()["fills"][0]["payload"]["notional_usd"] == 250
-    assert client.get(f"/api/order-intents/{rest_intent_id}", headers=_h(tenant_a)).json()[
-        "orders"
-    ][0]["broker"] == "paper"
+    assert created_intent.status_code == 403, created_intent.text
+    assert client.get(f"/api/order-intents/{intent['intent_id']}", headers=_h(tenant_a)).status_code == 403
+    assert client.post(f"/api/order-intents/{intent['intent_id']}/preview", headers=_h(tenant_a)).status_code == 403
+    assert client.post(f"/api/order-intents/{intent['intent_id']}/submit", headers=_h(tenant_a)).status_code == 403
 
     triggers = client.get("/api/triggers", headers=_h(tenant_a)).json()["triggers"]
     assert triggers[0]["trigger_id"] == trigger["trigger_id"]

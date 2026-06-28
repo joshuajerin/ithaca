@@ -55,7 +55,7 @@ def test_launch_gate_local_mode_passes_without_external_services(capsys, monkeyp
     assert statuses["mcp durable run cancel"] == "pass"
     assert statuses["mcp durable run cleanup"] == "pass"
     assert statuses["mcp resource scope denial"] == "pass"
-    assert statuses["ibkr smoke"] == "skip"
+    assert statuses["live data smoke"] == "skip"
     catalog = next(row for row in body["results"] if row["name"] == "mcp resource catalog")
     assert catalog["evidence"]["count"] >= 50
     trigger_fire = next(row for row in body["results"] if row["name"] == "trigger realtime fire")
@@ -63,7 +63,7 @@ def test_launch_gate_local_mode_passes_without_external_services(capsys, monkeyp
     trigger_history = next(row for row in body["results"] if row["name"] == "trigger realtime history")
     artifact_bundle = next(row for row in body["results"] if row["name"] == "backtest artifact bundle")
     assert trigger_dry_run["evidence"]["quote_mode"] == "provided"
-    assert trigger_fire["evidence"]["quote_mode"] == "static-ibkr-shaped"
+    assert trigger_fire["evidence"]["quote_mode"] == "static-live-data-shaped"
     assert trigger_history["evidence"]["run_id"] == trigger_fire["evidence"]["run_id"]
     assert artifact_bundle["evidence"]["artifact_count"] == 8
     created = next(row for row in body["results"] if row["name"] == "mcp durable run create")
@@ -80,6 +80,6 @@ def test_launch_gate_can_require_ibkr_smoke(capsys, monkeypatch):
     assert code == 1
     body = _json_payload(capsys.readouterr().out)
     assert body["ok"] is False
-    ibkr = next(row for row in body["results"] if row["name"] == "ibkr smoke")
+    ibkr = next(row for row in body["results"] if row["name"] == "live data smoke")
     assert ibkr["status"] == "fail"
     assert ibkr["evidence"]["code"] == "BROKER_CONNECTION_REQUIRED"

@@ -136,18 +136,18 @@ spec:
             - name: DOOMBERG_SESSION_SECRET
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: session_secret, optional: true }
-            - name: GOOGLE_CLIENT_ID
+            - name: CLERK_PEM_PUBLIC_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: google_client_id, optional: true }
-            - name: GOOGLE_CLIENT_SECRET
+                secretKeyRef: { name: doomberg-db, key: clerk_pem_public_key, optional: true }
+            - name: CLERK_JWKS_URL
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: google_client_secret, optional: true }
-            - name: GITHUB_CLIENT_ID
+                secretKeyRef: { name: doomberg-db, key: clerk_jwks_url, optional: true }
+            - name: CLERK_ALLOWED_ORIGINS
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: github_client_id, optional: true }
-            - name: GITHUB_CLIENT_SECRET
+                secretKeyRef: { name: doomberg-db, key: clerk_allowed_origins, optional: true }
+            - name: CLERK_ISSUER
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: github_client_secret, optional: true }
+                secretKeyRef: { name: doomberg-db, key: clerk_issuer, optional: true }
             - name: FMP_API_KEY
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: fmp_api_key, optional: true }

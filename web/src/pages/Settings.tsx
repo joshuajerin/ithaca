@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
-import { beginOAuth, providerConfigured, type Provider } from "../auth/oauth";
+import type { Provider } from "../auth/AuthContext";
 import { GoogleIcon, GithubIcon } from "../auth/icons";
 import { api } from "../api";
 import { MCP_BASE } from "../config";
@@ -10,8 +10,7 @@ const PROVIDERS: { id: Provider; label: string; icon: () => JSX.Element; blurb: 
   { id: "github", label: "GitHub", icon: GithubIcon, blurb: "Sign-in & repo-linked strategies" },
 ];
 
-// The issuable agent scopes. deploy:live is intentionally absent — the gateway refuses
-// to mint it, so live money movement is never reachable from an API key.
+// The issuable agent scopes. Trading scopes are intentionally absent.
 const SCOPES: { id: string; label: string }[] = [
   { id: "data:read", label: "Read market & research data" },
   { id: "strategy:author", label: "Author / propose strategies" },
@@ -20,7 +19,6 @@ const SCOPES: { id: string; label: string }[] = [
   { id: "approvals:read", label: "Read approvals" },
   { id: "artifacts:read", label: "Read artifacts" },
   { id: "deploy:backtest", label: "Run backtests" },
-  { id: "deploy:paper", label: "Run paper trading" },
 ];
 
 type KeyRow = { key_id: string; scopes: string[]; created_at: string; revoked: boolean };
@@ -31,7 +29,7 @@ function fmtDate(v: string | number): string {
 }
 
 export function Settings() {
-  const { user, integrations, setIntegration, signOut } = useAuth();
+  const { user, integrations, manageAccount, signOut } = useAuth();
 
   const [keys, setKeys] = useState<KeyRow[]>([]);
   const [loadingKeys, setLoadingKeys] = useState(true);
@@ -125,7 +123,7 @@ export function Settings() {
         </div>
       </section>
 
-      {/* Connected accounts / OAuth integrations */}
+      {/* Clerk-connected social accounts */}
       <section className="set-section">
         <div className="set-h">Connected accounts</div>
         <div className="set-card">
@@ -141,17 +139,8 @@ export function Settings() {
                 <span className={`int-status ${connected ? "on" : "off"}`}>
                   {connected ? "Connected" : "Not connected"}
                 </span>
-                <button
-                  className={`btn ${connected ? "" : "primary"}`}
-                  onClick={() => {
-                    if (!connected && providerConfigured(id)) {
-                      beginOAuth(id, "link");
-                      return;
-                    }
-                    setIntegration(id, !connected);
-                  }}
-                >
-                  {connected ? "Disconnect" : "Connect"}
+                <button className={`btn ${connected ? "" : "primary"}`} onClick={manageAccount}>
+                  Manage
                 </button>
               </div>
             );
@@ -240,7 +229,7 @@ export function Settings() {
           <div className="set-hint">
             Hand this key to your agent as the <code>Authorization: Bearer</code> token against{" "}
             <code>{MCP_BASE}</code>. Keys can read data, author strategies, and run
-            backtests/paper — never move real money.
+            backtests. Trading is disabled in this workspace.
           </div>
         </div>
       </section>

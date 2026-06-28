@@ -4,9 +4,7 @@ import type {
   ArtifactRow,
   DatasetSnapshotRow,
   JobRow,
-  IbkrSmokeStatus,
-  OrderIntentRecord,
-  OrderIntentRow,
+  LiveDataSmokeStatus,
   OpsStatus,
   ProviderConnectionRow,
   RunRow,
@@ -22,31 +20,27 @@ export interface ProviderConnectionInput {
   entitlements?: Array<Record<string, unknown>>;
   state?: string;
   connection_id?: string;
-  account_ref?: string;
-  credential_ref?: string;
   retention_policy?: string;
-}
-
-export interface OrderIntentInput {
-  run_id: string;
-  payload: Record<string, unknown>;
-  strategy_id?: string;
-  account_ref?: string;
-  idempotency_key?: string;
 }
 
 // Thin REST client over the rest-gateway. The browser NEVER speaks MCP; this is the only
 // backend it knows. Two auth modes, resolved at the gateway's single front door:
-//   - Prod:  browser session token or VITE_API_KEY -> `Authorization: Bearer <token>`;
+//   - Prod:  Clerk session token or VITE_API_KEY -> `Authorization: Bearer <token>`;
 //            the gateway derives the tenant from the credential.
 //   - Dev:   no token/key -> X-Tenant-Id carries the tenant only when the gateway's local
 //            dev fallback is enabled.
 
-function headers(): HeadersInit {
+let authTokenProvider: (() => Promise<string | null>) | null = null;
+
+export function setAuthTokenProvider(provider: (() => Promise<string | null>) | null): void {
+  authTokenProvider = provider;
+}
+
+async function headers(): Promise<HeadersInit> {
   const h: Record<string, string> = { "Content-Type": "application/json" };
-  const oauthToken = localStorage.getItem("doomberg.token");
-  if (oauthToken) {
-    h.Authorization = `Bearer ${oauthToken}`;
+  const clerkToken = authTokenProvider ? await authTokenProvider() : null;
+  if (clerkToken) {
+    h.Authorization = `Bearer ${clerkToken}`;
   } else if (API_KEY) {
     h.Authorization = `Bearer ${API_KEY}`;
   } else {
@@ -56,7 +50,7 @@ function headers(): HeadersInit {
 }
 
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { headers: headers(), signal });
+  const res = await fetch(`${API_BASE}${path}`, { headers: await headers(), signal });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`GET ${path} -> ${res.status} ${res.statusText}${body ? `: ${body}` : ""}`);
@@ -67,7 +61,7 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
 async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers: headers(),
+    headers: await headers(),
     body: JSON.stringify(body ?? {}),
     signal,
   });
@@ -79,7 +73,7 @@ async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): P
 }
 
 async function delJson<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { method: "DELETE", headers: headers(), signal });
+  const res = await fetch(`${API_BASE}${path}`, { method: "DELETE", headers: await headers(), signal });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`DELETE ${path} -> ${res.status} ${res.statusText}${text ? `: ${text}` : ""}`);
@@ -140,8 +134,8 @@ export const api = {
     return getJson<OpsStatus>(`/ops/status`, signal);
   },
 
-  async ibkrSmoke(symbol = "AAPL", signal?: AbortSignal): Promise<IbkrSmokeStatus> {
-    return getJson<IbkrSmokeStatus>(`/ops/ibkr-smoke?symbol=${encodeURIComponent(symbol)}`, signal);
+  async liveDataSmoke(symbol = "AAPL", signal?: AbortSignal): Promise<LiveDataSmokeStatus> {
+    return getJson<LiveDataSmokeStatus>(`/ops/live-data-smoke?symbol=${encodeURIComponent(symbol)}`, signal);
   },
 
   async listArtifacts(signal?: AbortSignal): Promise<ArtifactRow[]> {
@@ -175,31 +169,6 @@ export const api = {
 
   async upsertProviderConnection(body: ProviderConnectionInput, signal?: AbortSignal) {
     return postJson<ProviderConnectionRow>(`/providers`, body, signal);
-  },
-
-  async listOrderIntents(signal?: AbortSignal): Promise<OrderIntentRow[]> {
-    const raw = await getJson<unknown>(`/order-intents`, signal);
-    return unwrapList<OrderIntentRow>(raw, "order_intents");
-  },
-
-  async createOrderIntent(body: OrderIntentInput, signal?: AbortSignal): Promise<OrderIntentRecord> {
-    return postJson<OrderIntentRecord>(`/order-intents`, body, signal);
-  },
-
-  async previewOrderIntent(intentId: string, signal?: AbortSignal): Promise<OrderIntentRecord> {
-    return postJson<OrderIntentRecord>(
-      `/order-intents/${encodeURIComponent(intentId)}/preview`,
-      {},
-      signal,
-    );
-  },
-
-  async submitOrderIntent(intentId: string, signal?: AbortSignal): Promise<OrderIntentRecord> {
-    return postJson<OrderIntentRecord>(
-      `/order-intents/${encodeURIComponent(intentId)}/submit`,
-      {},
-      signal,
-    );
   },
 
   async listTriggers(signal?: AbortSignal): Promise<TriggerRow[]> {
@@ -250,56 +219,16 @@ export const api = {
     return API_BASE.startsWith("http") ? url.toString() : `${url.pathname}${url.search}${url.hash}`;
   },
 
-  async getBook(id: string, signal?: AbortSignal): Promise<Record<string, unknown> | null> {
-    const raw = await getJson<{ book: Record<string, unknown> | null }>(
-      `/runs/${encodeURIComponent(id)}/book`,
-      signal,
-    );
-    return raw.book ?? null;
-  },
-
   // Write actions: the UI is the human actor (the gateway defaults X-Actor-Kind to "user").
   async proposeStrategy(spec: Record<string, unknown>, signal?: AbortSignal): Promise<RunRow> {
     return postJson<RunRow>(`/strategies`, { spec }, signal);
   },
 
-  async createRun(strategy_id: string, kind: "backtest" | "paper", range = "1y", signal?: AbortSignal): Promise<RunRow> {
+  async createRun(strategy_id: string, kind: "backtest", range = "1y", signal?: AbortSignal): Promise<RunRow> {
     return postJson<RunRow>(`/runs`, { strategy_id, kind, range }, signal);
   },
 
-  // Human-only money-path actions, served by the gateway over the shared control-plane
-  // implementation. Agents may NOT call these (the gateway/control-plane enforce it).
-  async promoteRun(id: string, signal?: AbortSignal): Promise<RunRow> {
-    return postJson<RunRow>(`/runs/${encodeURIComponent(id)}/promote`, {}, signal);
-  },
-
-  async runAction(
-    id: string,
-    action: "cancel" | "promote" | "activate" | "pause" | "resume" | "retire",
-    signal?: AbortSignal,
-  ): Promise<RunRow> {
-    return postJson<RunRow>(`/runs/${encodeURIComponent(id)}/${action}`, {}, signal);
-  },
-
   // ---- auth ------------------------------------------------------------------
-  async signUp(email: string, name: string, password: string) {
-    return postJson<{ user: Record<string, unknown>; token: string }>(
-      `/auth/signup`,
-      { email, name, password },
-    );
-  },
-
-  async signIn(email: string, password: string) {
-    return postJson<{ user: Record<string, unknown>; token: string }>(
-      `/auth/signin`,
-      { email, password },
-    );
-  },
-
-  async signOut() {
-    await postJson(`/auth/signout`, {}).catch(() => null);
-  },
-
   async me() {
     return getJson<Record<string, unknown>>(`/auth/me`);
   },

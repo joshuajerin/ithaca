@@ -1,5 +1,4 @@
-"""The UI's human money-path actions, served by the rest-gateway over the SHARED
-control-plane implementation (one money path, two transports)."""
+"""Write-action policy tests for the public REST gateway."""
 
 from __future__ import annotations
 
@@ -30,33 +29,33 @@ def _h(tenant):
     return {"X-Tenant-Id": tenant}
 
 
-def test_propose_then_create_then_promote_then_activate(client, tenant):
-    # propose
+def test_propose_then_backtest_create_succeeds_but_trading_lifecycle_is_disabled(client, tenant):
     r = client.post("/api/strategies", json={"spec": _spec()}, headers=_h(tenant))
     assert r.status_code == 201
     sid = r.json()["id"]
 
-    # create paper run (queued)
     r = client.post("/api/runs", json={"strategy_id": sid, "kind": "paper"}, headers=_h(tenant))
+    assert r.status_code == 403
+    assert "trading is disabled" in r.json()["detail"]
+
+    r = client.post("/api/runs", json={"strategy_id": sid, "kind": "backtest"}, headers=_h(tenant))
     assert r.status_code == 201
     run_id = r.json()["run_id"]
-    assert r.json()["state"] == "queued"
+    assert r.json()["kind"] == "backtest"
 
-    # promote (human=UI by default) then activate -> live
-    assert client.post(f"/api/runs/{run_id}/promote", headers=_h(tenant)).json()["state"] == "promoted"
-    assert client.post(f"/api/runs/{run_id}/activate", headers=_h(tenant)).json()["state"] == "live"
-
-    # the run now lists as a live paper deployment
-    listed = client.get("/api/runs", params={"kind": "paper"}, headers=_h(tenant)).json()["runs"]
-    assert listed[0]["state"] == "live"
+    for action in ("promote", "activate", "pause", "resume", "retire"):
+        blocked = client.post(f"/api/runs/{run_id}/{action}", headers=_h(tenant))
+        assert blocked.status_code == 403
+        assert "trading lifecycle actions are disabled" in blocked.json()["detail"]
 
 
-def test_agent_actor_cannot_promote_via_ui_backend(client, tenant):
+def test_agent_actor_cannot_create_trading_run(client, tenant):
     sid = client.post("/api/strategies", json={"spec": _spec()}, headers=_h(tenant)).json()["id"]
-    run_id = client.post("/api/runs", json={"strategy_id": sid, "kind": "paper"},
-                         headers=_h(tenant)).json()["run_id"]
-    resp = client.post(f"/api/runs/{run_id}/promote",
-                       headers={"X-Tenant-Id": tenant, "X-Actor-Kind": "agent"})
+    resp = client.post(
+        "/api/runs",
+        json={"strategy_id": sid, "kind": "paper"},
+        headers={"X-Tenant-Id": tenant, "X-Actor-Kind": "agent"},
+    )
     assert resp.status_code == 403
 
 
@@ -66,9 +65,9 @@ def test_propose_invalid_spec_422(client, tenant):
     assert client.post("/api/strategies", json={"spec": bad}, headers=_h(tenant)).status_code == 422
 
 
-def test_book_endpoint_returns_none_until_applied(client, tenant):
+def test_book_endpoint_returns_none_without_trading_state(client, tenant):
     sid = client.post("/api/strategies", json={"spec": _spec()}, headers=_h(tenant)).json()["id"]
-    run_id = client.post("/api/runs", json={"strategy_id": sid, "kind": "paper"},
+    run_id = client.post("/api/runs", json={"strategy_id": sid, "kind": "backtest"},
                          headers=_h(tenant)).json()["run_id"]
     body = client.get(f"/api/runs/{run_id}/book", headers=_h(tenant)).json()
     assert body["book"] is None

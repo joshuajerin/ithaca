@@ -167,7 +167,7 @@ export function MultiStrategyPanel({
       <div className="w-full h-full flex flex-col items-center justify-center text-center gap-2 text-muted-foreground">
         <span className="font-serif text-base text-white">No sleeves to allocate</span>
         <span className="editorial-label text-[9px] max-w-[300px]">
-          {data.note || "Create and paper-trade a few strategies, then allocate capital across them as sleeves."}
+          {data.note || "Create and analyze a few strategies, then allocate model capital across them as sleeves."}
         </span>
       </div>
     );

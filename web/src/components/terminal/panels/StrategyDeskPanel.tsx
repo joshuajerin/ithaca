@@ -128,7 +128,7 @@ export function StrategyDeskPanel({ data }: { data: StrategyDeskData }) {
       <div className="w-full h-full flex flex-col items-center justify-center text-center gap-2 text-muted-foreground">
         <span className="font-serif text-base text-white">No strategies yet</span>
         <span className="editorial-label text-[9px] max-w-[260px]">
-          Say "create a momentum strategy" or "paper-trade the value strategy" to populate the desk.
+          Say "create a momentum strategy" or "analyze the value strategy" to populate the desk.
         </span>
       </div>
     );

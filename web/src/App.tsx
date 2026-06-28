@@ -6,11 +6,10 @@ import { NewSession } from "./pages/NewSession";
 import { Docs } from "./pages/Docs";
 import { RunsList } from "./pages/RunsList";
 import { RunDetail } from "./pages/RunDetail";
-import { Deploys } from "./pages/Deploys";
-import { Trades } from "./pages/Trades";
 import { Ideas } from "./pages/Ideas";
 import { Settings } from "./pages/Settings";
 import { AuthPage } from "./pages/AuthPage";
+import { AgentLink } from "./pages/AgentLink";
 import { useAuth } from "./auth/AuthContext";
 import { api } from "./api";
 
@@ -19,8 +18,6 @@ const NAV: { to: string; label: string; cta?: boolean }[] = [
   { to: "/dashboard", label: "Dashboard" },
   { to: "/sessions", label: "Sessions" },
   { to: "/runs", label: "Runs" },
-  { to: "/deploys", label: "Deploys" },
-  { to: "/trades", label: "Trades" },
   { to: "/ideas", label: "Ideas" },
   { to: "/docs", label: "Docs" },
   { to: "/settings", label: "Settings" },
@@ -38,7 +35,7 @@ function LogoutIcon() {
 export function App() {
   const { user, signOut } = useAuth();
 
-  // No session → the auth gate (Google / GitHub / demo) stands in for the app.
+  // No Clerk session -> show the auth gate.
   if (!user) return <AuthPage />;
 
   const initials = user.name
@@ -96,10 +93,9 @@ export function App() {
           <Route path="/docs" element={<Docs />} />
           <Route path="/runs" element={<RunsList />} />
           <Route path="/runs/:id" element={<RunDetail />} />
-          <Route path="/deploys" element={<Deploys />} />
-          <Route path="/trades" element={<Trades />} />
           <Route path="/ideas" element={<Ideas />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/agent-link" element={<AgentLink />} />
           <Route path="*" element={<div className="page"><div className="empty">Not found.</div></div>} />
         </Routes>
       </main>

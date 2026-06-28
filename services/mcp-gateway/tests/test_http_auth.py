@@ -106,21 +106,20 @@ def test_scope_policy_recognizes_calls():
     # durable run creation needs the run-write scope
     body = json.dumps({"method": "tools/call", "params": {"name": "run_skill"}}).encode()
     assert _scope_needed(body) == {"runs:write"}
-    # execution tools are still governed MCP calls: create/preview require runs:write;
-    # broker submission requires the explicit paper-deploy capability.
+    # Execution tools are not registered on the public MCP server.
     body = json.dumps({"method": "tools/call", "params": {"name": "create_order_intent"}}).encode()
-    assert _scope_needed(body) == {"runs:write"}
+    assert _scope_needed(body) == set()
     body = json.dumps({"method": "tools/call", "params": {"name": "preview_order_intent"}}).encode()
-    assert _scope_needed(body) == {"runs:write"}
+    assert _scope_needed(body) == set()
     body = json.dumps({"method": "tools/call", "params": {"name": "submit_order_intent"}}).encode()
-    assert _scope_needed(body) == {"deploy:paper"}
+    assert _scope_needed(body) == set()
     # batches need the union of every tool-specific scope
     body = json.dumps([
         {"method": "tools/call", "params": {"name": "run_skill"}},
         {"method": "tools/call", "params": {"name": "decide_approval"}},
         {"method": "tools/call", "params": {"name": "submit_order_intent"}},
     ]).encode()
-    assert _scope_needed(body) == {"runs:write", "approvals:decide", "deploy:paper"}
+    assert _scope_needed(body) == {"runs:write", "approvals:decide"}
     # a handshake/discovery message: not a tool call, no scope gate
     body = json.dumps({"method": "tools/list"}).encode()
     assert _is_tool_call(body) is False

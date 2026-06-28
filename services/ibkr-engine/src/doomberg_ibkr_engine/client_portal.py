@@ -13,8 +13,12 @@ from html import unescape
 from typing import Any
 
 
+PUBLIC_DATA_SOURCE = "doomberg-live-data"
+PUBLIC_ENTITLEMENT_CLASS = "doomberg_live"
+
+
 class ClientPortalError(RuntimeError):
-    """Base error for IBKR Client Portal Gateway calls."""
+    """Base error for private market-data gateway calls."""
 
 
 class ClientPortalHttpError(ClientPortalError):
@@ -23,7 +27,7 @@ class ClientPortalHttpError(ClientPortalError):
     def __init__(self, status: int, detail: str = "") -> None:
         self.status = int(status)
         self.detail = detail[:1000]
-        super().__init__(f"IBKR Client Portal Gateway HTTP {self.status}")
+        super().__init__(f"market-data gateway HTTP {self.status}")
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -54,7 +58,7 @@ def _first_number(data: dict[str, Any], names: tuple[str, ...]) -> float | None:
 
 
 class ClientPortalGateway:
-    """Small stdlib client for the local IBKR Client Portal Gateway."""
+    """Small stdlib client for the local private market-data gateway."""
 
     def __init__(
         self,
@@ -82,7 +86,7 @@ class ClientPortalGateway:
             if exc.status in {401, 403}:
                 return {
                     "ok": True,
-                    "upstream": "ibkr-client-portal",
+                    "upstream": "private-market-data",
                     "latency_ms": int((time.perf_counter() - started) * 1000),
                     "authenticated": False,
                     "connected": False,
@@ -92,13 +96,13 @@ class ClientPortalGateway:
         except ClientPortalError as exc:
             return {
                 "ok": False,
-                "upstream": "ibkr-client-portal",
+                "upstream": "private-market-data",
                 "latency_ms": int((time.perf_counter() - started) * 1000),
                 "error": str(exc),
             }
         return {
             "ok": True,
-            "upstream": "ibkr-client-portal",
+            "upstream": "private-market-data",
             "latency_ms": int((time.perf_counter() - started) * 1000),
             "authenticated": bool(status.get("authenticated")),
             "connected": bool(status.get("connected")),
@@ -133,10 +137,10 @@ class ClientPortalGateway:
         if not isinstance(accounts, list):
             accounts = []
         return {
-            "provider": "ibkr-engine",
-            "source": "ibkr-client-portal",
-            "entitlement_class": "connected_account",
-            "accounts": [_redact(item) for item in accounts],
+            "provider": PUBLIC_DATA_SOURCE,
+            "source": PUBLIC_DATA_SOURCE,
+            "entitlement_class": PUBLIC_ENTITLEMENT_CLASS,
+            "accounts": [_public_account(idx, item) for idx, item in enumerate(accounts, start=1)],
             "raw_count": len(accounts),
         }
 
@@ -144,10 +148,9 @@ class ClientPortalGateway:
         resolved = account or self.default_account()
         if not resolved:
             return {
-                "provider": "ibkr-engine",
-                "source": "ibkr-client-portal",
-                "source_account": None,
-                "entitlement_class": "connected_account",
+                "provider": PUBLIC_DATA_SOURCE,
+                "source": PUBLIC_DATA_SOURCE,
+                "entitlement_class": PUBLIC_ENTITLEMENT_CLASS,
                 "positions": [],
                 "raw_count": 0,
             }
@@ -156,10 +159,9 @@ class ClientPortalGateway:
         if not isinstance(positions, list):
             positions = []
         return {
-            "provider": "ibkr-engine",
-            "source": "ibkr-client-portal",
-            "source_account": resolved,
-            "entitlement_class": "connected_account",
+            "provider": PUBLIC_DATA_SOURCE,
+            "source": PUBLIC_DATA_SOURCE,
+            "entitlement_class": PUBLIC_ENTITLEMENT_CLASS,
             "positions": [_redact(item) for item in positions],
             "raw_count": len(positions),
         }
@@ -170,10 +172,9 @@ class ClientPortalGateway:
         if not isinstance(orders, list):
             orders = []
         return {
-            "provider": "ibkr-engine",
-            "source": "ibkr-client-portal",
-            "source_account": account,
-            "entitlement_class": "connected_account",
+            "provider": PUBLIC_DATA_SOURCE,
+            "source": PUBLIC_DATA_SOURCE,
+            "entitlement_class": PUBLIC_ENTITLEMENT_CLASS,
             "orders": [_redact(item) for item in orders],
             "raw_count": len(orders),
         }
@@ -214,9 +215,8 @@ class ClientPortalGateway:
                     "last": price,
                     "bid": _first_number(row, ("84", "bid", "bidPrice")),
                     "ask": _first_number(row, ("86", "ask", "askPrice")),
-                    "source": "ibkr-engine",
-                    "source_account": self.default_account(),
-                    "entitlement_class": "connected_account",
+                    "source": PUBLIC_DATA_SOURCE,
+                    "entitlement_class": PUBLIC_ENTITLEMENT_CLASS,
                     "event_time": _event_time(row) or received,
                     "received_time": received,
                     "raw": _redact(row),
@@ -259,12 +259,12 @@ class ClientPortalGateway:
                 "symbol": symbol,
                 "price": last.get("c"),
                 "asOf": last.get("t") or _now_iso(),
-                "source": "ibkr-engine",
+                "source": PUBLIC_DATA_SOURCE,
             }
         return {
-            "provider": "ibkr-engine",
-            "source": "ibkr-client-portal",
-            "entitlement_class": "connected_account",
+            "provider": PUBLIC_DATA_SOURCE,
+            "source": PUBLIC_DATA_SOURCE,
+            "entitlement_class": PUBLIC_ENTITLEMENT_CLASS,
             "symbol": symbol,
             "conid": conid,
             "period": period,
@@ -285,9 +285,9 @@ class ClientPortalGateway:
         raw = self._request_json("GET", path)
         items = _briefing_items(raw, ticker=ticker, limit=limit)
         return {
-            "provider": "ibkr-engine",
-            "source": "ibkr-client-portal",
-            "entitlement_class": "connected_account",
+            "provider": PUBLIC_DATA_SOURCE,
+            "source": PUBLIC_DATA_SOURCE,
+            "entitlement_class": PUBLIC_ENTITLEMENT_CLASS,
             "scope": ticker or "Markets",
             "items": items,
             "count": len(items),
@@ -335,9 +335,9 @@ class ClientPortalGateway:
             row["bid"] = _first_number(snap, ("84", "bid"))
             row["ask"] = _first_number(snap, ("86", "ask"))
         return {
-            "provider": "ibkr-engine",
-            "source": "ibkr-client-portal",
-            "entitlement_class": "connected_account",
+            "provider": PUBLIC_DATA_SOURCE,
+            "source": PUBLIC_DATA_SOURCE,
+            "entitlement_class": PUBLIC_ENTITLEMENT_CLASS,
             "scanType": body["type"],
             "rows": rows,
             "count": len(rows),
@@ -398,7 +398,7 @@ class ClientPortalGateway:
         data = json.dumps(body).encode("utf-8") if body is not None else None
         req = urllib.request.Request(url, data=data, method=method)
         req.add_header("Accept", "application/json")
-        req.add_header("User-Agent", "doomberg-ibkr-engine")
+        req.add_header("User-Agent", "doomberg-live-data-engine")
         if body is not None:
             req.add_header("Content-Type", "application/json")
         try:
@@ -408,13 +408,13 @@ class ClientPortalGateway:
             detail = exc.read().decode("utf-8", errors="replace")
             raise ClientPortalHttpError(exc.code, detail) from exc
         except urllib.error.URLError as exc:
-            raise ClientPortalError(f"IBKR Client Portal Gateway unreachable: {exc.reason}") from exc
+            raise ClientPortalError(f"market-data gateway unreachable: {exc.reason}") from exc
         if not raw:
             return {}
         try:
             return json.loads(raw.decode("utf-8"))
         except json.JSONDecodeError as exc:
-            raise ClientPortalError("IBKR Client Portal Gateway returned invalid JSON") from exc
+            raise ClientPortalError("market-data gateway returned invalid JSON") from exc
 
 
 def _event_time(row: dict[str, Any]) -> str | None:
@@ -442,13 +442,13 @@ def _strip_html(value: str) -> str:
 def _briefing_items(raw: Any, *, ticker: str | None, limit: int) -> list[dict[str, Any]]:
     if not isinstance(raw, dict):
         return []
-    title = str(raw.get("title") or "IBKR market briefing").strip()
+    title = str(raw.get("title") or "Market briefing").strip()
     content = str(raw.get("content") or "")
     paragraphs = re.findall(r"<p[^>]*>(.*?)</p>", content, flags=re.I | re.S)
     if not paragraphs and content:
         paragraphs = [content]
     items: list[dict[str, Any]] = []
-    provider = raw.get("provider") or raw.get("source") or "IBKR"
+    provider = raw.get("provider") or raw.get("source") or "Market data"
     now = _now_iso()
     for idx, paragraph in enumerate(paragraphs[: max(1, limit)]):
         summary = _strip_html(paragraph)
@@ -456,7 +456,7 @@ def _briefing_items(raw: Any, *, ticker: str | None, limit: int) -> list[dict[st
             continue
         headline = title if idx == 0 else summary[:140]
         items.append({
-            "id": f"ibkr-briefing-{idx}",
+            "id": f"market-briefing-{idx}",
             "headline": headline,
             "source": provider,
             "summary": summary,
@@ -468,7 +468,7 @@ def _briefing_items(raw: Any, *, ticker: str | None, limit: int) -> list[dict[st
         })
     if not items and title:
         items.append({
-            "id": "ibkr-briefing",
+            "id": "market-briefing",
             "headline": title,
             "source": provider,
             "summary": _strip_html(content),
@@ -496,5 +496,23 @@ def _redact(item: Any) -> dict[str, Any]:
         "session_id",
         "ssotoken",
         "token",
+        "account",
+        "accountid",
+        "account_id",
+        "accountvan",
+        "acctid",
+        "acct_id",
+        "id",
     }
     return {str(key): value for key, value in item.items() if str(key).lower() not in blocked}
+
+
+def _public_account(idx: int, item: Any) -> dict[str, Any]:
+    if not isinstance(item, dict):
+        return {"label": f"Account {idx}", "type": "data"}
+    return {
+        "label": f"Account {idx}",
+        "type": item.get("type") or item.get("tradingType") or "data",
+        "currency": item.get("currency"),
+        "status": "connected",
+    }

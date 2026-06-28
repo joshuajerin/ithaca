@@ -6,6 +6,8 @@ from .ibkr_engine import (
     IbkrEngineError,
     IbkrEngineHttpError,
     IbkrQuoteInvariantError,
+    PUBLIC_DATA_SOURCE,
+    PUBLIC_ENTITLEMENT_CLASS,
     normalize_quote,
     public_quote,
 )
@@ -16,6 +18,8 @@ __all__ = [
     "IbkrEngineError",
     "IbkrEngineHttpError",
     "IbkrQuoteInvariantError",
+    "PUBLIC_DATA_SOURCE",
+    "PUBLIC_ENTITLEMENT_CLASS",
     "normalize_quote",
     "public_quote",
 ]
