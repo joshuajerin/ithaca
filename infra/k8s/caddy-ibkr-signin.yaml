@@ -43,7 +43,7 @@ data:
       respond "IBKR sign-in window is closed or not allowed from this IP." 403
     }
 
-    dev-mcp.doomberg.me {
+    dev-mcp.doomberg.me, dev-mcp.129.212.135.120.sslip.io {
       reverse_proxy doomberg-app.doomberg-dev-gateway.svc.cluster.local:8080 {
         flush_interval -1
         transport http {
@@ -53,7 +53,7 @@ data:
       }
     }
 
-    dev-app.doomberg.me {
+    dev-app.doomberg.me, dev-app.129.212.135.120.sslip.io {
       reverse_proxy doomberg-app.doomberg-dev-gateway.svc.cluster.local:8000
     }
 ---
