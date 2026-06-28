@@ -27,6 +27,8 @@ IBKR_ENGINE_STORAGE_SIZE="${IBKR_ENGINE_STORAGE_SIZE:-2Gi}"
 IBKR_SIGNIN_PUBLIC="${IBKR_SIGNIN_PUBLIC:-0}"
 IBKR_SIGNIN_HOST="${IBKR_SIGNIN_HOST:-ibkr.doomberg.me}"
 IBKR_SIGNIN_REMOTE_IPS="${IBKR_SIGNIN_REMOTE_IPS:-0.0.0.0/0}"
+APP_REPLICAS_EXPLICIT="${APP_REPLICAS+x}"
+WORKER_REPLICAS_EXPLICIT="${WORKER_REPLICAS+x}"
 
 case "${DEPLOY_ENV}" in
   prod)
@@ -38,8 +40,8 @@ case "${DEPLOY_ENV}" in
     MCP_NODE_PORT="${MCP_NODE_PORT:-30808}"
     APP_NODE_WORKLOAD="${APP_NODE_WORKLOAD:-paper}"
     WORKER_NODE_WORKLOAD="${WORKER_NODE_WORKLOAD:-paper}"
-    APP_REPLICAS="${APP_REPLICAS:-2}"
-    WORKER_REPLICAS="${WORKER_REPLICAS:-2}"
+    APP_REPLICAS="${APP_REPLICAS:-}"
+    WORKER_REPLICAS="${WORKER_REPLICAS:-}"
     SHORT_LOADER_SUSPEND="${SHORT_LOADER_SUSPEND:-false}"
     DOOMBERG_PLATFORM_DB_URL="${DOOMBERG_PLATFORM_DB_URL:-${DOOMBERG_PROD_URL:-${DOOMBERG_ARCHIVE_URL:-}}}"
     DOOMBERG_ARCHIVE_URL="${DOOMBERG_ARCHIVE_URL:-${DOOMBERG_PLATFORM_DB_URL:-}}"
@@ -67,6 +69,85 @@ esac
 
 MCP_ALLOWED_HOSTS="${MCP_ALLOWED_HOSTS:-${MCP_HOST},${MCP_HOST}:443}"
 CLERK_ALLOWED_ORIGINS="${CLERK_ALLOWED_ORIGINS:-https://${APP_HOST}}"
+
+node_count_for_workload() {
+  local workload="$1"
+  kubectl get nodes -l "workload=${workload}" --no-headers 2>/dev/null | awk 'END { print NR + 0 }'
+}
+
+default_replicas_for_workload() {
+  local workload="$1"
+  local count
+  count="$(node_count_for_workload "${workload}")"
+  if [[ "${count}" -ge 2 ]]; then
+    echo "2"
+  else
+    echo "1"
+  fi
+}
+
+dump_rollout_debug() {
+  local status=$?
+  if [[ "${status}" -eq 0 ]]; then
+    return 0
+  fi
+  echo "ERROR: deploy failed; dumping Kubernetes rollout diagnostics" >&2
+  for ns in "${K8S_GATEWAY_NAMESPACE}" "${K8S_WORKER_NAMESPACE}"; do
+    echo "==> namespace ${ns}: deployments" >&2
+    kubectl -n "${ns}" get deployments -o wide >&2 || true
+    echo "==> namespace ${ns}: pods" >&2
+    kubectl -n "${ns}" get pods -o wide >&2 || true
+    echo "==> namespace ${ns}: recent warning events" >&2
+    kubectl -n "${ns}" get events --sort-by=.lastTimestamp --field-selector type=Warning 2>/dev/null | tail -n 60 >&2 || true
+  done
+  for target in \
+    "${K8S_GATEWAY_NAMESPACE}/deployment/doomberg-app" \
+    "${K8S_GATEWAY_NAMESPACE}/deployment/ibkr-engine" \
+    "${K8S_GATEWAY_NAMESPACE}/deployment/ibkr-gateway" \
+    "${K8S_WORKER_NAMESPACE}/deployment/doomberg-workers"; do
+    local ns="${target%%/*}"
+    local deploy="${target#*/}"
+    echo "==> describe ${ns}/${deploy}" >&2
+    kubectl -n "${ns}" describe "${deploy}" >&2 || true
+  done
+  for container in rest-gateway control-plane mcp-gateway; do
+    echo "==> doomberg-app ${container} logs" >&2
+    kubectl -n "${K8S_GATEWAY_NAMESPACE}" logs deployment/doomberg-app -c "${container}" --tail=80 --prefix >&2 || true
+  done
+  echo "==> doomberg-workers logs" >&2
+  kubectl -n "${K8S_WORKER_NAMESPACE}" logs deployment/doomberg-workers --all-containers --tail=80 --prefix >&2 || true
+  exit "${status}"
+}
+
+trap dump_rollout_debug ERR
+
+if [[ "${DEPLOY_ENV}" == "prod" ]]; then
+  if [[ -z "${APP_REPLICAS}" ]]; then
+    APP_REPLICAS="$(default_replicas_for_workload "${APP_NODE_WORKLOAD}")"
+    echo "==> derived APP_REPLICAS=${APP_REPLICAS} from workload=${APP_NODE_WORKLOAD}"
+  elif [[ -z "${APP_REPLICAS_EXPLICIT}" ]]; then
+    echo "==> default APP_REPLICAS=${APP_REPLICAS}"
+  fi
+  if [[ -z "${WORKER_REPLICAS}" ]]; then
+    WORKER_REPLICAS="$(default_replicas_for_workload "${WORKER_NODE_WORKLOAD}")"
+    echo "==> derived WORKER_REPLICAS=${WORKER_REPLICAS} from workload=${WORKER_NODE_WORKLOAD}"
+  elif [[ -z "${WORKER_REPLICAS_EXPLICIT}" ]]; then
+    echo "==> default WORKER_REPLICAS=${WORKER_REPLICAS}"
+  fi
+fi
+
+APP_MAX_SURGE="${APP_MAX_SURGE:-1}"
+APP_MAX_UNAVAILABLE="${APP_MAX_UNAVAILABLE:-0}"
+WORKER_MAX_SURGE="${WORKER_MAX_SURGE:-1}"
+WORKER_MAX_UNAVAILABLE="${WORKER_MAX_UNAVAILABLE:-1}"
+if [[ "${APP_REPLICAS}" -le 1 ]]; then
+  APP_MAX_SURGE="${APP_MAX_SURGE_SINGLE:-0}"
+  APP_MAX_UNAVAILABLE="${APP_MAX_UNAVAILABLE_SINGLE:-1}"
+fi
+if [[ "${WORKER_REPLICAS}" -le 1 ]]; then
+  WORKER_MAX_SURGE="${WORKER_MAX_SURGE_SINGLE:-0}"
+  WORKER_MAX_UNAVAILABLE="${WORKER_MAX_UNAVAILABLE_SINGLE:-1}"
+fi
 
 if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
   if [[ -z "${IBKR_GATEWAY_IMAGE:-}" ]]; then
@@ -130,6 +211,10 @@ render_manifest() {
     -e "s|\${WORKER_NODE_WORKLOAD}|${WORKER_NODE_WORKLOAD}|g" \
     -e "s|\${APP_REPLICAS}|${APP_REPLICAS}|g" \
     -e "s|\${WORKER_REPLICAS}|${WORKER_REPLICAS}|g" \
+    -e "s|\${APP_MAX_SURGE}|${APP_MAX_SURGE}|g" \
+    -e "s|\${APP_MAX_UNAVAILABLE}|${APP_MAX_UNAVAILABLE}|g" \
+    -e "s|\${WORKER_MAX_SURGE}|${WORKER_MAX_SURGE}|g" \
+    -e "s|\${WORKER_MAX_UNAVAILABLE}|${WORKER_MAX_UNAVAILABLE}|g" \
     -e "s|\${SHORT_LOADER_SUSPEND}|${SHORT_LOADER_SUSPEND}|g" \
     -e "s|\${MCP_ALLOWED_HOSTS}|${MCP_ALLOWED_HOSTS}|g" \
     "${file}"
@@ -190,6 +275,7 @@ if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
   echo "==> ibkr enabled wrapper_image=${IBKR_ENGINE_IMAGE} gateway_image=${IBKR_GATEWAY_IMAGE} public_signin=${IBKR_SIGNIN_PUBLIC}"
 fi
 echo "==> replicas app=${APP_REPLICAS} workers=${WORKER_REPLICAS} node_workloads app=${APP_NODE_WORKLOAD} workers=${WORKER_NODE_WORKLOAD}"
+echo "==> rollout app=maxSurge:${APP_MAX_SURGE},maxUnavailable:${APP_MAX_UNAVAILABLE} workers=maxSurge:${WORKER_MAX_SURGE},maxUnavailable:${WORKER_MAX_UNAVAILABLE}"
 
 echo "==> namespaces"
 render_manifest infra/k8s/namespace.yaml | kubectl apply -f -

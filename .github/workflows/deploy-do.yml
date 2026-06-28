@@ -311,6 +311,10 @@ jobs:
       - name: Deploy services
         env:
           LOAD_LOCAL_ENV: "0"
+          APP_NODE_WORKLOAD: ${{ vars.APP_NODE_WORKLOAD }}
+          WORKER_NODE_WORKLOAD: ${{ vars.WORKER_NODE_WORKLOAD }}
+          APP_REPLICAS: ${{ vars.APP_REPLICAS }}
+          WORKER_REPLICAS: ${{ vars.WORKER_REPLICAS }}
           DOOMBERG_ARCHIVE_URL: ${{ secrets.DOOMBERG_ARCHIVE_URL }}
           DOOMBERG_PLATFORM_DB_URL: ${{ secrets.DOOMBERG_ARCHIVE_URL }}
           DOOMBERG_SESSION_SECRET: ${{ secrets.DOOMBERG_SESSION_SECRET }}

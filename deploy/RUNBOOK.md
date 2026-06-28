@@ -109,7 +109,7 @@ What it provisions (the allowlist — nothing else):
 | VPC | private `10.20.0.0/20` |
 | DOKS cluster | **HA control plane**, registry-integrated, auto-upgrade |
 | node pool `backtest` | `c-4`, autoscale **min 1 (warm) → max 8** |
-| node pool `paper` (always-on) | `s-4vcpu-8gb` × **2** (HA) — gateways + scheduler |
+| node pool `paper` (always-on) | `s-2vcpu-4gb` × **4** (HA + rollout headroom) — gateways + scheduler |
 | Managed Postgres 16 | `db-s-2vcpu-4gb`, **2 nodes = primary + standby (HA)**, daily backups + WAL/PITR, storage autoscale |
 | Container Registry | `doomberg`, professional tier |
 | Load Balancer | `size_unit = 2` (HA) → gateway pool |
@@ -429,7 +429,7 @@ $500/mo; this stack is reliability-tuned, not cost-tuned.
 |---|---|---|
 | DOKS HA control plane | `ha = true` | 40 |
 | Backtest pool (warm floor) | `c-4` × 1 (min) | 84 |
-| Paper/gateway pool (always-on HA) | `s-4vcpu-8gb` × 2 | 96 |
+| Paper/gateway pool (always-on HA + rollout headroom) | `s-2vcpu-4gb` × 4 | 96 |
 | Managed Postgres (HA) | `db-s-2vcpu-4gb`, primary + standby | 120 |
 | Container Registry | professional tier | 20 |
 | Load Balancer (HA) | `size_unit = 2` | 24 |

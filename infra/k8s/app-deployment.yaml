@@ -18,8 +18,8 @@ spec:
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+      maxSurge: ${APP_MAX_SURGE}
+      maxUnavailable: ${APP_MAX_UNAVAILABLE}
   selector:
     matchLabels:
       doomberg/component: app
