@@ -1,9 +1,54 @@
-const COLUMNS: { heading: string; links: string[] }[] = [
-  { heading: "Platform", links: ["MCP gateway", "Tools catalog", "Glass box", "Boards", "Pricing"] },
-  { heading: "Build", links: ["Docs", "StrategySpec", "API reference", "Status", "Changelog"] },
-  { heading: "Company", links: ["About", "Architecture", "Security", "Careers", "Blog"] },
-  { heading: "Legal", links: ["Terms", "Privacy", "Data sources", "Disclosures"] },
+import { Link } from "react-router-dom";
+
+type FooterLink = { label: string; to?: string };
+
+const COLUMNS: { heading: string; links: FooterLink[] }[] = [
+  {
+    heading: "Platform",
+    links: [
+      { label: "MCP gateway" },
+      { label: "Tools catalog" },
+      { label: "Glass box" },
+      { label: "Boards" },
+      { label: "Pricing" },
+    ],
+  },
+  {
+    heading: "Build",
+    links: [
+      { label: "Docs" },
+      { label: "StrategySpec" },
+      { label: "API reference" },
+      { label: "Status" },
+      { label: "Changelog" },
+    ],
+  },
+  {
+    heading: "Company",
+    links: [
+      { label: "About" },
+      { label: "Architecture" },
+      { label: "Security" },
+      { label: "Careers" },
+      { label: "Blog" },
+    ],
+  },
+  {
+    heading: "Legal",
+    links: [
+      { label: "Terms", to: "/terms" },
+      { label: "Privacy", to: "/privacy" },
+      { label: "Cookies", to: "/cookies" },
+      { label: "Acceptable use", to: "/acceptable-use" },
+      { label: "Disclosures", to: "/disclosures" },
+      { label: "Data sources", to: "/data-sources" },
+      { label: "Subprocessors", to: "/subprocessors" },
+    ],
+  },
 ];
+
+const linkClass =
+  "text-[0.92rem] text-ink-soft transition-colors hover:text-olive";
 
 export default function Footer() {
   return (
@@ -45,13 +90,16 @@ export default function Footer() {
               </h4>
               <ul className="mt-4 space-y-2.5">
                 {col.links.map((l) => (
-                  <li key={l}>
-                    <a
-                      href="#"
-                      className="text-[0.92rem] text-ink-soft transition-colors hover:text-olive"
-                    >
-                      {l}
-                    </a>
+                  <li key={l.label}>
+                    {l.to ? (
+                      <Link to={l.to} className={linkClass}>
+                        {l.label}
+                      </Link>
+                    ) : (
+                      <a href="#" className={linkClass}>
+                        {l.label}
+                      </a>
+                    )}
                   </li>
                 ))}
               </ul>

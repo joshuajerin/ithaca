@@ -10,6 +10,7 @@ import { Settings } from "./pages/Settings";
 import { AuthPage } from "./pages/AuthPage";
 import { AgentLink } from "./pages/AgentLink";
 import { useAuth } from "./auth/AuthContext";
+import { LEGAL_LINKS, legalUrl } from "./lib/legal";
 
 const NAV: { to: string; label: string; cta?: boolean }[] = [
   { to: "/dashboard", label: "Dashboard" },
@@ -66,6 +67,19 @@ export function App() {
           <button className="rail-signout" onClick={signOut} title="Sign out" aria-label="Sign out">
             <LogoutIcon />
           </button>
+        </div>
+
+        <div className="rail-foot">
+          <div className="rail-legal">
+            {LEGAL_LINKS.map((l, i) => (
+              <span key={l.slug}>
+                {i > 0 && <span className="rail-legal-sep"> · </span>}
+                <a href={legalUrl(l.slug)} target="_blank" rel="noopener noreferrer">
+                  {l.label}
+                </a>
+              </span>
+            ))}
+          </div>
         </div>
       </aside>
       <main className="main">

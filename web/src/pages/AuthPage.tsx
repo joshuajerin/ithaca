@@ -2,6 +2,7 @@ import { SignIn, SignUp } from "@clerk/react";
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { DoombergMark } from "../auth/icons";
+import { legalUrl } from "../lib/legal";
 
 const embeddedClerkAppearance = {
   elements: {
@@ -47,6 +48,18 @@ export function AuthPage() {
             {isSignUp ? "Sign in" : "Sign up"}
           </button>
         </div>
+
+        <p className="auth-consent">
+          By continuing you agree to our{" "}
+          <a href={legalUrl("terms")} target="_blank" rel="noopener noreferrer">
+            Terms
+          </a>{" "}
+          and{" "}
+          <a href={legalUrl("privacy")} target="_blank" rel="noopener noreferrer">
+            Privacy Policy
+          </a>
+          .
+        </p>
       </div>
     </div>
   );
