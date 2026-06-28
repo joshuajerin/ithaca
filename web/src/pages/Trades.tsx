@@ -45,14 +45,13 @@ export function Trades() {
       <div className="page-head">
         <div>
           <div className="page-title">Trades</div>
-          <div className="page-sub">paper fills across all runs (display-only)</div>
         </div>
       </div>
 
       {error && <div className="banner">Failed to load: {error}</div>}
       {loading && <div className="empty">Loading trades…</div>}
       {!loading && !error && trades.length === 0 && (
-        <div className="empty">No fills recorded yet. Paper ticks emit fills as they execute.</div>
+        <div className="empty">No trades.</div>
       )}
 
       {trades.length > 0 && (

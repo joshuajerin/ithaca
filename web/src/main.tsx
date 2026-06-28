@@ -8,6 +8,20 @@ import { AuthProvider } from "./auth/AuthContext";
 import "./index.css";
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
+const clerkLocalization = {
+  signIn: {
+    start: {
+      title: "Sign in",
+      subtitle: "Welcome back.",
+    },
+  },
+  signUp: {
+    start: {
+      title: "Create account",
+      subtitle: "Get started.",
+    },
+  },
+};
 
 function MissingClerkConfig() {
   return (
@@ -17,7 +31,6 @@ function MissingClerkConfig() {
         <div className="auth-brand">
           <div>
             Doomberg
-            <small>Terminal</small>
           </div>
         </div>
         <h1 className="auth-title">Clerk is not configured</h1>
@@ -32,12 +45,12 @@ function MissingClerkConfig() {
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     {clerkPublishableKey ? (
-      <ClerkProvider publishableKey={clerkPublishableKey}>
+      <ClerkProvider publishableKey={clerkPublishableKey} localization={clerkLocalization}>
         <AuthProvider>
-        <HashRouter>
-          <App />
-        </HashRouter>
-        <Analytics />
+          <HashRouter>
+            <App />
+          </HashRouter>
+          <Analytics />
         </AuthProvider>
       </ClerkProvider>
     ) : (

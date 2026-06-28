@@ -39,14 +39,6 @@ export function SignalScorecardPanel({ data }: Props) {
 
   return (
     <div className="flex flex-col h-full gap-2">
-      <div className="shrink-0">
-        <div className="text-[9px] text-muted-foreground uppercase tracking-widest">
-          Alpha Signal Scorecard · ranked by IC information ratio
-        </div>
-        <div className="text-[9px] text-muted-foreground/70 mt-0.5">
-          {universe} · {universeSize} names · {holding}d holding · {quantiles} quantiles
-        </div>
-      </div>
       <CoverageBadge coverage={coverage} />
 
       <div className="flex-1 min-h-0 overflow-auto">
@@ -91,10 +83,6 @@ export function SignalScorecardPanel({ data }: Props) {
             })}
           </tbody>
         </table>
-      </div>
-
-      <div className="shrink-0 border-t border-border/40 pt-1.5 text-[8px] text-muted-foreground uppercase tracking-widest">
-        IC IR = mean rank IC / IC volatility · higher is a more consistent signal · |t| &gt; 2 ≈ significant
       </div>
     </div>
   );

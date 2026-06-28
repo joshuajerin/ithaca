@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Doomberg v2 observability UI — React + Vite + TS. Consumes the rest-gateway REST+SSE only (never MCP). No chat console.",
+  "description": "Doomberg v2 dashboard — React + Vite + TS.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

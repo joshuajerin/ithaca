@@ -17,9 +17,10 @@ from datetime import datetime, timezone
 
 from doomberg_control.actions import ActionError
 from doomberg_control.deps import Ctx
-from doomberg_control.execution_gateway import ExecutionGateway, ExecutionPolicy
+from doomberg_control.execution_gateway import ExecutionPolicy
 from doomberg_core import ALL_SKILL_MANIFESTS, SKILLS, Core, SkillSet
 from doomberg_core.providers import PUBLIC_DATA_SOURCE, PUBLIC_ENTITLEMENT_CLASS, IbkrEngineClient, IbkrEngineError
+from doomberg_platform import TransitionConflict
 
 from .trace import InMemoryTrace, PlatformTraceSink, Tracer
 
@@ -812,7 +813,15 @@ class Toolset:
         cancelled_jobs = self.platform.jobs.cancel_by_run(tenant_id, run_id, reason=reason)
         if run["state"] not in {"succeeded", "failed", "timeout", "cancelled", "promoted",
                                 "live", "paused", "retired"}:
-            self.platform.runs.cancel(tenant_id, run_id, expect=run["version"])
+            try:
+                self.platform.runs.cancel(tenant_id, run_id, expect=run["version"])
+            except TransitionConflict:
+                latest = self.platform.runs.get(tenant_id, run_id)
+                if latest and latest["state"] not in {
+                    "succeeded", "failed", "timeout", "cancelled", "promoted",
+                    "live", "paused", "retired",
+                }:
+                    self.platform.runs.cancel(tenant_id, run_id, expect=latest["version"])
         Tracer(self.sink, run_id=run_id, tenant_id=tenant_id, session_id=run_id,
                actor_id=(_ctx or {}).get("agent_id")).event(
             "run_transition",

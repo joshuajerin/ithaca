@@ -1,10 +1,24 @@
 import { SignIn, SignUp } from "@clerk/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { DoombergMark } from "../auth/icons";
 import { legalUrl } from "../lib/legal";
 
+const embeddedClerkAppearance = {
+  elements: {
+    footerAction: {
+      display: "none",
+    },
+  },
+} as const;
+
 export function AuthPage() {
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const { pathname } = useLocation();
+  const [isSignUp, setIsSignUp] = useState(pathname === "/sign-up");
+
+  useEffect(() => {
+    setIsSignUp(pathname === "/sign-up");
+  }, [pathname]);
 
   return (
     <div className="auth">
@@ -14,30 +28,26 @@ export function AuthPage() {
           <DoombergMark size={30} />
           <div>
             Doomberg
-            <small>Terminal</small>
           </div>
         </div>
 
-        <div className="auth-switch clerk-auth-switch">
+        {isSignUp ? (
+          <SignUp appearance={embeddedClerkAppearance} path="/" routing="path" />
+        ) : (
+          <SignIn appearance={embeddedClerkAppearance} path="/" routing="path" />
+        )}
+
+        <div className="auth-mode-row">
+          <span>{isSignUp ? "Already have an account?" : "Don't have an account?"}</span>
           <button
-            className={`link-btn ${mode === "signin" ? "active" : ""}`}
-            onClick={() => setMode("signin")}
+            className="link-btn auth-mode-link"
+            data-auth-switch
+            type="button"
+            onClick={() => setIsSignUp((current) => !current)}
           >
-            Sign in
-          </button>
-          <button
-            className={`link-btn ${mode === "signup" ? "active" : ""}`}
-            onClick={() => setMode("signup")}
-          >
-            Create account
+            {isSignUp ? "Sign in" : "Sign up"}
           </button>
         </div>
-
-        {mode === "signin" ? (
-          <SignIn routing="hash" signUpUrl="#/sign-up" />
-        ) : (
-          <SignUp routing="hash" signInUrl="#/sign-in" />
-        )}
 
         <p className="auth-consent">
           By continuing you agree to our{" "}
@@ -50,10 +60,6 @@ export function AuthPage() {
           </a>
           .
         </p>
-      </div>
-
-      <div className="auth-foot">
-        Never runs your agent · Never executes agent-authored code
       </div>
     </div>
   );

@@ -12,7 +12,6 @@ export function RunsList() {
       <div className="page-head">
         <div>
           <div className="page-title">Runs</div>
-          <div className="page-sub">tenant {shortId(api.tenantId)} · the agent trace centerpiece</div>
         </div>
         <button className="btn" onClick={reload}>
           Refresh
@@ -22,7 +21,7 @@ export function RunsList() {
       {error && <div className="banner">Failed to load runs: {error}</div>}
       {loading && <div className="empty">Loading runs…</div>}
       {!loading && !error && (data?.length ?? 0) === 0 && (
-        <div className="empty">No runs yet. Propose a strategy and start a run via the control plane.</div>
+        <div className="empty">No runs.</div>
       )}
 
       {(data?.length ?? 0) > 0 && (

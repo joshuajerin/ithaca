@@ -4,6 +4,7 @@ from __future__ import annotations
 import uuid
 
 from control_helpers import agent_headers, human_headers, valid_spec
+from doomberg_platform import TransitionConflict
 
 
 # ----------------------------------------------------------------------------------------
@@ -116,6 +117,33 @@ def test_cancel_run_cancels_run_and_job(client, platform, tenant_a):
         json={"reason": "user requested"},
         headers=human_headers(tenant_a),
     )
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "cancelled"
+    assert platform.runs.get(tenant_a, body["run_id"])["state"] == "cancelled"
+    assert platform.jobs.get(tenant_a, body["job_id"])["state"] == "cancelled"
+
+
+def test_cancel_run_retries_if_worker_advances_version(client, platform, tenant_a, monkeypatch):
+    sid = _propose(client, tenant_a).json()["id"]
+    body = _create_run(client, tenant_a, sid, kind="backtest").json()
+    original_cancel = platform.runs.cancel
+    raced = {"done": False}
+
+    def racing_cancel(tenant_id, run_id, *, expect=None):
+        if not raced["done"]:
+            raced["done"] = True
+            platform.runs.transition(tenant_id, run_id, "running", expect=expect)
+            raise TransitionConflict("version mismatch: expected 1, found 2")
+        return original_cancel(tenant_id, run_id, expect=expect)
+
+    monkeypatch.setattr(platform.runs, "cancel", racing_cancel)
+
+    resp = client.post(
+        f"/runs/{body['run_id']}/cancel",
+        json={"reason": "launch gate cleanup"},
+        headers=human_headers(tenant_a),
+    )
+
     assert resp.status_code == 200
     assert resp.json()["state"] == "cancelled"
     assert platform.runs.get(tenant_a, body["run_id"])["state"] == "cancelled"

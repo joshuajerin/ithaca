@@ -31,7 +31,7 @@ data:
     ${IBKR_SIGNIN_HOST} {
       @signin_allowed remote_ip ${IBKR_SIGNIN_REMOTE_IPS}
       handle @signin_allowed {
-        reverse_proxy https://ibkr-client-portal.doomberg-gateway.svc.cluster.local:5000 {
+        reverse_proxy https://ibkr-client-portal.${K8S_GATEWAY_NAMESPACE}.svc.cluster.local:5000 {
           header_up Host 127.0.0.1:5000
           header_up X-Forwarded-For 127.0.0.1
           header_up X-Real-IP 127.0.0.1

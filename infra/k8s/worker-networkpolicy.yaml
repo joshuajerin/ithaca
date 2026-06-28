@@ -51,6 +51,18 @@ spec:
       ports:
         - protocol: TCP
           port: ${IBKR_ENGINE_PORT}
+    # Dev shares the single customer-authenticated IBKR engine in prod.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              doomberg/role: data-gateway
+              doomberg/environment: prod
+          podSelector:
+            matchLabels:
+              doomberg/component: ibkr-engine
+      ports:
+        - protocol: TCP
+          port: ${IBKR_ENGINE_PORT}
     - to:
         - namespaceSelector:
             matchLabels:

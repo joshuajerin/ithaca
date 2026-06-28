@@ -32,6 +32,26 @@ spec:
       ports:
         - protocol: TCP
           port: ${IBKR_ENGINE_PORT}
+    # Dev uses the single shared customer-authenticated IBKR engine in the prod
+    # gateway namespace. Do not run a separate dev Client Portal session.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              doomberg/role: data-gateway
+              doomberg/environment: dev
+          podSelector:
+            matchLabels:
+              doomberg/component: app
+        - namespaceSelector:
+            matchLabels:
+              doomberg/role: workers
+              doomberg/environment: dev
+          podSelector:
+            matchLabels:
+              doomberg/component: worker
+      ports:
+        - protocol: TCP
+          port: ${IBKR_ENGINE_PORT}
   egress:
     - to:
         - namespaceSelector:
@@ -75,7 +95,10 @@ spec:
     # Caddy may reach the login/session port only while the temporary public
     # sign-in Caddy config is applied.
     - from:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: doomberg-gateway
+          podSelector:
             matchLabels:
               doomberg/component: caddy
       ports:

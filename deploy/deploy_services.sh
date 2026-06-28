@@ -21,9 +21,9 @@ REGISTRY_NAME="${REGISTRY_NAME:-doomberg}"
 WORKER_IMAGE="${WORKER_IMAGE:-registry.digitalocean.com/${REGISTRY_NAME}/doomberg:${TAG}}"
 IBKR_ENGINE_IMAGE="${IBKR_ENGINE_IMAGE:-registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:${TAG}}"
 CADDY_NAMESPACE="${CADDY_NAMESPACE:-doomberg-gateway}"
-IBKR_ENGINE_ENABLED="${IBKR_ENGINE_ENABLED:-1}"
 IBKR_ENGINE_PORT="${IBKR_ENGINE_PORT:-8090}"
 IBKR_ENGINE_STORAGE_SIZE="${IBKR_ENGINE_STORAGE_SIZE:-2Gi}"
+SHARED_IBKR_NAMESPACE="${SHARED_IBKR_NAMESPACE:-doomberg-gateway}"
 IBKR_SIGNIN_PUBLIC="${IBKR_SIGNIN_PUBLIC:-0}"
 IBKR_SIGNIN_HOST="${IBKR_SIGNIN_HOST:-ibkr.doomberg.me}"
 IBKR_SIGNIN_REMOTE_IPS="${IBKR_SIGNIN_REMOTE_IPS:-0.0.0.0/0}"
@@ -45,6 +45,7 @@ case "${DEPLOY_ENV}" in
     SHORT_LOADER_SUSPEND="${SHORT_LOADER_SUSPEND:-false}"
     DOOMBERG_PLATFORM_DB_URL="${DOOMBERG_PLATFORM_DB_URL:-${DOOMBERG_PROD_URL:-${DOOMBERG_ARCHIVE_URL:-}}}"
     DOOMBERG_ARCHIVE_URL="${DOOMBERG_ARCHIVE_URL:-${DOOMBERG_PLATFORM_DB_URL:-}}"
+    IBKR_ENGINE_ENABLED="${IBKR_ENGINE_ENABLED:-1}"
     ;;
   dev)
     K8S_GATEWAY_NAMESPACE="${K8S_GATEWAY_NAMESPACE:-doomberg-dev-gateway}"
@@ -60,6 +61,10 @@ case "${DEPLOY_ENV}" in
     SHORT_LOADER_SUSPEND="${SHORT_LOADER_SUSPEND:-true}"
     DOOMBERG_PLATFORM_DB_URL="${DOOMBERG_PLATFORM_DB_URL:-${DOOMBERG_DEV_URL:-${DOOMBERG_ARCHIVE_URL:-}}}"
     DOOMBERG_ARCHIVE_URL="${DOOMBERG_ARCHIVE_URL:-${DOOMBERG_PLATFORM_DB_URL:-}}"
+    # Dev shares the single customer-authenticated IBKR engine by default.
+    # Set IBKR_ENGINE_ENABLED=1 explicitly only when intentionally testing an
+    # isolated Client Portal/engine stack.
+    IBKR_ENGINE_ENABLED="${IBKR_ENGINE_ENABLED:-0}"
     ;;
   *)
     echo "ERROR: DEPLOY_ENV must be prod or dev; got ${DEPLOY_ENV}" >&2
@@ -69,6 +74,13 @@ esac
 
 MCP_ALLOWED_HOSTS="${MCP_ALLOWED_HOSTS:-${MCP_HOST},${MCP_HOST}:443}"
 CLERK_ALLOWED_ORIGINS="${CLERK_ALLOWED_ORIGINS:-https://${APP_HOST}}"
+if [[ -z "${APPLY_CADDY+x}" ]]; then
+  if [[ "${DEPLOY_ENV}" == "${CADDY_APPLY_ENV:-prod}" ]]; then
+    APPLY_CADDY="1"
+  else
+    APPLY_CADDY="0"
+  fi
+fi
 
 node_count_for_workload() {
   local workload="$1"
@@ -166,6 +178,19 @@ if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
   fi
   if [[ -z "${DOOMBERG_IBKR_ENGINE_TOKEN:-}" ]]; then
     DOOMBERG_IBKR_ENGINE_TOKEN="$(openssl rand -hex 32)"
+  fi
+  DOOMBERG_IBKR_QUOTE_PATH="${DOOMBERG_IBKR_QUOTE_PATH:-/quote?symbol={symbol}}"
+  DOOMBERG_IBKR_HISTORY_PATH="${DOOMBERG_IBKR_HISTORY_PATH:-/history?symbol={symbol}}"
+  DOOMBERG_IBKR_NEWS_PATH="${DOOMBERG_IBKR_NEWS_PATH:-/news}"
+  DOOMBERG_IBKR_SCANNER_PATH="${DOOMBERG_IBKR_SCANNER_PATH:-/scanner}"
+  DOOMBERG_IBKR_ACCOUNTS_PATH="${DOOMBERG_IBKR_ACCOUNTS_PATH:-/accounts}"
+  DOOMBERG_IBKR_POSITIONS_PATH="${DOOMBERG_IBKR_POSITIONS_PATH:-/positions?account={account}}"
+  DOOMBERG_IBKR_ORDERS_PATH="${DOOMBERG_IBKR_ORDERS_PATH:-/orders?account={account}}"
+elif [[ "${DEPLOY_ENV}" == "dev" ]]; then
+  DOOMBERG_IBKR_ENGINE_URL="${DOOMBERG_IBKR_ENGINE_URL:-http://ibkr-engine.${SHARED_IBKR_NAMESPACE}.svc.cluster.local:${IBKR_ENGINE_PORT}}"
+  if [[ -z "${DOOMBERG_IBKR_ENGINE_TOKEN:-}" ]]; then
+    DOOMBERG_IBKR_ENGINE_TOKEN="$(kubectl -n "${SHARED_IBKR_NAMESPACE}" get secret ibkr-engine \
+      -o jsonpath='{.data.engine_token}' 2>/dev/null | base64 --decode || true)"
   fi
   DOOMBERG_IBKR_QUOTE_PATH="${DOOMBERG_IBKR_QUOTE_PATH:-/quote?symbol={symbol}}"
   DOOMBERG_IBKR_HISTORY_PATH="${DOOMBERG_IBKR_HISTORY_PATH:-/history?symbol={symbol}}"
@@ -273,6 +298,8 @@ verify_deployment_images() {
 echo "==> deploy env=${DEPLOY_ENV} gateway=${K8S_GATEWAY_NAMESPACE} workers=${K8S_WORKER_NAMESPACE} image=${WORKER_IMAGE}"
 if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
   echo "==> ibkr enabled wrapper_image=${IBKR_ENGINE_IMAGE} gateway_image=${IBKR_GATEWAY_IMAGE} public_signin=${IBKR_SIGNIN_PUBLIC}"
+elif [[ "${DEPLOY_ENV}" == "dev" ]]; then
+  echo "==> ibkr shared namespace=${SHARED_IBKR_NAMESPACE} url=${DOOMBERG_IBKR_ENGINE_URL}"
 fi
 echo "==> replicas app=${APP_REPLICAS} workers=${WORKER_REPLICAS} node_workloads app=${APP_NODE_WORKLOAD} workers=${WORKER_NODE_WORKLOAD}"
 echo "==> rollout app=maxSurge:${APP_MAX_SURGE},maxUnavailable:${APP_MAX_UNAVAILABLE} workers=maxSurge:${WORKER_MAX_SURGE},maxUnavailable:${WORKER_MAX_UNAVAILABLE}"

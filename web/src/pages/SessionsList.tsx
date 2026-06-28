@@ -12,10 +12,8 @@ export function SessionsList() {
       <div className="page-head">
         <div>
           <div className="page-title">Sessions</div>
-          <div className="page-sub">MCP workflow history · prompts · tools · returned summaries</div>
         </div>
         <div className="toolbar compact">
-          <Link to="/new-session" className="btn primary">New Session</Link>
           <button className="btn" onClick={reload}>Refresh</button>
         </div>
       </div>
@@ -23,7 +21,7 @@ export function SessionsList() {
       {error && <div className="banner">Failed to load sessions: {error}</div>}
       {loading && <div className="empty">Loading sessions...</div>}
       {!loading && !error && (data?.length ?? 0) === 0 && (
-        <div className="empty">No research sessions yet. Start one from New Session.</div>
+        <div className="empty">No sessions.</div>
       )}
 
       {(data?.length ?? 0) > 0 && (
@@ -57,4 +55,3 @@ export function SessionsList() {
     </div>
   );
 }
-

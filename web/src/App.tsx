@@ -1,27 +1,23 @@
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { Link, NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { Dashboard } from "./pages/Dashboard";
 import { SessionsList } from "./pages/SessionsList";
 import { SessionDetail } from "./pages/SessionDetail";
-import { NewSession } from "./pages/NewSession";
-import { Docs } from "./pages/Docs";
 import { RunsList } from "./pages/RunsList";
 import { RunDetail } from "./pages/RunDetail";
-import { Ideas } from "./pages/Ideas";
+import { Deploys } from "./pages/Deploys";
+import { Trades } from "./pages/Trades";
 import { Settings } from "./pages/Settings";
 import { AuthPage } from "./pages/AuthPage";
 import { AgentLink } from "./pages/AgentLink";
 import { useAuth } from "./auth/AuthContext";
-import { api } from "./api";
 import { LEGAL_LINKS, legalUrl } from "./lib/legal";
 
 const NAV: { to: string; label: string; cta?: boolean }[] = [
-  { to: "/new-session", label: "New Session", cta: true },
   { to: "/dashboard", label: "Dashboard" },
   { to: "/sessions", label: "Sessions" },
   { to: "/runs", label: "Runs" },
-  { to: "/ideas", label: "Ideas" },
-  { to: "/docs", label: "Docs" },
-  { to: "/settings", label: "Settings" },
+  { to: "/deploys", label: "Deploys" },
+  { to: "/trades", label: "Trades" },
 ];
 
 function LogoutIcon() {
@@ -36,7 +32,6 @@ function LogoutIcon() {
 export function App() {
   const { user, signOut } = useAuth();
 
-  // No Clerk session -> show the auth gate.
   if (!user) return <AuthPage />;
 
   const initials = user.name
@@ -49,10 +44,7 @@ export function App() {
   return (
     <div className="app">
       <aside className="rail">
-        <div className="rail-brand">
-          Doomberg
-          <small>Observability</small>
-        </div>
+        <div className="rail-brand">Doomberg</div>
         <nav className="rail-nav">
           {NAV.map((n) => (
             <NavLink
@@ -69,19 +61,15 @@ export function App() {
           <div className="rail-user-av">
             {user.avatarUrl ? <img src={user.avatarUrl} alt="" /> : <span>{initials}</span>}
           </div>
-          <div className="rail-user-meta">
+          <Link className="rail-user-meta" to="/settings" title="Settings">
             <div className="rail-user-name">{user.name}</div>
-            <div className="rail-user-sub">{user.provider}</div>
-          </div>
+          </Link>
           <button className="rail-signout" onClick={signOut} title="Sign out" aria-label="Sign out">
             <LogoutIcon />
           </button>
         </div>
 
         <div className="rail-foot">
-          api {api.apiBase}
-          <br />
-          tenant {api.tenantId.slice(0, 8)}…
           <div className="rail-legal">
             {LEGAL_LINKS.map((l, i) => (
               <span key={l.slug}>
@@ -98,13 +86,13 @@ export function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/new-session" element={<NewSession />} />
+          <Route path="/new-session" element={<Navigate to="/dashboard" replace />} />
           <Route path="/sessions" element={<SessionsList />} />
           <Route path="/sessions/:id" element={<SessionDetail />} />
-          <Route path="/docs" element={<Docs />} />
           <Route path="/runs" element={<RunsList />} />
           <Route path="/runs/:id" element={<RunDetail />} />
-          <Route path="/ideas" element={<Ideas />} />
+          <Route path="/deploys" element={<Deploys />} />
+          <Route path="/trades" element={<Trades />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/agent-link" element={<AgentLink />} />
           <Route path="*" element={<div className="page"><div className="empty">Not found.</div></div>} />

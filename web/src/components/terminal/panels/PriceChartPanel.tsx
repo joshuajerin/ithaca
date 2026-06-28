@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React from "react";
 import type { PriceChartData } from "@workspace/api-client-react";
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } from "recharts";
+import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } from "recharts";
 import { Sparkline } from "../Sparkline";
 
 interface PriceChartPanelProps {
@@ -36,11 +36,42 @@ function formatTooltipLabel(value: string, range: string): string {
   });
 }
 
+function useChartSize() {
+  const ref = React.useRef<HTMLDivElement | null>(null);
+  const [size, setSize] = React.useState({ width: 0, height: 0 });
+
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    let frame = 0;
+    const check = () => {
+      const rect = el.getBoundingClientRect();
+      setSize({
+        width: Math.max(0, Math.floor(rect.width)),
+        height: Math.max(0, Math.floor(rect.height)),
+      });
+    };
+
+    frame = requestAnimationFrame(check);
+    const observer = new ResizeObserver(check);
+    observer.observe(el);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, []);
+
+  return [ref, size] as const;
+}
+
 export function PriceChartPanel({ data, onSelectRange }: PriceChartPanelProps) {
   const unavailable = data.available === false || data.last == null;
   const isPositive = (data.change ?? 0) >= 0;
   const spark = data.points.map((p) => p.c);
   const ranges = (data.ranges && data.ranges.length ? data.ranges : DEFAULT_RANGES);
+  const [chartRef, chartSize] = useChartSize();
 
   // Create a minimal tooltip
   const CustomTooltip = ({ active, payload, label }: any) => {
@@ -69,9 +100,6 @@ export function PriceChartPanel({ data, onSelectRange }: PriceChartPanelProps) {
               </span>
             )}
           </div>
-          <div className="editorial-label text-[9px] text-muted-foreground mt-2 truncate">
-            {data.name} · {data.range} Range
-          </div>
         </div>
         <div className="text-right shrink-0 ml-4">
           {unavailable ? (
@@ -85,7 +113,6 @@ export function PriceChartPanel({ data, onSelectRange }: PriceChartPanelProps) {
               <div className={`font-serif text-base nums-oldstyle ${isPositive ? 'text-white' : 'text-muted-foreground'}`}>
                 {isPositive ? '+' : ''}{(data.change ?? 0).toFixed(2)} ({isPositive ? '+' : ''}{(data.changePct ?? 0).toFixed(2)}%)
               </div>
-              <div className="editorial-label text-[8px] text-muted-foreground mt-0.5">over {data.range}</div>
             </>
           )}
         </div>
@@ -114,7 +141,7 @@ export function PriceChartPanel({ data, onSelectRange }: PriceChartPanelProps) {
         </div>
       )}
 
-      <div className="border-t border-border flex-1 w-full min-h-0 pt-3">
+      <div ref={chartRef} className="border-t border-border flex-1 w-full min-h-0 pt-3">
         {unavailable ? (
           <div className="w-full h-full flex flex-col items-center justify-center text-center gap-2 px-6">
             <span className="editorial-label text-[9px] text-muted-foreground">Intraday data unavailable</span>
@@ -122,13 +149,19 @@ export function PriceChartPanel({ data, onSelectRange }: PriceChartPanelProps) {
               {data.reason || `No intraday bars for ${data.symbol} over ${data.range}. Try a longer range.`}
             </span>
           </div>
+        ) : chartSize.width <= 0 || chartSize.height <= 0 ? (
+          <div className="h-full w-full" />
         ) : (
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data.points} margin={{ top: 5, right: 0, left: -20, bottom: 0 }}>
+          <LineChart
+            width={chartSize.width}
+            height={chartSize.height}
+            data={data.points}
+            margin={{ top: 5, right: 0, left: -20, bottom: 0 }}
+          >
               <CartesianGrid strokeDasharray="1 3" stroke="#2a2a2a" vertical={false} />
               <XAxis
                 dataKey="t"
-                tick={{ fontSize: 9, fill: '#777', fontFamily: 'Inter', letterSpacing: '0.08em' }}
+                tick={{ fontSize: 9, fill: '#777', fontFamily: 'Arial, Helvetica, sans-serif' }}
                 tickLine={false}
                 axisLine={false}
                 minTickGap={30}
@@ -136,7 +169,7 @@ export function PriceChartPanel({ data, onSelectRange }: PriceChartPanelProps) {
               />
               <YAxis
                 domain={['auto', 'auto']}
-                tick={{ fontSize: 10, fill: '#777', fontFamily: 'Newsreader' }}
+                tick={{ fontSize: 10, fill: '#777', fontFamily: 'Arial, Helvetica, sans-serif' }}
                 tickLine={false}
                 axisLine={false}
                 tickFormatter={(val) => val.toFixed(1)}
@@ -154,7 +187,6 @@ export function PriceChartPanel({ data, onSelectRange }: PriceChartPanelProps) {
                 activeDot={{ r: 3, fill: '#000', stroke: '#fff', strokeWidth: 1.5 }}
               />
             </LineChart>
-          </ResponsiveContainer>
         )}
       </div>
     </div>

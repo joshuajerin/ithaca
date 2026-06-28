@@ -19,6 +19,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from doomberg_platform import TransitionConflict
 from pydantic import ValidationError as PydanticValidationError
 
 from .deps import HUMAN_ACTOR_KINDS, Ctx
@@ -206,6 +207,19 @@ def cancel_run(platform: Any, ctx: Ctx, run_id: str, *, reason: str | None = Non
     cancelled_jobs = jobs.cancel_by_run(ctx.tenant_id, run_id, reason=reason) if jobs else []
     try:
         updated = platform.runs.cancel(ctx.tenant_id, run_id, expect=run["version"])
+    except TransitionConflict:
+        latest = platform.runs.get(ctx.tenant_id, run_id)
+        if latest is None:
+            raise ActionError(404, "run not found")
+        if latest["state"] in {"succeeded", "failed", "timeout", "cancelled", "promoted",
+                               "live", "paused", "retired"}:
+            raise ActionError(409, f"run in state {latest['state']!r} cannot be cancelled")
+        try:
+            updated = platform.runs.cancel(ctx.tenant_id, run_id, expect=latest["version"])
+        except Exception as exc:
+            _emit(platform, ctx=ctx, run_id=run_id, event_type="error",
+                  data={"action": "cancel", "reason": "transition failed", "detail": str(exc)})
+            raise ActionError(409, "cancel transition failed") from exc
     except Exception as exc:
         _emit(platform, ctx=ctx, run_id=run_id, event_type="error",
               data={"action": "cancel", "reason": "transition failed", "detail": str(exc)})
