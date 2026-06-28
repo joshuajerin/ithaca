@@ -67,7 +67,7 @@ export function AuthPage() {
         </h1>
         <p className="auth-sub">
           {mode === "signin"
-            ? "Watch your agent research, deploy, and trade — in the glass box."
+            ? "Watch your agent research markets and run backtests in the glass box."
             : "Spin up a tenant and point your agent at Doomberg over MCP."}
         </p>
 

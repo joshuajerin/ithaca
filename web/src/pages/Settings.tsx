@@ -10,8 +10,7 @@ const PROVIDERS: { id: Provider; label: string; icon: () => JSX.Element; blurb: 
   { id: "github", label: "GitHub", icon: GithubIcon, blurb: "Sign-in & repo-linked strategies" },
 ];
 
-// The issuable agent scopes. deploy:live is intentionally absent — the gateway refuses
-// to mint it, so live money movement is never reachable from an API key.
+// The issuable agent scopes. Trading scopes are intentionally absent.
 const SCOPES: { id: string; label: string }[] = [
   { id: "data:read", label: "Read market & research data" },
   { id: "strategy:author", label: "Author / propose strategies" },
@@ -20,7 +19,6 @@ const SCOPES: { id: string; label: string }[] = [
   { id: "approvals:read", label: "Read approvals" },
   { id: "artifacts:read", label: "Read artifacts" },
   { id: "deploy:backtest", label: "Run backtests" },
-  { id: "deploy:paper", label: "Run paper trading" },
 ];
 
 type KeyRow = { key_id: string; scopes: string[]; created_at: string; revoked: boolean };
@@ -240,7 +238,7 @@ export function Settings() {
           <div className="set-hint">
             Hand this key to your agent as the <code>Authorization: Bearer</code> token against{" "}
             <code>{MCP_BASE}</code>. Keys can read data, author strategies, and run
-            backtests/paper — never move real money.
+            backtests. Trading is disabled in this workspace.
           </div>
         </div>
       </section>

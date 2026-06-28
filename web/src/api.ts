@@ -4,9 +4,7 @@ import type {
   ArtifactRow,
   DatasetSnapshotRow,
   JobRow,
-  IbkrSmokeStatus,
-  OrderIntentRecord,
-  OrderIntentRow,
+  LiveDataSmokeStatus,
   OpsStatus,
   ProviderConnectionRow,
   RunRow,
@@ -22,17 +20,7 @@ export interface ProviderConnectionInput {
   entitlements?: Array<Record<string, unknown>>;
   state?: string;
   connection_id?: string;
-  account_ref?: string;
-  credential_ref?: string;
   retention_policy?: string;
-}
-
-export interface OrderIntentInput {
-  run_id: string;
-  payload: Record<string, unknown>;
-  strategy_id?: string;
-  account_ref?: string;
-  idempotency_key?: string;
 }
 
 // Thin REST client over the rest-gateway. The browser NEVER speaks MCP; this is the only
@@ -140,8 +128,8 @@ export const api = {
     return getJson<OpsStatus>(`/ops/status`, signal);
   },
 
-  async ibkrSmoke(symbol = "AAPL", signal?: AbortSignal): Promise<IbkrSmokeStatus> {
-    return getJson<IbkrSmokeStatus>(`/ops/ibkr-smoke?symbol=${encodeURIComponent(symbol)}`, signal);
+  async liveDataSmoke(symbol = "AAPL", signal?: AbortSignal): Promise<LiveDataSmokeStatus> {
+    return getJson<LiveDataSmokeStatus>(`/ops/live-data-smoke?symbol=${encodeURIComponent(symbol)}`, signal);
   },
 
   async listArtifacts(signal?: AbortSignal): Promise<ArtifactRow[]> {
@@ -175,31 +163,6 @@ export const api = {
 
   async upsertProviderConnection(body: ProviderConnectionInput, signal?: AbortSignal) {
     return postJson<ProviderConnectionRow>(`/providers`, body, signal);
-  },
-
-  async listOrderIntents(signal?: AbortSignal): Promise<OrderIntentRow[]> {
-    const raw = await getJson<unknown>(`/order-intents`, signal);
-    return unwrapList<OrderIntentRow>(raw, "order_intents");
-  },
-
-  async createOrderIntent(body: OrderIntentInput, signal?: AbortSignal): Promise<OrderIntentRecord> {
-    return postJson<OrderIntentRecord>(`/order-intents`, body, signal);
-  },
-
-  async previewOrderIntent(intentId: string, signal?: AbortSignal): Promise<OrderIntentRecord> {
-    return postJson<OrderIntentRecord>(
-      `/order-intents/${encodeURIComponent(intentId)}/preview`,
-      {},
-      signal,
-    );
-  },
-
-  async submitOrderIntent(intentId: string, signal?: AbortSignal): Promise<OrderIntentRecord> {
-    return postJson<OrderIntentRecord>(
-      `/order-intents/${encodeURIComponent(intentId)}/submit`,
-      {},
-      signal,
-    );
   },
 
   async listTriggers(signal?: AbortSignal): Promise<TriggerRow[]> {
@@ -250,35 +213,13 @@ export const api = {
     return API_BASE.startsWith("http") ? url.toString() : `${url.pathname}${url.search}${url.hash}`;
   },
 
-  async getBook(id: string, signal?: AbortSignal): Promise<Record<string, unknown> | null> {
-    const raw = await getJson<{ book: Record<string, unknown> | null }>(
-      `/runs/${encodeURIComponent(id)}/book`,
-      signal,
-    );
-    return raw.book ?? null;
-  },
-
   // Write actions: the UI is the human actor (the gateway defaults X-Actor-Kind to "user").
   async proposeStrategy(spec: Record<string, unknown>, signal?: AbortSignal): Promise<RunRow> {
     return postJson<RunRow>(`/strategies`, { spec }, signal);
   },
 
-  async createRun(strategy_id: string, kind: "backtest" | "paper", range = "1y", signal?: AbortSignal): Promise<RunRow> {
+  async createRun(strategy_id: string, kind: "backtest", range = "1y", signal?: AbortSignal): Promise<RunRow> {
     return postJson<RunRow>(`/runs`, { strategy_id, kind, range }, signal);
-  },
-
-  // Human-only money-path actions, served by the gateway over the shared control-plane
-  // implementation. Agents may NOT call these (the gateway/control-plane enforce it).
-  async promoteRun(id: string, signal?: AbortSignal): Promise<RunRow> {
-    return postJson<RunRow>(`/runs/${encodeURIComponent(id)}/promote`, {}, signal);
-  },
-
-  async runAction(
-    id: string,
-    action: "cancel" | "promote" | "activate" | "pause" | "resume" | "retire",
-    signal?: AbortSignal,
-  ): Promise<RunRow> {
-    return postJson<RunRow>(`/runs/${encodeURIComponent(id)}/${action}`, {}, signal);
   },
 
   // ---- auth ------------------------------------------------------------------

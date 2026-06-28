@@ -1,11 +1,20 @@
 import { z } from "zod";
-import { TraceEvent as TraceEventSchema } from "@doomberg/contracts/generated";
 
-// The wire event shape is the shared contract. We infer the TS type from the zod schema
-// so the UI can never drift from doomberg_contracts.
+// Narrow runtime validation for the fields the browser renders. Do not import the full
+// generated contract here; it pulls internal execution vocabulary into the customer bundle.
+export const TraceEventSchema = z.object({
+  seq: z.number(),
+  ts: z.string(),
+  type: z.string(),
+  run_id: z.string().optional(),
+  tenant_id: z.string().optional(),
+  span_id: z.string().nullable().optional(),
+  parent_span_id: z.string().nullable().optional(),
+  actor: z.unknown().optional(),
+  data: z.record(z.unknown()).default({}),
+}).passthrough();
+
 export type TraceEvent = z.infer<typeof TraceEventSchema>;
-export { TraceEventSchema };
-
 export type TraceEventType = TraceEvent["type"];
 
 // Run row as returned by GET /api/runs and GET /api/runs/{id}. The rest-gateway reads these
@@ -14,7 +23,7 @@ export interface RunRow {
   id: string;
   run_id?: string;
   tenant_id: string;
-  kind: "backtest" | "paper" | "research" | string;
+  kind: "backtest" | "research" | string;
   state: string;
   strategy_id: string | null;
   job_id?: string | null;
@@ -97,7 +106,6 @@ export interface ProviderConnectionRow {
   connection_id: string;
   provider: string;
   state: string;
-  account_ref?: string | null;
   capabilities: string[];
   entitlements: Array<Record<string, unknown>>;
   retention_policy?: string | null;
@@ -116,48 +124,6 @@ export interface DatasetSnapshotRow {
   uri?: string | null;
   manifest: Record<string, unknown>;
   created_at?: string | null;
-}
-
-export interface OrderIntentRow {
-  tenant_id: string;
-  intent_id: string;
-  run_id: string;
-  strategy_id?: string | null;
-  account_ref?: string | null;
-  state: string;
-  payload: Record<string, unknown>;
-  risk_decision?: Record<string, unknown> | null;
-  idempotency_key?: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-}
-
-export interface OrderRow {
-  tenant_id: string;
-  order_id: string;
-  intent_id: string;
-  broker: string;
-  client_order_id: string;
-  broker_order_id?: string | null;
-  state: string;
-  payload: Record<string, unknown>;
-  created_at?: string | null;
-  updated_at?: string | null;
-}
-
-export interface FillRow {
-  tenant_id: string;
-  fill_id: string;
-  order_id: string;
-  broker_fill_id?: string | null;
-  payload: Record<string, unknown>;
-  event_time: string;
-  created_at?: string | null;
-}
-
-export interface OrderIntentRecord extends OrderIntentRow {
-  orders?: OrderRow[];
-  fills?: FillRow[];
 }
 
 export interface TriggerRow {
@@ -200,17 +166,15 @@ export interface OpsStatus {
     archive_configured: boolean;
     mcp_allowed_hosts?: string;
   };
-  ibkr: {
+  live_data: {
     engine_configured: boolean;
-    engine_host?: string | null;
     quote_path: string;
-    order_path: string;
     connected_quote_provider: boolean;
-    connected_execution_provider: boolean;
   };
   execution: {
     paper_enabled: boolean;
     live_enabled: boolean;
+    disabled?: boolean;
     max_notional_usd: string;
     max_quantity: string;
     max_freshness_ms: string;
@@ -243,7 +207,7 @@ export interface OpsStatus {
   readiness: OpsReadinessRow[];
 }
 
-export interface IbkrSmokeInvariant {
+export interface LiveDataSmokeInvariant {
   name: string;
   ok: boolean;
   detail: string;
@@ -251,7 +215,7 @@ export interface IbkrSmokeInvariant {
   max_freshness_ms?: number;
 }
 
-export interface IbkrSmokeStatus {
+export interface LiveDataSmokeStatus {
   configured: boolean;
   ok: boolean;
   status: string;
@@ -269,13 +233,12 @@ export interface IbkrSmokeStatus {
     bid?: number | null;
     ask?: number | null;
     source: string;
-    source_account?: string | null;
     entitlement_class?: string | null;
     event_time: string;
     received_time: string;
     freshness_ms: number;
   } | null;
-  invariants: IbkrSmokeInvariant[];
+  invariants: LiveDataSmokeInvariant[];
 }
 
 // Backtest result `data` shape (from INTERFACES.md / doomberg_core).

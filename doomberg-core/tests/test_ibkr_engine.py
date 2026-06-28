@@ -132,9 +132,9 @@ def _quote_payload(
                 "askPrice": price + 0.01,
                 "event_time": event_time.isoformat(),
                 "received_time": received_time.isoformat(),
-                "source": "ibkr-engine",
+                "source": "doomberg-live-data",
                 "source_account": "ibkr-paper",
-                "entitlement_class": "connected_account",
+                "entitlement_class": "doomberg_live",
             }
         }
     }
@@ -170,7 +170,9 @@ def test_ibkr_quote_client_normalizes_smoke_and_submit_order() -> None:
     assert quote["symbol"] == "AAPL"
     assert quote["price"] == 212.45
     assert diagnosis["ok"] is True
-    assert diagnosis["quote"]["source_account"] == "ibkr-paper"
+    assert diagnosis["quote"]["source"] == "doomberg-live-data"
+    assert diagnosis["quote"]["entitlement_class"] == "doomberg_live"
+    assert "source_account" not in diagnosis["quote"]
     assert "raw" not in diagnosis["quote"]
     assert order["order_id"] == "ibkr-1"
     assert [request["method"] for request in server.requests] == ["GET", "GET", "POST"]
@@ -203,7 +205,7 @@ def test_ibkr_read_models_are_redacted_and_account_scoped() -> None:
         },
         "/v1/news?limit=3&ticker=AAPL": {
             "scope": "AAPL",
-            "items": [{"headline": "Apple moves higher", "source": "IBKR"}],
+            "items": [{"headline": "Apple moves higher", "source": "Doomberg"}],
         },
         "/v1/scanner?scan_type=MOST_ACTIVE&limit=2": {
             "rows": [{"symbol": "AAPL", "rank": 1}],
@@ -228,11 +230,13 @@ def test_ibkr_read_models_are_redacted_and_account_scoped() -> None:
         news = client.news(ticker="aapl", limit=3, tenant_id="tenant-1")
         scanner = client.scanner(scan_type="MOST_ACTIVE", limit=2, tenant_id="tenant-1")
 
-    assert accounts["accounts"] == [{"account_id": "DU12345", "type": "paper"}]
+    assert accounts["accounts"] == [
+        {"label": "Account 1", "type": "paper", "currency": None, "status": "connected"}
+    ]
     assert positions["positions"] == [{"symbol": "AAPL", "quantity": 2}]
     assert orders["orders"] == [{"order_id": "100", "symbol": "AAPL", "status": "Submitted"}]
     assert history["points"][0]["c"] == 282.5
-    assert news["items"][0]["source"] == "IBKR"
+    assert news["items"][0]["source"] == "Doomberg"
     assert scanner["rows"][0]["symbol"] == "AAPL"
     assert [request["path"] for request in server.requests] == [
         "/v1/accounts",
@@ -265,8 +269,8 @@ def test_ibkr_diagnose_fails_when_quote_timestamps_are_missing() -> None:
         "quote": {
             "symbol": "AAPL",
             "last": 212.45,
-            "source": "ibkr-engine",
-            "entitlement_class": "connected_account",
+            "source": "doomberg-live-data",
+            "entitlement_class": "doomberg_live",
         }
     }
     with _Server(payload) as server:

@@ -52,7 +52,6 @@ def test_mint_defaults_to_agent_operational_scope_set(client):
         "approvals:read",
         "artifacts:read",
         "deploy:backtest",
-        "deploy:paper",
     }
 
 

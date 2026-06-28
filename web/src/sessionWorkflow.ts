@@ -40,7 +40,7 @@ function eventName(ev: TraceEvent): string {
   if (ev.type === "run_transition") return `state.${str(data.to) ?? "transition"}`;
   if (ev.type === "run_progress") return `progress.${str(data.phase) ?? "update"}`;
   if (ev.type === "mark") return "market.mark";
-  if (ev.type === "fill") return "paper.fill";
+  if (ev.type === "fill") return "model.fill";
   if (ev.type === "denial") return "denial";
   if (ev.type === "error") return "error";
   if (ev.type === "reasoning") return str(data.kind) ?? "reasoning";
@@ -179,4 +179,3 @@ export function buildWorkflowItems(state: TimelineState, events: TraceEvent[]): 
 
   return items;
 }
-

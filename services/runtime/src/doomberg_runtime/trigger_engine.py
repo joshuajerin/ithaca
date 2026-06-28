@@ -2,9 +2,7 @@
 
 The trigger engine is deliberately separate from MCP: it polls active trigger policies,
 observes live market data through a provider client, evaluates typed conditions, and creates
-durable Doomberg runs when a policy fires. A trigger never submits a broker order directly.
-If a policy asks for execution, the engine creates an approval request around the proposed
-action; the execution gateway is the only broker-write path.
+durable Doomberg runs when a policy fires. Trading is disabled in this deployment.
 """
 
 from __future__ import annotations
@@ -23,6 +21,8 @@ from doomberg_core.providers import (
     IbkrEngineError,
     IbkrEngineHttpError,
     IbkrQuoteInvariantError,
+    PUBLIC_DATA_SOURCE,
+    PUBLIC_ENTITLEMENT_CLASS,
     normalize_quote,
 )
 
@@ -59,7 +59,7 @@ def _parse_time(value: Any, *, default: datetime | None = None) -> datetime:
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
     if isinstance(value, (int, float)):
-        # IBKR-style timestamps may be epoch seconds or milliseconds.
+        # Upstream timestamps may be epoch seconds or milliseconds.
         n = float(value)
         if n > 10_000_000_000:
             n = n / 1000.0
@@ -103,10 +103,10 @@ def parse_duration_seconds(value: Any) -> int:
 
 
 class HttpQuoteClient:
-    """HTTP adapter for a user-run IBKR engine.
+    """HTTP adapter for the private live market-data engine.
 
     Defaults assume the VPS exposes ``GET /quote?symbol=NVDA`` and returns a JSON object.
-    Set ``DOOMBERG_IBKR_QUOTE_PATH`` to override, e.g. ``/v1/market/quote/{symbol}``.
+    Set the private quote-path env var to override, e.g. ``/v1/market/quote/{symbol}``.
     The response normalizer accepts common shapes: ``price``, ``last``, ``last_price``,
     ``marketPrice``, or nested ``data``/``quote`` objects.
     """
@@ -132,17 +132,17 @@ class HttpQuoteClient:
 
     def quote(self, symbol: str, *, tenant_id: str | None = None) -> dict[str, Any]:
         if not self.client.configured():
-            raise TriggerEvaluationError("DOOMBERG_IBKR_ENGINE_URL is not configured")
+            raise TriggerEvaluationError("live market-data engine is not configured")
         try:
             return self.client.quote(symbol, tenant_id=tenant_id)
         except IbkrEngineHttpError as exc:
-            raise TriggerEvaluationError(f"IBKR engine HTTP {exc.status}") from exc
+            raise TriggerEvaluationError(f"live market-data engine HTTP {exc.status}") from exc
         except IbkrQuoteInvariantError as exc:
             raise TriggerEvaluationError(str(exc)) from exc
         except IbkrEngineConnectionError as exc:
-            raise TriggerEvaluationError(f"IBKR engine request failed: {exc}") from exc
+            raise TriggerEvaluationError(f"live market-data engine request failed: {exc}") from exc
         except IbkrEngineError as exc:
-            raise TriggerEvaluationError(f"IBKR engine request failed: {exc}") from exc
+            raise TriggerEvaluationError(f"live market-data engine request failed: {exc}") from exc
 
     def _url(self, symbol: str) -> str:
         return self.client.url_for_path(self.quote_path, symbol=symbol)
@@ -325,9 +325,8 @@ class TriggerEngine:
             "last": quote["last"],
             "bid": quote.get("bid"),
             "ask": quote.get("ask"),
-            "source": quote.get("source"),
-            "source_account": quote.get("source_account"),
-            "entitlement_class": quote.get("entitlement_class"),
+            "source": PUBLIC_DATA_SOURCE,
+            "entitlement_class": quote.get("entitlement_class") or PUBLIC_ENTITLEMENT_CLASS,
             "event_time": quote.get("event_time"),
             "received_time": quote.get("received_time"),
             "freshness_seconds": freshness_seconds,
@@ -411,7 +410,7 @@ class TriggerEngine:
         context: dict[str, Any],
         now: datetime,
     ) -> dict[str, Any] | None:
-        if controls.get("require_connected_live_data") and context.get("entitlement_class") != "connected_account":
+        if controls.get("require_connected_live_data") and context.get("entitlement_class") != PUBLIC_ENTITLEMENT_CLASS:
             return self._skip(trigger, "ENTITLEMENT_REQUIRED", context)
         freshness_limit = controls.get("data_freshness_seconds") or controls.get("max_freshness_seconds")
         if freshness_limit is not None and context["data_freshness_seconds"] > float(freshness_limit):
@@ -584,8 +583,7 @@ class TriggerEngine:
                 "ask": context.get("ask"),
             },
             "provenance": {
-                "source": context["source"],
-                "source_account": context.get("source_account"),
+                "source": PUBLIC_DATA_SOURCE,
                 "entitlement_class": context["entitlement_class"],
                 "as_of": context["event_time"],
                 "freshness_ms": int(context["data_freshness_seconds"] * 1000),
@@ -681,7 +679,7 @@ def main() -> None:
         f"db={db_path}, interval={interval_s}s, "
         f"lease_ttl={os.environ.get('DOOMBERG_TRIGGER_LEASE_TTL_S') or max(60.0, interval_s * 3.0)}s, "
         f"owner={worker_id}, "
-        f"ibkr_url={'set' if os.environ.get('DOOMBERG_IBKR_ENGINE_URL') else 'unset'}",
+        f"live_data_url={'set' if os.environ.get('DOOMBERG_IBKR_ENGINE_URL') else 'unset'}",
         flush=True,
     )
     TriggerEngine(platform, worker_id=worker_id).run_forever(interval_s=interval_s)

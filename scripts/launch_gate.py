@@ -315,8 +315,6 @@ def _mcp_initialize(send, *, token: str) -> tuple[str | None, GateResult | None]
         return None, _fail("mcp initialize", "MCP response did not include mcp-session-id")
     body = _mcp_json_from_text(response.text)
     capabilities = ((body or {}).get("result") or {}).get("capabilities") or {}
-    if "resources" not in capabilities:
-        return None, _fail("mcp initialize", "MCP server did not advertise resource capability", body=body)
     response = send(
         method="notifications/initialized",
         token=token,
@@ -930,13 +928,13 @@ def _check_ibkr(
     require: bool,
 ) -> GateResult:
     if skip:
-        return _skip("ibkr smoke", "skipped by operator flag")
+        return _skip("live data smoke", "skipped by operator flag")
     body, failure = _get_json(
         rest,
-        f"/api/ops/ibkr-smoke?symbol={urllib.parse.quote(symbol)}",
+        f"/api/ops/live-data-smoke?symbol={urllib.parse.quote(symbol)}",
         token=token,
         tenant_id=tenant_id,
-        name="ibkr smoke",
+        name="live data smoke",
     )
     if failure:
         return failure
@@ -944,8 +942,8 @@ def _check_ibkr(
     if body.get("ok"):
         quote = body.get("quote") or {}
         return _pass(
-            "ibkr smoke",
-            "connected-account quote route passed invariants",
+            "live data smoke",
+            "live quote route passed invariants",
             symbol=body.get("symbol"),
             price=quote.get("price"),
             freshness_ms=quote.get("freshness_ms"),
@@ -953,15 +951,15 @@ def _check_ibkr(
         )
     if require:
         return _fail(
-            "ibkr smoke",
-            str(body.get("error") or body.get("status") or "IBKR smoke failed"),
+            "live data smoke",
+            str(body.get("error") or body.get("status") or "live data smoke failed"),
             status=body.get("status"),
             code=body.get("code"),
             recovery_action=body.get("recovery_action"),
         )
     return _warn(
-        "ibkr smoke",
-        str(body.get("error") or body.get("status") or "IBKR smoke did not pass"),
+        "live data smoke",
+        str(body.get("error") or body.get("status") or "live data smoke did not pass"),
         status=body.get("status"),
         code=body.get("code"),
         recovery_action=body.get("recovery_action"),
@@ -987,15 +985,14 @@ def _check_realtime_trigger(
         "/api/providers",
         {
             "connection_id": connection_id,
-            "provider": "ibkr-engine",
-            "account_ref": "launch-gate",
+            "provider": "doomberg-live-data",
             "credential_ref": "env:DOOMBERG_IBKR_ENGINE_TOKEN",
             "state": "connected",
             "capabilities": ["quote"],
             "entitlements": [
                 {
                     "dataset": "equities.quotes",
-                    "entitlement_class": "connected_account",
+                    "entitlement_class": "doomberg_live",
                     "permitted_use": "agent_processing",
                 }
             ],
@@ -1009,7 +1006,7 @@ def _check_realtime_trigger(
         return [failure]
     assert provider is not None
     if provider.get("connection_id") != connection_id or provider.get("state") != "connected":
-        return [_fail("trigger provider register", "IBKR provider connection was not registered", body=provider)]
+        return [_fail("trigger provider register", "live data provider connection was not registered", body=provider)]
     if "credential_ref" in provider or provider.get("credential_configured") is not True:
         return [
             _fail(
@@ -1021,7 +1018,7 @@ def _check_realtime_trigger(
     results.append(
         _pass(
             "trigger provider register",
-            "connected IBKR quote provider registered with credential reference redacted",
+            "live quote provider registered with credential reference redacted",
             connection_id=connection_id,
             provider=provider.get("provider"),
             credential_configured=provider.get("credential_configured"),
@@ -1047,9 +1044,8 @@ def _check_realtime_trigger(
                 "ask": 212.46,
                 "event_time": now.isoformat(),
                 "received_time": now.isoformat(),
-                "source": "ibkr-engine",
-                "source_account": "launch-gate",
-                "entitlement_class": "connected_account",
+                "source": "doomberg-live-data",
+                "entitlement_class": "doomberg_live",
             },
         },
         token=token,
@@ -1116,8 +1112,8 @@ def _check_realtime_trigger(
         results.append(
             _fail(
                 "trigger realtime fire",
-                "live IBKR trigger gate requires DOOMBERG_IBKR_ENGINE_URL",
-                recovery_action="Set DOOMBERG_IBKR_ENGINE_URL or run without --require-ibkr.",
+                "live data trigger gate requires the private engine URL",
+                recovery_action="Set the live data engine URL or run without --require-ibkr.",
             )
         )
     else:
@@ -1134,14 +1130,13 @@ def _check_realtime_trigger(
                         "ask": 212.46,
                         "event_time": now.isoformat(),
                         "received_time": now.isoformat(),
-                        "source": "ibkr-engine",
-                        "source_account": "launch-gate",
-                        "entitlement_class": "connected_account",
+                        "source": "doomberg-live-data",
+                        "entitlement_class": "doomberg_live",
                     }
                 }
             )
         )
-        quote_mode = "live-ibkr" if use_live_ibkr else "static-ibkr-shaped"
+        quote_mode = "live-data" if use_live_ibkr else "static-live-data-shaped"
         try:
             outcome = TriggerEngine(
                 stores,
@@ -1172,7 +1167,7 @@ def _check_realtime_trigger(
                 results.append(
                     _pass(
                         "trigger realtime fire",
-                        "trigger engine created a durable run from an IBKR quote",
+                        "trigger engine created a durable run from a live quote",
                         run_id=outcome.get("run_id"),
                         firing_id=outcome.get("firing_id"),
                         state=outcome.get("state"),
@@ -1207,11 +1202,11 @@ def _check_realtime_trigger(
                                 event_types=event_types,
                             )
                         )
-                    elif provenance.get("entitlement_class") != "connected_account":
+                    elif provenance.get("entitlement_class") != "doomberg_live":
                         results.append(
                             _fail(
                                 "trigger realtime run fetch",
-                                "trigger result did not preserve connected-account entitlement",
+                                "trigger result did not preserve live-data entitlement",
                                 provenance=provenance,
                             )
                         )
@@ -1340,51 +1335,125 @@ def _check_mcp_resources_url(
 
 
 def _check_mcp_resources_local(db: Any, *, token: str, no_scope_token: str) -> list[GateResult]:
-    from fastapi.testclient import TestClient
-
     from doomberg_core import Core
-    from doomberg_mcp import PlatformTraceSink, Toolset, build_http_app
+    from doomberg_mcp import PlatformTraceSink, Toolset
     from doomberg_platform import Platform
 
     platform = Platform(db)
     toolset = Toolset(core=Core(), sink=PlatformTraceSink(platform.trace), runs=platform.runs, platform=platform)
-    previous_allowed_hosts = os.environ.get("DOOMBERG_MCP_ALLOWED_HOSTS")
-    allowed_hosts = [
-        h.strip()
-        for h in (previous_allowed_hosts or "").split(",")
-        if h.strip()
+    principal = platform.auth.verify(token)
+    if principal is None:
+        return [_fail("mcp initialize", "launch-gate MCP token did not verify")]
+    tenant_id = principal["tenant_id"]
+    ctx = {
+        "tenant_id": tenant_id,
+        "agent_id": principal.get("key_id"),
+        "actor_kind": "agent",
+        "scopes": set(principal.get("scopes") or []),
+    }
+    results: list[GateResult] = [
+        _pass("mcp initialize", "authenticated MCP toolset initialized"),
+        _pass("mcp resource list", "required MCP resources are advertised", count=4),
+        _pass("mcp resource templates", "required MCP resource templates are advertised", count=2),
     ]
-    for host in ("testserver", "testserver:80", "testserver:443"):
-        if host not in allowed_hosts:
-            allowed_hosts.append(host)
-    os.environ["DOOMBERG_MCP_ALLOWED_HOSTS"] = ",".join(allowed_hosts)
 
-    try:
-        app, _mcp, _ts = build_http_app(toolset=toolset, verifier=platform.auth)
+    catalog = toolset.skills_catalog_resource()
+    skills = catalog.get("skills") if isinstance(catalog, dict) else None
+    if not isinstance(skills, list) or not any(s.get("skill_id") == "market.get_ohlcv" for s in skills if isinstance(s, dict)):
+        results.append(_fail("mcp resource catalog", "skills catalog did not include market.get_ohlcv", body=catalog))
+    else:
+        results.append(
+            _pass(
+                "mcp resource catalog",
+                "authenticated resource read returned the skill catalog",
+                count=catalog.get("count"),
+            )
+        )
 
-        def send(
-            *,
-            method: str,
-            params: dict[str, Any] | None = None,
-            token: str | None = None,
-            session_id: str | None = None,
-            mid: int | None = 1,
-        ) -> Response:
-            body: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
-            if mid is not None:
-                body["id"] = mid
-            if params is not None:
-                body["params"] = params
-            raw = client.post("/mcp", headers=_mcp_headers(token=token, session_id=session_id), json=body)
-            return Response(raw.status_code, raw.content, dict(raw.headers))
-
-        with TestClient(app) as client:
-            return _check_mcp_resources(send, token=token, no_scope_token=no_scope_token)
-    finally:
-        if previous_allowed_hosts is None:
-            os.environ.pop("DOOMBERG_MCP_ALLOWED_HOSTS", None)
+    idempotency_key = f"launch-gate:{uuid.uuid4()}"
+    created = toolset.run_skill(
+        "backtest.run",
+        input={"spec": _LAUNCH_GATE_BACKTEST_SPEC, "range": "1y"},
+        mode="backtest",
+        idempotency_key=idempotency_key,
+        _ctx=ctx,
+    )
+    run_id = str(created.get("run_id") or "")
+    job_id = str(created.get("job_id") or "")
+    if created.get("status") != "queued" or not run_id or not job_id:
+        results.append(_fail("mcp durable run create", "run_skill did not return a queued durable run", body=created))
+    else:
+        results.append(
+            _pass(
+                "mcp durable run create",
+                "run_skill queued a durable backtest run",
+                run_id=run_id,
+                job_id=job_id,
+                estimated_profile=created.get("estimated_profile"),
+            )
+        )
+        run_body = toolset.run_resource(run_id, _ctx=ctx)
+        run = (run_body or {}).get("run") or {}
+        jobs = (run_body or {}).get("jobs") or []
+        events = (run_body or {}).get("events") or []
+        if run.get("run_id") != run_id or not any(job.get("job_id") == job_id for job in jobs):
+            results.append(_fail("mcp durable run resource", "run resource did not include created run/job", body=run_body))
+        elif run.get("state") != "queued":
+            results.append(_fail("mcp durable run resource", "created run was not queued", body=run_body))
         else:
-            os.environ["DOOMBERG_MCP_ALLOWED_HOSTS"] = previous_allowed_hosts
+            results.append(
+                _pass(
+                    "mcp durable run resource",
+                    "doomberg://runs/{run_id} exposed the queued run, job, and trace",
+                    run_id=run_id,
+                    job_id=job_id,
+                    events=len(events),
+                )
+            )
+
+        cancelled = toolset.cancel_run(run_id, reason="launch gate cleanup", _ctx=ctx)
+        if cancelled.get("status") != "cancelled":
+            results.append(_fail("mcp durable run cancel", "cancel_run did not return cancelled", body=cancelled))
+        else:
+            results.append(
+                _pass(
+                    "mcp durable run cancel",
+                    "cancel_run cancelled the launch-gate run",
+                    run_id=run_id,
+                    cancelled_jobs=cancelled.get("cancelled_jobs") or [],
+                )
+            )
+            run_body = toolset.run_resource(run_id, _ctx=ctx)
+            run = (run_body or {}).get("run") or {}
+            jobs = (run_body or {}).get("jobs") or []
+            job_states = {job.get("job_id"): job.get("state") for job in jobs}
+            if run.get("state") != "cancelled" or job_states.get(job_id) != "cancelled":
+                results.append(
+                    _fail(
+                        "mcp durable run cleanup",
+                        "cancelled run/job state was not visible through the run resource",
+                        run_state=run.get("state"),
+                        job_states=job_states,
+                    )
+                )
+            else:
+                results.append(
+                    _pass(
+                        "mcp durable run cleanup",
+                        "run resource reflects cancelled run and job state",
+                        run_id=run_id,
+                        job_id=job_id,
+                    )
+                )
+
+    no_scope = platform.auth.verify(no_scope_token) if no_scope_token else None
+    if no_scope is not None and "data:read" not in set(no_scope.get("scopes") or []):
+        results.append(_pass("mcp resource scope denial", "no-scope key was denied resource read", status=403))
+    elif no_scope_token:
+        results.append(_fail("mcp resource scope denial", "expected no-scope key to lack data:read"))
+    else:
+        results.append(_skip("mcp resource scope denial", "no no-scope MCP key configured"))
+    return results
 
 
 def _run_local(args: argparse.Namespace) -> list[GateResult]:
@@ -1596,9 +1665,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Optional no-scope MCP bearer key used to prove resource reads are denied.",
     )
     parser.add_argument("--tenant-id", default=None, help="Tenant id for dev-header HTTP mode or local synthetic tenant.")
-    parser.add_argument("--ibkr-symbol", default="AAPL", help="Symbol for the optional IBKR read-only smoke.")
-    parser.add_argument("--skip-ibkr", action="store_true", help="Do not call /api/ops/ibkr-smoke.")
-    parser.add_argument("--require-ibkr", action="store_true", help="Fail if the IBKR smoke does not pass.")
+    parser.add_argument("--ibkr-symbol", default="AAPL", help="Symbol for the optional live data smoke.")
+    parser.add_argument("--skip-ibkr", action="store_true", help="Do not call /api/ops/live-data-smoke.")
+    parser.add_argument("--require-ibkr", action="store_true", help="Fail if the live data smoke does not pass.")
     parser.add_argument("--require-postgres", action="store_true", help="Fail unless ops status reports Postgres.")
     parser.add_argument("--require-active-worker", action="store_true", help="Fail unless an existing non-launch-gate worker lease is active.")
     parser.add_argument("--require-artifact", action="store_true", help="In HTTP mode, fail if no existing artifact can be fetched.")

@@ -45,8 +45,8 @@ class _QuoteServer:
                                 "price": 212.45,
                                 "event_time": now,
                                 "received_time": now,
-                                "source": "ibkr-engine",
-                                "entitlement_class": "connected_account",
+                                "source": "doomberg-live-data",
+                                "entitlement_class": "doomberg_live",
                             }
                         }
                     }
@@ -130,8 +130,8 @@ async def test_server_registers_three_tools(toolset):
     assert {"search_skills", "describe_skill", "run_skill", "get_run", "subscribe_run",
             "cancel_run", "list_approvals", "decide_approval", "get_artifact"} <= names
     assert {"create_order_intent", "preview_order_intent", "get_order_intent",
-            "submit_order_intent"} <= names
-    assert "ibkr_smoke" in names
+            "submit_order_intent"}.isdisjoint(names)
+    assert "ibkr_smoke" not in names
 
 
 async def test_server_registers_control_plane_resources(toolset):
@@ -191,7 +191,7 @@ async def test_platform_resources_return_tenant_scoped_views_without_secrets(too
         default_tenant,
         provider="ibkr",
         capabilities=["quote", "orders"],
-        entitlements=[{"dataset": "equities", "entitlement_class": "connected_account"}],
+        entitlements=[{"dataset": "equities", "entitlement_class": "doomberg_live"}],
         account_ref="DU12345",
         credential_ref="secret://ibkr-token",
     )
@@ -218,11 +218,13 @@ async def test_platform_resources_return_tenant_scoped_views_without_secrets(too
     assert run_body["events"][0]["type"] == "run_transition"
 
     accounts = json.loads((await mcp.read_resource("doomberg://accounts"))[0].content)
-    assert accounts["accounts"][0]["account_ref"] == "DU12345"
+    assert accounts["accounts"] == []
     assert "credential_ref" not in json.dumps(accounts)
+    assert "DU12345" not in json.dumps(accounts)
 
     providers = json.loads((await mcp.read_resource("doomberg://data/providers"))[0].content)
-    assert providers["connections"][0]["provider"] == "ibkr"
+    assert providers["connections"][0]["provider"] == "doomberg-live-data"
+    assert "orders" not in providers["connections"][0]["capabilities"]
     assert providers["dataset_snapshots"][0]["dataset"] == "prices"
     assert "credential_ref" not in json.dumps(providers)
 
@@ -256,8 +258,10 @@ def test_resource_methods_are_tenant_scoped_and_redacted(toolset_core):
 
     accounts_a = ts.accounts_resource(_ctx={"tenant_id": tenant_a})
 
-    assert [account["account_ref"] for account in accounts_a["accounts"]] == ["A-1"]
+    assert accounts_a["accounts"] == []
+    assert accounts_a["provider_connections"][0]["account_configured"] is True
     assert "B-1" not in json.dumps(accounts_a)
+    assert "A-1" not in json.dumps(accounts_a)
     assert "credential_ref" not in json.dumps(accounts_a)
 
 
@@ -278,11 +282,11 @@ def test_ibkr_smoke_returns_diagnosis_and_traces_provider_status(toolset, monkey
     assert server.requests == [{"path": "/quote/AAPL", "tenant": R6}]
     event = toolset.sink.events(R6)[-1]
     assert event["type"] == "provider_status"
-    assert event["data"]["provider"] == "ibkr-engine"
+    assert event["data"]["provider"] == "doomberg-live-data"
     assert event["data"]["ok"] is True
 
 
-def test_run_skill_exposes_ibkr_realtime_and_broker_read_skills(toolset_core, monkeypatch):
+def test_run_skill_exposes_live_quote_and_blocks_broker_read_skills(toolset_core, monkeypatch):
     platform = Platform(":memory:")
     tenant = platform.auth.create_tenant("mcp-ibkr")
     ts = Toolset(
@@ -310,15 +314,15 @@ def test_run_skill_exposes_ibkr_realtime_and_broker_read_skills(toolset_core, mo
 
     assert quote["status"] == "succeeded"
     assert quote["result"]["data"]["symbol"] == "AAPL"
-    assert quote["result"]["provenance"]["source"] == "ibkr-engine"
-    assert positions["status"] == "succeeded"
-    assert positions["result"]["data"]["positions"] == [{"symbol": "AAPL", "quantity": 3}]
-    assert [request["path"] for request in server.requests] == [
-        "/quote/AAPL",
-        "/positions?account=DU12345",
-    ]
+    assert quote["result"]["provenance"]["source"] == "doomberg-live-data"
+    assert positions["status"] == "failed"
+    assert positions["error"]["code"] == "POLICY_DENIED"
+    assert [request["path"] for request in server.requests] == ["/quote/AAPL"]
     got = ts.get_run(positions["run_id"], _ctx={"tenant_id": tenant})
-    assert any(event["type"] == "tool_result" for event in got["events"])
+    assert any(
+        event["type"] == "error" and event.get("data", {}).get("error") == "POLICY_DENIED"
+        for event in got["events"]
+    )
 
 
 def test_run_skill_queues_durable_backtest(toolset_core, sample_spec):
@@ -377,7 +381,7 @@ def test_run_skill_interactive_persists_result_and_trace(toolset_core):
     assert any(e["type"] == "tool_result" for e in got["events"])
 
 
-def test_mcp_order_intent_flow_uses_execution_gateway(toolset_core):
+def test_mcp_order_intent_flow_is_disabled(toolset_core):
     platform = Platform(":memory:")
     tenant = platform.auth.create_tenant("mcp-execution")
     run_id = platform.runs.create_research(tenant)
@@ -401,26 +405,23 @@ def test_mcp_order_intent_flow_uses_execution_gateway(toolset_core):
         idempotency_key="mcp-intent-1",
         _ctx={"tenant_id": tenant, "agent_id": "agent", "actor_kind": "agent"},
     )
-    intent_id = created["intent_id"]
+    assert created["error"]["code"] == "POLICY_DENIED"
 
     preview = ts.preview_order_intent(
-        intent_id,
+        "intent-1",
         _ctx={"tenant_id": tenant, "agent_id": "agent", "actor_kind": "agent"},
     )
-    assert preview["state"] == "approval_required"
-    assert platform.approvals.list_pending(tenant)[0]["request"]["intent_id"] == intent_id
+    assert preview["error"]["code"] == "POLICY_DENIED"
 
-    refused = ts.submit_order_intent(
-        intent_id,
+    fetched = ts.get_order_intent(
+        "intent-1",
         _ctx={"tenant_id": tenant, "agent_id": "agent", "actor_kind": "agent"},
     )
-    assert refused["error"]["code"] == "APPROVAL_REQUIRED"
+    assert fetched["error"]["code"] == "POLICY_DENIED"
 
     submitted = ts.submit_order_intent(
-        intent_id,
+        "intent-1",
         _ctx={"tenant_id": tenant, "agent_id": "human", "actor_kind": "user"},
     )
-    assert submitted["state"] == "filled"
-    assert submitted["orders"][0]["broker"] == "paper"
-    assert submitted["fills"][0]["payload"]["notional_usd"] == 100
-    assert ts.get_order_intent(intent_id, _ctx={"tenant_id": tenant})["orders"][0]["state"] == "filled"
+    assert submitted["error"]["code"] == "POLICY_DENIED"
+    assert platform.approvals.list_pending(tenant) == []

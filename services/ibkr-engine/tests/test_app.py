@@ -161,14 +161,17 @@ def test_quote_and_read_models(monkeypatch) -> None:
     assert quote.status_code == 200
     assert quote.json()["data"]["quote"]["symbol"] == "AAPL"
     assert quote.json()["data"]["quote"]["price"] == 212.45
-    assert quote.json()["data"]["quote"]["source"] == "ibkr-engine"
+    assert quote.json()["data"]["quote"]["source"] == "doomberg-live-data"
+    assert quote.json()["data"]["quote"]["entitlement_class"] == "doomberg_live"
     assert history.status_code == 200
     assert history.json()["points"][-1]["c"] == 213.0
     assert news.status_code == 200
     assert news.json()["items"][0]["source"] == "Briefing.com General Market Columns"
     assert scanner.status_code == 200
     assert scanner.json()["rows"][0]["symbol"] == "AAPL"
-    assert accounts.json()["accounts"] == [{"accountId": "DU12345", "type": "PAPER"}]
+    assert accounts.json()["accounts"] == [
+        {"label": "Account 1", "type": "PAPER", "currency": None, "status": "connected"}
+    ]
     assert positions.json()["positions"] == [{"contractDesc": "AAPL", "position": 2}]
     assert orders.json()["orders"] == [{"orderId": "100", "ticker": "AAPL"}]
 

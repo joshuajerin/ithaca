@@ -45,7 +45,7 @@ from doomberg_control.actions import ActionError
 from doomberg_control.deps import HUMAN_ACTOR_KINDS, Ctx
 from doomberg_control.execution_gateway import ExecutionGateway
 from doomberg_core import Core
-from doomberg_core.providers import IbkrEngineClient
+from doomberg_core.providers import PUBLIC_DATA_SOURCE, PUBLIC_ENTITLEMENT_CLASS, IbkrEngineClient
 from doomberg_platform import (
     AuthStore,
     ApprovalStore,
@@ -222,7 +222,6 @@ def _verify_bearer(request: Request, authorization: str | None) -> dict[str, Any
                 "triggers:write",
                 "artifacts:read",
                 "deploy:backtest",
-                "deploy:paper",
             ],
             "actor_kind": "user",
         }
@@ -269,14 +268,29 @@ def _has_capability(connection: dict[str, Any], names: set[str]) -> bool:
 
 def _public_provider_connection(connection: dict[str, Any]) -> dict[str, Any]:
     """Return a REST-safe provider connection view without credential references."""
+    provider = str(connection.get("provider") or "")
+    is_private_live = provider.strip().lower() in {
+        "ibkr",
+        "ibkr-engine",
+        "interactive_brokers",
+        "interactive-brokers",
+        PUBLIC_DATA_SOURCE,
+    }
     return {
         "tenant_id": connection.get("tenant_id"),
         "connection_id": connection.get("connection_id"),
-        "provider": connection.get("provider"),
-        "account_ref": connection.get("account_ref"),
+        "provider": PUBLIC_DATA_SOURCE if is_private_live else provider,
         "state": connection.get("state"),
-        "capabilities": connection.get("capabilities") or [],
-        "entitlements": connection.get("entitlements") or [],
+        "capabilities": [
+            cap for cap in (connection.get("capabilities") or [])
+            if str(cap).strip().lower() not in {"orders", "trading", "execution"}
+        ],
+        "entitlements": [
+            {**ent, "entitlement_class": PUBLIC_ENTITLEMENT_CLASS}
+            if isinstance(ent, dict) and is_private_live
+            else ent
+            for ent in (connection.get("entitlements") or [])
+        ],
         "retention_policy": connection.get("retention_policy"),
         "credential_configured": bool(connection.get("credential_ref")),
         "created_at": connection.get("created_at"),
@@ -376,20 +390,17 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
     leases = stores.leases.list()
 
     connected = [c for c in connections if c.get("state") == "connected"]
-    ibkr_names = {"ibkr", "ibkr-engine", "interactive_brokers", "interactive-brokers"}
-    ibkr_connections = [
+    private_live_names = {"ibkr", "ibkr-engine", "interactive_brokers", "interactive-brokers", PUBLIC_DATA_SOURCE}
+    private_live_connections = [
         c for c in connected
-        if str(c.get("provider") or "").strip().lower() in ibkr_names
+        if str(c.get("provider") or "").strip().lower() in private_live_names
     ]
     quote_caps = {"quote", "quotes", "market_data", "market-data", "data"}
-    execution_caps = {"orders", "trading", "execution"}
-    ibkr_quote_provider = any(_has_capability(c, quote_caps) for c in ibkr_connections)
-    ibkr_execution_provider = any(_has_capability(c, execution_caps) for c in ibkr_connections)
+    live_quote_provider = any(_has_capability(c, quote_caps) for c in private_live_connections)
     entitlement_records = sum(len(c.get("entitlements") or []) for c in connections)
 
-    ibkr_url = os.environ.get("DOOMBERG_IBKR_ENGINE_URL")
-    ibkr_host = _configured_host(ibkr_url)
-    live_execution = _env_flag("DOOMBERG_ENABLE_LIVE_EXECUTION")
+    live_data_url = os.environ.get("DOOMBERG_IBKR_ENGINE_URL")
+    live_data_configured = bool(_configured_host(live_data_url))
     queued_jobs = sum(1 for job in jobs if job.get("state") == "queued")
     active_jobs = sum(1 for job in jobs if job.get("state") in {"leased", "running"})
     failed_jobs = sum(1 for job in jobs if job.get("state") in {"failed", "timed_out", "cancelled"})
@@ -411,23 +422,21 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
             else "DOOMBERG_ARCHIVE_URL is unset",
         },
         {
-            "name": "IBKR engine",
-            "state": "succeeded" if ibkr_host else "warn",
-            "detail": f"Configured for {ibkr_host}" if ibkr_host else "DOOMBERG_IBKR_ENGINE_URL is unset",
+            "name": "Live market data",
+            "state": "succeeded" if live_data_configured else "warn",
+            "detail": "Configured" if live_data_configured else "Live market-data engine is unset",
         },
         {
-            "name": "IBKR provider record",
-            "state": "succeeded" if ibkr_quote_provider else "warn",
+            "name": "Live data record",
+            "state": "succeeded" if live_quote_provider else "warn",
             "detail": "Connected quote capability registered"
-            if ibkr_quote_provider
-            else "Register a connected provider with quote capability",
+            if live_quote_provider
+            else "Register live data with quote capability",
         },
         {
-            "name": "Live execution",
-            "state": "succeeded" if live_execution and ibkr_execution_provider and ibkr_host else "paused",
-            "detail": "Live IBKR submission enabled and provider-gated"
-            if live_execution and ibkr_execution_provider and ibkr_host
-            else "Paper execution only",
+            "name": "Trading",
+            "state": "paused",
+            "detail": "Disabled; this deployment is data and backtest only",
         },
         {
             "name": "Worker backlog",
@@ -447,17 +456,15 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
             "archive_configured": bool(os.environ.get("DOOMBERG_ARCHIVE_URL")),
             "mcp_allowed_hosts": os.environ.get("DOOMBERG_MCP_ALLOWED_HOSTS") or "",
         },
-        "ibkr": {
-            "engine_configured": bool(ibkr_host),
-            "engine_host": ibkr_host,
+        "live_data": {
+            "engine_configured": live_data_configured,
             "quote_path": os.environ.get("DOOMBERG_IBKR_QUOTE_PATH") or "/quote?symbol={symbol}",
-            "order_path": os.environ.get("DOOMBERG_IBKR_ORDER_PATH") or "/orders",
-            "connected_quote_provider": ibkr_quote_provider,
-            "connected_execution_provider": ibkr_execution_provider,
+            "connected_quote_provider": live_quote_provider,
         },
         "execution": {
-            "paper_enabled": True,
-            "live_enabled": live_execution,
+            "paper_enabled": False,
+            "live_enabled": False,
+            "disabled": True,
             "max_notional_usd": os.environ.get("DOOMBERG_EXECUTION_MAX_NOTIONAL_USD") or "10000",
             "max_quantity": os.environ.get("DOOMBERG_EXECUTION_MAX_QUANTITY") or "10000",
             "max_freshness_ms": os.environ.get("DOOMBERG_EXECUTION_MAX_FRESHNESS_MS") or "10000",
@@ -929,7 +936,6 @@ def create_app(db: Any | None = None) -> FastAPI:
         "approvals:read",
         "artifacts:read",
         "deploy:backtest",
-        "deploy:paper",
     ]
 
     @app.post("/api/auth/keys", status_code=201)
@@ -1133,8 +1139,8 @@ def create_app(db: Any | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         return _ops_status(stores, tenant_id)
 
-    @app.get("/api/ops/ibkr-smoke")
-    def ibkr_smoke(
+    @app.get("/api/ops/live-data-smoke")
+    def live_data_smoke(
         symbol: str = "AAPL",
         max_freshness_ms: int | None = Query(default=None, ge=0),
         tenant_id: str = Depends(require_tenant),
@@ -1237,6 +1243,20 @@ def create_app(db: Any | None = None) -> FastAPI:
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
         _require_scope(ctx, "providers:write")
+        body.capabilities = [
+            cap for cap in body.capabilities
+            if str(cap).strip().lower() not in {"orders", "trading", "execution"}
+        ]
+        provider_name = str(body.provider or "").strip().lower()
+        credential_ref = body.credential_ref
+        if provider_name in {
+            "ibkr",
+            "ibkr-engine",
+            "interactive_brokers",
+            "interactive-brokers",
+            PUBLIC_DATA_SOURCE,
+        } and not credential_ref:
+            credential_ref = "env:DOOMBERG_IBKR_ENGINE_TOKEN"
         connection = stores.providers.upsert_connection(
             ctx.tenant_id,
             provider=body.provider,
@@ -1245,7 +1265,7 @@ def create_app(db: Any | None = None) -> FastAPI:
             state=body.state,
             connection_id=body.connection_id,
             account_ref=body.account_ref,
-            credential_ref=body.credential_ref,
+            credential_ref=credential_ref,
             retention_policy=body.retention_policy,
         )
         return _public_provider_connection(connection)
@@ -1272,7 +1292,7 @@ def create_app(db: Any | None = None) -> FastAPI:
         tenant_id: str = Depends(require_tenant),
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
-        return {"order_intents": stores.execution.list_intents(tenant_id, run_id=run_id, state=state, limit=limit)}
+        raise HTTPException(status_code=403, detail="order intents are disabled; this deployment is data-only")
 
     @app.post("/api/order-intents", status_code=201)
     def create_order_intent(
@@ -1280,17 +1300,7 @@ def create_app(db: Any | None = None) -> FastAPI:
         ctx: Ctx = Depends(_ctx),
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
-        try:
-            return ExecutionGateway(stores).create_intent(
-                ctx,
-                run_id=body.run_id,
-                payload=body.payload,
-                strategy_id=body.strategy_id,
-                account_ref=body.account_ref,
-                idempotency_key=body.idempotency_key,
-            )
-        except ActionError as err:
-            raise HTTPException(status_code=err.status, detail=err.detail) from err
+        raise HTTPException(status_code=403, detail="order intents are disabled; this deployment is data-only")
 
     @app.get("/api/order-intents/{intent_id}")
     def get_order_intent(
@@ -1298,10 +1308,7 @@ def create_app(db: Any | None = None) -> FastAPI:
         tenant_id: str = Depends(require_tenant),
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
-        record = stores.execution.get_record(tenant_id, intent_id)
-        if record is None:
-            raise HTTPException(status_code=404, detail="order intent not found")
-        return record
+        raise HTTPException(status_code=403, detail="order intents are disabled; this deployment is data-only")
 
     @app.post("/api/order-intents/{intent_id}/preview")
     def preview_order_intent(
@@ -1309,10 +1316,7 @@ def create_app(db: Any | None = None) -> FastAPI:
         ctx: Ctx = Depends(_ctx),
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
-        try:
-            return ExecutionGateway(stores).preview(ctx, intent_id)
-        except ActionError as err:
-            raise HTTPException(status_code=err.status, detail=err.detail) from err
+        raise HTTPException(status_code=403, detail="order intents are disabled; this deployment is data-only")
 
     @app.post("/api/order-intents/{intent_id}/submit")
     def submit_order_intent(
@@ -1320,10 +1324,7 @@ def create_app(db: Any | None = None) -> FastAPI:
         ctx: Ctx = Depends(_ctx),
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
-        try:
-            return ExecutionGateway(stores).submit(ctx, intent_id)
-        except ActionError as err:
-            raise HTTPException(status_code=err.status, detail=err.detail) from err
+        raise HTTPException(status_code=403, detail="order intents are disabled; this deployment is data-only")
 
     @app.get("/api/triggers")
     def list_triggers(
@@ -1420,6 +1421,8 @@ def create_app(db: Any | None = None) -> FastAPI:
         ctx: Ctx = Depends(_ctx),
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
+        if body.kind != "backtest":
+            raise HTTPException(status_code=403, detail="only backtest runs are enabled; trading is disabled")
         try:
             return actions.create_run(stores, ctx, strategy_id=body.strategy_id,
                                       kind=body.kind, range_=body.range,
@@ -1442,7 +1445,7 @@ def create_app(db: Any | None = None) -> FastAPI:
     def _action_route(fn):
         def route(run_id: str, ctx: Ctx = Depends(_ctx),
                   stores: Stores = Depends(get_stores)) -> dict[str, Any]:
-            return _do(fn, stores, ctx, run_id)
+            raise HTTPException(status_code=403, detail="trading lifecycle actions are disabled")
         return route
 
     for _name, _fn in (

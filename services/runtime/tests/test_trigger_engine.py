@@ -29,13 +29,13 @@ def _policy(*, cooldown="20m", require_live=True, approval_required=False):
     }
 
 
-def _quote(now, *, price=950, entitlement_class="connected_account"):
+def _quote(now, *, price=950, entitlement_class="doomberg_live"):
     return {
         "symbol": "NVDA",
         "price": price,
         "as_of": now.isoformat(),
         "received_time": now.isoformat(),
-        "source": "ibkr-engine",
+        "source": "doomberg-live-data",
         "entitlement_class": entitlement_class,
     }
 
@@ -63,8 +63,8 @@ def test_trigger_engine_fires_quote_run_and_cooldown_blocks_repeat(durable_platf
                     "price": 950,
                     "as_of": now.isoformat(),
                     "received_time": now.isoformat(),
-                    "source": "ibkr-engine",
-                    "entitlement_class": "connected_account",
+                    "source": "doomberg-live-data",
+                    "entitlement_class": "doomberg_live",
                 }
             }
         ),
@@ -79,7 +79,7 @@ def test_trigger_engine_fires_quote_run_and_cooldown_blocks_repeat(durable_platf
     assert run["kind"] == "trigger"
     assert run["state"] == "succeeded"
     assert run["result"]["data"]["symbol"] == "NVDA"
-    assert run["result"]["provenance"]["source"] == "ibkr-engine"
+    assert run["result"]["provenance"]["source"] == "doomberg-live-data"
     types = [event["type"] for event in durable_platform.trace.events(tenant, run_id)]
     assert types == ["trigger_fired", "tool_call", "tool_result", "run_transition"]
     assert durable_platform.triggers.latest_firing(
@@ -186,7 +186,7 @@ def test_trigger_dry_run_predicts_fire_without_side_effects(durable_platform, te
         "broker_order": False,
     }
     assert result["context"]["symbol"] == "NVDA"
-    assert result["context"]["entitlement_class"] == "connected_account"
+    assert result["context"]["entitlement_class"] == "doomberg_live"
     assert durable_platform.runs.list(tenant) == []
     assert durable_platform.jobs.list(tenant) == []
     assert durable_platform.approvals.list(tenant) == []
@@ -268,8 +268,8 @@ def test_trigger_engine_creates_approval_when_requested(durable_platform, tenant
                     "price": 950,
                     "as_of": now.isoformat(),
                     "received_time": now.isoformat(),
-                    "source": "ibkr-engine",
-                    "entitlement_class": "connected_account",
+                    "source": "doomberg-live-data",
+                    "entitlement_class": "doomberg_live",
                 }
             }
         ),

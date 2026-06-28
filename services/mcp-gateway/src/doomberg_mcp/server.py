@@ -19,7 +19,7 @@ from doomberg_control.actions import ActionError
 from doomberg_control.deps import Ctx
 from doomberg_control.execution_gateway import ExecutionGateway, ExecutionPolicy
 from doomberg_core import ALL_SKILL_MANIFESTS, SKILLS, Core, SkillSet
-from doomberg_core.providers import IbkrEngineClient, IbkrEngineError
+from doomberg_core.providers import PUBLIC_DATA_SOURCE, PUBLIC_ENTITLEMENT_CLASS, IbkrEngineClient, IbkrEngineError
 
 from .trace import InMemoryTrace, PlatformTraceSink, Tracer
 
@@ -53,13 +53,28 @@ def _without_none(payload: dict) -> dict:
 
 def _public_connection(connection: dict) -> dict:
     """Return an agent-safe provider connection view with no credential material."""
+    provider = str(connection.get("provider") or "")
+    public_provider = PUBLIC_DATA_SOURCE if provider.lower() in {
+        "ibkr",
+        "ibkr-engine",
+        "interactive_brokers",
+        "interactive-brokers",
+    } else provider
     return _without_none({
         "connection_id": connection.get("connection_id"),
-        "provider": connection.get("provider"),
-        "account_ref": connection.get("account_ref"),
+        "provider": public_provider,
         "state": connection.get("state"),
-        "capabilities": connection.get("capabilities") or [],
-        "entitlements": connection.get("entitlements") or [],
+        "account_configured": bool(connection.get("account_ref")),
+        "capabilities": [
+            cap for cap in (connection.get("capabilities") or [])
+            if str(cap).strip().lower() not in {"orders", "trading", "execution"}
+        ],
+        "entitlements": [
+            {**ent, "entitlement_class": PUBLIC_ENTITLEMENT_CLASS}
+            if isinstance(ent, dict) and provider.lower() in {"ibkr", "ibkr-engine", "interactive_brokers", "interactive-brokers"}
+            else ent
+            for ent in (connection.get("entitlements") or [])
+        ],
         "retention_policy": connection.get("retention_policy"),
         "created_at": connection.get("created_at"),
         "updated_at": connection.get("updated_at"),
@@ -72,7 +87,7 @@ def _public_connection(connection: dict) -> dict:
 def _provenance_summary(envelope: dict) -> dict:
     prov = envelope.get("provenance") or {}
     summary = {
-        "source": prov.get("source"),
+        "source": PUBLIC_DATA_SOURCE if prov.get("source") == "ibkr-engine" else prov.get("source"),
         "freshness": prov.get("freshness"),
         "pit": prov.get("pit"),
         "coverage": prov.get("coverage"),
@@ -87,24 +102,56 @@ def _provenance_summary(envelope: dict) -> dict:
 
 
 def _ibkr_skill_envelope(data: dict, *, as_of: str | None = None) -> dict:
-    """Wrap connected-account IBKR data in the same envelope shape as catalog skills."""
+    """Wrap private live market data in the same envelope shape as catalog skills."""
 
     as_of = as_of or datetime.now(timezone.utc).isoformat()
+    sanitized = _sanitize_live_data(data)
     return {
-        "data": data,
+        "data": sanitized,
         "provenance": {
-            "source": "ibkr-engine",
+            "source": PUBLIC_DATA_SOURCE,
             "as_of": as_of,
             "freshness": "live",
             "stale_age_sec": None,
             "pit": "false",
             "coverage": {"requested": 1, "resolved": 1, "missing": []},
-            "cost": {"class": "connected_account", "credits": 0},
+            "cost": {"class": PUBLIC_ENTITLEMENT_CLASS, "credits": 0},
             "cache_hit": False,
         },
         "partial": False,
         "warnings": [],
     }
+
+
+def _sanitize_live_data(value):
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            lk = str(key).lower()
+            if lk in {"source_account", "account_ref", "credential_ref", "host", "quote_path", "order_path"}:
+                continue
+            if lk in {"provider", "source"} and str(item).lower() in {
+                "ibkr",
+                "ibkr-engine",
+                "ibkr-client-portal",
+                "interactive_brokers",
+                "interactive-brokers",
+            }:
+                out[key] = PUBLIC_DATA_SOURCE
+            elif lk == "entitlement_class" and str(item) == "connected_account":
+                out[key] = PUBLIC_ENTITLEMENT_CLASS
+            elif isinstance(item, str):
+                out[key] = (
+                    item.replace("IBKR", "Doomberg")
+                    .replace("ibkr-engine", PUBLIC_DATA_SOURCE)
+                    .replace("ibkr-client-portal", "private-market-data")
+                )
+            else:
+                out[key] = _sanitize_live_data(item)
+        return out
+    if isinstance(value, list):
+        return [_sanitize_live_data(item) for item in value]
+    return value
 
 
 def _i(value, default: int, lo: int, hi: int) -> int:
@@ -245,7 +292,7 @@ class Toolset:
                             "symbol": str(raw.get("symbol") or symbol).upper(),
                             "points": points,
                             "quote": raw.get("quote") or {},
-                            "provider": "ibkr-engine",
+                            "provider": PUBLIC_DATA_SOURCE,
                             "period": raw.get("period") or period,
                             "bar": raw.get("bar") or bar,
                         },
@@ -266,7 +313,7 @@ class Toolset:
         max_freshness_ms: int | None = None,
         _ctx: dict | None = None,
     ) -> dict:
-        """Entitlement-aware connected-account realtime quote via the IBKR engine."""
+        """Entitlement-aware realtime quote via the private live-data engine."""
 
         ctx = dict(_ctx or {})
         tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
@@ -281,18 +328,18 @@ class Toolset:
         if not diagnosis.get("ok"):
             out = self._typed_error(
                 diagnosis.get("code") or "PROVIDER_DEGRADED",
-                diagnosis.get("error") or diagnosis.get("status") or "IBKR quote failed",
-                diagnosis.get("recovery_action") or "Check the IBKR engine and connected-account data entitlements.",
+                diagnosis.get("error") or diagnosis.get("status") or "live quote failed",
+                diagnosis.get("recovery_action") or "Check live market-data connectivity and entitlements.",
                 {"diagnosis": {k: v for k, v in diagnosis.items() if k != "quote"}},
             )
-            tr.tool_result("market.quote", span, {"source": "ibkr-engine", "ok": False,
+            tr.tool_result("market.quote", span, {"source": PUBLIC_DATA_SOURCE, "ok": False,
                                                   "code": out["error"]["code"]})
             return out
         quote = diagnosis["quote"]
         out = _ibkr_skill_envelope(
             {
                 **quote,
-                "provider": "ibkr-engine",
+                "provider": PUBLIC_DATA_SOURCE,
                 "diagnostics": {
                     "latency_ms": diagnosis.get("latency_ms"),
                     "invariants": diagnosis.get("invariants") or [],
@@ -304,31 +351,25 @@ class Toolset:
         return out
 
     def broker_accounts(self, _ctx: dict | None = None) -> dict:
-        ctx = dict(_ctx or {})
-        tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
-        tr = self._tracer(_ctx)
-        span = tr.tool_call("broker.accounts", {})
-        out = _ibkr_skill_envelope(IbkrEngineClient().accounts(tenant_id=tenant_id))
-        tr.tool_result("broker.accounts", span, _provenance_summary(out))
-        return out
+        return self._typed_error(
+            "POLICY_DENIED",
+            "broker account access is disabled",
+            "Use market data and backtest skills only.",
+        )
 
     def broker_positions(self, account: str | None = None, _ctx: dict | None = None) -> dict:
-        ctx = dict(_ctx or {})
-        tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
-        tr = self._tracer(_ctx)
-        span = tr.tool_call("broker.positions", {"account": account})
-        out = _ibkr_skill_envelope(IbkrEngineClient().positions(account=account, tenant_id=tenant_id))
-        tr.tool_result("broker.positions", span, _provenance_summary(out))
-        return out
+        return self._typed_error(
+            "POLICY_DENIED",
+            "broker position access is disabled",
+            "Use market data and backtest skills only.",
+        )
 
     def broker_orders(self, account: str | None = None, _ctx: dict | None = None) -> dict:
-        ctx = dict(_ctx or {})
-        tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
-        tr = self._tracer(_ctx)
-        span = tr.tool_call("broker.orders", {"account": account})
-        out = _ibkr_skill_envelope(IbkrEngineClient().orders(account=account, tenant_id=tenant_id))
-        tr.tool_result("broker.orders", span, _provenance_summary(out))
-        return out
+        return self._typed_error(
+            "POLICY_DENIED",
+            "broker order access is disabled",
+            "Use market data and backtest skills only.",
+        )
 
     def ops_provider_status(
         self,
@@ -337,7 +378,7 @@ class Toolset:
         _ctx: dict | None = None,
     ) -> dict:
         result = self.ibkr_smoke(symbol=symbol, max_freshness_ms=max_freshness_ms, _ctx=_ctx)
-        return _ibkr_skill_envelope({"provider": "ibkr-engine", **result})
+        return _ibkr_skill_envelope({"provider": PUBLIC_DATA_SOURCE, **result})
 
     def backtest_run(self, spec: dict, range: str = "1y", _ctx: dict | None = None) -> dict:
         tr = self._tracer(_ctx)
@@ -426,14 +467,14 @@ class Toolset:
     def _ibkr_live_skill(self, tool: str, params: dict, *, tenant_id: str) -> dict:
         client = IbkrEngineClient()
         if not client.configured():
-            raise IbkrEngineError("IBKR engine is not configured")
+            raise IbkrEngineError("live data engine is not configured")
         if tool == "market.news":
             ticker = (params.get("ticker") or params.get("symbol") or "").strip().upper() or None
             limit = _i(params.get("limit"), 10, 1, 50)
             raw = client.news(ticker=ticker, limit=limit, tenant_id=tenant_id)
             items = raw.get("items") or []
             if not items:
-                raise IbkrEngineError("IBKR news returned no items")
+                raise IbkrEngineError("live news returned no items")
             pos = sum(1 for item in items if item.get("sentiment") == "positive")
             neg = sum(1 for item in items if item.get("sentiment") == "negative")
             data = {
@@ -442,7 +483,7 @@ class Toolset:
                 "count": len(items),
                 "sentimentMix": {"positive": pos, "negative": neg, "neutral": len(items) - pos - neg},
                 "asOf": raw.get("asOf") or items[0].get("publishedAt"),
-                "provider": "ibkr-engine",
+                "provider": PUBLIC_DATA_SOURCE,
             }
             return _ibkr_skill_envelope(data, as_of=data.get("asOf"))
         if tool == "market.movers":
@@ -451,14 +492,14 @@ class Toolset:
             losers = client.scanner(scan_type="TOP_PERC_LOSE", limit=max(5, limit), tenant_id=tenant_id).get("rows") or []
             active = client.scanner(scan_type="MOST_ACTIVE", limit=limit, tenant_id=tenant_id).get("rows") or []
             if not (gainers or losers or active):
-                raise IbkrEngineError("IBKR scanner returned no rows")
+                raise IbkrEngineError("live scanner returned no rows")
             cells = active or (gainers[: limit // 2] + losers[: limit // 2])
             data = {
-                "title": "Live IBKR Market Movers",
+                "title": "Live Market Movers",
                 "cells": cells[:limit],
                 "gainers": gainers[:5],
                 "losers": losers[:5],
-                "provider": "ibkr-engine",
+                "provider": PUBLIC_DATA_SOURCE,
             }
             return _ibkr_skill_envelope(data)
         if tool == "market.screener":
@@ -466,16 +507,16 @@ class Toolset:
             raw = client.scanner(scan_type="MOST_ACTIVE", limit=limit, tenant_id=tenant_id)
             rows = raw.get("rows") or []
             if not rows:
-                raise IbkrEngineError("IBKR scanner returned no rows")
+                raise IbkrEngineError("live scanner returned no rows")
             data = {
-                "title": "Live IBKR Most Active Screener",
+                "title": "Live Most Active Screener",
                 "rows": rows,
                 "count": len(rows),
-                "provider": "ibkr-engine",
+                "provider": PUBLIC_DATA_SOURCE,
                 "asOf": raw.get("asOf"),
             }
             return _ibkr_skill_envelope(data, as_of=data.get("asOf"))
-        raise IbkrEngineError(f"IBKR live override is not available for {tool}")
+        raise IbkrEngineError(f"live-data override is not available for {tool}")
 
     def search_skills(self, query: str = "", asset_class: str | None = None,
                       intent: str | None = None) -> dict:
@@ -539,12 +580,11 @@ class Toolset:
         return {
             "kind": "policies.current",
             "tenant_id": (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT,
-            "broker_write_boundary": "execution_gateway",
-            "skills_may_call_brokers_directly": False,
-            "paper_trading_default": True,
+            "trading": {"enabled": False, "detail": "data and backtest only"},
+            "paper_trading_default": False,
             "live_execution": {
-                "enabled": policy.live_enabled,
-                "requires_connected_provider": policy.require_connected_provider_for_live,
+                "enabled": False,
+                "requires_connected_provider": False,
             },
             "execution": {
                 "max_notional_usd": policy.max_notional_usd,
@@ -564,22 +604,11 @@ class Toolset:
                 _public_connection(c)
                 for c in self.platform.providers.list_connections(tenant_id)
             ]
-        accounts = [
-            _without_none({
-                "account_ref": c.get("account_ref"),
-                "provider": c.get("provider"),
-                "state": c.get("state"),
-                "capabilities": c.get("capabilities") or [],
-                "entitlements": c.get("entitlements") or [],
-            })
-            for c in connections
-            if c.get("account_ref")
-        ]
         return {
             "kind": "accounts",
             "tenant_id": tenant_id,
-            "paper_trading": {"enabled": True, "broker": "paper"},
-            "accounts": accounts,
+            "trading": {"enabled": False},
+            "accounts": [],
             "provider_connections": connections,
         }
 
@@ -601,16 +630,13 @@ class Toolset:
             "tenant_id": tenant_id,
             "connections": connections,
             "dataset_snapshots": snapshots,
-            "ibkr_engine": {
+            "live_data": {
                 "configured": ibkr.configured(),
-                "host": ibkr.host,
-                "quote_path": ibkr.quote_path,
-                "order_path": ibkr.order_path,
-                "entitlement_class": "connected_account",
+                "entitlement_class": PUBLIC_ENTITLEMENT_CLASS,
             },
             "supported_modes": [
                 "community_public_delayed",
-                "connected_account",
+                PUBLIC_ENTITLEMENT_CLASS,
                 "doomberg_licensed_placeholder",
             ],
         }
@@ -640,17 +666,11 @@ class Toolset:
                     max_freshness_ms=params.get("max_freshness_ms"),
                     _ctx=_ctx,
                 )
-            if skill_id == "broker.accounts":
-                return self.broker_accounts(_ctx=_ctx)
-            if skill_id == "broker.positions":
-                return self.broker_positions(params.get("account"), _ctx=_ctx)
-            if skill_id == "broker.orders":
-                return self.broker_orders(params.get("account"), _ctx=_ctx)
-            if skill_id == "ops.provider_status":
-                return self.ops_provider_status(
-                    params.get("symbol", "AAPL"),
-                    max_freshness_ms=params.get("max_freshness_ms"),
-                    _ctx=_ctx,
+            if skill_id in {"broker.accounts", "broker.positions", "broker.orders", "ops.provider_status"}:
+                return self._typed_error(
+                    "POLICY_DENIED",
+                    "this skill is disabled",
+                    "Use market.quote for live data and backtest.run for analysis.",
                 )
             return self.call_skill(skill_id, params, _ctx=_ctx)
 
@@ -715,20 +735,24 @@ class Toolset:
                     max_freshness_ms=params.get("max_freshness_ms"),
                     _ctx=run_ctx,
                 )
-            elif skill_id == "broker.accounts":
-                out = self.broker_accounts(_ctx=run_ctx)
-            elif skill_id == "broker.positions":
-                out = self.broker_positions(params.get("account"), _ctx=run_ctx)
-            elif skill_id == "broker.orders":
-                out = self.broker_orders(params.get("account"), _ctx=run_ctx)
-            elif skill_id == "ops.provider_status":
-                out = self.ops_provider_status(
-                    params.get("symbol", "AAPL"),
-                    max_freshness_ms=params.get("max_freshness_ms"),
-                    _ctx=run_ctx,
+            elif skill_id in {"broker.accounts", "broker.positions", "broker.orders", "ops.provider_status"}:
+                out = self._typed_error(
+                    "POLICY_DENIED",
+                    "this skill is disabled",
+                    "Use market.quote for live data and backtest.run for analysis.",
                 )
             else:
                 out = self.call_skill(skill_id, params, _ctx=run_ctx)
+            if isinstance(out, dict) and out.get("error", {}).get("code") == "POLICY_DENIED":
+                self.platform.runs.set_result(tenant_id, run_id, out)
+                self.platform.runs.transition(tenant_id, run_id, "failed", expect=running["version"])
+                tr.event("error", {"stage": "run_skill", "error": "POLICY_DENIED"})
+                return {
+                    "run_id": run_id,
+                    "status": "failed",
+                    "error": out["error"],
+                    "status_url": f"/api/runs/{run_id}",
+                }
         except Exception as exc:  # noqa: BLE001 - return typed error in run result.
             err = self._typed_error("PROVIDER_DEGRADED", type(exc).__name__,
                                     "Inspect the run trace and retry when the provider recovers.",
@@ -846,64 +870,32 @@ class Toolset:
         idempotency_key: str | None = None,
         _ctx: dict | None = None,
     ) -> dict:
-        if self.platform is None:
-            return self._typed_error(
-                "JOB_QUEUED",
-                "order intents require the hosted platform store",
-                "Use the hosted MCP endpoint or REST API.",
-            )
-        try:
-            return ExecutionGateway(self.platform).create_intent(
-                self._ctx_to_control_ctx(_ctx),
-                run_id=run_id,
-                payload=dict(payload or {}),
-                strategy_id=strategy_id,
-                account_ref=account_ref,
-                idempotency_key=idempotency_key,
-            )
-        except ActionError as exc:
-            return self._action_error(exc)
+        return self._typed_error(
+            "POLICY_DENIED",
+            "order intents are disabled",
+            "This deployment is data and backtest only.",
+        )
 
     def preview_order_intent(self, intent_id: str, _ctx: dict | None = None) -> dict:
-        if self.platform is None:
-            return self._typed_error(
-                "JOB_QUEUED",
-                "order intents require the hosted platform store",
-                "Use the hosted MCP endpoint or REST API.",
-            )
-        try:
-            return ExecutionGateway(self.platform).preview(self._ctx_to_control_ctx(_ctx), intent_id)
-        except ActionError as exc:
-            return self._action_error(exc)
+        return self._typed_error(
+            "POLICY_DENIED",
+            "order intents are disabled",
+            "This deployment is data and backtest only.",
+        )
 
     def get_order_intent(self, intent_id: str, _ctx: dict | None = None) -> dict:
-        if self.platform is None:
-            return self._typed_error(
-                "JOB_QUEUED",
-                "order intents require the hosted platform store",
-                "Use the hosted MCP endpoint or REST API.",
-            )
-        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
-        record = self.platform.execution.get_record(tenant_id, intent_id)
-        if record is None:
-            return self._typed_error(
-                "ORDER_STATE_CONFLICT",
-                "order intent not found",
-                "Check the intent_id and tenant credential.",
-            )
-        return record
+        return self._typed_error(
+            "POLICY_DENIED",
+            "order intents are disabled",
+            "This deployment is data and backtest only.",
+        )
 
     def submit_order_intent(self, intent_id: str, _ctx: dict | None = None) -> dict:
-        if self.platform is None:
-            return self._typed_error(
-                "JOB_QUEUED",
-                "order intents require the hosted platform store",
-                "Use the hosted MCP endpoint or REST API.",
-            )
-        try:
-            return ExecutionGateway(self.platform).submit(self._ctx_to_control_ctx(_ctx), intent_id)
-        except ActionError as exc:
-            return self._action_error(exc)
+        return self._typed_error(
+            "POLICY_DENIED",
+            "order intents are disabled",
+            "This deployment is data and backtest only.",
+        )
 
     def ibkr_smoke(
         self,
@@ -924,7 +916,7 @@ class Toolset:
         tr.event(
             "provider_status",
             {
-                "provider": "ibkr-engine",
+                "provider": PUBLIC_DATA_SOURCE,
                 "symbol": result.get("symbol"),
                 "ok": result.get("ok"),
                 "status": result.get("status"),
@@ -985,7 +977,6 @@ class Toolset:
                 "triggers:write",
                 "artifacts:read",
                 "deploy:backtest",
-                "deploy:paper",
             }
         return Ctx(
             tenant_id=ctx.get("tenant_id") or _DEFAULT_TENANT,
@@ -1205,39 +1196,6 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     @mcp.tool(description="Fetch artifact metadata by id. Artifact content is addressed by returned URI.")
     def get_artifact(artifact_id: str) -> dict:
         return ts.get_artifact(artifact_id, _ctx=_ctx())
-
-    @mcp.tool(description="Create a governed order intent. This never submits a broker order.")
-    def create_order_intent(
-        run_id: str,
-        payload: dict,
-        strategy_id: str | None = None,
-        account_ref: str | None = None,
-        idempotency_key: str | None = None,
-    ) -> dict:
-        return ts.create_order_intent(
-            run_id,
-            payload,
-            strategy_id=strategy_id,
-            account_ref=account_ref,
-            idempotency_key=idempotency_key,
-            _ctx=_ctx(),
-        )
-
-    @mcp.tool(description="Evaluate an order intent against deterministic execution policy.")
-    def preview_order_intent(intent_id: str) -> dict:
-        return ts.preview_order_intent(intent_id, _ctx=_ctx())
-
-    @mcp.tool(description="Fetch an order intent with associated broker orders and fills.")
-    def get_order_intent(intent_id: str) -> dict:
-        return ts.get_order_intent(intent_id, _ctx=_ctx())
-
-    @mcp.tool(description="Submit an approved order intent. Hosted agent callers receive an approval error; human dashboard submission is required.")
-    def submit_order_intent(intent_id: str) -> dict:
-        return ts.submit_order_intent(intent_id, _ctx=_ctx())
-
-    @mcp.tool(description="Read-only IBKR engine quote smoke with source, entitlement, and freshness checks.")
-    def ibkr_smoke(symbol: str = "AAPL", max_freshness_ms: int | None = None) -> dict:
-        return ts.ibkr_smoke(symbol=symbol, max_freshness_ms=max_freshness_ms, _ctx=_ctx())
 
     @mcp.tool(description="Attach a user prompt/title and optional Doomberg session id to this MCP trace.")
     def session_context(prompt: str | None = None, title: str | None = None,
