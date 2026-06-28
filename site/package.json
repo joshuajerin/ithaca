@@ -3,13 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Doomberg v2 marketing site — the agent tool-platform for markets.",
+  "description": "Doomberg v2 marketing site.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview --port 4173"
   },
   "dependencies": {
+    "@clerk/react": "^6.11.1",
     "@vercel/analytics": "^2.0.1",
     "@vercel/speed-insights": "^2.0.0",
     "framer-motion": "^11.11.17",

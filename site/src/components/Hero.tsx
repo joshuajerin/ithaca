@@ -1,9 +1,8 @@
 import { motion, useMotionValue, useSpring, useTransform } from "framer-motion";
 import { useEffect, useState } from "react";
 import { EASE } from "../lib/motion";
-import { PillButton } from "./ui";
 import IsometricStack from "./IsometricStack";
-import { APP_URL } from "../lib/links";
+import InstallCommand from "./InstallCommand";
 
 // Three layers top→bottom: Data / Deploy / Observe (index matches stack slab order).
 const N_LAYERS = 3;
@@ -78,37 +77,23 @@ export default function Hero() {
             variants={item}
             className="display mx-auto max-w-[15ch] text-[2.6rem] leading-[1.0] text-ink sm:text-[3.2rem] lg:mx-0 lg:text-[4.2rem] lg:leading-[0.98]"
           >
-            The tool-platform for the agent economy
+            Market tools for agents
           </motion.h1>
 
           <motion.p
             variants={item}
-            className="mx-auto mt-5 max-w-[44ch] text-[1rem] leading-relaxed text-muted sm:text-[1.08rem] lg:mx-0 lg:text-[1.15rem]"
+            className="mx-auto mt-5 max-w-[56ch] text-[1.12rem] leading-relaxed text-muted sm:text-[1.22rem] lg:mx-0 lg:text-[1.32rem]"
           >
-            Doomberg gives autonomous agents vetted market tools, honest
-            backtesting, and paper-trading on trusted infrastructure — recorded
-            in a replayable glass box.
+            Research live market data, test strategies against historical
+            context, and paper-trade the results from one dashboard built for
+            agent workflows. Doomberg keeps tools, runs, evidence, and approvals
+            in one place.
           </motion.p>
 
 
-          <motion.div
-            variants={item}
-            className="mt-7 flex flex-wrap items-center justify-center gap-3 lg:justify-start"
-          >
-            <PillButton href={APP_URL} variant="primary" size="lg">
-              Connect over MCP
-            </PillButton>
-            <PillButton href="#features" variant="secondary" size="lg">
-              Explore the platform
-            </PillButton>
+          <motion.div variants={item} className="mx-auto mt-7 max-w-[680px] lg:mx-0">
+            <InstallCommand />
           </motion.div>
-
-          <motion.p
-            variants={item}
-            className="mt-5 font-mono text-[0.68rem] uppercase tracking-[0.14em] text-gold-deep sm:text-[0.72rem] sm:tracking-[0.16em]"
-          >
-            Never runs your agent · Never executes agent-authored code
-          </motion.p>
         </motion.div>
 
         {/* RIGHT — isometric stack; cursor position over the stack drives layer focus */}

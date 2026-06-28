@@ -20,8 +20,8 @@ const BLOCKS: Block[] = [
     eyebrow: "Tools layer",
     title: (
       <>
-        The agent's interface
-        <br /> to the markets
+        Market data
+        <br /> and research
       </>
     ),
     copy: "Your agent connects over MCP, starts a visible research session with the prompt, then calls vetted financial tools directly. Every result comes back typed, with a mandatory provenance block.",
@@ -42,38 +42,38 @@ const BLOCKS: Block[] = [
         <br /> not code we run
       </>
     ),
-    copy: "The agent proposes a strategy as a declarative spec. We validate it against the operator registry, backtest it point-in-time, then paper-trade it on workers that import the very same core.",
+    copy: "Submit a strategy spec, run a point-in-time backtest, then paper-trade it from the same core logic.",
     side: "left",
     illustration: "dots",
     features: [
-      { icon: <IconLayers />, title: "Declarative StrategySpec", body: "A closed, validated schema — there is no free-form code field." },
-      { icon: <IconChart />, title: "No-lookahead backtests", body: "Walk-forward, Monte Carlo, deflated Sharpe + PBO by default." },
-      { icon: <IconShield />, title: "Single-writer paper book", body: "Workers propose deltas; the control plane applies them serially." },
+      { icon: <IconLayers />, title: "Strategy specs", body: "Validated inputs for signals, sizing, risk, and execution rules." },
+      { icon: <IconChart />, title: "Backtests", body: "Walk-forward, Monte Carlo, deflated Sharpe, and PBO." },
+      { icon: <IconShield />, title: "Paper trading", body: "Track fills, exposure, and P&L in one place." },
     ],
   },
   {
-    id: "observability",
-    eyebrow: "Observability layer",
+    id: "records",
+    eyebrow: "Record layer",
     title: (
       <>
-        A glass box that
-        <br /> records everything
+        Runs you can
+        <br /> inspect later
       </>
     ),
-    copy: "Because Doomberg is the server your agent calls, every tool call is an observation point. Watch the reasoning, the tool timeline, and the evidence panels live — or scrub the whole run back.",
+    copy: "Review tool calls, evidence panels, fills, and run history after each session.",
     side: "right",
     illustration: "matrix",
     features: [
-      { icon: <IconNodes />, title: "Live trace + replay", body: "Reasoning → tool calls → evidence panels, event-sourced." },
-      { icon: <IconChart />, title: "Evidence panels", body: "~80 quant renderers map tool outputs to a question's answer." },
-      { icon: <IconShield />, title: "Full audit log", body: "The event log is the audit trail — every call attributable." },
+      { icon: <IconNodes />, title: "Run history", body: "Tool calls, outputs, and decisions are grouped by session." },
+      { icon: <IconChart />, title: "Evidence panels", body: "Charts and tables for the outputs that matter." },
+      { icon: <IconShield />, title: "Audit log", body: "See what ran, when it ran, and which source it used." },
     ],
   },
 ];
 
 export default function FeatureSections() {
   return (
-    <section id="features" className="relative bg-paper">
+    <section id="platform" className="relative bg-paper">
       <div className="pointer-events-none absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-gradient-to-b from-transparent via-line to-transparent" />
       <div className="relative mx-auto max-w-[1200px] space-y-24 px-5 py-24 lg:space-y-36 lg:py-32">
         {BLOCKS.map((b) => (
