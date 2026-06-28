@@ -313,8 +313,6 @@ def _mcp_initialize(send, *, token: str) -> tuple[str | None, GateResult | None]
     session_id = _header(response.headers, "mcp-session-id")
     if not session_id:
         return None, _fail("mcp initialize", "MCP response did not include mcp-session-id")
-    body = _mcp_json_from_text(response.text)
-    capabilities = ((body or {}).get("result") or {}).get("capabilities") or {}
     response = send(
         method="notifications/initialized",
         token=token,
