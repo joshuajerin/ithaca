@@ -135,6 +135,19 @@ if [[ "${DEPLOY_ENV}" == "prod" ]]; then
   fi
 fi
 
+APP_MAX_SURGE="${APP_MAX_SURGE:-1}"
+APP_MAX_UNAVAILABLE="${APP_MAX_UNAVAILABLE:-0}"
+WORKER_MAX_SURGE="${WORKER_MAX_SURGE:-1}"
+WORKER_MAX_UNAVAILABLE="${WORKER_MAX_UNAVAILABLE:-1}"
+if [[ "${APP_REPLICAS}" -le 1 ]]; then
+  APP_MAX_SURGE="${APP_MAX_SURGE_SINGLE:-0}"
+  APP_MAX_UNAVAILABLE="${APP_MAX_UNAVAILABLE_SINGLE:-1}"
+fi
+if [[ "${WORKER_REPLICAS}" -le 1 ]]; then
+  WORKER_MAX_SURGE="${WORKER_MAX_SURGE_SINGLE:-0}"
+  WORKER_MAX_UNAVAILABLE="${WORKER_MAX_UNAVAILABLE_SINGLE:-1}"
+fi
+
 if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
   if [[ -z "${IBKR_GATEWAY_IMAGE:-}" ]]; then
     IBKR_GATEWAY_IMAGE="$(kubectl -n "${K8S_GATEWAY_NAMESPACE}" get deployment ibkr-gateway \
@@ -192,6 +205,10 @@ render_manifest() {
     -e "s|\${WORKER_NODE_WORKLOAD}|${WORKER_NODE_WORKLOAD}|g" \
     -e "s|\${APP_REPLICAS}|${APP_REPLICAS}|g" \
     -e "s|\${WORKER_REPLICAS}|${WORKER_REPLICAS}|g" \
+    -e "s|\${APP_MAX_SURGE}|${APP_MAX_SURGE}|g" \
+    -e "s|\${APP_MAX_UNAVAILABLE}|${APP_MAX_UNAVAILABLE}|g" \
+    -e "s|\${WORKER_MAX_SURGE}|${WORKER_MAX_SURGE}|g" \
+    -e "s|\${WORKER_MAX_UNAVAILABLE}|${WORKER_MAX_UNAVAILABLE}|g" \
     -e "s|\${SHORT_LOADER_SUSPEND}|${SHORT_LOADER_SUSPEND}|g" \
     -e "s|\${MCP_ALLOWED_HOSTS}|${MCP_ALLOWED_HOSTS}|g" \
     "${file}"
@@ -252,6 +269,7 @@ if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
   echo "==> ibkr enabled wrapper_image=${IBKR_ENGINE_IMAGE} gateway_image=${IBKR_GATEWAY_IMAGE} public_signin=${IBKR_SIGNIN_PUBLIC}"
 fi
 echo "==> replicas app=${APP_REPLICAS} workers=${WORKER_REPLICAS} node_workloads app=${APP_NODE_WORKLOAD} workers=${WORKER_NODE_WORKLOAD}"
+echo "==> rollout app=maxSurge:${APP_MAX_SURGE},maxUnavailable:${APP_MAX_UNAVAILABLE} workers=maxSurge:${WORKER_MAX_SURGE},maxUnavailable:${WORKER_MAX_UNAVAILABLE}"
 
 echo "==> namespaces"
 render_manifest infra/k8s/namespace.yaml | kubectl apply -f -
