@@ -113,8 +113,6 @@ def create_app() -> FastAPI:
         ctx: Ctx = Depends(get_ctx),
         platform: Platform = Depends(get_platform),
     ) -> dict[str, Any]:
-        if body.kind != "backtest":
-            raise HTTPException(status_code=403, detail="only backtest runs are enabled; trading is disabled")
         try:
             return actions.create_run(platform, ctx, strategy_id=body.strategy_id,
                                       kind=body.kind, range_=body.range,
@@ -137,27 +135,42 @@ def create_app() -> FastAPI:
     @app.post("/runs/{run_id}/promote")
     def promote_run(run_id: str, ctx: Ctx = Depends(get_ctx),
                     platform: Platform = Depends(get_platform)) -> dict[str, Any]:
-        raise HTTPException(status_code=403, detail="trading lifecycle actions are disabled")
+        try:
+            return actions.promote_run(platform, ctx, run_id)
+        except ActionError as err:
+            _raise(err)
 
     @app.post("/runs/{run_id}/activate")
     def activate_run(run_id: str, ctx: Ctx = Depends(get_ctx),
                      platform: Platform = Depends(get_platform)) -> dict[str, Any]:
-        raise HTTPException(status_code=403, detail="trading lifecycle actions are disabled")
+        try:
+            return actions.activate_run(platform, ctx, run_id)
+        except ActionError as err:
+            _raise(err)
 
     @app.post("/runs/{run_id}/pause")
     def pause_run(run_id: str, ctx: Ctx = Depends(get_ctx),
                   platform: Platform = Depends(get_platform)) -> dict[str, Any]:
-        raise HTTPException(status_code=403, detail="trading lifecycle actions are disabled")
+        try:
+            return actions.pause_run(platform, ctx, run_id)
+        except ActionError as err:
+            _raise(err)
 
     @app.post("/runs/{run_id}/resume")
     def resume_run(run_id: str, ctx: Ctx = Depends(get_ctx),
                    platform: Platform = Depends(get_platform)) -> dict[str, Any]:
-        raise HTTPException(status_code=403, detail="trading lifecycle actions are disabled")
+        try:
+            return actions.resume_run(platform, ctx, run_id)
+        except ActionError as err:
+            _raise(err)
 
     @app.post("/runs/{run_id}/retire")
     def retire_run(run_id: str, ctx: Ctx = Depends(get_ctx),
                    platform: Platform = Depends(get_platform)) -> dict[str, Any]:
-        raise HTTPException(status_code=403, detail="trading lifecycle actions are disabled")
+        try:
+            return actions.retire_run(platform, ctx, run_id)
+        except ActionError as err:
+            _raise(err)
 
     # ---- reads -------------------------------------------------------------------------
     @app.get("/runs")
@@ -186,7 +199,17 @@ def create_app() -> FastAPI:
         ctx: Ctx = Depends(get_ctx),
         platform: Platform = Depends(get_platform),
     ) -> dict[str, Any]:
-        raise HTTPException(status_code=403, detail="order intents are disabled; this deployment is data-only")
+        try:
+            return ExecutionGateway(platform).create_intent(
+                ctx,
+                run_id=body.run_id,
+                payload=body.payload,
+                strategy_id=body.strategy_id,
+                account_ref=body.account_ref,
+                idempotency_key=body.idempotency_key,
+            )
+        except ActionError as err:
+            _raise(err)
 
     @app.get("/execution/intents/{intent_id}")
     def get_order_intent(
@@ -194,7 +217,10 @@ def create_app() -> FastAPI:
         ctx: Ctx = Depends(get_ctx),
         platform: Platform = Depends(get_platform),
     ) -> dict[str, Any]:
-        raise HTTPException(status_code=403, detail="order intents are disabled; this deployment is data-only")
+        record = platform.execution.get_record(ctx.tenant_id, intent_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="order intent not found")
+        return record
 
     @app.post("/execution/intents/{intent_id}/preview")
     def preview_order_intent(
@@ -202,7 +228,10 @@ def create_app() -> FastAPI:
         ctx: Ctx = Depends(get_ctx),
         platform: Platform = Depends(get_platform),
     ) -> dict[str, Any]:
-        raise HTTPException(status_code=403, detail="order intents are disabled; this deployment is data-only")
+        try:
+            return ExecutionGateway(platform).preview(ctx, intent_id)
+        except ActionError as err:
+            _raise(err)
 
     @app.post("/execution/intents/{intent_id}/submit")
     def submit_order_intent(
@@ -210,7 +239,10 @@ def create_app() -> FastAPI:
         ctx: Ctx = Depends(get_ctx),
         platform: Platform = Depends(get_platform),
     ) -> dict[str, Any]:
-        raise HTTPException(status_code=403, detail="order intents are disabled; this deployment is data-only")
+        try:
+            return ExecutionGateway(platform).submit(ctx, intent_id)
+        except ActionError as err:
+            _raise(err)
 
     # ---- admin (operator-only; inert unless DOOMBERG_ADMIN_TOKEN is set) ----------------
     @app.post("/admin/tenants", status_code=201)
