@@ -36,7 +36,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -1509,6 +1509,14 @@ def create_app(db: Any | None = None) -> FastAPI:
         )
 
     # ---- serve the built web UI from the SAME backend (one LB for UI + API) -------------
+    @app.get("/auth/callback", include_in_schema=False)
+    def auth_callback_page() -> FileResponse:
+        dist = _web_dist_dir()
+        index = dist / "index.html" if dist is not None else None
+        if index is None or not index.is_file():
+            raise HTTPException(status_code=404, detail="web app not built")
+        return FileResponse(index)
+
     # Mounted LAST, so the explicit ``/api/*`` + ``/healthz`` routes above always win; the
     # SPA mount only catches everything else. ``html=True`` serves index.html for unknown
     # client-side routes. Skipped entirely when there is no build (tests / dev), so the

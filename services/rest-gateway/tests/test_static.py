@@ -25,6 +25,10 @@ def test_spa_served_and_api_precedence(tmp_path, db, monkeypatch):
         root = c.get("/")
         assert root.status_code == 200
         assert "doomberg" in root.text
+        # OAuth providers redirect to a real path before React takes over.
+        callback = c.get("/auth/callback")
+        assert callback.status_code == 200
+        assert "doomberg" in callback.text
         # A built asset is served.
         assert c.get("/assets/app.js").status_code == 200
         # /healthz still wins over the SPA mount.
