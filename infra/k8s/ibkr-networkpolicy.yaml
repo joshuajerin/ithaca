@@ -75,7 +75,10 @@ spec:
     # Caddy may reach the login/session port only while the temporary public
     # sign-in Caddy config is applied.
     - from:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: doomberg-gateway
+          podSelector:
             matchLabels:
               doomberg/component: caddy
       ports:
