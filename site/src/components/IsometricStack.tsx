@@ -6,8 +6,8 @@ import type { MotionValue } from "framer-motion";
  * platform's three layers. Pure CSS 3D transforms — no WebGL.
  *
  *   Data layer     (top)    — vetted market data the agent reasons over
- *   Deploy layer   (middle) — declarative specs run on trusted infra
- *   Observe layer  (bottom) — the replayable, audited event log / glass box
+ *   Deploy layer   (middle) — strategy and paper-trading state
+ *   Record layer   (bottom) — run history and evidence
  *
  * Controlled by scroll (or static, when `idle`):
  *   • `separation` (0..1): slabs sit stacked tight, then spread apart.
@@ -40,9 +40,9 @@ export default function IsometricStack({
       transition={idle ? { duration: 1, ease: [0.22, 1, 0.36, 1] } : undefined}
       className="relative mx-auto w-full max-w-[600px]"
     >
-      <EdgeLabel text="DATA LAYER" side="right" top="14%" focus={focus.top} />
-      <EdgeLabel text="DEPLOY LAYER" side="left" top="50%" focus={focus.mid} />
-      <EdgeLabel text="OBSERVE LAYER" side="right" top="86%" focus={focus.bot} />
+      <EdgeLabel text="DATA" side="right" top="14%" focus={focus.top} />
+      <EdgeLabel text="TRADES" side="left" top="50%" focus={focus.mid} />
+      <EdgeLabel text="RUNS" side="right" top="86%" focus={focus.bot} />
 
       <div
         className="relative mx-auto"
@@ -59,7 +59,7 @@ export default function IsometricStack({
             <Highlight />
           </Plane>
 
-          {/* MIDDLE — deploy / trusted infra */}
+          {/* MIDDLE — deploy */}
           <Plane zNear={ZNEAR.mid} zFar={ZFAR.mid} separation={separation} focus={focus.mid}>
             <div className="absolute inset-0 rounded-[30px] border border-line-strong bg-gradient-to-br from-cream to-sand-2 shadow-[0_34px_70px_-30px_rgba(24,23,15,0.42)]" />
             <PipeBars />
@@ -217,7 +217,7 @@ function PipeBars() {
   );
 }
 
-/* OBSERVE — green dots travelling along circuit paths (event log / glass box) */
+/* RECORD — green dots travelling along circuit paths */
 function ObserveDots() {
   // SVG paths for the dots to travel along
   const paths = [

@@ -43,7 +43,9 @@ export function App() {
   return (
     <div className="app">
       <aside className="rail">
-        <div className="rail-brand">Doomberg</div>
+        <Link className="rail-brand" to="/dashboard" title="Home">
+          Doomberg
+        </Link>
         <nav className="rail-nav">
           {NAV.map((n) => (
             <NavLink
