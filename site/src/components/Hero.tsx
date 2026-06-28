@@ -1,7 +1,7 @@
 import { motion, useMotionValue, useSpring, useTransform } from "framer-motion";
 import { useEffect, useState } from "react";
 import { EASE } from "../lib/motion";
-import { Badge, PillButton } from "./ui";
+import { PillButton } from "./ui";
 import IsometricStack from "./IsometricStack";
 import { APP_URL } from "../lib/links";
 
@@ -74,13 +74,9 @@ export default function Hero() {
           animate="show"
           className="text-center lg:text-left"
         >
-          <motion.div variants={item} className="flex justify-center lg:justify-start">
-            <Badge>Real exchange-grade data is live</Badge>
-          </motion.div>
-
           <motion.h1
             variants={item}
-            className="display mx-auto mt-6 max-w-[15ch] text-[2.6rem] leading-[1.0] text-ink sm:text-[3.2rem] lg:mx-0 lg:text-[4.2rem] lg:leading-[0.98]"
+            className="display mx-auto max-w-[15ch] text-[2.6rem] leading-[1.0] text-ink sm:text-[3.2rem] lg:mx-0 lg:text-[4.2rem] lg:leading-[0.98]"
           >
             The tool-platform for the agent economy
           </motion.h1>
