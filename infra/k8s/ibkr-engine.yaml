@@ -1,0 +1,231 @@
+# Dedicated IBKR stack.
+#
+# Keep the official Client Portal Gateway in its own Deployment so Doomberg
+# wrapper/app deploys can roll without restarting Java and losing the IBKR
+# authenticated brokerage session.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ibkr-client-portal-state
+  namespace: ${K8S_GATEWAY_NAMESPACE}
+  labels:
+    doomberg/component: ibkr-gateway
+    doomberg/environment: ${DOOMBERG_ENV}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: do-block-storage
+  resources:
+    requests:
+      storage: ${IBKR_ENGINE_STORAGE_SIZE}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ibkr-gateway
+  namespace: ${K8S_GATEWAY_NAMESPACE}
+  labels:
+    doomberg/component: ibkr-gateway
+    doomberg/environment: ${DOOMBERG_ENV}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      doomberg/component: ibkr-gateway
+  template:
+    metadata:
+      labels:
+        doomberg/component: ibkr-gateway
+        doomberg/environment: ${DOOMBERG_ENV}
+    spec:
+      terminationGracePeriodSeconds: 60
+      automountServiceAccountToken: false
+      nodeSelector:
+        workload: ${APP_NODE_WORKLOAD}
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: ${APP_NODE_WORKLOAD}
+          effect: NoSchedule
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: ibkr-client-portal-state
+        - name: logs
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      containers:
+        - name: ibkr-client-portal-gateway
+          image: ${IBKR_GATEWAY_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args: ["ibkr-gateway"]
+          ports:
+            - name: gateway
+              containerPort: 5000
+          env:
+            - name: CLIENT_PORTAL_STATE
+              value: /opt/clientportal/root
+            - name: JAVA_TOOL_OPTIONS
+              value: -Dvertx.cacheDirBase=/tmp/vertx-cache
+          readinessProbe:
+            tcpSocket: { port: 5000 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket: { port: 5000 }
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests: { cpu: "250m", memory: 512Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          volumeMounts:
+            - { name: state, mountPath: /opt/clientportal/root }
+            - { name: logs, mountPath: /opt/clientportal/logs }
+            - { name: tmp, mountPath: /tmp }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ibkr-gateway
+  namespace: ${K8S_GATEWAY_NAMESPACE}
+  labels:
+    doomberg/component: ibkr-gateway
+    doomberg/environment: ${DOOMBERG_ENV}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      doomberg/component: ibkr-gateway
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ibkr-client-portal
+  namespace: ${K8S_GATEWAY_NAMESPACE}
+  labels:
+    doomberg/component: ibkr-gateway
+    doomberg/environment: ${DOOMBERG_ENV}
+spec:
+  type: ClusterIP
+  selector:
+    doomberg/component: ibkr-gateway
+  ports:
+    - name: gateway
+      port: 5000
+      targetPort: 5000
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ibkr-engine
+  namespace: ${K8S_GATEWAY_NAMESPACE}
+  labels:
+    doomberg/component: ibkr-engine
+    doomberg/environment: ${DOOMBERG_ENV}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      doomberg/component: ibkr-engine
+  template:
+    metadata:
+      labels:
+        doomberg/component: ibkr-engine
+        doomberg/environment: ${DOOMBERG_ENV}
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        workload: ${APP_NODE_WORKLOAD}
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: ${APP_NODE_WORKLOAD}
+          effect: NoSchedule
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      containers:
+        - name: doomberg-ibkr-engine
+          image: ${IBKR_ENGINE_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args: ["ibkr-engine"]
+          ports:
+            - name: wrapper
+              containerPort: ${IBKR_ENGINE_PORT}
+          env:
+            - name: DOOMBERG_IBKR_ENGINE_PORT
+              value: "${IBKR_ENGINE_PORT}"
+            - name: IBKR_CLIENT_PORTAL_URL
+              value: https://ibkr-client-portal.${K8S_GATEWAY_NAMESPACE}.svc.cluster.local:5000/v1/api
+            - name: IBKR_CLIENT_PORTAL_VERIFY_SSL
+              value: "false"
+            - name: DOOMBERG_IBKR_ENGINE_TOKEN
+              valueFrom:
+                secretKeyRef: { name: ibkr-engine, key: engine_token }
+            - name: DOOMBERG_ENABLE_LIVE_EXECUTION
+              valueFrom:
+                secretKeyRef: { name: ibkr-engine, key: enable_live_execution }
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: ${IBKR_ENGINE_PORT}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: ${IBKR_ENGINE_PORT}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests: { cpu: "100m", memory: 192Mi }
+            limits: { cpu: "500m", memory: 512Mi }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ibkr-engine
+  namespace: ${K8S_GATEWAY_NAMESPACE}
+  labels:
+    doomberg/component: ibkr-engine
+    doomberg/environment: ${DOOMBERG_ENV}
+spec:
+  type: ClusterIP
+  selector:
+    doomberg/component: ibkr-engine
+  ports:
+    - name: wrapper
+      port: ${IBKR_ENGINE_PORT}
+      targetPort: ${IBKR_ENGINE_PORT}
+      protocol: TCP

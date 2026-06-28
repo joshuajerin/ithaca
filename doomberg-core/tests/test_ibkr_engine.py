@@ -197,6 +197,17 @@ def test_ibkr_read_models_are_redacted_and_account_scoped() -> None:
                 {"order_id": "100", "symbol": "AAPL", "status": "Submitted", "secret": "x"},
             ],
         },
+        "/v1/history?symbol=AAPL&period=1d&bar=5min": {
+            "symbol": "AAPL",
+            "points": [{"d": "2026-06-27T18:00:00+00:00", "c": 282.5}],
+        },
+        "/v1/news?limit=3&ticker=AAPL": {
+            "scope": "AAPL",
+            "items": [{"headline": "Apple moves higher", "source": "IBKR"}],
+        },
+        "/v1/scanner?scan_type=MOST_ACTIVE&limit=2": {
+            "rows": [{"symbol": "AAPL", "rank": 1}],
+        },
     }
     with _RouteServer(routes) as server:
         client = IbkrEngineClient(
@@ -205,19 +216,31 @@ def test_ibkr_read_models_are_redacted_and_account_scoped() -> None:
             accounts_path="/v1/accounts",
             positions_path="/v1/positions?account={account}",
             orders_path="/v1/orders?account={account}",
+            history_path="/v1/history?symbol={symbol}",
+            news_path="/v1/news",
+            scanner_path="/v1/scanner",
         )
 
         accounts = client.accounts(tenant_id="tenant-1")
         positions = client.positions(account="DU12345", tenant_id="tenant-1")
         orders = client.orders(account="DU12345", tenant_id="tenant-1")
+        history = client.history("aapl", tenant_id="tenant-1")
+        news = client.news(ticker="aapl", limit=3, tenant_id="tenant-1")
+        scanner = client.scanner(scan_type="MOST_ACTIVE", limit=2, tenant_id="tenant-1")
 
     assert accounts["accounts"] == [{"account_id": "DU12345", "type": "paper"}]
     assert positions["positions"] == [{"symbol": "AAPL", "quantity": 2}]
     assert orders["orders"] == [{"order_id": "100", "symbol": "AAPL", "status": "Submitted"}]
+    assert history["points"][0]["c"] == 282.5
+    assert news["items"][0]["source"] == "IBKR"
+    assert scanner["rows"][0]["symbol"] == "AAPL"
     assert [request["path"] for request in server.requests] == [
         "/v1/accounts",
         "/v1/positions?account=DU12345",
         "/v1/orders?account=DU12345",
+        "/v1/history?symbol=AAPL&period=1d&bar=5min",
+        "/v1/news?limit=3&ticker=AAPL",
+        "/v1/scanner?scan_type=MOST_ACTIVE&limit=2",
     ]
     assert {request["tenant"] for request in server.requests} == {"tenant-1"}
 

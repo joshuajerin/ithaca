@@ -38,7 +38,10 @@ replicas and one dev worker replica.
 - `worker-deployment.yaml` - conductor + trigger-engine.
 - `app-service.yaml` - NodePort service with env-specific ports.
 - `worker-networkpolicy.yaml` - default-deny worker namespace plus DNS, gateway, Postgres, and provider egress.
+- `ibkr-engine.yaml` - split IBKR Client Portal Gateway and Doomberg wrapper services.
+- `ibkr-networkpolicy.yaml` - limits the wrapper API to Doomberg app/workers and the login port to Caddy.
 - `caddy.yaml` - public HTTPS routing for prod and dev hostnames.
+- `caddy-ibkr-signin.yaml` - temporary public IBKR sign-in route; apply only with `IBKR_SIGNIN_PUBLIC=1`.
 - `pvc.yaml` - legacy SQLite state PVC retained for rollback/dev experiments; not applied by `deploy_services.sh`.
 
 The `doomberg-db` Secret is created in both the gateway and worker namespaces by
@@ -47,10 +50,21 @@ Set `DOOMBERG_PLATFORM_DB_URL` for the platform store and `DOOMBERG_ARCHIVE_URL`
 for archive reads. If `DOOMBERG_ARCHIVE_URL` is omitted, the deploy script uses
 the platform DSN for both.
 
-Set `DOOMBERG_IBKR_ENGINE_URL` (and optionally `DOOMBERG_IBKR_ENGINE_TOKEN` /
-`DOOMBERG_IBKR_QUOTE_PATH`) in the deploy environment to back live trigger quote
-evaluation with the user-run IBKR engine. Without a URL, the worker stays up but
-active live-data trigger evaluations will return provider errors until configured.
+Set `IBKR_ENGINE_ENABLED=1` to deploy the managed in-cluster IBKR engine. The
+Client Portal Java process runs as the dedicated `ibkr-gateway` Deployment and
+the normalized Doomberg API runs as the separate `ibkr-engine` Deployment. The
+deploy script defaults `DOOMBERG_IBKR_ENGINE_URL` to the internal `ibkr-engine`
+ClusterIP service and creates matching app/engine tokens. It also reuses the
+existing `ibkr-gateway` image unless `IBKR_GATEWAY_IMAGE` is explicitly set, so
+ordinary app/wrapper deploys do not restart Java and drop the IBKR authenticated
+session. Set `DOOMBERG_IBKR_ENGINE_URL` explicitly only when pointing Doomberg
+at an external engine. Without an engine URL, the worker stays up but active
+live-data trigger evaluations and IBKR MCP tools will return provider errors
+until configured.
+`IBKR_SIGNIN_PUBLIC=1` applies the temporary `IBKR_SIGNIN_HOST` sign-in route
+(`ibkr.doomberg.me` by default; an `sslip.io` host can be used if registrar DNS
+is unavailable). Deploy again with `IBKR_SIGNIN_PUBLIC=0` after customer login so
+only the cluster can reach the gateway/API.
 Run `ibkr-smoke --symbol AAPL --json` from the deployed image, or call
 `GET /api/ops/ibkr-smoke?symbol=AAPL`, to verify the read-only quote route,
 source, entitlement class, and freshness before enabling live-data triggers.
@@ -62,11 +76,17 @@ create/cancel, MCP resource scope denial, ops status, and provider smoke.
 With `--require-ibkr`, the trigger probe uses the configured IBKR engine; without
 it, local/offline checks use a static IBKR-shaped connected-account quote.
 
-The REST and control-plane containers also receive the IBKR order endpoint and
-execution safety knobs:
+The REST, control-plane, and MCP containers also receive the IBKR order endpoint
+and execution safety knobs:
 
 - `DOOMBERG_ENABLE_LIVE_EXECUTION` - must be `1` before the gateway will submit to IBKR.
 - `DOOMBERG_IBKR_ORDER_PATH` - default `/orders`.
+- `DOOMBERG_IBKR_HISTORY_PATH`, `DOOMBERG_IBKR_NEWS_PATH`, and
+  `DOOMBERG_IBKR_SCANNER_PATH` - live IBKR market-data endpoints for MCP
+  `market.get_ohlcv`, `market.news`, `market.movers`, and `market.screener`.
+- `DOOMBERG_IBKR_ACCOUNTS_PATH`, `DOOMBERG_IBKR_POSITIONS_PATH`, and
+  `DOOMBERG_IBKR_ORDERS_PATH` - optional read-model overrides for hosted MCP
+  `broker.accounts`, `broker.positions`, and `broker.orders`.
 - `DOOMBERG_EXECUTION_MAX_NOTIONAL_USD`, `DOOMBERG_EXECUTION_MAX_QUANTITY`,
   `DOOMBERG_EXECUTION_MAX_FRESHNESS_MS` - deterministic risk limits.
 

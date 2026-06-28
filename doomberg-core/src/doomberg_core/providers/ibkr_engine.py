@@ -217,6 +217,9 @@ class IbkrEngineClient:
         accounts_path: str | None = None,
         positions_path: str | None = None,
         orders_path: str | None = None,
+        history_path: str | None = None,
+        news_path: str | None = None,
+        scanner_path: str | None = None,
         timeout_s: float = 5.0,
     ) -> None:
         resolved_url = base_url if base_url is not None else os.environ.get("DOOMBERG_IBKR_ENGINE_URL")
@@ -235,6 +238,9 @@ class IbkrEngineClient:
             orders_path or os.environ.get("DOOMBERG_IBKR_ORDERS_PATH")
             or "/orders?account={account}"
         )
+        self.history_path = history_path or os.environ.get("DOOMBERG_IBKR_HISTORY_PATH") or "/history?symbol={symbol}"
+        self.news_path = news_path or os.environ.get("DOOMBERG_IBKR_NEWS_PATH") or "/news"
+        self.scanner_path = scanner_path or os.environ.get("DOOMBERG_IBKR_SCANNER_PATH") or "/scanner"
         self.timeout_s = float(timeout_s)
 
     @property
@@ -285,6 +291,62 @@ class IbkrEngineClient:
         if not isinstance(raw, dict):
             raise IbkrQuoteInvariantError(f"quote for {symbol.upper()} did not include a JSON object")
         return normalize_quote(raw, symbol=symbol, source="ibkr-engine")
+
+    def history(
+        self,
+        symbol: str,
+        *,
+        period: str = "1d",
+        bar: str = "5min",
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
+        url = self.url_for_path(self.history_path, symbol=symbol)
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}period={urllib.parse.quote(period)}&bar={urllib.parse.quote(bar)}"
+        raw = self._request_json(
+            "GET",
+            url,
+            tenant_id=tenant_id,
+            user_agent="doomberg-ibkr-history",
+        )
+        return raw if isinstance(raw, dict) else {"points": raw}
+
+    def news(
+        self,
+        *,
+        ticker: str | None = None,
+        limit: int = 10,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
+        url = self.url_for_path(self.news_path)
+        params = {"limit": str(limit)}
+        if ticker:
+            params["ticker"] = ticker.upper()
+        sep = "&" if "?" in url else "?"
+        raw = self._request_json(
+            "GET",
+            f"{url}{sep}{urllib.parse.urlencode(params)}",
+            tenant_id=tenant_id,
+            user_agent="doomberg-ibkr-news",
+        )
+        return raw if isinstance(raw, dict) else {"items": raw}
+
+    def scanner(
+        self,
+        *,
+        scan_type: str = "MOST_ACTIVE",
+        limit: int = 25,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
+        url = self.url_for_path(self.scanner_path)
+        sep = "&" if "?" in url else "?"
+        raw = self._request_json(
+            "GET",
+            f"{url}{sep}{urllib.parse.urlencode({'scan_type': scan_type, 'limit': str(limit)})}",
+            tenant_id=tenant_id,
+            user_agent="doomberg-ibkr-scanner",
+        )
+        return raw if isinstance(raw, dict) else {"rows": raw}
 
     def accounts(self, *, tenant_id: str | None = None) -> dict[str, Any]:
         """Return a redacted read-only account summary from the user-run IBKR engine."""

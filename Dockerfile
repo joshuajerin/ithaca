@@ -45,6 +45,7 @@ COPY services/mcp-gateway/pyproject.toml services/mcp-gateway/
 COPY services/control-plane/pyproject.toml services/control-plane/
 COPY services/rest-gateway/pyproject.toml services/rest-gateway/
 COPY services/runtime/pyproject.toml services/runtime/
+COPY services/ibkr-engine/pyproject.toml services/ibkr-engine/
 
 # 2) Resolve + install all third-party deps for every workspace package, against
 #    the frozen lockfile, WITHOUT the local packages (no source yet). Cached.

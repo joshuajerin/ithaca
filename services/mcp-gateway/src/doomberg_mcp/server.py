@@ -19,7 +19,7 @@ from doomberg_control.actions import ActionError
 from doomberg_control.deps import Ctx
 from doomberg_control.execution_gateway import ExecutionGateway, ExecutionPolicy
 from doomberg_core import ALL_SKILL_MANIFESTS, SKILLS, Core, SkillSet
-from doomberg_core.providers import IbkrEngineClient
+from doomberg_core.providers import IbkrEngineClient, IbkrEngineError
 
 from .trace import InMemoryTrace, PlatformTraceSink, Tracer
 
@@ -105,6 +105,14 @@ def _ibkr_skill_envelope(data: dict, *, as_of: str | None = None) -> dict:
         "partial": False,
         "warnings": [],
     }
+
+
+def _i(value, default: int, lo: int, hi: int) -> int:
+    try:
+        out = int(value)
+    except (TypeError, ValueError):
+        out = default
+    return max(lo, min(hi, out))
 
 
 class Toolset:
@@ -223,6 +231,30 @@ class Toolset:
                          _ctx: dict | None = None) -> dict:
         tr = self._tracer(_ctx)
         span = tr.tool_call("market.get_ohlcv", {"symbol": symbol, "range": range, "interval": interval})
+        ctx = dict(_ctx or {})
+        tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
+        client = IbkrEngineClient()
+        if client.configured():
+            try:
+                period, bar = self._ibkr_history_window(range, interval)
+                raw = client.history(symbol, period=period, bar=bar, tenant_id=tenant_id)
+                points = raw.get("points") or []
+                if points:
+                    out = _ibkr_skill_envelope(
+                        {
+                            "symbol": str(raw.get("symbol") or symbol).upper(),
+                            "points": points,
+                            "quote": raw.get("quote") or {},
+                            "provider": "ibkr-engine",
+                            "period": raw.get("period") or period,
+                            "bar": raw.get("bar") or bar,
+                        },
+                        as_of=(raw.get("quote") or {}).get("asOf") or points[-1].get("t") or points[-1].get("d"),
+                    )
+                    tr.tool_result("market.get_ohlcv", span, _provenance_summary(out))
+                    return out
+            except IbkrEngineError:
+                pass
         out = self.core.run_tool("market.get_ohlcv", {"symbol": symbol, "range": range, "interval": interval})
         tr.tool_result("market.get_ohlcv", span, _provenance_summary(out))
         return out
@@ -364,9 +396,86 @@ class Toolset:
             raise ValueError(f"unknown skill: {tool!r} (have {sorted(SKILLS)})")
         tr = self._tracer(_ctx)
         span = tr.tool_call(tool, params)
+        ctx = dict(_ctx or {})
+        tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
+        if tool in {"market.news", "market.movers", "market.screener"}:
+            try:
+                out = self._ibkr_live_skill(tool, params, tenant_id=tenant_id)
+                tr.tool_result(tool, span, _provenance_summary(out))
+                return out
+            except IbkrEngineError:
+                pass
         out = getattr(self.skills, method)(params)
         tr.tool_result(tool, span, _provenance_summary(out))
         return out
+
+    @staticmethod
+    def _ibkr_history_window(range_value: str, interval: str) -> tuple[str, str]:
+        interval_map = {
+            "1m": "1min",
+            "5m": "5min",
+            "15m": "15min",
+            "30m": "30min",
+            "1h": "1h",
+            "1d": "1d",
+            "day": "1d",
+            "daily": "1d",
+        }
+        return range_value or "1d", interval_map.get(str(interval or "").lower(), interval or "5min")
+
+    def _ibkr_live_skill(self, tool: str, params: dict, *, tenant_id: str) -> dict:
+        client = IbkrEngineClient()
+        if not client.configured():
+            raise IbkrEngineError("IBKR engine is not configured")
+        if tool == "market.news":
+            ticker = (params.get("ticker") or params.get("symbol") or "").strip().upper() or None
+            limit = _i(params.get("limit"), 10, 1, 50)
+            raw = client.news(ticker=ticker, limit=limit, tenant_id=tenant_id)
+            items = raw.get("items") or []
+            if not items:
+                raise IbkrEngineError("IBKR news returned no items")
+            pos = sum(1 for item in items if item.get("sentiment") == "positive")
+            neg = sum(1 for item in items if item.get("sentiment") == "negative")
+            data = {
+                "scope": raw.get("scope") or ticker or "Markets",
+                "items": items,
+                "count": len(items),
+                "sentimentMix": {"positive": pos, "negative": neg, "neutral": len(items) - pos - neg},
+                "asOf": raw.get("asOf") or items[0].get("publishedAt"),
+                "provider": "ibkr-engine",
+            }
+            return _ibkr_skill_envelope(data, as_of=data.get("asOf"))
+        if tool == "market.movers":
+            limit = _i(params.get("limit"), 25, 1, 100)
+            gainers = client.scanner(scan_type="TOP_PERC_GAIN", limit=max(5, limit), tenant_id=tenant_id).get("rows") or []
+            losers = client.scanner(scan_type="TOP_PERC_LOSE", limit=max(5, limit), tenant_id=tenant_id).get("rows") or []
+            active = client.scanner(scan_type="MOST_ACTIVE", limit=limit, tenant_id=tenant_id).get("rows") or []
+            if not (gainers or losers or active):
+                raise IbkrEngineError("IBKR scanner returned no rows")
+            cells = active or (gainers[: limit // 2] + losers[: limit // 2])
+            data = {
+                "title": "Live IBKR Market Movers",
+                "cells": cells[:limit],
+                "gainers": gainers[:5],
+                "losers": losers[:5],
+                "provider": "ibkr-engine",
+            }
+            return _ibkr_skill_envelope(data)
+        if tool == "market.screener":
+            limit = _i(params.get("limit"), 50, 1, 100)
+            raw = client.scanner(scan_type="MOST_ACTIVE", limit=limit, tenant_id=tenant_id)
+            rows = raw.get("rows") or []
+            if not rows:
+                raise IbkrEngineError("IBKR scanner returned no rows")
+            data = {
+                "title": "Live IBKR Most Active Screener",
+                "rows": rows,
+                "count": len(rows),
+                "provider": "ibkr-engine",
+                "asOf": raw.get("asOf"),
+            }
+            return _ibkr_skill_envelope(data, as_of=data.get("asOf"))
+        raise IbkrEngineError(f"IBKR live override is not available for {tool}")
 
     def search_skills(self, query: str = "", asset_class: str | None = None,
                       intent: str | None = None) -> dict:

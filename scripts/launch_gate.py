@@ -285,6 +285,14 @@ def _mcp_post_url(
         return Response(exc.code, exc.read(), dict(exc.headers.items()))
 
 
+def _header(headers: dict[str, str], name: str) -> str | None:
+    expected = name.lower()
+    for key, value in headers.items():
+        if key.lower() == expected:
+            return value
+    return None
+
+
 def _mcp_initialize(send, *, token: str) -> tuple[str | None, GateResult | None]:
     response = send(
         method="initialize",
@@ -302,7 +310,7 @@ def _mcp_initialize(send, *, token: str) -> tuple[str | None, GateResult | None]
             f"unexpected HTTP {response.status_code}",
             body=response.text[:500],
         )
-    session_id = response.headers.get("mcp-session-id")
+    session_id = _header(response.headers, "mcp-session-id")
     if not session_id:
         return None, _fail("mcp initialize", "MCP response did not include mcp-session-id")
     body = _mcp_json_from_text(response.text)
@@ -1340,26 +1348,43 @@ def _check_mcp_resources_local(db: Any, *, token: str, no_scope_token: str) -> l
 
     platform = Platform(db)
     toolset = Toolset(core=Core(), sink=PlatformTraceSink(platform.trace), runs=platform.runs, platform=platform)
-    app, _mcp, _ts = build_http_app(toolset=toolset, verifier=platform.auth)
+    previous_allowed_hosts = os.environ.get("DOOMBERG_MCP_ALLOWED_HOSTS")
+    allowed_hosts = [
+        h.strip()
+        for h in (previous_allowed_hosts or "").split(",")
+        if h.strip()
+    ]
+    for host in ("testserver", "testserver:80", "testserver:443"):
+        if host not in allowed_hosts:
+            allowed_hosts.append(host)
+    os.environ["DOOMBERG_MCP_ALLOWED_HOSTS"] = ",".join(allowed_hosts)
 
-    def send(
-        *,
-        method: str,
-        params: dict[str, Any] | None = None,
-        token: str | None = None,
-        session_id: str | None = None,
-        mid: int | None = 1,
-    ) -> Response:
-        body: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
-        if mid is not None:
-            body["id"] = mid
-        if params is not None:
-            body["params"] = params
-        raw = client.post("/mcp", headers=_mcp_headers(token=token, session_id=session_id), json=body)
-        return Response(raw.status_code, raw.content, dict(raw.headers))
+    try:
+        app, _mcp, _ts = build_http_app(toolset=toolset, verifier=platform.auth)
 
-    with TestClient(app) as client:
-        return _check_mcp_resources(send, token=token, no_scope_token=no_scope_token)
+        def send(
+            *,
+            method: str,
+            params: dict[str, Any] | None = None,
+            token: str | None = None,
+            session_id: str | None = None,
+            mid: int | None = 1,
+        ) -> Response:
+            body: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+            if mid is not None:
+                body["id"] = mid
+            if params is not None:
+                body["params"] = params
+            raw = client.post("/mcp", headers=_mcp_headers(token=token, session_id=session_id), json=body)
+            return Response(raw.status_code, raw.content, dict(raw.headers))
+
+        with TestClient(app) as client:
+            return _check_mcp_resources(send, token=token, no_scope_token=no_scope_token)
+    finally:
+        if previous_allowed_hosts is None:
+            os.environ.pop("DOOMBERG_MCP_ALLOWED_HOSTS", None)
+        else:
+            os.environ["DOOMBERG_MCP_ALLOWED_HOSTS"] = previous_allowed_hosts
 
 
 def _run_local(args: argparse.Namespace) -> list[GateResult]:

@@ -1,0 +1,101 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ibkr-engine-ingress-egress
+  namespace: ${K8S_GATEWAY_NAMESPACE}
+  labels:
+    doomberg/component: ibkr-engine
+    doomberg/environment: ${DOOMBERG_ENV}
+spec:
+  podSelector:
+    matchLabels:
+      doomberg/component: ibkr-engine
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    # Doomberg app/MCP/control-plane may call the normalized wrapper API.
+    - from:
+        - podSelector:
+            matchLabels:
+              doomberg/component: app
+      ports:
+        - protocol: TCP
+          port: ${IBKR_ENGINE_PORT}
+    # Worker trigger smokes and trigger-engine may call the normalized wrapper API.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              doomberg/role: workers
+              doomberg/environment: ${DOOMBERG_ENV}
+          podSelector:
+            matchLabels:
+              doomberg/component: worker
+      ports:
+        - protocol: TCP
+          port: ${IBKR_ENGINE_PORT}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              doomberg/component: ibkr-gateway
+      ports:
+        - protocol: TCP
+          port: 5000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ibkr-gateway-ingress-egress
+  namespace: ${K8S_GATEWAY_NAMESPACE}
+  labels:
+    doomberg/component: ibkr-gateway
+    doomberg/environment: ${DOOMBERG_ENV}
+spec:
+  podSelector:
+    matchLabels:
+      doomberg/component: ibkr-gateway
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    # Only the Doomberg wrapper can call the private Client Portal API.
+    - from:
+        - podSelector:
+            matchLabels:
+              doomberg/component: ibkr-engine
+      ports:
+        - protocol: TCP
+          port: 5000
+    # Caddy may reach the login/session port only while the temporary public
+    # sign-in Caddy config is applied.
+    - from:
+        - podSelector:
+            matchLabels:
+              doomberg/component: caddy
+      ports:
+        - protocol: TCP
+          port: 5000
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443

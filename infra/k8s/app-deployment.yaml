@@ -169,9 +169,30 @@ spec:
             - name: DOOMBERG_IBKR_ENGINE_TOKEN
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: ibkr_engine_token, optional: true }
+            - name: DOOMBERG_IBKR_QUOTE_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_quote_path, optional: true }
+            - name: DOOMBERG_IBKR_HISTORY_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_history_path, optional: true }
+            - name: DOOMBERG_IBKR_NEWS_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_news_path, optional: true }
+            - name: DOOMBERG_IBKR_SCANNER_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_scanner_path, optional: true }
             - name: DOOMBERG_IBKR_ORDER_PATH
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: ibkr_order_path, optional: true }
+            - name: DOOMBERG_IBKR_ACCOUNTS_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_accounts_path, optional: true }
+            - name: DOOMBERG_IBKR_POSITIONS_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_positions_path, optional: true }
+            - name: DOOMBERG_IBKR_ORDERS_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_orders_path, optional: true }
           readinessProbe:
             httpGet:
               path: /healthz
@@ -238,9 +259,30 @@ spec:
             - name: DOOMBERG_IBKR_ENGINE_TOKEN
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: ibkr_engine_token, optional: true }
+            - name: DOOMBERG_IBKR_QUOTE_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_quote_path, optional: true }
+            - name: DOOMBERG_IBKR_HISTORY_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_history_path, optional: true }
+            - name: DOOMBERG_IBKR_NEWS_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_news_path, optional: true }
+            - name: DOOMBERG_IBKR_SCANNER_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_scanner_path, optional: true }
             - name: DOOMBERG_IBKR_ORDER_PATH
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: ibkr_order_path, optional: true }
+            - name: DOOMBERG_IBKR_ACCOUNTS_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_accounts_path, optional: true }
+            - name: DOOMBERG_IBKR_POSITIONS_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_positions_path, optional: true }
+            - name: DOOMBERG_IBKR_ORDERS_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_orders_path, optional: true }
           readinessProbe:
             httpGet: { path: /healthz, port: 8001 }
             initialDelaySeconds: 5
@@ -292,6 +334,48 @@ spec:
             - name: FMP_API_KEY
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: fmp_api_key, optional: true }
+            - name: DOOMBERG_ENABLE_LIVE_EXECUTION
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: enable_live_execution, optional: true }
+            - name: DOOMBERG_EXECUTION_MAX_NOTIONAL_USD
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: execution_max_notional_usd, optional: true }
+            - name: DOOMBERG_EXECUTION_MAX_QUANTITY
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: execution_max_quantity, optional: true }
+            - name: DOOMBERG_EXECUTION_MAX_FRESHNESS_MS
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: execution_max_freshness_ms, optional: true }
+            - name: DOOMBERG_IBKR_ENGINE_URL
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_engine_url, optional: true }
+            - name: DOOMBERG_IBKR_ENGINE_TOKEN
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_engine_token, optional: true }
+            - name: DOOMBERG_IBKR_QUOTE_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_quote_path, optional: true }
+            - name: DOOMBERG_IBKR_HISTORY_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_history_path, optional: true }
+            - name: DOOMBERG_IBKR_NEWS_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_news_path, optional: true }
+            - name: DOOMBERG_IBKR_SCANNER_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_scanner_path, optional: true }
+            - name: DOOMBERG_IBKR_ORDER_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_order_path, optional: true }
+            - name: DOOMBERG_IBKR_ACCOUNTS_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_accounts_path, optional: true }
+            - name: DOOMBERG_IBKR_POSITIONS_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_positions_path, optional: true }
+            - name: DOOMBERG_IBKR_ORDERS_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_orders_path, optional: true }
           readinessProbe:
             tcpSocket: { port: 8080 }
             initialDelaySeconds: 5

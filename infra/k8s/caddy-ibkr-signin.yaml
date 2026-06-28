@@ -1,0 +1,141 @@
+# Temporary Caddy config for IBKR customer sign-in.
+# Apply only with IBKR_SIGNIN_PUBLIC=1. Re-run deploy without that flag after
+# /auth/status is authenticated so the sign-in host is removed from public ingress.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: caddy-config
+  namespace: doomberg-gateway
+data:
+  Caddyfile: |
+    {
+      http_port 8080
+      https_port 8443
+      email admin@doomberg.me
+    }
+
+    mcp.doomberg.me {
+      reverse_proxy doomberg-app.doomberg-gateway.svc.cluster.local:8080 {
+        flush_interval -1
+        transport http {
+          read_timeout 1h
+          write_timeout 1h
+        }
+      }
+    }
+
+    app.doomberg.me {
+      reverse_proxy doomberg-app.doomberg-gateway.svc.cluster.local:8000
+    }
+
+    ${IBKR_SIGNIN_HOST} {
+      @signin_allowed remote_ip ${IBKR_SIGNIN_REMOTE_IPS}
+      handle @signin_allowed {
+        reverse_proxy https://ibkr-client-portal.doomberg-gateway.svc.cluster.local:5000 {
+          header_up Host 127.0.0.1:5000
+          header_up X-Forwarded-For 127.0.0.1
+          header_up X-Real-IP 127.0.0.1
+          transport http {
+            tls_insecure_skip_verify
+          }
+        }
+      }
+      respond "IBKR sign-in window is closed or not allowed from this IP." 403
+    }
+
+    dev-mcp.doomberg.me {
+      reverse_proxy doomberg-app.doomberg-dev-gateway.svc.cluster.local:8080 {
+        flush_interval -1
+        transport http {
+          read_timeout 1h
+          write_timeout 1h
+        }
+      }
+    }
+
+    dev-app.doomberg.me {
+      reverse_proxy doomberg-app.doomberg-dev-gateway.svc.cluster.local:8000
+    }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: caddy-data
+  namespace: doomberg-gateway
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: do-block-storage
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caddy
+  namespace: doomberg-gateway
+  labels:
+    doomberg/component: caddy
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      doomberg/component: caddy
+  template:
+    metadata:
+      labels:
+        doomberg/component: caddy
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        workload: paper
+      securityContext:
+        fsGroup: 1000
+      volumes:
+        - name: config
+          configMap:
+            name: caddy-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: caddy-data
+        - name: xdg-config
+          emptyDir: {}
+      containers:
+        - name: caddy
+          image: caddy:2.10
+          args: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: https, containerPort: 8443 }
+          env:
+            - { name: XDG_DATA_HOME, value: /data }
+            - { name: XDG_CONFIG_HOME, value: /config }
+          volumeMounts:
+            - { name: config, mountPath: /etc/caddy }
+            - { name: data, mountPath: /data }
+            - { name: xdg-config, mountPath: /config }
+          resources:
+            requests: { cpu: "50m", memory: 96Mi }
+            limits: { cpu: "500m", memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: caddy
+  namespace: doomberg-gateway
+  labels:
+    doomberg/component: caddy
+  annotations:
+    service.beta.kubernetes.io/do-loadbalancer-protocol: "tcp"
+    service.beta.kubernetes.io/do-loadbalancer-healthcheck-protocol: "tcp"
+    service.beta.kubernetes.io/do-loadbalancer-healthcheck-port: "8080"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    doomberg/component: caddy
+  ports:
+    - { name: http, port: 80, targetPort: 8080, protocol: TCP }
+    - { name: https, port: 443, targetPort: 8443, protocol: TCP }

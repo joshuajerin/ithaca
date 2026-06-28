@@ -86,7 +86,7 @@ uv run --package doomberg-rest-gateway  uvicorn doomberg_rest.app:app   --port 8
 uv run python scripts/run_workers.py
 
 # trigger engine: polls active trigger policies and creates durable runs.
-# For live quotes, point it at the user-run IBKR engine on the VPS.
+# For local live quotes, point it at an IBKR engine.
 export DOOMBERG_IBKR_ENGINE_URL=https://your-ibkr-engine.example.com
 export DOOMBERG_IBKR_ENGINE_TOKEN=replace-with-bearer-token   # optional if the VPS is otherwise private
 # Optional when the VPS does not expose GET /quote?symbol=NVDA.
@@ -127,7 +127,11 @@ checks.
 
 In Kubernetes, `deploy/deploy_services.sh` creates the same `doomberg-db` Secret in the gateway and worker
 namespaces. `doomberg-app` runs `rest-gateway`, `control-plane`, and hosted HTTP MCP; `doomberg-workers`
-runs the active queue/paper/trigger loops against the same Postgres store.
+runs the active queue/paper/trigger loops against the same Postgres store. With `IBKR_ENGINE_ENABLED=1`, the
+deploy script also runs the managed IBKR Client Portal Gateway wrapper and points Doomberg at the internal
+`ibkr-engine` service. `IBKR_SIGNIN_PUBLIC=1` opens a temporary `https://ibkr.doomberg.me/` sign-in route;
+set `IBKR_SIGNIN_HOST` to an `sslip.io` hostname if the `doomberg.me` DNS record is not available. Deploy
+again with `IBKR_SIGNIN_PUBLIC=0` after authentication so only the cluster-internal service remains.
 
 The implemented skill catalog is contract-backed by `doomberg_core.skills.ALL_SKILL_MANIFESTS`.
 MCP `search_skills` and `describe_skill` read those manifests, while `run_skill` still only

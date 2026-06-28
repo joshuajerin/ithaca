@@ -43,6 +43,17 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
+              doomberg/role: data-gateway
+              doomberg/environment: ${DOOMBERG_ENV}
+          podSelector:
+            matchLabels:
+              doomberg/component: ibkr-engine
+      ports:
+        - protocol: TCP
+          port: ${IBKR_ENGINE_PORT}
+    - to:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: kube-system
       ports:
         - protocol: UDP

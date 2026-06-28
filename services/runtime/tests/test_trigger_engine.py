@@ -95,7 +95,7 @@ def test_trigger_engine_fires_quote_run_and_cooldown_blocks_repeat(durable_platf
 def test_trigger_engine_run_forever_requires_leadership(durable_platform, monkeypatch):
     tenant = durable_platform.auth.create_tenant("trigger tenant")
     now = dt.datetime(2026, 6, 24, 13, 30, tzinfo=dt.timezone.utc)
-    _active_trigger(durable_platform, tenant, _policy())
+    _active_trigger(durable_platform, tenant, _policy(cooldown="9999d"))
     quote_client = StaticQuoteClient({"NVDA": _quote(now)})
     monkeypatch.setenv("DOOMBERG_TRIGGER_LEASE_TTL_S", "30")
 

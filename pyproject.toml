@@ -10,6 +10,7 @@ members = [
     "services/control-plane",
     "services/rest-gateway",
     "services/runtime",
+    "services/ibkr-engine",
 ]
 
 [tool.ruff]
@@ -29,4 +30,5 @@ testpaths = [
     "services/platform/tests",
     "services/rest-gateway/tests",
     "services/runtime/tests",
+    "services/ibkr-engine/tests",
 ]

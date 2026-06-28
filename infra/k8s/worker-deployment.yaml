@@ -173,6 +173,15 @@ spec:
             - name: DOOMBERG_IBKR_QUOTE_PATH
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: ibkr_quote_path, optional: true }
+            - name: DOOMBERG_IBKR_HISTORY_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_history_path, optional: true }
+            - name: DOOMBERG_IBKR_NEWS_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_news_path, optional: true }
+            - name: DOOMBERG_IBKR_SCANNER_PATH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: ibkr_scanner_path, optional: true }
           resources:
             requests: { cpu: "100m", memory: 192Mi }
             limits: { cpu: "500m", memory: 512Mi }

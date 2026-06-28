@@ -237,11 +237,55 @@ loops use the platform `worker_leases` table, so only one worker replica owns
 each singleton loop at a time; if the owner dies, another replica takes over
 after the lease TTL.
 
-For connected-account live trigger quotes, set:
+For connected-account live trigger quotes, use the managed in-cluster IBKR engine
+by default:
+
+```bash
+./deploy/build_ibkr_engine.sh "${IMAGE_TAG}"
+IBKR_ENGINE_ENABLED=1 DEPLOY_ENV=prod IMAGE_TAG="${IMAGE_TAG}" ./deploy/deploy_services.sh
+```
+
+When `IBKR_ENGINE_ENABLED=1`, `deploy/deploy_services.sh` defaults the app,
+workers, REST, control-plane, and MCP to the internal engine service:
+
+```bash
+http://ibkr-engine.doomberg-gateway.svc.cluster.local:8090
+```
+
+The customer sign-in URL is temporary. Open it only for the sign-in window, then
+deploy again without the flag to remove the public broker surface:
+
+```bash
+# Optional: restrict the temporary sign-in route to a known IP/CIDR.
+IBKR_SIGNIN_PUBLIC=1 \
+IBKR_SIGNIN_HOST=ibkr.doomberg.me \
+IBKR_SIGNIN_REMOTE_IPS="203.0.113.10/32" \
+IBKR_ENGINE_ENABLED=1 \
+DEPLOY_ENV=prod \
+IMAGE_TAG="${IMAGE_TAG}" \
+./deploy/deploy_services.sh
+
+dig +short ibkr.doomberg.me A
+open https://ibkr.doomberg.me/
+
+# After the customer signs in, verify the session from inside the cluster.
+kubectl -n doomberg-gateway exec deploy/ibkr-engine -c doomberg-ibkr-engine -- \
+  sh -lc 'curl -fsS -H "Authorization: Bearer ${DOOMBERG_IBKR_ENGINE_TOKEN}" http://127.0.0.1:8090/auth/status'
+
+# Close the public route. Doomberg keeps using the internal ClusterIP service.
+IBKR_SIGNIN_PUBLIC=0 IBKR_ENGINE_ENABLED=1 DEPLOY_ENV=prod IMAGE_TAG="${IMAGE_TAG}" ./deploy/deploy_services.sh
+curl -I https://ibkr.doomberg.me/ || true
+```
+
+If `ibkr.doomberg.me` is not available in DNS, set `IBKR_SIGNIN_HOST` to a
+temporary hostname that already resolves to the Caddy LoadBalancer, for example
+`ibkr.129.212.135.120.sslip.io`, and remove it after authentication the same way.
+
+If you must point Doomberg at an external engine instead, set:
 
 ```bash
 export DOOMBERG_IBKR_ENGINE_URL=https://your-ibkr-vps.example.com
-export DOOMBERG_IBKR_ENGINE_TOKEN=...        # optional
+export DOOMBERG_IBKR_ENGINE_TOKEN=...        # optional if the endpoint is private
 export DOOMBERG_IBKR_QUOTE_PATH=/quote?symbol={symbol}  # optional
 export DOOMBERG_IBKR_SMOKE_MAX_FRESHNESS_MS=60000        # optional live-session gate
 ```
@@ -304,9 +348,9 @@ If `DOOMBERG_ENABLE_LIVE_EXECUTION=1` is set without `DOOMBERG_IBKR_ENGINE_URL`,
 requires a connected provider row with order/trading capability for live broker
 intents, and human submission remains the only path from intent to order.
 
-If `DOOMBERG_IBKR_ENGINE_URL` is unset, the trigger worker still deploys and
-idles, but active live-data policies will emit provider errors until the VPS URL
-is configured.
+If `IBKR_ENGINE_ENABLED=0` and `DOOMBERG_IBKR_ENGINE_URL` is unset, the trigger
+worker still deploys and idles, but active live-data policies will emit provider
+errors until an engine URL is configured.
 
 ```bash
 # Public ingress IP for DNS:

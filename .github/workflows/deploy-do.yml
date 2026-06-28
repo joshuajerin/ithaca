@@ -95,6 +95,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: IBKR engine image build smoke
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.ibkr-engine
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: doomberg-ibkr-engine:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Service role smoke
         run: |
           set -euo pipefail
@@ -108,6 +120,8 @@ jobs:
           sleep 5
           docker logs "$cid" | grep -q "doomberg trigger engine up"
           docker rm -f "$cid"
+          docker run --rm doomberg-ibkr-engine:ci python -c \
+            'import doomberg_ibkr_engine; print("ibkr engine imports OK")'
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -166,6 +180,17 @@ jobs:
             VITE_OAUTH_REDIRECT=https://${{ vars.APP_HOST }}/auth/callback
             VITE_API_BASE=/api
 
+      - name: Build and push immutable IBKR engine image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.ibkr-engine
+          platforms: linux/amd64
+          push: true
+          tags: registry.digitalocean.com/${{ env.REGISTRY_NAME }}/doomberg-ibkr-engine:${{ needs.classify.outputs.image_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   deploy:
     name: deploy to ${{ needs.classify.outputs.deploy_env }}
     runs-on: ubuntu-latest
@@ -206,6 +231,7 @@ jobs:
             echo "APP_HOST=${APP_HOST}"
             echo "MCP_HOST=${MCP_HOST}"
             echo "WORKER_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-doomberg}/doomberg:${IMAGE_TAG}"
+            echo "IBKR_ENGINE_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-doomberg}/doomberg-ibkr-engine:${IMAGE_TAG}"
           } >> "${GITHUB_ENV}"
 
       - name: Ref freshness guard
@@ -234,6 +260,14 @@ jobs:
           DOOMBERG_IBKR_ENGINE_URL: ${{ vars.DOOMBERG_IBKR_ENGINE_URL }}
           DOOMBERG_IBKR_ENGINE_TOKEN: ${{ secrets.DOOMBERG_IBKR_ENGINE_TOKEN }}
           DOOMBERG_IBKR_QUOTE_PATH: ${{ vars.DOOMBERG_IBKR_QUOTE_PATH }}
+          DOOMBERG_IBKR_ACCOUNTS_PATH: ${{ vars.DOOMBERG_IBKR_ACCOUNTS_PATH }}
+          DOOMBERG_IBKR_POSITIONS_PATH: ${{ vars.DOOMBERG_IBKR_POSITIONS_PATH }}
+          DOOMBERG_IBKR_ORDERS_PATH: ${{ vars.DOOMBERG_IBKR_ORDERS_PATH }}
+          DOOMBERG_IBKR_ORDER_PATH: ${{ vars.DOOMBERG_IBKR_ORDER_PATH }}
+          DOOMBERG_ENABLE_LIVE_EXECUTION: ${{ vars.DOOMBERG_ENABLE_LIVE_EXECUTION }}
+          DOOMBERG_EXECUTION_MAX_NOTIONAL_USD: ${{ vars.DOOMBERG_EXECUTION_MAX_NOTIONAL_USD }}
+          DOOMBERG_EXECUTION_MAX_QUANTITY: ${{ vars.DOOMBERG_EXECUTION_MAX_QUANTITY }}
+          DOOMBERG_EXECUTION_MAX_FRESHNESS_MS: ${{ vars.DOOMBERG_EXECUTION_MAX_FRESHNESS_MS }}
         run: bash deploy/deploy_services.sh
 
       - name: HTTP health checks
@@ -243,6 +277,35 @@ jobs:
           curl -fsS --retry 6 --retry-delay 5 "https://${APP_HOST}/healthz"
           code="$(curl -sS -o /tmp/doomberg-mcp-response.txt -w "%{http_code}" "https://${MCP_HOST}/mcp")"
           test "${code}" = "401"
+
+      - name: Customer launch gate
+        shell: bash
+        env:
+          DOOMBERG_SMOKE_API_KEY: ${{ secrets.DOOMBERG_SMOKE_API_KEY }}
+          DOOMBERG_SMOKE_NO_SCOPE_API_KEY: ${{ secrets.DOOMBERG_SMOKE_NO_SCOPE_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOOMBERG_SMOKE_API_KEY}" ]]; then
+            if [[ "${DEPLOY_ENV}" == "prod" ]]; then
+              echo "ERROR: prod requires DOOMBERG_SMOKE_API_KEY for authenticated launch-gate checks" >&2
+              exit 1
+            fi
+            echo "WARN: skipping authenticated launch gate; DOOMBERG_SMOKE_API_KEY is unset" >&2
+            exit 0
+          fi
+          kubectl -n "${K8S_GATEWAY_NAMESPACE}" exec deploy/doomberg-app -c mcp-gateway -- \
+            env \
+              DOOMBERG_API_KEY="${DOOMBERG_SMOKE_API_KEY}" \
+              DOOMBERG_MCP_NO_SCOPE_API_KEY="${DOOMBERG_SMOKE_NO_SCOPE_API_KEY}" \
+              /opt/venv/bin/python scripts/launch_gate.py \
+                --mode http \
+                --base-url "https://${APP_HOST}" \
+                --mcp-url "https://${MCP_HOST}/mcp" \
+                --require-postgres \
+                --require-active-worker \
+                --require-ibkr \
+                --require-mcp \
+                --json
 
   mark-latest:
     name: mark prod latest
@@ -271,3 +334,6 @@ jobs:
           docker buildx imagetools create \
             -t "registry.digitalocean.com/${REGISTRY_NAME}/doomberg:latest" \
             "registry.digitalocean.com/${REGISTRY_NAME}/doomberg:${{ needs.classify.outputs.image_tag }}"
+          docker buildx imagetools create \
+            -t "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:latest" \
+            "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:${{ needs.classify.outputs.image_tag }}"
