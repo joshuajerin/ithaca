@@ -1,6 +1,7 @@
 import { SignIn, SignUp } from "@clerk/react";
 import { useState } from "react";
 import { DoombergMark } from "../auth/icons";
+import { legalUrl } from "../lib/legal";
 
 export function AuthPage() {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
@@ -37,6 +38,18 @@ export function AuthPage() {
         ) : (
           <SignUp routing="hash" signInUrl="#/sign-in" />
         )}
+
+        <p className="auth-consent">
+          By continuing you agree to our{" "}
+          <a href={legalUrl("terms")} target="_blank" rel="noopener noreferrer">
+            Terms
+          </a>{" "}
+          and{" "}
+          <a href={legalUrl("privacy")} target="_blank" rel="noopener noreferrer">
+            Privacy Policy
+          </a>
+          .
+        </p>
       </div>
 
       <div className="auth-foot">

@@ -1,25 +1,16 @@
-import Nav from "./components/Nav";
-import Hero from "./components/Hero";
-import Marquee from "./components/Marquee";
-// import HowItWorks from "./components/HowItWorks"; // layers moved into Hero (right side)
-import FeatureSections from "./components/FeatureSections";
-import Trust from "./components/Trust";
-import CTA from "./components/CTA";
-import Footer from "./components/Footer";
+import { Navigate, Route, Routes } from "react-router-dom";
+import Landing from "./Landing";
+import LegalPage from "./legal/LegalPage";
+import { LEGAL_DOCS } from "./legal/registry";
 
 export default function App() {
   return (
-    <div className="relative min-h-screen bg-paper">
-      <Nav />
-      <main>
-        <Hero />
-        <Marquee />
-        {/* <HowItWorks /> — layers animation moved into the Hero (right side) */}
-        <FeatureSections />
-        <Trust />
-        <CTA />
-      </main>
-      <Footer />
-    </div>
+    <Routes>
+      <Route path="/" element={<Landing />} />
+      {LEGAL_DOCS.map((doc) => (
+        <Route key={doc.slug} path={`/${doc.slug}`} element={<LegalPage slug={doc.slug} />} />
+      ))}
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }
