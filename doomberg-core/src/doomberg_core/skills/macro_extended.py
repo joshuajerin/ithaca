@@ -630,12 +630,12 @@ class MacroExtendedSkills:
             try:
                 rows = self.archive._rows(  # type: ignore[attr-defined]
                     """
-                    SELECT ticker, trade_date, close, volume
+                    SELECT symbol AS ticker, d AS trade_date, c AS close, v AS volume
                     FROM archive.ohlcv
-                    WHERE trade_date >= CURRENT_DATE - INTERVAL %s
-                    ORDER BY ticker, trade_date
+                    WHERE d >= CURRENT_DATE - (%s::int * INTERVAL '1 day')
+                    ORDER BY symbol, d
                     """,
-                    (f"{needed_days} days",),
+                    (needed_days,),
                 )
             except Exception as exc:  # noqa: BLE001
                 warnings.append(warn("MARKET_TIDE_QUERY_ERROR", detail=str(exc)[:200]))

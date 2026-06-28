@@ -262,6 +262,33 @@ def test_risk_stress_needs_shocks(skills):
         skills.risk_stress({"exposures": {"Market": 1.0}})
 
 
+# ----------------------------- market.tide -----------------------------
+def test_market_tide_fallback_uses_postgres_safe_interval():
+    class RowsOnlyArchive:
+        def __init__(self):
+            self.calls = []
+
+        def _rows(self, sql, params):
+            self.calls.append((sql, params))
+            return [
+                {"ticker": "AAA", "trade_date": "2024-01-01", "close": 100.0, "volume": 1000.0},
+                {"ticker": "AAA", "trade_date": "2024-01-02", "close": 110.0, "volume": 1200.0},
+                {"ticker": "BBB", "trade_date": "2024-01-01", "close": 100.0, "volume": 900.0},
+                {"ticker": "BBB", "trade_date": "2024-01-02", "close": 90.0, "volume": 800.0},
+            ]
+
+    archive = RowsOnlyArchive()
+    out = SkillSet(archive).market_tide({"lookback": 5})
+
+    sql, params = archive.calls[0]
+    assert "INTERVAL %s" not in sql
+    assert "%s::int * INTERVAL '1 day'" in sql
+    assert params == (205,)
+    assert out["warnings"] == []
+    assert out["data"]["advancing"] == 1
+    assert out["data"]["declining"] == 1
+
+
 # ----------------------------- tearsheet -----------------------------
 def test_tearsheet_runs_backtest_over_archive(skills):
     out = skills.tearsheet({"symbol": "LONG", "strategy": "buy_and_hold"})

@@ -1022,6 +1022,8 @@ def _build_archive():
     url = os.environ.get("DOOMBERG_ARCHIVE_URL") or os.environ.get("DOOMBERG_DB")
     if not url:
         return None
+    if not url.startswith(("postgres://", "postgresql://")):
+        return None
     try:
         # PgArchiveGateway is the CONCRETE psycopg gateway; ArchiveGateway is just the
         # Protocol (not constructible). Construct the concrete one against the archive DSN.

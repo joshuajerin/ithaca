@@ -169,6 +169,15 @@ def test_skills_degrade_without_archive():
     assert [e["type"] for e in ts.sink.events(R)] == ["tool_call", "tool_result"]
 
 
+def test_local_sqlite_db_is_not_reused_as_postgres_archive(monkeypatch):
+    from doomberg_mcp.server import _build_archive
+
+    monkeypatch.delenv("DOOMBERG_ARCHIVE_URL", raising=False)
+    monkeypatch.setenv("DOOMBERG_DB", "./doomberg.db")
+
+    assert _build_archive() is None
+
+
 def test_progressive_skill_discovery_uses_manifest_catalog(archive_toolset):
     out = archive_toolset.search_skills(query="options")
     ids = {row["skill_id"] for row in out["skills"]}
