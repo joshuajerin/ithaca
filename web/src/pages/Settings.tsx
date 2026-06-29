@@ -2,14 +2,14 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../api";
 
-const SCOPES: { id: string; label: string }[] = [
-  { id: "data:read", label: "Read market data" },
-  { id: "strategy:author", label: "Author strategies" },
-  { id: "runs:write", label: "Create runs" },
-  { id: "runs:cancel", label: "Cancel runs" },
-  { id: "approvals:read", label: "Read approvals" },
-  { id: "artifacts:read", label: "Read artifacts" },
-  { id: "deploy:backtest", label: "Run backtests" },
+const SCOPES: { id: string; label: string; desc: string }[] = [
+  { id: "data:read",       label: "Read market data",   desc: "Access live and historical price feeds" },
+  { id: "strategy:author", label: "Author strategies",  desc: "Create and edit strategy definitions" },
+  { id: "runs:write",      label: "Create runs",        desc: "Trigger backtests and live sessions" },
+  { id: "runs:cancel",     label: "Cancel runs",        desc: "Halt in-flight sessions" },
+  { id: "approvals:read",  label: "Read approvals",     desc: "Inspect approval queues" },
+  { id: "artifacts:read",  label: "Read artifacts",     desc: "Download backtest artifacts" },
+  { id: "deploy:backtest", label: "Run backtests",      desc: "Execute backtest pipelines" },
 ];
 
 type KeyRow = { key_id: string; scopes: string[]; created_at: string; revoked: boolean };
@@ -19,9 +19,18 @@ function fmtDate(v: string | number): string {
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString();
 }
 
+function SearchIcon() {
+  return (
+    <svg className="searchbar-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+      <circle cx="6.5" cy="6.5" r="4" /><line x1="10" y1="10" x2="14" y2="14" />
+    </svg>
+  );
+}
+
 export function Settings() {
   const { user, manageAccount, signOut } = useAuth();
 
+  const [query, setQuery] = useState("");
   const [keys, setKeys] = useState<KeyRow[]>([]);
   const [loadingKeys, setLoadingKeys] = useState(true);
   const [keysError, setKeysError] = useState<string | null>(null);
@@ -39,16 +48,14 @@ export function Settings() {
       if (isUnauthorized(e)) {
         setKeys([]);
       } else {
-        setKeysError("Could not update keys.");
+        setKeysError("Could not load keys.");
       }
     } finally {
       setLoadingKeys(false);
     }
   }
 
-  useEffect(() => {
-    void loadKeys();
-  }, []);
+  useEffect(() => { void loadKeys(); }, []);
 
   function toggleScope(id: string) {
     setSelectedScopes((cur) =>
@@ -91,116 +98,231 @@ export function Settings() {
   }
 
   if (!user) return null;
-  const initials = user.name.split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
+  const initials = user.name.split(" ").map((s: string) => s[0]).slice(0, 2).join("").toUpperCase();
   const activeKeys = keys.filter((k) => !k.revoked);
 
   return (
-    <div className="page">
-      <div className="page-head">
-        <div>
-          <div className="page-title">Settings</div>
+    <div className="page" style={{ padding: 0, overflow: "auto" }}>
+      {/* Topbar */}
+      <div className="topbar">
+        <div className="topbar-left">
+          <div className="topbar-title">Settings</div>
         </div>
+        <div className="searchbar-wrap">
+          <SearchIcon />
+          <input
+            className="searchbar"
+            type="search"
+            placeholder="Search settings..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <div className="topbar-right" />
       </div>
 
-      <section className="set-section">
-        <div className="set-h">Profile</div>
-        <div className="set-card profile-row">
-          <div className="avatar">
-            {user.avatarUrl ? <img src={user.avatarUrl} alt="" /> : <span>{initials}</span>}
-          </div>
-          <div className="profile-meta">
-            <div className="profile-name">{user.name}</div>
-            <div className="profile-email">{user.email}</div>
-          </div>
-          <button className="btn" onClick={manageAccount}>
-            Manage
-          </button>
-        </div>
-      </section>
+      <div style={{ padding: "4px 24px 40px", maxWidth: 820 }}>
 
-      <section className="set-section">
-        <div className="set-h">Agent access</div>
-        <div className="set-card">
-          <div className="set-field">
-            <label>Scopes</label>
-            <div className="scope-grid">
-              {SCOPES.map((s) => (
-                <label key={s.id} className="scope-opt">
-                  <input
-                    type="checkbox"
-                    checked={selectedScopes.includes(s.id)}
-                    onChange={() => toggleScope(s.id)}
-                  />
-                  <span>{s.label}</span>
-                  <code className="mono scope-id">{s.id}</code>
-                </label>
-              ))}
-            </div>
-            <div className="set-actions">
-              <button
-                className="btn primary"
-                onClick={generateKey}
-                disabled={minting || selectedScopes.length === 0}
-              >
-                {minting ? "Generating..." : "Generate key"}
+        {/* ── Profile ──────────────────────────────────────────────────── */}
+        <div className="settings-section">
+          <div className="settings-section-label">Profile</div>
+          <div className="fcard">
+            <div className="settings-profile-row">
+              <div className="settings-avatar">
+                {user.avatarUrl ? <img src={user.avatarUrl} alt="" /> : <span>{initials}</span>}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 650, fontSize: 15, marginBottom: 3, color: "var(--fg)" }}>
+                  {user.name}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
+                  {user.email}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--muted-dim)", marginTop: 2 }}>
+                  {user.provider ?? "Ithaca"}
+                </div>
+              </div>
+              <button className="settings-btn" onClick={manageAccount}>
+                Manage account
               </button>
             </div>
           </div>
+        </div>
 
-          {freshKey && (
-            <div className="set-field key-fresh">
-              <label>New key</label>
-              <code className="mono set-value key-plain">{freshKey.api_key}</code>
-              <div className="set-actions">
-                <button className="btn primary" onClick={copyFresh}>
-                  {copied ? "Copied" : "Copy key"}
+        {/* ── Agent API Keys ────────────────────────────────────────────── */}
+        <div className="settings-section">
+          <div className="settings-section-label">Agent API Keys</div>
+          <div className="fcard" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+
+            {/* Scope picker */}
+            <div>
+              <div className="settings-field-label">Permissions</div>
+              <div className="settings-scope-grid">
+                {SCOPES.map((s) => (
+                  <label key={s.id} className="settings-scope-item">
+                    <input
+                      type="checkbox"
+                      checked={selectedScopes.includes(s.id)}
+                      onChange={() => toggleScope(s.id)}
+                    />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 500 }}>{s.label}</div>
+                      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 1 }}>{s.desc}</div>
+                    </div>
+                    <code style={{ fontSize: 10, color: "var(--muted-dim)", fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>
+                      {s.id}
+                    </code>
+                  </label>
+                ))}
+              </div>
+              <div style={{ marginTop: 14 }}>
+                <button
+                  className="settings-btn primary"
+                  onClick={generateKey}
+                  disabled={minting || selectedScopes.length === 0}
+                >
+                  {minting ? "Generating…" : "Generate key"}
                 </button>
               </div>
             </div>
-          )}
 
-          {keysError && <div className="set-hint err">{keysError}</div>}
-
-          <div className="set-field">
-            <label>Active keys</label>
-            {loadingKeys ? (
-              <div className="set-hint">Loading...</div>
-            ) : activeKeys.length === 0 ? (
-              <div className="set-hint">No keys.</div>
-            ) : (
-              <div className="key-list">
-                {activeKeys.map((k) => (
-                  <div key={k.key_id} className="key-row">
-                    <code className="mono key-id">{k.key_id}</code>
-                    <span className="key-scopes">{k.scopes.join(", ")}</span>
-                    <span className="key-date">{fmtDate(k.created_at)}</span>
-                    <button className="btn" onClick={() => revoke(k.key_id)}>
-                      Revoke
-                    </button>
-                  </div>
-                ))}
+            {/* Newly minted key */}
+            {freshKey && (
+              <div className="settings-fresh-key">
+                <div className="settings-field-label" style={{ color: "#3d6b1c" }}>
+                  New key — copy now, shown only once
+                </div>
+                <code style={{
+                  display: "block",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 11,
+                  wordBreak: "break-all",
+                  color: "var(--fg)",
+                  background: "#ffffff",
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  marginBottom: 10,
+                  border: "1px solid #c5dda8",
+                }}>
+                  {freshKey.api_key}
+                </code>
+                <button className="settings-btn primary" onClick={copyFresh}>
+                  {copied ? "Copied!" : "Copy key"}
+                </button>
               </div>
             )}
+
+            {keysError && (
+              <div style={{ color: "var(--neg)", fontSize: 12, padding: "8px 12px", background: "#fff0f0", borderRadius: 8, border: "1px solid #f0b3b3" }}>
+                {keysError}
+              </div>
+            )}
+
+            {/* Active keys list */}
+            <div style={{ paddingTop: 16, borderTop: "1px solid var(--border-soft)" }}>
+              <div className="settings-field-label">
+                Active keys ({loadingKeys ? "…" : activeKeys.length})
+              </div>
+              {loadingKeys ? (
+                <div className="empty">Loading keys…</div>
+              ) : activeKeys.length === 0 ? (
+                <div className="empty">No active keys yet.</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {activeKeys.map((k) => (
+                    <div key={k.key_id} className="settings-key-row">
+                      <code style={{ color: "var(--fg)", fontFamily: "var(--font-mono)", fontSize: 11, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {k.key_id}
+                      </code>
+                      <span style={{ color: "var(--muted)", fontSize: 10, fontFamily: "var(--font-mono)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {k.scopes.join(", ")}
+                      </span>
+                      <span style={{ color: "var(--muted-dim)", fontSize: 10, fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>
+                        {fmtDate(k.created_at)}
+                      </span>
+                      <button className="settings-btn danger" onClick={() => revoke(k.key_id)}>
+                        Revoke
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </section>
 
-      <section className="set-section">
-        <div className="set-h">Session</div>
-        <div className="set-card set-row-end">
-          <span className="set-hint">Signed in as {user.email}.</span>
-          <button className="btn" onClick={signOut}>
-            Sign out
-          </button>
+        {/* ── Integrations ─────────────────────────────────────────────── */}
+        <div className="settings-section">
+          <div className="settings-section-label">Integrations</div>
+          <div className="fcard" style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+            {[
+              { name: "MCP Server",    blurb: "Tool-call bridge for agent workflows",   status: "active" },
+              { name: "Ithaca Auth",   blurb: "Identity and session management",          status: "active" },
+              { name: "Mintlify Docs", blurb: "Documentation and API reference",         status: "active", href: "https://doomberg.mintlify.app" },
+            ].map((int, i, arr) => (
+              <div key={int.name} style={{
+                display: "flex", alignItems: "center", gap: 14,
+                padding: "13px 2px",
+                borderBottom: i < arr.length - 1 ? "1px solid var(--border-soft)" : "none",
+              }}>
+                <div style={{
+                  width: 34, height: 34, borderRadius: 10,
+                  background: "var(--panel-2)", border: "1px solid var(--border)",
+                  display: "grid", placeItems: "center", flexShrink: 0, fontSize: 14,
+                }}>
+                  {int.name === "MCP Server"    ? "⚡" : int.name === "Ithaca Auth" ? "🔐" : "📄"}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 550, color: "var(--fg)" }}>{int.name}</div>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 1 }}>{int.blurb}</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{
+                    fontSize: 10, fontFamily: "var(--font-mono)",
+                    textTransform: "uppercase", letterSpacing: "0.1em",
+                    color: int.status === "active" ? "var(--pos)" : "var(--muted-dim)",
+                  }}>
+                    {int.status}
+                  </span>
+                  {int.href && (
+                    <a href={int.href} target="_blank" rel="noopener noreferrer" className="settings-btn" style={{ textDecoration: "none", padding: "5px 12px", fontSize: 11 }}>
+                      Open ↗
+                    </a>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-      </section>
+
+        {/* ── Session ──────────────────────────────────────────────────── */}
+        <div className="settings-section">
+          <div className="settings-section-label">Session</div>
+          <div className="fcard">
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+              <div>
+                <div style={{ fontSize: 13, color: "var(--fg)", marginBottom: 3 }}>
+                  Signed in as <strong style={{ fontWeight: 650 }}>{user.email}</strong>
+                </div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                  Provider: {user.provider ?? "Ithaca"} · Session is active
+                </div>
+              </div>
+              <button className="settings-btn danger" onClick={signOut}>
+                Sign out
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div>
     </div>
   );
 }
 
 function settingsError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
-  if (/401|unauthorized|sign in/i.test(message)) return "Keys unavailable.";
+  if (/401|unauthorized|sign in/i.test(message)) return "Keys unavailable — re-authenticate.";
   return "Could not update keys.";
 }
 
