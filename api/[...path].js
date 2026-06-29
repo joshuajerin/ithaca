@@ -36,6 +36,15 @@ function sendJson(res, status, payload, headers = {}) {
   res.end(JSON.stringify(payload));
 }
 
+function envFlag(name) {
+  return ["1", "true", "yes", "on"].includes(String(process.env[name] || "").trim().toLowerCase());
+}
+
+function legacyApiEnabled() {
+  const env = String(process.env.NODE_ENV || "").trim().toLowerCase();
+  return envFlag("DOOMBERG_ENABLE_LEGACY_VERCEL_API") || ["test", "local", "dev", "development"].includes(env);
+}
+
 function identityForTenant(tenant) {
   return {
     user: {
@@ -253,6 +262,7 @@ export default async function handler(req, res) {
       supabaseConfigured: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY),
     });
   }
+  if (!legacyApiEnabled()) return sendJson(res, 404, { detail: `Unknown API route: /api/${path}` });
   if (req.method === "GET" && path === "auth/user") return sendJson(res, 200, identityForTenant(tenant));
   if (req.method === "POST" && ["auth/login", "auth/signup", "auth/accept-invite"].includes(path)) {
     res.setHeader("set-cookie", `at_session=${tenant.id}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`);

@@ -50,6 +50,8 @@ async function check(name, fn) {
 // Disable Supabase logging side-effects for these tests.
 delete process.env.SUPABASE_URL;
 delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+delete process.env.NODE_ENV;
+delete process.env.DOOMBERG_ENABLE_LEGACY_VERCEL_API;
 
 await check("healthz reports doomberg tenant", async () => {
   const res = makeRes();
@@ -65,6 +67,14 @@ await check("healthz reports kural tenant", async () => {
   const out = JSON.parse(res.bodyText);
   assert.equal(out.tenant, "kural");
 });
+
+await check("legacy Vercel API is disabled by default outside local/test", async () => {
+  const res = makeRes();
+  await handler(makeReq("GET", "/api/auth/user", "doomberg.me"), res);
+  assert.equal(res.statusCode, 404);
+});
+
+process.env.DOOMBERG_ENABLE_LEGACY_VERCEL_API = "1";
 
 await check("orchestrate uses per-tenant kural endpoint + key", async () => {
   process.env.HERMES_BASE_URL = "https://hermes.example";

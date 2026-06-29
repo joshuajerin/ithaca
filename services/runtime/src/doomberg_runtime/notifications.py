@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
+import os
+import socket
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any
@@ -48,6 +52,55 @@ def webhook_signature(secret: str, timestamp: str, body: bytes) -> str:
     return f"hmac-sha256={digest}"
 
 
+def _local_env_allows_private_webhooks() -> bool:
+    env = (os.environ.get("DOOMBERG_ENV") or "").strip().lower()
+    if env not in {"test", "local", "dev", "development"}:
+        return False
+    return os.environ.get("DOOMBERG_ALLOW_PRIVATE_WEBHOOKS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _host_is_public(hostname: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(hostname.strip("[]"))
+        addresses = [ip]
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+        except socket.gaierror as exc:
+            raise PermanentDeliveryError(f"webhook host cannot be resolved: {hostname}") from exc
+        addresses = [ipaddress.ip_address(info[4][0]) for info in infos]
+
+    for address in addresses:
+        if (
+            address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_multicast
+            or address.is_reserved
+            or address.is_unspecified
+        ):
+            return False
+    return True
+
+
+def _validate_webhook_url(url: str) -> None:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"https", "http"} or not parsed.hostname:
+        raise PermanentDeliveryError("webhook target must be an absolute http(s) URL")
+    if parsed.username or parsed.password:
+        raise PermanentDeliveryError("webhook target URL must not include userinfo")
+    private_allowed = _local_env_allows_private_webhooks()
+    if parsed.scheme != "https" and not private_allowed:
+        raise PermanentDeliveryError("webhook target must use HTTPS")
+    if not private_allowed and not _host_is_public(parsed.hostname):
+        raise PermanentDeliveryError("webhook target must resolve to a public address")
+
+
 class WebhookAdapter:
     def __init__(self, *, timeout_s: float = 5.0) -> None:
         self.timeout_s = timeout_s
@@ -57,10 +110,13 @@ class WebhookAdapter:
         url = str(config.get("url") or "").strip()
         if not url:
             raise PermanentDeliveryError("webhook target missing config.url")
+        _validate_webhook_url(url)
         secret = str(config.get("hmac_secret") or target.get("secret_ref") or "").strip()
         if not secret:
             raise PermanentDeliveryError("webhook target missing hmac secret")
-        body = json.dumps(_sterile_payload(notification), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        body = json.dumps(
+            _sterile_payload(notification), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
         timestamp = _now()
         req = urllib.request.Request(
             url,
