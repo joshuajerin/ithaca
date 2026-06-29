@@ -16,7 +16,7 @@ export interface SessionUser {
   name: string;
   email: string;
   avatarUrl?: string;
-  provider: "ithaca";
+  provider: "doomberg";
 }
 
 export type Integrations = Record<Provider, boolean>;
@@ -49,7 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       name: clerkUser.fullName || clerkUser.username || email || "Doomberg user",
       email,
       avatarUrl: clerkUser.imageUrl || undefined,
-      provider: "ithaca",
+      provider: "doomberg",
     };
   }, [clerkUser]);
 

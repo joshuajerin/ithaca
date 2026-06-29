@@ -4,7 +4,7 @@
  * Doomberg design system
  * Warm, grainy "scratchpad" palette: ivory paper, warm ink, amber/orange
  * warm accent, olive brand green, a blueprint blue secondary + tans.
- * DM Sans display, JetBrains Mono for eyebrow labels.
+ * Pliant is the sole product font across display, sans, and utility text.
  * ------------------------------------------------------------------ */
 @theme {
   --color-cream: #f6f1e4;
@@ -39,8 +39,8 @@
   --color-line: #e7dcc7;
   --color-line-strong: #ddd0b8;
 
-  --font-sans: "DM Sans", ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --font-sans: "Pliant", "Helvetica Neue", Helvetica, ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Pliant", "Helvetica Neue", Helvetica, ui-sans-serif, system-ui, sans-serif;
 
   --radius-pill: 999px;
 
@@ -59,6 +59,13 @@
     font-family: var(--font-sans);
     font-feature-settings: "ss01", "cv01";
     overflow-x: hidden;
+  }
+  button,
+  input,
+  select,
+  textarea,
+  [data-clerk-element] {
+    font-family: var(--font-sans) !important;
   }
   ::selection {
     background: var(--color-leaf);

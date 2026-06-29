@@ -16,6 +16,8 @@ const DEFAULT_SCOPES = [
 ];
 
 function param(name: string): string {
+  const searchValue = new URLSearchParams(window.location.search).get(name);
+  if (searchValue) return searchValue;
   return new URLSearchParams(window.location.hash.split("?", 2)[1] ?? "").get(name) ?? "";
 }
 

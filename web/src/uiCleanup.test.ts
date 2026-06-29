@@ -10,16 +10,24 @@ function read(rel: string): string {
 }
 
 describe("customer-facing UI cleanup guards", () => {
-  it("uses Doomberg product copy in auth and agent-link surfaces", () => {
+  it("uses Ithaca product copy in auth and agent-link surfaces", () => {
     const text = [
       read("main.tsx"),
       read("pages/AuthPage.tsx"),
       read("pages/AgentLink.tsx"),
       read("auth/AuthContext.tsx"),
+      read("pages/Settings.tsx"),
     ].join("\n");
 
-    expect(text).toContain("Doomberg");
-    expect(text).not.toMatch(/\bIthaca(?: MCP| user)?\b/);
+    expect(text).toContain("Ithaca");
+    expect(text).toContain("Ithaca MCP");
+    expect(text).toContain("Ithaca user");
+    expect(text).toContain("ithaca.mintlify.app");
+    // No user-visible "Doomberg" brand text (DoombergMark component name is fine)
+    expect(text).not.toMatch(/>\s*Doomberg\s*</);
+    expect(text).not.toContain("Doomberg MCP");
+    expect(text).not.toContain("Doomberg user");
+    expect(text).not.toContain("docs.doomberg.me");
   });
 
   it("does not ship the old sliding sessions detail pane", () => {
@@ -31,9 +39,32 @@ describe("customer-facing UI cleanup guards", () => {
   it("does not render the old operational left rail buttons", () => {
     const app = read("App.tsx");
 
-    expect(app).not.toContain('className="rail"');
-    expect(app).not.toContain("rail-nav");
-    expect(app).not.toMatch(/\b(Runs|Orders|Approvals|Triggers|Artifacts|Providers|Trades)\b/);
+    expect(app).toContain("navItems");
+    expect(app).toContain("Dashboard");
+    expect(app).toContain("Sessions");
+    expect(app).toContain("Deployments");
+    expect(app).not.toMatch(/\b(Runs|Orders|Approvals|Triggers|Artifacts|Providers|Trades|Docs)\b/);
+    expect(app).not.toMatch(/path="\/(?:runs|runs\/:id|deploys|trades|docs)"/);
+  });
+
+  it("uses browser history routing without hash URLs", () => {
+    const main = read("main.tsx");
+
+    expect(main).toContain("BrowserRouter");
+    expect(main).not.toContain("HashRouter");
+  });
+
+  it("loads and applies Pliant as the single product font", () => {
+    const webHtml = read("../index.html");
+    const webCss = read("index.css");
+    const siteHtml = read("../../site/index.html");
+    const siteCss = read("../../site/src/index.css");
+    const text = [webHtml, webCss, siteHtml, siteCss].join("\n");
+
+    expect(webHtml).toContain("fonts.googleapis.com/css2?family=Pliant");
+    expect(siteHtml).toContain("fonts.googleapis.com/css2?family=Pliant");
+    expect(text).toContain('"Pliant"');
+    expect(text).not.toMatch(/DM\+Sans|DM Sans|JetBrains\+Mono|JetBrains Mono/);
   });
 
   it("shows reference labels instead of sample or mock badges on customer panels", () => {
