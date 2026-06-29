@@ -36,6 +36,7 @@ doomberg.doomberg_init(goal="<user goal>")
 ```
 
 The init tool returns the first-call workflow, the session id, and the operating boundaries.
+For the full agent bootstrap prompt, see [`INIT.md`](../INIT.md).
 
 ## User-Facing Agent Reply
 

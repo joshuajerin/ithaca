@@ -315,6 +315,15 @@ class Toolset:
                 "can": ["read market data", "run backtests", "draft strategy proposals", "paper-trading research"],
                 "cannot": ["deploy live strategies", "move money", "read raw broker credentials"],
             },
+            "showcase_prompt": (
+                "Use Doomberg to research NVDA as a 3-6 month trade candidate. Pull "
+                "current/near-current price context and 1Y OHLCV, compare NVDA against AMD "
+                "and AVGO on fundamentals, check recent news, analyst ratings, institutional "
+                "flows, and options/volatility signals, then run one momentum-style backtest "
+                "and one downside stress or scenario. Return a short trade memo with data "
+                "freshness, tool provenance, key risks, and whether the result supports "
+                "watchlist, paper trade, or pass."
+            ),
             "dashboard_url": "https://app.doomberg.me/dashboard",
         }
 

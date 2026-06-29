@@ -146,6 +146,9 @@ def test_doomberg_init_returns_first_call_workflow(toolset):
         "describe_skill",
         "run_skill",
     }
+    assert "NVDA" in out["showcase_prompt"]
+    assert "AMD" in out["showcase_prompt"]
+    assert "AVGO" in out["showcase_prompt"]
     assert "move money" in out["boundaries"]["cannot"]
 
 
