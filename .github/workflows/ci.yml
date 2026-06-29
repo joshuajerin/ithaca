@@ -18,7 +18,7 @@ concurrency:
 jobs:
   contracts-drift:
     name: contracts • drift gate (schema ⇄ generated)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -31,7 +31,7 @@ jobs:
 
   python-tests:
     name: pytest • ${{ matrix.pkg }}
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     strategy:
       fail-fast: false
       matrix:
@@ -52,7 +52,7 @@ jobs:
 
   demo-e2e:
     name: end-to-end pipelines (pipeline + deploy-layer conductor)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -64,7 +64,7 @@ jobs:
 
   contracts-test-ts:
     name: contracts • zod round-trip
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -78,7 +78,7 @@ jobs:
 
   web:
     name: web • typecheck + build + test
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
