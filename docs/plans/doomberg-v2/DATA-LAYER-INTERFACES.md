@@ -214,8 +214,8 @@ synthetic v1 skills: order_book, iv_surface/options_*, cds_pricer, trade_flow, s
 | `universe.list` | universe + sectors | build_data_universe |
 | `backtest.run` (exists) | ohlcv_panel | build_backtest — now can run on the archive |
 
-Reuse v1 logic from `history/v1/artifacts/api-server/app/skills.py` for shaping, but the data
-comes from `ArchiveGateway`, never the v1 HTTP sources, and never synthetic generators.
+Keep shaping logic in the current `doomberg-core` skill implementations. Data comes from
+`ArchiveGateway`, never archived v1 HTTP sources, and never synthetic generators.
 
 ### COMPUTED skills (`source: "computed"`)
 

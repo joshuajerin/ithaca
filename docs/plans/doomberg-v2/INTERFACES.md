@@ -69,7 +69,7 @@ Out-of-process by design; deny-all egress in prod. Aggregate wall-clock deadline
 
 ## web (`web/`, React+Vite+TS)
 
-Observability surface, **no chat**. Views: Runs (three-column trace: reasoning rail · tool-call timeline · evidence panels) · Deploys (Backtests/Paper) · Trades · Ideas. Consume `doomberg_rest` REST+SSE only. A `panelType` on a tool result keys a static renderer (no client-side eval). Reuse v1 panels from `history/v1/artifacts/terminal/src/components/terminal/panels` as display-only renderers where helpful.
+Observability surface, **no chat**. Views: Runs (three-column trace: reasoning rail · tool-call timeline · evidence panels) · Deploys (Backtests/Paper) · Trades · Ideas. Consume `doomberg_rest` REST+SSE only. A `panelType` on a tool result keys a static renderer (no client-side eval). Use current v2-local renderers under `web/src/components/terminal/panels`; do not reintroduce archived v1 terminal code.
 
 ## Conventions
 - Never `except: pass` on an audited path; emit a `denial`/`error` trace event instead.

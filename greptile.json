@@ -6,7 +6,7 @@
   "fileChangeLimit": 250,
   "includeBranches": ["main", "ui"],
   "excludeAuthors": ["dependabot[bot]"],
-  "ignorePatterns": "node_modules/**\ndist/**\nbuild/**\n.venv/**\n.vercel/**\n.gstack/**\ncoverage/**\n**/*.generated.*\n**/*.tsbuildinfo\npnpm-lock.yaml\nuv.lock\nhistory/**\nsite/dist/**\nweb/dist/**",
+  "ignorePatterns": "node_modules/**\ndist/**\nbuild/**\n.venv/**\n.vercel/**\n.gstack/**\ncoverage/**\n**/*.generated.*\n**/*.tsbuildinfo\npnpm-lock.yaml\nuv.lock\nsite/dist/**\nweb/dist/**",
   "instructions": "Review Doomberg changes as an agent-native market research and paper-trading control plane. Prioritize tenant isolation, scoped MCP/API-key behavior, installer idempotency, secret handling, and tests that prove user-facing setup paths. Do not request generic refactors unless they reduce a concrete correctness or security risk.",
   "customContext": {
     "rules": [
