@@ -203,7 +203,7 @@ export function SessionsList() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(routeId ?? null);
   const [popupStep, setPopupStep] = useState<SkillStep | null>(null);
 
-  const { data: sessions, loading: sessLoading, error: sessError, reload } =
+  const { data: sessions, loading: sessLoading, error: sessError } =
     useAsync<SessionRow[]>((s) => api.listSessions(s), []);
 
   const { data: sessionDetail, loading: detailLoading } =
@@ -230,7 +230,7 @@ export function SessionsList() {
 
   function selectSession(id: string) {
     setSelectedSessionId(id);
-    setSelectedStepKey(null);
+    setPopupStep(null);
     navigate(`/sessions/${id}`, { replace: true });
   }
 
