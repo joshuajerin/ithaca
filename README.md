@@ -129,6 +129,9 @@ native MCP CLIs when present; Cursor, OpenClaw, and Hermes get merged
 one client, pass `--client cursor`, `--client claude-code`, `--client codex`,
 `--client openclaw`, or `--client hermes`.
 
+See [Agent Client Setup](docs/AGENT_CLIENT_SETUP.md) for per-client behavior and
+[Greptile Automation](docs/GREPTILE_AUTOMATION.md) for automated PR review setup.
+
 All six local processes share the same platform system-of-record via `DOOMBERG_DB`. The browser talks only to the
 rest-gateway (`:8000`); its human money-path actions (promote/activate/pause/resume/retire) call the same
 `doomberg_control.actions` the control plane exposes, so there is one money-path implementation, two transports.
