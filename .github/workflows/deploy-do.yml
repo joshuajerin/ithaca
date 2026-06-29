@@ -15,7 +15,7 @@ concurrency:
 jobs:
   classify:
     name: classify deploy target
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     outputs:
       deploy_env: ${{ steps.classify.outputs.deploy_env }}
       image_tag: ${{ steps.classify.outputs.image_tag }}
@@ -47,7 +47,7 @@ jobs:
 
   checks:
     name: deploy gates
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [classify, deploy-config-preflight]
     steps:
       - uses: actions/checkout@v4
@@ -143,7 +143,7 @@ jobs:
 
   deploy-config-preflight:
     name: deploy config preflight
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: classify
     environment: ${{ needs.classify.outputs.deploy_env }}
     steps:
@@ -207,7 +207,7 @@ jobs:
 
   build-push:
     name: build and push image
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [classify, checks]
     environment: ${{ needs.classify.outputs.deploy_env }}
     steps:
@@ -256,7 +256,7 @@ jobs:
 
   deploy:
     name: deploy to ${{ needs.classify.outputs.deploy_env }}
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [classify, build-push]
     environment: ${{ needs.classify.outputs.deploy_env }}
     concurrency:
@@ -389,7 +389,7 @@ jobs:
 
   mark-latest:
     name: mark prod latest
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [classify, deploy]
     if: needs.classify.outputs.push_latest == 'true'
     environment: prod

@@ -7,7 +7,6 @@ import { PortfolioRiskPanel } from "../dashboard/panels/PortfolioRiskPanel";
 import { TradeFlowPanel } from "../dashboard/panels/TradeFlowPanel";
 import { OrderBookPanel } from "../dashboard/panels/OrderBookPanel";
 import { CongressTradesPanel } from "../dashboard/panels/CongressTradesPanel";
-import { MacroDashboardPanel } from "../dashboard/panels/MacroDashboardPanel";
 import { YieldCurvePanel } from "../dashboard/panels/YieldCurvePanel";
 import { SentimentPanel } from "../dashboard/panels/SentimentPanel";
 import {
@@ -16,7 +15,6 @@ import {
   getTradeFlow,
   getOrderBook,
   getCongressTrades,
-  getMacro,
   getYieldCurve,
   getSentiment,
 } from "../dashboard/data";
@@ -31,7 +29,7 @@ interface BandDef {
 const BANDS: BandDef[] = [
   { id: "overview",  label: "Personal Overview", panels: [{ id: "perf", title: "Performance & P&L" }, { id: "risk", title: "Portfolio Risk" }] },
   { id: "activity",  label: "Recent Activity",   panels: [{ id: "flow", title: "Trade Flow" }, { id: "book", title: "Order Book" }, { id: "congress", title: "Congress Trades" }] },
-  { id: "global",    label: "Global Analysis",   panels: [{ id: "macro", title: "Macro Dashboard" }, { id: "yield", title: "Yield Curve" }, { id: "sentiment", title: "Sentiment" }] },
+  { id: "global",    label: "Global Analysis",   panels: [{ id: "yield", title: "Yield Curve" }, { id: "sentiment", title: "Sentiment" }] },
 ];
 
 function SearchIcon() {
@@ -65,8 +63,6 @@ export function Dashboard() {
   const orderBookData = getOrderBook() as any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const congressData = getCongressTrades() as any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const macroData = getMacro() as any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const yieldCurveData = getYieldCurve() as any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -134,13 +130,6 @@ export function Dashboard() {
         {/* Global Analysis */}
         {bandVisible(BANDS[2]) && (
           <div className="band">
-            {panelVisible("Macro Dashboard") && (
-              <div style={{ marginBottom: "var(--gap)" }}>
-                <FCardPanel title="Macro Dashboard" minHeight={280}>
-                  <MacroDashboardPanel data={macroData} />
-                </FCardPanel>
-              </div>
-            )}
             <div className="band-grid-2">
               {panelVisible("Yield Curve") && (
                 <FCardPanel title="Yield Curve" minHeight={300}>
