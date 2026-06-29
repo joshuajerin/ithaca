@@ -294,7 +294,7 @@ input, select, textarea { font-family: inherit; }
 .rail-user-av img { width: 100%; height: 100%; object-fit: cover; }
 .rail-user-meta { min-width: 0; flex: 1; }
 .rail-user-name { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rail-user-sub { font-size: 9px; color: var(--muted-dim); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.1em; }
+.rail-user-sub { font-size: 10px; color: var(--muted-dim); font-family: var(--font-sans); text-transform: none; letter-spacing: 0; }
 .rail-signout { background: none; border: 1px solid var(--border); color: var(--muted);
   width: 24px; height: 24px; display: grid; place-items: center; flex-shrink: 0; }
 .rail-signout:hover { border-color: var(--accent); color: var(--accent); }

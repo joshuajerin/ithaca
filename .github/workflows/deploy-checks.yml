@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   image-build:
-    name: docker image • build (no push)
+    name: 1/2 • docker image build (no push)
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -51,8 +51,9 @@ jobs:
           docker rm -f "$cid"
 
   terraform-check:
-    name: terraform • fmt + validate
+    name: 2/2 • terraform fmt + validate
     runs-on: self-hosted
+    needs: image-build
     defaults:
       run:
         working-directory: infra/terraform

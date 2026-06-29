@@ -12,10 +12,10 @@ The target visual is the screenshot-approved compact terminal panel: black card,
 - `web/src/pages/Dashboard.tsx` currently renders a hand-built terminal dashboard with sections for price chart, session tape, generic subwidgets, news flow, options/trade flow, and deployment activity.
 - `web/src/pages/Dashboard.tsx` already depends on class names like `terminal-grid`, `terminal-panel`, `price-panel`, `terminal-panel-head`, `price-chart`, `range-row`, `mini-grid`, `news-flow`, and `mini-table`.
 - `web/src/index.css` currently has no `terminal-*`, `price-panel`, `mini-grid`, `news-flow`, or related rules. That means the existing dashboard markup does not yet have the visual system needed for the old Doomberg widget look.
-- The archived source for the old analyst widget is `history/v1/artifacts/terminal/src/components/terminal/panels/AnalystRatingsPanel.tsx`.
-- The old panel source depends on v1-only pieces: Tailwind utility classes, `ScrollArea` from the archived shadcn UI folder, and `lucide-react` icons.
+- The old v1 analyst widget archive has been removed. Rebuild the card as a v2-local component instead of importing archived UI code.
+- The old panel source depended on v1-only pieces: Tailwind utility classes, archived shadcn UI, and `lucide-react` icons.
 - The current web app dependencies in `web/package.json` do not include `lucide-react`, `framer-motion`, `recharts`, Tailwind, or the archived `@workspace/api-client-react` package. Porting the widget should avoid adding those dependencies for this narrow dashboard change.
-- The old `PanelContainer` registry in `history/v1/artifacts/terminal/src/components/terminal/PanelContainer.tsx` maps `analyst_ratings` to `AnalystRatingsPanel`, but the current v2 web app does not use that registry.
+- The current v2 web app does not use the old v1 panel registry.
 
 ## Target design
 

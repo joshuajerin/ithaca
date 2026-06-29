@@ -34,7 +34,7 @@ After login, `/` should open `/dashboard`. The Sessions area should show MCP wor
 - [packages/contracts/schema/events.schema.json](/Users/joshuajerin/Desktop/jarvis/doomberg/packages/contracts/schema/events.schema.json) allows `session_open`, `reasoning`, `tool_call`, `tool_result`, `strategy_proposed`, lifecycle events, marks, fills, denials, errors, and arbitrary object data. This can carry prompt metadata inside `session_open.data` without a schema migration.
 - [site/src/index.css](/Users/joshuajerin/Desktop/jarvis/doomberg/site/src/index.css) already defines the warm public-site palette: cream, paper, sand, ink, olive, amber, blueprint blue, and line colors.
 - [docs/plans/doomberg-v2/designs/webui.md](/Users/joshuajerin/Desktop/jarvis/doomberg/docs/plans/doomberg-v2/designs/webui.md) already describes the intended v2 observability model: external agents call MCP, the browser reads REST/SSE, and the run trace is the audit surface.
-- [history/v1/artifacts/terminal/src/components/terminal/panels](/Users/joshuajerin/Desktop/jarvis/doomberg/history/v1/artifacts/terminal/src/components/terminal/panels) contains 83 old terminal panel files. They can be reused selectively later, but this dashboard pass should not pull the whole v1 terminal into the current app.
+- The old v1 terminal archive has been removed from this repo. New dashboard work should use the current `web/src/components/terminal/panels` renderers or add explicit v2-local components.
 
 ## Product Shape
 
