@@ -240,14 +240,14 @@ export function IntradayChartPanel({
             <XAxis
               dataKey="t"
               tickFormatter={fmtTime}
-              tick={{ fontSize: 9, fill: "#777", fontFamily: "Arial, Helvetica, sans-serif" }}
+              tick={{ fontSize: 9, fill: "#777", fontFamily: "var(--font-sans)" }}
               tickLine={false}
               axisLine={false}
               minTickGap={40}
             />
             <YAxis
               domain={["auto", "auto"]}
-              tick={{ fontSize: 10, fill: "#777", fontFamily: "Arial, Helvetica, sans-serif" }}
+              tick={{ fontSize: 10, fill: "#777", fontFamily: "var(--font-sans)" }}
               tickLine={false}
               axisLine={false}
               tickFormatter={(val) => val.toFixed(1)}

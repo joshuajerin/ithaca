@@ -87,11 +87,11 @@ export function SentimentPanel({ data }: { data: SentimentData }) {
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="1 3" stroke="#222" vertical={false} />
-            <XAxis dataKey="t" tick={{ fontSize: 9, fill: '#777', fontFamily: 'Arial, Helvetica, sans-serif' }} tickLine={false} axisLine={false} minTickGap={20} />
+            <XAxis dataKey="t" tick={{ fontSize: 9, fill: '#777', fontFamily: 'var(--font-sans)' }} tickLine={false} axisLine={false} minTickGap={20} />
             <Tooltip 
-              contentStyle={{ backgroundColor: '#000', borderColor: '#fff', borderRadius: 0, color: '#fff', fontFamily: 'Arial, Helvetica, sans-serif' }}
+              contentStyle={{ backgroundColor: '#000', borderColor: '#fff', borderRadius: 0, color: '#fff', fontFamily: 'var(--font-sans)' }}
               itemStyle={{ color: '#fff' }}
-              labelStyle={{ color: '#888', fontFamily: 'Arial, Helvetica, sans-serif', textTransform: 'uppercase', fontSize: 9 }}
+              labelStyle={{ color: '#888', fontFamily: 'var(--font-sans)', textTransform: 'uppercase', fontSize: 9 }}
               formatter={(value: number) => [value.toFixed(2), 'Score']}
             />
             <Area 
