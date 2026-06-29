@@ -371,14 +371,6 @@ class Toolset:
         ctx = dict(ctx or {})
         tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
         agent_id = ctx.get("agent_id")
-        explicit_run = ctx.get("run_id")
-        if explicit_run:
-            try:
-                run = self.runs.get(tenant_id, str(explicit_run))
-            except TypeError:
-                run = None
-            if run is not None:
-                return str(explicit_run)
         explicit_session = ctx.get("session_id")
         if explicit_session:
             existing = self._existing_research_run(tenant_id, str(explicit_session))
@@ -411,6 +403,30 @@ class Toolset:
         if self._active_research_session(ctx) is not None:
             return None
         return self._session_context_required()
+
+    def _trace_workflow_tool(self, name: str, params: dict, result: dict,
+                             ctx: dict | None) -> dict:
+        if self.runs is None:
+            return result
+        trace_ctx = self._with_active_session(ctx)
+        tr = self._tracer(trace_ctx)
+        span = tr.tool_call(name, params)
+        summary = {"status": "ok"}
+        error = result.get("error") if isinstance(result, dict) else None
+        if isinstance(error, dict):
+            summary = {"status": "error", "error": error.get("code")}
+        elif isinstance(result, dict):
+            for key in ("run_id", "status", "cursor"):
+                if key in result:
+                    summary[key] = result[key]
+            if isinstance(result.get("events"), list):
+                summary["event_count"] = len(result["events"])
+            if isinstance(result.get("jobs"), list):
+                summary["job_count"] = len(result["jobs"])
+            if isinstance(result.get("artifacts"), list):
+                summary["artifact_count"] = len(result["artifacts"])
+        tr.tool_result(name, span, summary)
+        return result
 
     def _tracer(self, ctx: dict | None) -> Tracer:
         ctx = ctx or {}
@@ -517,32 +533,44 @@ class Toolset:
             title="Doomberg onboarding",
             _ctx=_ctx,
         )
+        direct_tools = self._direct_tool_catalog()
         return {
             "status": "ready",
             "session_id": session["session_id"],
+            "session": {
+                "session_id": session["session_id"],
+                "prompt": visible_prompt,
+                "title": "Doomberg onboarding",
+                "required": True,
+                "context": "All subsequent direct tools are attached to this authenticated research session.",
+            },
             "goal_captured": bool(goal),
             "start_here": [
                 {
-                    "tool": "search_skills",
-                    "when": "Find the smallest tool set for a market-data, research, or backtest task.",
-                },
-                {
-                    "tool": "describe_skill",
-                    "when": "Inspect exact inputs before calling a catalog skill.",
-                },
-                {
-                    "tool": "run_skill",
-                    "when": "Create a durable run for backtests or longer research jobs.",
+                    "tool": "start_research_session",
+                    "status": "already_started_by_doomberg_init",
+                    "when": "Use only if the user changes tasks or you need to attach a web-created session_id.",
                 },
                 {
                     "tool": "market_get_ohlcv",
-                    "when": "Fetch quick OHLCV history for one symbol.",
+                    "when": "Fetch quick OHLCV history directly.",
+                },
+                {
+                    "tool": "run_skill",
+                    "when": "Create a durable run for backtests or longer research jobs inside this session.",
+                },
+                {
+                    "tool": "get_run",
+                    "when": "Inspect visible run state, jobs, artifacts, and trace events.",
                 },
                 {
                     "tool": "propose_strategy",
                     "when": "Register a validated draft StrategySpec for human review.",
                 },
             ],
+            "direct_tools": direct_tools,
+            "toolkits": self.list_toolkits()["toolkits"],
+            "discovery_helpers": ["list_toolkits", "describe_toolkit", "search_skills", "describe_skill"],
             "boundaries": {
                 "can": ["read market data", "run backtests", "draft strategy proposals", "paper-trading research"],
                 "cannot": ["deploy live strategies", "move money", "read raw broker credentials"],
@@ -846,6 +874,7 @@ class Toolset:
                 "name": toolkit["name"],
                 "description": toolkit["description"],
                 "required_first_tool": toolkit["required_first_tool"],
+                "direct_tools": list(toolkit["direct_tools"]),
                 "direct_tool_count": len(toolkit["direct_tools"]),
                 "skill_count": len(toolkit["skill_ids"]),
             }
@@ -857,6 +886,21 @@ class Toolset:
                 continue
             entries.append(entry)
         return {"toolkits": entries, "count": len(entries)}
+
+    def _direct_tool_catalog(self) -> list[dict]:
+        seen: set[str] = set()
+        tools: list[dict] = []
+        for toolkit_id, toolkit in sorted(_TOOLKITS.items()):
+            for name in toolkit["direct_tools"]:
+                if name in seen:
+                    continue
+                seen.add(name)
+                tools.append({
+                    "name": name,
+                    "toolkit_id": toolkit_id,
+                    "required_first_tool": toolkit["required_first_tool"],
+                })
+        return tools
 
     def describe_toolkit(self, toolkit_id: str) -> dict:
         toolkit_id = str(toolkit_id or "").strip().lower()
@@ -924,7 +968,7 @@ class Toolset:
 
     def run_resource(self, run_id: str, _ctx: dict | None = None) -> dict:
         """Read-only MCP resource for a durable run, including jobs, artifacts and events."""
-        return self.get_run(run_id, _ctx=_ctx)
+        return self._get_run_unchecked(run_id, _ctx=_ctx)
 
     def policies_resource(self, _ctx: dict | None = None) -> dict:
         """Read-only MCP resource describing current deterministic platform policy."""
@@ -1153,6 +1197,17 @@ class Toolset:
         })
 
     def get_run(self, run_id: str, _ctx: dict | None = None) -> dict:
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
+        return self._trace_workflow_tool(
+            "get_run",
+            {"run_id": run_id},
+            self._get_run_unchecked(run_id, _ctx=_ctx),
+            _ctx,
+        )
+
+    def _get_run_unchecked(self, run_id: str, _ctx: dict | None = None) -> dict:
         if self.platform is None:
             return self._typed_error("JOB_QUEUED", "durable runs are unavailable in this toolset",
                                      "Use the hosted MCP endpoint or REST API.")
@@ -1169,13 +1224,21 @@ class Toolset:
         }
 
     def subscribe_run(self, run_id: str, cursor: int = -1, _ctx: dict | None = None) -> dict:
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
         if self.platform is None:
             return self._typed_error("JOB_QUEUED", "durable runs are unavailable in this toolset",
                                      "Use the hosted MCP endpoint or REST API.")
         tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
         events = self.platform.trace.events(tenant_id, run_id, after_seq=int(cursor))
         next_cursor = events[-1]["seq"] if events else int(cursor)
-        return {"run_id": run_id, "cursor": next_cursor, "events": events}
+        return self._trace_workflow_tool(
+            "subscribe_run",
+            {"run_id": run_id, "cursor": cursor},
+            {"run_id": run_id, "cursor": next_cursor, "events": events},
+            _ctx,
+        )
 
     def cancel_run(self, run_id: str, reason: str | None = None, _ctx: dict | None = None) -> dict:
         if self.platform is None:
@@ -1347,10 +1410,18 @@ class Toolset:
         err = self._require_platform()
         if err:
             return err
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
         tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
         try:
             self._validate_trigger_policy(policy)
-            return self.platform.triggers.create(tenant_id, name=name, policy=policy, state=state)
+            return self._trace_workflow_tool(
+                "triggers_create",
+                {"name": name, "state": state},
+                self.platform.triggers.create(tenant_id, name=name, policy=policy, state=state),
+                _ctx,
+            )
         except Exception as exc:
             return self._typed_error(
                 "POLICY_DENIED",
@@ -1369,20 +1440,28 @@ class Toolset:
         err = self._require_platform()
         if err:
             return err
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
         from doomberg_runtime import TriggerEngine, TriggerEvaluationError
 
         tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
         try:
             self._validate_trigger_policy(policy)
-            return TriggerEngine(self.platform, worker_id="mcp-trigger-dry-run").dry_run(
-                {
-                    "tenant_id": tenant_id,
-                    "trigger_id": "dry-run-" + uuid.uuid4().hex,
-                    "name": name,
-                    "state": "draft",
-                    "policy": policy,
-                },
-                quote=quote,
+            return self._trace_workflow_tool(
+                "triggers_dry_run",
+                {"name": name},
+                TriggerEngine(self.platform, worker_id="mcp-trigger-dry-run").dry_run(
+                    {
+                        "tenant_id": tenant_id,
+                        "trigger_id": "dry-run-" + uuid.uuid4().hex,
+                        "name": name,
+                        "state": "draft",
+                        "policy": policy,
+                    },
+                    quote=quote,
+                ),
+                _ctx,
             )
         except (ValueError, TriggerEvaluationError) as exc:
             return self._typed_error(
@@ -1397,6 +1476,21 @@ class Toolset:
         err = self._require_platform()
         if err:
             return err
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
+        return self._trace_workflow_tool(
+            "triggers_list",
+            {"state": state, "limit": limit},
+            self._triggers_list_unchecked(state=state, limit=limit, _ctx=_ctx),
+            _ctx,
+        )
+
+    def _triggers_list_unchecked(self, state: str | None = None, limit: int = 100,
+                                 _ctx: dict | None = None) -> dict:
+        err = self._require_platform()
+        if err:
+            return err
         tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
         return {"triggers": self.platform.triggers.list(tenant_id, state=state, limit=limit)}
 
@@ -1404,9 +1498,17 @@ class Toolset:
         err = self._require_platform()
         if err:
             return err
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
         tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
         try:
-            return self.platform.triggers.set_state(tenant_id, trigger_id, state)
+            return self._trace_workflow_tool(
+                "triggers_set_state",
+                {"trigger_id": trigger_id, "state": state},
+                self.platform.triggers.set_state(tenant_id, trigger_id, state),
+                _ctx,
+            )
         except Exception as exc:
             return self._typed_error(
                 "ORDER_STATE_CONFLICT",
@@ -1416,6 +1518,25 @@ class Toolset:
             )
 
     def trigger_firings_list(
+        self,
+        trigger_id: str | None = None,
+        limit: int = 100,
+        _ctx: dict | None = None,
+    ) -> dict:
+        err = self._require_platform()
+        if err:
+            return err
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
+        return self._trace_workflow_tool(
+            "trigger_firings_list",
+            {"trigger_id": trigger_id, "limit": limit},
+            self._trigger_firings_list_unchecked(trigger_id=trigger_id, limit=limit, _ctx=_ctx),
+            _ctx,
+        )
+
+    def _trigger_firings_list_unchecked(
         self,
         trigger_id: str | None = None,
         limit: int = 100,
@@ -1438,6 +1559,21 @@ class Toolset:
         err = self._require_platform()
         if err:
             return err
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
+        return self._trace_workflow_tool(
+            "alerts_list",
+            {"state": state, "limit": limit},
+            self._alerts_list_unchecked(state=state, limit=limit, _ctx=_ctx),
+            _ctx,
+        )
+
+    def _alerts_list_unchecked(self, state: str | None = "open", limit: int = 100,
+                               _ctx: dict | None = None) -> dict:
+        err = self._require_platform()
+        if err:
+            return err
         tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
         return {"alerts": self.platform.notifications.list(tenant_id, state=state, limit=limit)}
 
@@ -1446,6 +1582,9 @@ class Toolset:
         err = self._require_platform()
         if err:
             return err
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
         tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
         alerts = list(reversed(self.platform.notifications.list(tenant_id, state="open", limit=limit)))
         if cursor and cursor != "-1":
@@ -1458,15 +1597,28 @@ class Toolset:
                     passed = True
             alerts = filtered
         next_cursor = alerts[-1]["notification_id"] if alerts else cursor
-        return {"cursor": next_cursor, "alerts": alerts}
+        return self._trace_workflow_tool(
+            "alerts_subscribe",
+            {"cursor": cursor, "limit": limit},
+            {"cursor": next_cursor, "alerts": alerts},
+            _ctx,
+        )
 
     def alerts_ack(self, notification_id: str, _ctx: dict | None = None) -> dict:
         err = self._require_platform()
         if err:
             return err
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
         tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
         try:
-            return self.platform.notifications.ack(tenant_id, notification_id)
+            return self._trace_workflow_tool(
+                "alerts_ack",
+                {"notification_id": notification_id},
+                self.platform.notifications.ack(tenant_id, notification_id),
+                _ctx,
+            )
         except KeyError:
             return self._typed_error(
                 "INVALID_SYMBOL",
@@ -1475,7 +1627,7 @@ class Toolset:
             )
 
     def triggers_resource(self, _ctx: dict | None = None) -> dict:
-        return self.triggers_list(limit=100, _ctx=_ctx)
+        return self._triggers_list_unchecked(limit=100, _ctx=_ctx)
 
     def trigger_resource(self, trigger_id: str, _ctx: dict | None = None) -> dict:
         err = self._require_platform()
@@ -1488,7 +1640,7 @@ class Toolset:
         return {"trigger": trigger}
 
     def alerts_resource(self, _ctx: dict | None = None) -> dict:
-        return self.alerts_list(state="open", limit=100, _ctx=_ctx)
+        return self._alerts_list_unchecked(state="open", limit=100, _ctx=_ctx)
 
     def alert_resource(self, notification_id: str, _ctx: dict | None = None) -> dict:
         err = self._require_platform()
@@ -1504,7 +1656,7 @@ class Toolset:
         }
 
     def trigger_firings_resource(self, _ctx: dict | None = None) -> dict:
-        return self.trigger_firings_list(limit=100, _ctx=_ctx)
+        return self._trigger_firings_list_unchecked(limit=100, _ctx=_ctx)
 
     def ibkr_smoke(
         self,

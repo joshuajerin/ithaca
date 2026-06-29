@@ -186,6 +186,7 @@ jobs:
           CLERK_PEM_PUBLIC_KEY: ${{ secrets.CLERK_PEM_PUBLIC_KEY }}
           CLERK_JWKS_URL: ${{ vars.CLERK_JWKS_URL }}
           CLERK_ALLOWED_ORIGINS: ${{ vars.CLERK_ALLOWED_ORIGINS }}
+          CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
           DOOMBERG_ADMIN_TOKEN: ${{ secrets.DOOMBERG_ADMIN_TOKEN }}
           DOOMBERG_SMOKE_API_KEY: ${{ secrets.DOOMBERG_SMOKE_API_KEY }}
           DOOMBERG_SMOKE_NO_SCOPE_API_KEY: ${{ secrets.DOOMBERG_SMOKE_NO_SCOPE_API_KEY }}
@@ -211,6 +212,7 @@ jobs:
           require_env DOOMBERG_SESSION_SECRET
           require_env CLERK_PUBLISHABLE_KEY
           require_env CLERK_ALLOWED_ORIGINS
+          require_env CLERK_ISSUER
           require_env DO_CLUSTER_NAME
           require_env K8S_GATEWAY_NAMESPACE
           require_env K8S_WORKER_NAMESPACE

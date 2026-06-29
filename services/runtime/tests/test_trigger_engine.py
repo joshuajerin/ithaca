@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import threading
 import time
+import urllib.error
 
 from doomberg_runtime import (
     NotificationDispatcher,
@@ -508,6 +509,41 @@ def test_webhook_delivery_rejects_userinfo(monkeypatch):
         assert "userinfo" in str(exc)
     else:
         raise AssertionError("webhook target with userinfo should be rejected")
+
+
+def test_webhook_delivery_rejects_redirects(monkeypatch):
+    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    adapter = WebhookAdapter()
+    notification = {
+        "event_type": "trigger.fired",
+        "notification_id": "notif_1",
+        "priority": "high",
+        "created_at": "2026-06-24T13:30:00+00:00",
+        "payload": {},
+    }
+    target = {
+        "config": {"url": "https://example.com/hook", "hmac_secret": "secret"},
+        "secret_ref": None,
+    }
+
+    class FakeRedirectOpener:
+        def open(self, req, timeout):
+            raise urllib.error.HTTPError(
+                req.full_url,
+                302,
+                "Found",
+                {"Location": "http://127.0.0.1:8080/hook"},
+                None,
+            )
+
+    adapter._opener = FakeRedirectOpener()
+
+    try:
+        adapter.deliver(notification, target)
+    except PermanentDeliveryError as exc:
+        assert "redirect" in str(exc).lower()
+    else:
+        raise AssertionError("webhook redirects should be rejected")
 
 
 def test_private_webhook_targets_require_local_explicit_opt_in(monkeypatch, local_server):

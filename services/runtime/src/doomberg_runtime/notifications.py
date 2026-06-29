@@ -101,9 +101,15 @@ def _validate_webhook_url(url: str) -> None:
         raise PermanentDeliveryError("webhook target must resolve to a public address")
 
 
+class _NoWebhookRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        return None
+
+
 class WebhookAdapter:
     def __init__(self, *, timeout_s: float = 5.0) -> None:
         self.timeout_s = timeout_s
+        self._opener = urllib.request.build_opener(_NoWebhookRedirects)
 
     def deliver(self, notification: dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:
         config = target.get("config") or {}
@@ -131,11 +137,13 @@ class WebhookAdapter:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
+            with self._opener.open(req, timeout=self.timeout_s) as resp:
                 status = int(getattr(resp, "status", 200))
                 text = resp.read(8192).decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
             detail = exc.read(8192).decode("utf-8", errors="replace")
+            if 300 <= exc.code < 400:
+                raise PermanentDeliveryError("webhook redirects are not allowed") from exc
             if 400 <= exc.code < 500 and exc.code not in {408, 409, 425, 429}:
                 raise PermanentDeliveryError(f"webhook HTTP {exc.code}: {detail[:200]}") from exc
             raise TemporaryDeliveryError(f"webhook HTTP {exc.code}: {detail[:200]}") from exc
