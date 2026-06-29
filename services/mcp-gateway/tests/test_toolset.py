@@ -127,14 +127,41 @@ async def test_server_registers_three_tools(toolset):
     tools = await mcp.list_tools()
     names = {t.name for t in tools}
     assert {"market_get_ohlcv", "backtest_run", "propose_strategy"} <= names
-    assert {"start_research_session", "session_context", "search_skills", "describe_skill",
-            "run_skill", "get_run", "subscribe_run",
-            "cancel_run", "list_approvals", "decide_approval", "get_artifact"} <= names
+    assert {
+        "doomberg_init",
+        "start_research_session",
+        "session_context",
+        "search_skills",
+        "describe_skill",
+        "list_toolkits",
+        "describe_toolkit",
+        "run_skill",
+        "get_run",
+        "subscribe_run",
+        "cancel_run",
+        "list_approvals",
+        "decide_approval",
+        "get_artifact",
+    } <= names
     assert {"triggers_create", "triggers_dry_run", "triggers_list", "triggers_set_state",
             "trigger_firings_list", "alerts_list", "alerts_subscribe", "alerts_ack"} <= names
     assert {"create_order_intent", "preview_order_intent", "get_order_intent",
             "submit_order_intent"}.isdisjoint(names)
     assert "ibkr_smoke" not in names
+
+
+def test_doomberg_init_returns_first_call_workflow(toolset):
+    out = toolset.doomberg_init(goal="research AAPL momentum")
+
+    assert out["status"] == "ready"
+    assert out["goal_captured"] is True
+    assert out["session_id"]
+    assert {step["tool"] for step in out["start_here"]} >= {
+        "search_skills",
+        "describe_skill",
+        "run_skill",
+    }
+    assert "move money" in out["boundaries"]["cannot"]
 
 
 async def test_server_registers_control_plane_resources(toolset):
@@ -146,6 +173,7 @@ async def test_server_registers_control_plane_resources(toolset):
     uris = {str(resource.uri) for resource in resources}
     assert {
         "doomberg://skills/catalog",
+        "doomberg://toolkits/catalog",
         "doomberg://policies/current",
         "doomberg://accounts",
         "doomberg://data/providers",
@@ -158,6 +186,7 @@ async def test_server_registers_control_plane_resources(toolset):
     template_uris = {template.uriTemplate for template in templates}
     assert {
         "doomberg://skills/{skill_id}/{version}",
+        "doomberg://toolkits/{toolkit_id}",
         "doomberg://runs/{run_id}",
         "doomberg://triggers/{trigger_id}",
         "doomberg://alerts/{notification_id}",
@@ -180,6 +209,29 @@ async def test_skill_resources_return_catalog_and_manifest(toolset):
     assert manifest["skill_id"] == "market.get_ohlcv"
     assert manifest["version"] == "0.1.0"
     assert manifest["runtime"]["profile"] == "interactive"
+
+
+async def test_toolkit_resources_return_grouped_direct_tools(toolset):
+    from doomberg_mcp import create_server
+
+    mcp, ts = create_server(toolset)
+
+    listed = ts.list_toolkits()
+    assert any(t["toolkit_id"] == "market-research" for t in listed["toolkits"])
+
+    toolkit = ts.describe_toolkit("backtest-paper")
+    assert toolkit["required_first_tool"] == "start_research_session"
+    assert "backtest_run" in toolkit["direct_tools"]
+    assert "list_approvals" in toolkit["direct_tools"]
+
+    catalog_contents = await mcp.read_resource("doomberg://toolkits/catalog")
+    catalog = json.loads(catalog_contents[0].content)
+    assert catalog["kind"] == "toolkits.catalog"
+    assert any(t["toolkit_id"] == "portfolio-risk" for t in catalog["toolkits"])
+
+    toolkit_contents = await mcp.read_resource("doomberg://toolkits/market-research")
+    manifest = json.loads(toolkit_contents[0].content)
+    assert "market_tide" in manifest["direct_tools"]
 
 
 async def test_platform_resources_return_tenant_scoped_views_without_secrets(toolset_core):

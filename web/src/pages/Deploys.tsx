@@ -11,8 +11,19 @@ type Tab = "backtest" | "paper";
 
 export function Deploys() {
   const [tab, setTab] = useState<Tab>("backtest");
-  const { data, loading, error } = useAsync<RunRow[]>((s) => api.listRuns(tab, s), [tab]);
+  const { data, loading, error, reload } = useAsync<RunRow[]>((s) => api.listRuns(tab, s), [tab]);
   const navigate = useNavigate();
+
+  async function requestPaper(run: RunRow) {
+    if (!run.strategy_id) return;
+    await api.createRun(run.strategy_id, "paper");
+    setTab("paper");
+  }
+
+  async function lifecycle(run: RunRow, action: "promote" | "activate" | "pause" | "resume" | "retire") {
+    await api.runAction(run.id, action);
+    reload();
+  }
 
   return (
     <div className="page">
@@ -37,14 +48,30 @@ export function Deploys() {
 
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {(data ?? []).map((r) => (
-          <DeployCard key={r.id} run={r} onOpen={() => navigate(`/runs/${r.id}`)} />
+          <DeployCard
+            key={r.id}
+            run={r}
+            onOpen={() => navigate(`/runs/${r.id}`)}
+            onRequestPaper={() => void requestPaper(r)}
+            onLifecycle={(action) => void lifecycle(r, action)}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function DeployCard({ run, onOpen }: { run: RunRow; onOpen: () => void }) {
+function DeployCard({
+  run,
+  onOpen,
+  onRequestPaper,
+  onLifecycle,
+}: {
+  run: RunRow;
+  onOpen: () => void;
+  onRequestPaper: () => void;
+  onLifecycle: (action: "promote" | "activate" | "pause" | "resume" | "retire") => void;
+}) {
   const result = (run.result ?? {}) as Partial<BacktestResult> & { data?: Partial<BacktestResult> };
   // The result row may wrap the backtest data in a provenance envelope.
   const bt: Partial<BacktestResult> = (result.data ?? result) as Partial<BacktestResult>;
@@ -61,6 +88,7 @@ function DeployCard({ run, onOpen }: { run: RunRow; onOpen: () => void }) {
           <span className={`badge ${stateClass(run.state)}`}>{run.state}</span>{" "}
           <span style={{ color: "var(--muted-dim)" }}>strategy {shortId(run.strategy_id)}</span>
         </div>
+        <DeployActions run={run} onRequestPaper={onRequestPaper} onLifecycle={onLifecycle} />
       </div>
 
       {curve.length > 1 ? (
@@ -83,6 +111,40 @@ function DeployCard({ run, onOpen }: { run: RunRow; onOpen: () => void }) {
       ) : (
         <div className="empty">No result.</div>
       )}
+    </div>
+  );
+}
+
+function DeployActions({
+  run,
+  onRequestPaper,
+  onLifecycle,
+}: {
+  run: RunRow;
+  onRequestPaper: () => void;
+  onLifecycle: (action: "promote" | "activate" | "pause" | "resume" | "retire") => void;
+}) {
+  if (run.kind === "backtest") {
+    return (
+      <button className="btn" onClick={onRequestPaper} disabled={!run.strategy_id}>
+        Request paper
+      </button>
+    );
+  }
+  if (run.kind !== "paper") return null;
+  const actions: Array<["promote" | "activate" | "pause" | "resume" | "retire", string]> = [];
+  if (["queued", "running", "succeeded"].includes(run.state)) actions.push(["promote", "Promote"]);
+  if (["promoted", "paused"].includes(run.state)) actions.push([run.state === "paused" ? "resume" : "activate", run.state === "paused" ? "Resume" : "Activate"]);
+  if (run.state === "live") actions.push(["pause", "Pause"]);
+  if (["promoted", "live", "paused"].includes(run.state)) actions.push(["retire", "Retire"]);
+  if (!actions.length) return null;
+  return (
+    <div className="row-actions">
+      {actions.map(([action, label]) => (
+        <button className={action === "activate" || action === "resume" ? "btn primary" : "btn"} key={action} onClick={() => onLifecycle(action)}>
+          {label}
+        </button>
+      ))}
     </div>
   );
 }

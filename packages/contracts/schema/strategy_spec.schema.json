@@ -116,7 +116,19 @@
       "additionalProperties": false,
       "required": ["cost_bps", "rebalance"],
       "properties": {
-        "cost_bps": { "type": "number", "minimum": 0, "maximum": 1000 },
+        "cost_bps": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "Explicit commissions/fees in basis points per unit of turnover."
+        },
+        "slippage_bps": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 0,
+          "description": "Expected market impact/slippage in basis points per unit of turnover. Added to cost_bps for all-in trading cost."
+        },
         "algo": {
           "type": "string",
           "enum": ["market", "vwap", "twap"],

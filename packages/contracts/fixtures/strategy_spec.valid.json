@@ -6,7 +6,7 @@
   "strategy": { "id": "momentum", "params": { "lookback": 90, "top": 2 } },
   "construction": { "scheme": "rank_weight", "long_only": true, "gross": 1.0 },
   "risk": { "max_gross": 1.0, "max_net": 1.0, "max_name_pct": 0.25 },
-  "execution": { "cost_bps": 5, "algo": "vwap", "rebalance": "daily@close" },
+  "execution": { "cost_bps": 5, "slippage_bps": 2, "algo": "vwap", "rebalance": "daily@close" },
   "resources": { "tier": "standard" },
   "seed": 42
 }

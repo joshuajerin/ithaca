@@ -56,6 +56,7 @@ def test_mint_defaults_to_agent_operational_scope_set(client, clerk_auth):
         "alerts:ack",
         "artifacts:read",
         "deploy:backtest",
+        "deploy:paper",
     }
 
 

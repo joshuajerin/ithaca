@@ -47,6 +47,7 @@ _LAUNCH_GATE_BACKTEST_SPEC = {
     "execution": {"cost_bps": 5, "algo": "market", "rebalance": "monthly@close"},
     "seed": 42,
 }
+_LAUNCH_GATE_ACTIVE_RUN_STATES = {"queued", "running"}
 
 
 def _launch_gate_trigger_policy(symbol: str) -> dict[str, Any]:
@@ -492,18 +493,28 @@ def _check_mcp_durable_run(send, *, token: str, session_id: str) -> list[GateRes
             results.append(
                 _fail("mcp durable run resource", "run resource did not include created run/job", body=run_body)
             )
-        elif run.get("state") != "queued":
-            results.append(_fail("mcp durable run resource", "created run was not queued", body=run_body))
         else:
-            results.append(
-                _pass(
-                    "mcp durable run resource",
-                    "doomberg://runs/{run_id} exposed the queued run, job, and trace",
-                    run_id=run_id,
-                    job_id=job_id,
-                    events=len(events),
+            run_state = str(run.get("state") or "")
+            if run_state not in _LAUNCH_GATE_ACTIVE_RUN_STATES:
+                results.append(
+                    _fail(
+                        "mcp durable run resource",
+                        "created run was not queued or running",
+                        state=run_state,
+                        body=run_body,
+                    )
                 )
-            )
+            else:
+                results.append(
+                    _pass(
+                        "mcp durable run resource",
+                        "doomberg://runs/{run_id} exposed the queued/running run, job, and trace",
+                        run_id=run_id,
+                        job_id=job_id,
+                        state=run_state,
+                        events=len(events),
+                    )
+                )
 
     cancelled, failure = _mcp_call_tool(
         send,
@@ -1505,18 +1516,28 @@ def _check_mcp_resources_local(db: Any, *, token: str, no_scope_token: str) -> l
         events = (run_body or {}).get("events") or []
         if run.get("run_id") != run_id or not any(job.get("job_id") == job_id for job in jobs):
             results.append(_fail("mcp durable run resource", "run resource did not include created run/job", body=run_body))
-        elif run.get("state") != "queued":
-            results.append(_fail("mcp durable run resource", "created run was not queued", body=run_body))
         else:
-            results.append(
-                _pass(
-                    "mcp durable run resource",
-                    "doomberg://runs/{run_id} exposed the queued run, job, and trace",
-                    run_id=run_id,
-                    job_id=job_id,
-                    events=len(events),
+            run_state = str(run.get("state") or "")
+            if run_state not in _LAUNCH_GATE_ACTIVE_RUN_STATES:
+                results.append(
+                    _fail(
+                        "mcp durable run resource",
+                        "created run was not queued or running",
+                        state=run_state,
+                        body=run_body,
+                    )
                 )
-            )
+            else:
+                results.append(
+                    _pass(
+                        "mcp durable run resource",
+                        "doomberg://runs/{run_id} exposed the queued/running run, job, and trace",
+                        run_id=run_id,
+                        job_id=job_id,
+                        state=run_state,
+                        events=len(events),
+                    )
+                )
 
         cancelled = toolset.cancel_run(run_id, reason="launch gate cleanup", _ctx=ctx)
         if cancelled.get("status") != "cancelled":

@@ -1,18 +1,20 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
+import { useUser } from "@clerk/react";
+import type { AuthMode } from "../App";
 import { EASE } from "../lib/motion";
-import { APP_URL } from "../lib/links";
+import { APP_URL, DOCS_URL } from "../lib/links";
 
 const LINKS = [
-  { label: "Platform", href: "#features" },
-  { label: "Security", href: "#trust" },
-  { label: "Docs", href: "#" },
+  { label: "Platform", href: "#platform" },
+  { label: "Security", href: "#security" },
+  { label: "Docs", href: DOCS_URL },
 ];
 
 function Logo() {
   return (
-    <a href="#top" className="flex items-center gap-2.5">
-      {/* CSS-drawn mark: stacked layers = tools / execution / observability */}
+    <a href="/" data-nav-logo className="flex items-center gap-2.5" aria-label="Doomberg home">
+      {/* CSS-drawn mark: stacked layers = tools, execution, records */}
       <span className="relative grid h-7 w-7 place-items-center">
         <span className="absolute h-7 w-7 rotate-45 rounded-[7px] bg-olive" />
         <span className="absolute h-3.5 w-3.5 rotate-45 rounded-[3px] bg-leaf" />
@@ -24,7 +26,7 @@ function Logo() {
   );
 }
 
-export default function Nav() {
+function NavShell({ isSignedIn }: { isSignedIn: boolean }) {
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
@@ -67,15 +69,9 @@ export default function Nav() {
         <div className="flex items-center gap-2">
           <a
             href={APP_URL}
-            className="hidden rounded-pill px-3.5 py-2 text-[0.9rem] font-medium text-ink transition-colors hover:text-ink/70 sm:block"
+            className="group inline-flex items-center gap-2 rounded-pill bg-amber px-4 py-2.5 text-[0.9rem] font-semibold text-ink shadow-[0_8px_24px_-12px_rgba(201,121,26,0.9)] transition-all duration-300 hover:-translate-y-0.5 hover:bg-amber-deep hover:text-cream"
           >
-            Sign in
-          </a>
-          <a
-            href={APP_URL}
-            className="group inline-flex items-center gap-2 rounded-pill bg-amber px-4 py-2.5 text-[0.9rem] font-semibold text-ink shadow-[0_8px_24px_-12px_rgba(201,121,26,0.9)] transition-all duration-300 hover:bg-amber-deep hover:text-cream hover:-translate-y-0.5"
-          >
-            Connect your agent
+            {isSignedIn ? "Dashboard" : "Sign in"}
             <span className="transition-transform duration-300 group-hover:translate-x-0.5">
               →
             </span>
@@ -84,4 +80,14 @@ export default function Nav() {
       </nav>
     </motion.header>
   );
+}
+
+function ClerkNav() {
+  const { isLoaded, isSignedIn } = useUser();
+  return <NavShell isSignedIn={isLoaded && Boolean(isSignedIn)} />;
+}
+
+export default function Nav({ authMode }: { authMode: AuthMode }) {
+  if (authMode === "clerk") return <ClerkNav />;
+  return <NavShell isSignedIn={false} />;
 }

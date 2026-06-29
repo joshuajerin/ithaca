@@ -95,8 +95,9 @@ export function AgentLink() {
           </div>
           <div className="set-hint">
             Approving creates a scoped MCP key for this tenant and sends it to the local
-            installer waiting on your machine. The key can run research, backtests, and paper
-            trading; it cannot request live deployment.
+            installer waiting on your machine. The key can research, queue backtests, and
+            request paper work; promotion, approval decisions, and any live deployment still
+            require a signed-in human.
           </div>
           {error && <div className="set-hint err">{error}</div>}
           <div className="set-field">

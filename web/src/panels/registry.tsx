@@ -3,7 +3,7 @@ import { BacktestPanel } from "./BacktestPanel";
 import { JsonPanel } from "./JsonPanel";
 
 // STATIC panelType -> renderer registry. SECURITY INVARIANT: this is a fixed lookup table.
-// There is NO eval, NO sucrase, NO dynamic import of agent-authored code (the v1 RCE lesson).
+// Keep rendering on fixed local components only.
 // An unknown panelType falls back to the generic JSON/table renderer.
 export interface PanelProps {
   data: unknown;

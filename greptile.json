@@ -1,0 +1,58 @@
+{
+  "strictness": 2,
+  "commentTypes": ["logic", "syntax", "style"],
+  "triggerOnUpdates": true,
+  "triggerOnDrafts": false,
+  "fileChangeLimit": 250,
+  "includeBranches": ["main", "ui"],
+  "excludeAuthors": ["dependabot[bot]"],
+  "ignorePatterns": "node_modules/**\ndist/**\nbuild/**\n.venv/**\n.vercel/**\n.gstack/**\ncoverage/**\n**/*.generated.*\n**/*.tsbuildinfo\npnpm-lock.yaml\nuv.lock\nhistory/**\nsite/dist/**\nweb/dist/**",
+  "instructions": "Review Doomberg changes as an agent-native market research and paper-trading control plane. Prioritize tenant isolation, scoped MCP/API-key behavior, installer idempotency, secret handling, and tests that prove user-facing setup paths. Do not request generic refactors unless they reduce a concrete correctness or security risk.",
+  "customContext": {
+    "rules": [
+      {
+        "rule": "Installer changes must not overwrite existing user MCP servers or leak API keys into tracked files.",
+        "globs": ["scripts/install_agent_mcp.py", "services/rest-gateway/tests/test_installer.py", "README.md", "docs/**/*.md"]
+      },
+      {
+        "rule": "Hosted MCP access must stay tenant-scoped and bearer-token based; browser UI flows must not bypass scoped key issuance.",
+        "globs": ["services/mcp-gateway/**", "services/rest-gateway/**", "web/src/pages/AgentLink.tsx"]
+      },
+      {
+        "rule": "Frontend changes should remove filler copy and preserve a direct dashboard/docs/setup flow.",
+        "globs": ["site/src/**", "web/src/**"]
+      }
+    ],
+    "files": [
+      "README.md",
+      "docs/AGENT_CLIENT_SETUP.md",
+      "docs/GREPTILE_AUTOMATION.md",
+      "scripts/install_agent_mcp.py",
+      "services/rest-gateway/tests/test_installer.py"
+    ]
+  },
+  "statusCheck": true,
+  "statusCommentsEnabled": true,
+  "includeConfidenceScore": true,
+  "includeIssuesTable": true,
+  "summarySection": {
+    "included": true,
+    "collapsible": true,
+    "defaultOpen": true
+  },
+  "issuesTableSection": {
+    "included": true,
+    "collapsible": true,
+    "defaultOpen": true
+  },
+  "confidenceScoreSection": {
+    "included": true,
+    "collapsible": true,
+    "defaultOpen": false
+  },
+  "sequenceDiagramSection": {
+    "included": false,
+    "collapsible": true,
+    "defaultOpen": false
+  }
+}

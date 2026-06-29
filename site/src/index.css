@@ -137,7 +137,7 @@
   }
 }
 
-/* Marquee keyframes for the data-source ticker */
+/* Marquee keyframes for the founder logo strip */
 @keyframes marquee {
   from { transform: translateX(0); }
   to { transform: translateX(-50%); }
@@ -189,7 +189,7 @@
 }
 .animate-orb-glow { animation: orb-glow 4.5s ease-in-out infinite; }
 
-/* Slow dot-matrix shimmer for the settlement/observability plane. */
+/* Slow dot-matrix shimmer for the record plane. */
 @keyframes matrix-pan {
   from { background-position: 0 0; }
   to { background-position: 0 -240px; }

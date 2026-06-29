@@ -102,6 +102,13 @@ class Execution(BaseModel):
         extra="forbid",
     )
     cost_bps: float = Field(..., ge=0.0, le=1000.0)
+    """
+    Explicit commissions/fees in basis points per unit of turnover.
+    """
+    slippage_bps: float | None = Field(0, ge=0.0, le=1000.0)
+    """
+    Expected market impact/slippage in basis points per unit of turnover. Added to cost_bps for all-in trading cost.
+    """
     algo: Algo | None = "vwap"
     rebalance: Rebalance
 

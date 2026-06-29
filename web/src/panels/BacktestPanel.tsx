@@ -9,8 +9,14 @@ export function BacktestPanel({ data }: { data: unknown }) {
   const stats = d.stats ?? {};
   const curve = Array.isArray(d.equityCurve) ? d.equityCurve : [];
   const weights = d.finalWeights ?? {};
+  const benchmark = d.benchmark;
+  const comparison = d.comparison;
+  const execution = d.execution;
+  const integrity = d.integrity;
+  const quality = d.dataQuality;
 
   const statKeys = pickStats(stats);
+  const benchmarkStats = benchmark?.stats ? pickStats(benchmark.stats).slice(0, 4) : [];
 
   return (
     <div>
@@ -34,6 +40,78 @@ export function BacktestPanel({ data }: { data: unknown }) {
         {Array.isArray(d.symbols) && d.symbols.length ? `· ${d.symbols.join(", ")}` : ""}
       </div>
       <EquityCurve points={curve} />
+
+      {(comparison || benchmarkStats.length > 0) && (
+        <>
+          <div className="col-head" style={{ position: "static", padding: "10px 0 4px", border: "none" }}>
+            Benchmark Comparison {benchmark?.label ? `· ${benchmark.label}` : ""}
+          </div>
+          <div className="stat-grid">
+            {comparison && (
+              <>
+                <div className="stat">
+                  <div className="stat-label">active return</div>
+                  <div className={`stat-val ${comparison.activeTotalReturnPct >= 0 ? "pos" : "neg"}`}>
+                    {comparison.activeTotalReturnPct.toFixed(1)}%
+                  </div>
+                </div>
+                <div className="stat">
+                  <div className="stat-label">tracking error</div>
+                  <div className="stat-val">{comparison.trackingErrorPct.toFixed(1)}%</div>
+                </div>
+                <div className="stat">
+                  <div className="stat-label">info ratio</div>
+                  <div className={`stat-val ${comparison.informationRatio >= 0 ? "pos" : "neg"}`}>
+                    {comparison.informationRatio.toFixed(2)}
+                  </div>
+                </div>
+              </>
+            )}
+            {benchmarkStats.map(([k, v]) => (
+              <div className="stat" key={`bench-${k}`}>
+                <div className="stat-label">bench {k}</div>
+                <div className={`stat-val ${signClass(k, v)}`}>{fmtStat(k, v)}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {(execution || integrity || quality) && (
+        <>
+          <div className="col-head" style={{ position: "static", padding: "10px 0 4px", border: "none" }}>
+            Run Integrity
+          </div>
+          <table className="tbl">
+            <tbody>
+              {execution && (
+                <>
+                  <tr>
+                    <td>Trading cost</td>
+                    <td>{execution.cost_bps.toFixed(1)} bps + {execution.slippage_bps.toFixed(1)} bps slippage</td>
+                  </tr>
+                  <tr>
+                    <td>Turnover cost</td>
+                    <td>{execution.total_cost_pct.toFixed(2)}% total · {execution.avg_daily_turnover.toFixed(3)} avg daily turnover</td>
+                  </tr>
+                </>
+              )}
+              {integrity && (
+                <tr>
+                  <td>No-lookahead</td>
+                  <td>{integrity.noLookahead ? `${integrity.decisionLagBars} bar decision lag` : "not attested"}</td>
+                </tr>
+              )}
+              {quality && (
+                <tr>
+                  <td>OHLCV panel</td>
+                  <td>cleaned cache · PIT {quality.pointInTime ? "yes" : "no"}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </>
+      )}
 
       {Object.keys(weights).length > 0 && (
         <>
@@ -79,10 +157,8 @@ function pickStats(stats: Record<string, number>): [string, number][] {
 
 function fmtStat(k: string, v: number): string {
   const lk = k.toLowerCase();
-  if (lk.includes("cagr") || lk.includes("dd") || lk.includes("rate") || lk.includes("vol")) {
-    // these are commonly fractions or percents; show as %
-    const asPct = Math.abs(v) <= 5 ? v * 100 : v;
-    return `${asPct.toFixed(1)}%`;
+  if (lk.includes("cagr") || lk.includes("dd") || lk.includes("rate") || lk.includes("return") || lk.includes("vol")) {
+    return `${v.toFixed(1)}%`;
   }
   return v.toFixed(2);
 }
