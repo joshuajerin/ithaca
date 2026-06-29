@@ -171,7 +171,7 @@ export function App() {
           </div>
           <div className="rail-user-meta">
             <div className="rail-user-name">{user.name}</div>
-            <div className="rail-user-sub">{user.provider ?? "user"}</div>
+            <div className="rail-user-sub">{user.email || "signed in"}</div>
           </div>
           <button className="rail-signout" onClick={signOut} title="Sign out" aria-label="Sign out">
             <LogoutIcon />

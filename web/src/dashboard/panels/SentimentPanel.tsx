@@ -13,11 +13,11 @@ export function SentimentPanel({ data }: { data: SentimentData }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 20, flexShrink: 0 }}>
         <div>
           <div className="editorial-label" style={{ fontSize: 9, color: "var(--muted)", marginBottom: 6 }}>{data.scope} Sentiment</div>
-          <div style={{ fontFamily: "Georgia, serif", fontSize: 28, lineHeight: 1, color: "var(--fg)", textTransform: "capitalize" }}>
+          <div style={{ fontFamily: "var(--font-sans)", fontSize: 28, lineHeight: 1, color: "var(--fg)", textTransform: "capitalize" }}>
             {data.label.replace('_', ' ').toLowerCase()}
           </div>
         </div>
-        <div style={{ fontFamily: "Georgia, serif", fontSize: 36, lineHeight: 1, color: isPositive ? "var(--pos)" : "var(--neg)" }}>
+        <div style={{ fontFamily: "var(--font-sans)", fontSize: 36, lineHeight: 1, color: isPositive ? "var(--pos)" : "var(--neg)" }}>
           {data.overall > 0 ? '+' : ''}{data.overall.toFixed(2)}
         </div>
       </div>
@@ -27,7 +27,7 @@ export function SentimentPanel({ data }: { data: SentimentData }) {
           <div key={source.channel} style={{ borderTop: "1px solid var(--border-soft)", paddingTop: 8 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
               <span className="editorial-label" style={{ fontSize: 8.5, color: "var(--muted)" }}>{source.channel}</span>
-              <span style={{ fontFamily: "Georgia, serif", fontSize: 13, color: source.score > 0 ? "var(--pos)" : "var(--neg)" }}>
+              <span style={{ fontFamily: "var(--font-sans)", fontSize: 13, color: source.score > 0 ? "var(--pos)" : "var(--neg)" }}>
                 {source.score > 0 ? '+' : ''}{source.score.toFixed(1)}
               </span>
             </div>

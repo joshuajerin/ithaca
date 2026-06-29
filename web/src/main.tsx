@@ -33,7 +33,7 @@ function MissingClerkConfig() {
             Doomberg
           </div>
         </div>
-        <h1 className="auth-title">Clerk is not configured</h1>
+        <h1 className="auth-title">Authentication is not configured</h1>
         <div className="banner">
           Set <code>VITE_CLERK_PUBLISHABLE_KEY</code> for this environment.
         </div>

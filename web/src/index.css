@@ -22,7 +22,7 @@
   --color-accent-foreground: #f5f1e8;
   --color-destructive: #7f1d1d;
   --color-destructive-foreground: #fef2f2;
-  --font-serif: Arial, "Helvetica Neue", Helvetica, ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Pliant", "Helvetica Neue", Helvetica, ui-sans-serif, system-ui, sans-serif;
 }
 
 @layer utilities {
@@ -72,7 +72,7 @@
   --warn: #c9791a;
   --info: #2f6be5;
   --accent: #485c11;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --font-mono: "Pliant", "Helvetica Neue", Helvetica, ui-sans-serif, system-ui, sans-serif;
   --font-display: "Pliant", "Helvetica Neue", Helvetica, ui-sans-serif, system-ui, sans-serif;
   --font-sans: "Pliant", "Helvetica Neue", Helvetica, ui-sans-serif, system-ui, sans-serif;
 }
@@ -88,7 +88,7 @@ body {
 }
 a { color: inherit; text-decoration: none; }
 button { font-family: inherit; cursor: pointer; }
-input, select { font-family: inherit; }
+input, select, textarea { font-family: inherit; }
 .font-serif { font-family: var(--font-display) !important; }
 
 .app { display: grid; grid-template-columns: 224px 1fr; height: 100vh; }
@@ -280,7 +280,7 @@ input, select { font-family: inherit; }
 .rail-user-av img { width: 100%; height: 100%; object-fit: cover; }
 .rail-user-meta { min-width: 0; flex: 1; }
 .rail-user-name { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rail-user-sub { font-size: 9px; color: var(--muted-dim); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.1em; }
+.rail-user-sub { font-size: 10px; color: var(--muted-dim); font-family: var(--font-sans); text-transform: none; letter-spacing: 0; }
 .rail-signout { background: none; border: 1px solid var(--border); color: var(--muted);
   width: 24px; height: 24px; display: grid; place-items: center; flex-shrink: 0; }
 .rail-signout:hover { border-color: var(--accent); color: var(--accent); }

@@ -161,7 +161,7 @@ export function PriceChartPanel({ data, onSelectRange }: PriceChartPanelProps) {
               <CartesianGrid strokeDasharray="1 3" stroke="#2a2a2a" vertical={false} />
               <XAxis
                 dataKey="t"
-                tick={{ fontSize: 9, fill: '#777', fontFamily: 'Arial, Helvetica, sans-serif' }}
+                tick={{ fontSize: 9, fill: '#777', fontFamily: 'var(--font-sans)' }}
                 tickLine={false}
                 axisLine={false}
                 minTickGap={30}
@@ -169,7 +169,7 @@ export function PriceChartPanel({ data, onSelectRange }: PriceChartPanelProps) {
               />
               <YAxis
                 domain={['auto', 'auto']}
-                tick={{ fontSize: 10, fill: '#777', fontFamily: 'Arial, Helvetica, sans-serif' }}
+                tick={{ fontSize: 10, fill: '#777', fontFamily: 'var(--font-sans)' }}
                 tickLine={false}
                 axisLine={false}
                 tickFormatter={(val) => val.toFixed(1)}
