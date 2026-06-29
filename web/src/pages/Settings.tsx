@@ -254,7 +254,7 @@ export function Settings() {
           <div className="fcard" style={{ display: "flex", flexDirection: "column", gap: 0 }}>
             {[
               { name: "MCP Server",   blurb: "Tool-call bridge for agent workflows",   status: "active" },
-              { name: "Ithaca Docs",  blurb: "Documentation and API reference",         status: "active", href: "https://ithaca.mintlify.app" },
+              { name: "Doomberg Docs", blurb: "Documentation and API reference",         status: "active", href: "https://docs.doomberg.me" },
             ].map((int, i, arr) => (
               <div key={int.name} style={{
                 display: "flex", alignItems: "center", gap: 14,

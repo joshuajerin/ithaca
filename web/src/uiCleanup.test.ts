@@ -10,7 +10,7 @@ function read(rel: string): string {
 }
 
 describe("customer-facing UI cleanup guards", () => {
-  it("uses Ithaca product copy in auth and agent-link surfaces", () => {
+  it("uses Doomberg product copy in auth and agent-link surfaces", () => {
     const text = [
       read("main.tsx"),
       read("pages/AuthPage.tsx"),
@@ -19,14 +19,14 @@ describe("customer-facing UI cleanup guards", () => {
       read("pages/Settings.tsx"),
     ].join("\n");
 
-    expect(text).toContain("Ithaca");
-    expect(text).toContain("Ithaca MCP");
-    expect(text).toContain("Ithaca user");
-    expect(text).toContain("ithaca.mintlify.app");
-    expect(text).not.toMatch(/>\s*Doomberg\s*</);
-    expect(text).not.toContain("Doomberg MCP");
-    expect(text).not.toContain("Doomberg user");
-    expect(text).not.toContain("docs.doomberg.me");
+    expect(text).toContain("Doomberg");
+    expect(text).toContain("Doomberg MCP");
+    expect(text).toContain("Doomberg user");
+    expect(text).toContain("docs.doomberg.me");
+    expect(text).not.toMatch(/>\s*Ithaca\s*</);
+    expect(text).not.toContain("Ithaca MCP");
+    expect(text).not.toContain("Ithaca user");
+    expect(text).not.toContain("ithaca.mintlify.app");
   });
 
   it("does not ship the old sliding sessions detail pane", () => {
