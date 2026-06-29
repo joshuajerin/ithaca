@@ -122,8 +122,12 @@ curl -fsSL https://app.doomberg.me/install.py | python3
 
 The installer opens the Doomberg app, lets the user sign in or sign up with Clerk,
 then asks for approval to mint a scoped MCP key. After approval it
-registers the hosted streamable-HTTP MCP server with Codex as `doomberg` using
-`codex mcp add --url ... --bearer-token-env-var DOOMBERG_MCP_API_KEY`.
+registers the hosted streamable-HTTP MCP server as `doomberg` for Cursor,
+Claude Code, Codex, OpenClaw, and Hermes. Codex and Claude Code use their
+native MCP CLIs when present; Cursor, OpenClaw, and Hermes get merged
+`mcpServers` JSON config files without overwriting existing servers. To target
+one client, pass `--client cursor`, `--client claude-code`, `--client codex`,
+`--client openclaw`, or `--client hermes`.
 
 All six local processes share the same platform system-of-record via `DOOMBERG_DB`. The browser talks only to the
 rest-gateway (`:8000`); its human money-path actions (promote/activate/pause/resume/retire) call the same
