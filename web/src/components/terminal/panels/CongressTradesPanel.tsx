@@ -70,7 +70,7 @@ type SideFilter = "all" | "buy" | "sell";
 
 export function CongressTradesPanel({ data }: { data: CongressTradesData }) {
   const [side, setSide] = useState<SideFilter>("all");
-  const isMock = data.source === "mock";
+  const isLive = data.source === "live";
 
   const trades = useMemo(
     () => (side === "all" ? data.trades : data.trades.filter(t => t.type === side)),
@@ -90,8 +90,8 @@ export function CongressTradesPanel({ data }: { data: CongressTradesData }) {
           </span>
         </div>
         <span className="text-[9px] text-muted-foreground uppercase tracking-wider shrink-0 ml-2 flex items-center gap-1.5">
-          <span className={`w-1.5 h-1.5 rounded-full ${isMock ? "bg-gray-500" : "bg-emerald-400"}`} />
-          {isMock ? "sample" : "live"}
+          <span className={`w-1.5 h-1.5 rounded-full ${isLive ? "bg-emerald-400" : "bg-gray-500"}`} />
+          {isLive ? "live" : "reference"}
         </span>
       </div>
 

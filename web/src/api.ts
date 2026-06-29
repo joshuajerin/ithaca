@@ -24,6 +24,42 @@ export interface ProviderConnectionInput {
   retention_policy?: string;
 }
 
+export type AgentToolkitsErrorKind = "auth-required" | "unavailable" | "fetch-failed";
+
+export class AgentToolkitsError extends Error {
+  kind: AgentToolkitsErrorKind;
+  status?: number;
+
+  constructor(kind: AgentToolkitsErrorKind, message: string, status?: number) {
+    super(message);
+    this.name = "AgentToolkitsError";
+    this.kind = kind;
+    this.status = status;
+  }
+}
+
+export interface AgentCatalogTool {
+  name: string;
+  description?: string;
+}
+
+export interface AgentToolkit {
+  toolkit_id: string;
+  name: string;
+  description: string;
+  required_first_tool?: string;
+  direct_tool_count: number;
+  skill_count?: number;
+  direct_tools: string[];
+  tools: AgentCatalogTool[];
+}
+
+export interface AgentToolkitsCatalog {
+  source: "live";
+  kind?: string;
+  toolkits: AgentToolkit[];
+}
+
 // Thin REST client over the rest-gateway. The browser NEVER speaks MCP; this is the only
 // backend it knows. Two auth modes, resolved at the gateway's single front door:
 //   - Prod:  Clerk session token or VITE_API_KEY -> `Authorization: Bearer <token>`;
@@ -92,6 +128,103 @@ function unwrapList<T>(raw: unknown, key: string): T[] {
     }
   }
   return [];
+}
+
+function rec(v: unknown): Record<string, unknown> {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+}
+
+function stringList(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+}
+
+function catalogTools(v: unknown): AgentCatalogTool[] {
+  if (!Array.isArray(v)) return [];
+  return v.flatMap((item) => {
+    if (typeof item === "string" && item.trim()) return [{ name: item.trim() }];
+    const obj = rec(item);
+    const name = typeof obj.name === "string" ? obj.name.trim() : "";
+    if (!name) return [];
+    const description = typeof obj.description === "string" ? obj.description : undefined;
+    return [{ name, description }];
+  });
+}
+
+function normalizeAgentToolkits(raw: unknown): AgentToolkitsCatalog {
+  const obj = rec(raw);
+  const rows = unwrapList<unknown>(raw, "toolkits");
+  return {
+    source: "live",
+    kind: typeof obj.kind === "string" ? obj.kind : undefined,
+    toolkits: rows.flatMap((row): AgentToolkit[] => {
+      const item = rec(row);
+      const id = typeof item.toolkit_id === "string"
+        ? item.toolkit_id
+        : typeof item.id === "string"
+          ? item.id
+          : "";
+      if (!id.trim()) return [];
+      const directTools = stringList(item.direct_tools);
+      const tools = catalogTools(item.tools);
+      const directToolCount = typeof item.direct_tool_count === "number"
+        ? item.direct_tool_count
+        : directTools.length;
+      return [{
+        toolkit_id: id,
+        name: typeof item.name === "string" && item.name.trim() ? item.name : id,
+        description: typeof item.description === "string" ? item.description : "",
+        required_first_tool: typeof item.required_first_tool === "string" ? item.required_first_tool : undefined,
+        direct_tool_count: directToolCount,
+        skill_count: typeof item.skill_count === "number" ? item.skill_count : undefined,
+        direct_tools: directTools,
+        tools,
+      }];
+    }),
+  };
+}
+
+const AGENT_TOOLKIT_CATALOG_PATHS = ["/agent/toolkits", "/mcp/toolkits", "/toolkits/catalog"];
+
+async function getAgentToolkits(signal?: AbortSignal): Promise<AgentToolkitsCatalog> {
+  let lastNotFound = "";
+  for (const path of AGENT_TOOLKIT_CATALOG_PATHS) {
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}${path}`, { headers: await headers(), signal });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      throw new AgentToolkitsError(
+        "fetch-failed",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    if (res.status === 404) {
+      lastNotFound = path;
+      continue;
+    }
+    if (res.status === 401 || res.status === 403) {
+      const body = await res.text().catch(() => "");
+      throw new AgentToolkitsError(
+        "auth-required",
+        `GET ${path} -> ${res.status} ${res.statusText}${body ? `: ${body}` : ""}`,
+        res.status,
+      );
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new AgentToolkitsError(
+        "fetch-failed",
+        `GET ${path} -> ${res.status} ${res.statusText}${body ? `: ${body}` : ""}`,
+        res.status,
+      );
+    }
+    return normalizeAgentToolkits(await res.json());
+  }
+  throw new AgentToolkitsError(
+    "unavailable",
+    `No REST agent toolkit catalog endpoint found${lastNotFound ? `; last tried ${lastNotFound}` : ""}.`,
+    404,
+  );
 }
 
 export const api = {
@@ -193,6 +326,10 @@ export const api = {
       signal,
     );
     return { connections: raw.connections ?? [], snapshots: raw.snapshots ?? [] };
+  },
+
+  async listAgentToolkits(signal?: AbortSignal): Promise<AgentToolkitsCatalog> {
+    return getAgentToolkits(signal);
   },
 
   async upsertProviderConnection(body: ProviderConnectionInput, signal?: AbortSignal) {

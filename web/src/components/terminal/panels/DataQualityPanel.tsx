@@ -64,7 +64,7 @@ const STATUS: Record<string, { icon: React.ElementType; cls: string; label: stri
   ok: { icon: CheckCircle2, cls: "text-emerald-400", label: "Clean" },
   warn: { icon: AlertTriangle, cls: "text-amber-400", label: "Issues" },
   stale: { icon: Clock, cls: "text-amber-400", label: "Stale" },
-  mock: { icon: CircleDashed, cls: "text-muted-foreground/50", label: "Mock" },
+  mock: { icon: CircleDashed, cls: "text-muted-foreground/50", label: "Reference" },
   unavailable: { icon: Ban, cls: "text-muted-foreground/50", label: "N/A" },
 };
 
@@ -109,7 +109,7 @@ export function DataQualityPanel({ data }: { data: DataQualityData }) {
         <Stat label="Series" value={s.seriesCount} accent />
         <Stat label="Clean" value={s.okCount} accent={s.okCount > 0} />
         <Stat label="Flagged" value={s.issueCount} accent={s.issueCount > 0} />
-        <Stat label="Mock" value={s.mockCount} />
+        <Stat label="Reference" value={s.mockCount} />
         {(s.unavailableCount ?? 0) > 0 && (
           <Stat label="N/A" value={s.unavailableCount ?? 0} />
         )}

@@ -122,16 +122,11 @@ export function SessionsList() {
 
   const steps = extractSteps(sessionDetail);
   const selectedStep = steps.find((s) => s.key === selectedStepKey) ?? null;
-  const paneOpen = selectedStep !== null;
 
   function selectSession(id: string) {
     setSelectedSessionId(id);
     setSelectedStepKey(null);
     navigate(`/sessions/${id}`, { replace: true });
-  }
-
-  function closePane() {
-    setSelectedStepKey(null);
   }
 
   return (
@@ -179,7 +174,7 @@ export function SessionsList() {
           ))}
         </div>
 
-        {/* Right: skill pipeline */}
+        {/* Right: skill pipeline and selected step detail */}
         <div className="sessions-right">
           {!selectedSessionId ? (
             <div className="empty" style={{ padding: 24 }}>Select a session to see its skill pipeline.</div>
@@ -218,69 +213,51 @@ export function SessionsList() {
               ))}
             </div>
           )}
+
+          {selectedSessionId && !detailLoading && steps.length > 0 && (
+            <div className="step-detail" role="complementary" aria-label="Step detail">
+              {selectedStep ? (
+                <>
+                  <div className="step-detail-head">
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, fontFamily: "var(--font-mono)", color: "var(--fg)" }}>{selectedStep.name}</div>
+                      <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
+                        seq {selectedStep.seq} · {fmtTime(selectedStep.ts)}
+                        {selectedStep.durationMs != null ? ` · ${selectedStep.durationMs}ms` : ""}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 16 }}>
+                    {selectedStep.args != null && (
+                      <section>
+                        <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.14em", color: "var(--muted-dim)", marginBottom: 6 }}>Arguments</div>
+                        <pre className="pre">{typeof selectedStep.args === "string" ? selectedStep.args : JSON.stringify(selectedStep.args, null, 2)}</pre>
+                      </section>
+                    )}
+
+                    {selectedStep.result != null && !selectedStep.evidence && (
+                      <section>
+                        <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.14em", color: "var(--muted-dim)", marginBottom: 6 }}>Result</div>
+                        <pre className="pre">{typeof selectedStep.result === "string" ? selectedStep.result : JSON.stringify(selectedStep.result, null, 2)}</pre>
+                      </section>
+                    )}
+
+                    {selectedStep.evidence && (
+                      <section>
+                        <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.14em", color: "var(--muted-dim)", marginBottom: 8 }}>Evidence</div>
+                        <Panel panelType={selectedStep.evidence.panelType} data={selectedStep.evidence.data} />
+                      </section>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="empty" style={{ padding: 24 }}>Select a skill step to inspect its result.</div>
+              )}
+            </div>
+          )}
         </div>
       </div>
-
-      {/* Right detail pane — no scrim, slides in from right */}
-      <div
-        className={`detail-pane ${paneOpen ? "open" : "closed"}`}
-        role="complementary"
-        aria-label="Step detail"
-      >
-        {selectedStep && (
-          <>
-            <div className="detail-pane-head">
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700, fontFamily: "var(--font-mono)", color: "var(--fg)" }}>{selectedStep.name}</div>
-                <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
-                  seq {selectedStep.seq} · {fmtTime(selectedStep.ts)}
-                  {selectedStep.durationMs != null ? ` · ${selectedStep.durationMs}ms` : ""}
-                </div>
-              </div>
-              <button className="detail-pane-close" onClick={closePane} aria-label="Close detail pane">✕</button>
-            </div>
-
-            <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 16 }}>
-              {/* Args */}
-              {selectedStep.args != null && (
-                <section>
-                  <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.14em", color: "var(--muted-dim)", marginBottom: 6 }}>Arguments</div>
-                  <pre className="pre">{typeof selectedStep.args === "string" ? selectedStep.args : JSON.stringify(selectedStep.args, null, 2)}</pre>
-                </section>
-              )}
-
-              {/* Result */}
-              {selectedStep.result != null && !selectedStep.evidence && (
-                <section>
-                  <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.14em", color: "var(--muted-dim)", marginBottom: 6 }}>Result</div>
-                  <pre className="pre">{typeof selectedStep.result === "string" ? selectedStep.result : JSON.stringify(selectedStep.result, null, 2)}</pre>
-                </section>
-              )}
-
-              {/* Evidence rendered via secure Panel */}
-              {selectedStep.evidence && (
-                <section>
-                  <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.14em", color: "var(--muted-dim)", marginBottom: 8 }}>Evidence</div>
-                  <Panel panelType={selectedStep.evidence.panelType} data={selectedStep.evidence.data} />
-                </section>
-              )}
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Click-on-left to close pane — just the pane itself closes via ✕; clicking left area closes too */}
-      {paneOpen && (
-        <div
-          style={{ position: "fixed", inset: 0, zIndex: 49, cursor: "default" }}
-          aria-hidden
-          onClick={(e) => {
-            // Only close if the click is to the LEFT of the pane (i.e., not on the pane itself)
-            const paneEl = document.querySelector(".detail-pane");
-            if (paneEl && !paneEl.contains(e.target as Node)) closePane();
-          }}
-        />
-      )}
     </div>
   );
 }
