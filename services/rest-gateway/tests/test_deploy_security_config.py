@@ -15,3 +15,11 @@ def test_deploy_workflow_preflight_requires_clerk_issuer() -> None:
 
     assert "CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}" in workflow
     assert "require_env CLERK_ISSUER" in workflow
+
+
+def test_deploy_workflow_uses_platform_db_secret() -> None:
+    workflow = (REPO_ROOT / ".github" / "workflows" / "deploy-do.yml").read_text()
+
+    assert "DOOMBERG_PLATFORM_DB_URL: ${{ secrets.DOOMBERG_PLATFORM_DB_URL }}" in workflow
+    assert "require_env DOOMBERG_PLATFORM_DB_URL" in workflow
+    assert "DOOMBERG_ARCHIVE_URL" not in workflow

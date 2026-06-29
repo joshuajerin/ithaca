@@ -180,7 +180,7 @@ jobs:
         env:
           DEPLOY_ENV: ${{ needs.classify.outputs.deploy_env }}
           DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-          DOOMBERG_ARCHIVE_URL: ${{ secrets.DOOMBERG_ARCHIVE_URL }}
+          DOOMBERG_PLATFORM_DB_URL: ${{ secrets.DOOMBERG_PLATFORM_DB_URL }}
           DOOMBERG_SESSION_SECRET: ${{ secrets.DOOMBERG_SESSION_SECRET }}
           CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
           CLERK_PEM_PUBLIC_KEY: ${{ secrets.CLERK_PEM_PUBLIC_KEY }}
@@ -208,10 +208,11 @@ jobs:
           }
 
           require_env DIGITALOCEAN_ACCESS_TOKEN
-          require_env DOOMBERG_ARCHIVE_URL
+          require_env DOOMBERG_PLATFORM_DB_URL
           require_env DOOMBERG_SESSION_SECRET
           require_env CLERK_PUBLISHABLE_KEY
           require_env CLERK_ALLOWED_ORIGINS
+          require_env CLERK_ISSUER
           require_env DO_CLUSTER_NAME
           require_env K8S_GATEWAY_NAMESPACE
           require_env K8S_WORKER_NAMESPACE
@@ -348,8 +349,7 @@ jobs:
           WORKER_NODE_WORKLOAD: ${{ vars.WORKER_NODE_WORKLOAD }}
           APP_REPLICAS: ${{ vars.APP_REPLICAS }}
           WORKER_REPLICAS: ${{ vars.WORKER_REPLICAS }}
-          DOOMBERG_ARCHIVE_URL: ${{ secrets.DOOMBERG_ARCHIVE_URL }}
-          DOOMBERG_PLATFORM_DB_URL: ${{ secrets.DOOMBERG_ARCHIVE_URL }}
+          DOOMBERG_PLATFORM_DB_URL: ${{ secrets.DOOMBERG_PLATFORM_DB_URL }}
           DOOMBERG_SESSION_SECRET: ${{ secrets.DOOMBERG_SESSION_SECRET }}
           CLERK_PEM_PUBLIC_KEY: ${{ secrets.CLERK_PEM_PUBLIC_KEY }}
           CLERK_JWKS_URL: ${{ vars.CLERK_JWKS_URL }}
