@@ -258,7 +258,7 @@ export function Settings() {
             {[
               { name: "MCP Server",    blurb: "Tool-call bridge for agent workflows",   status: "active" },
               { name: "Ithaca Auth",   blurb: "Identity and session management",          status: "active" },
-              { name: "Mintlify Docs", blurb: "Documentation and API reference",         status: "active", href: "https://doomberg.mintlify.app" },
+              { name: "Mintlify Docs", blurb: "Documentation and API reference",         status: "active", href: "https://ithaca.mintlify.app" },
             ].map((int, i, arr) => (
               <div key={int.name} style={{
                 display: "flex", alignItems: "center", gap: 14,
