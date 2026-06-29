@@ -93,7 +93,7 @@ function SourceTag({ source }: { source: string }) {
   return (
     <span className="flex items-center gap-1 editorial-label text-[8px] text-muted-foreground">
       <span className={`w-1.5 h-1.5 rounded-full ${live ? "bg-emerald-400" : "bg-muted-foreground/40"}`} />
-      {live ? "live" : "mock"}
+      {live ? "live" : "reference"}
     </span>
   );
 }

@@ -232,7 +232,7 @@ export function WalkForwardComparePanel({ data }: { data: WalkForwardCompareData
 
         <div className="text-[8px] text-muted-foreground/70 flex items-center justify-between border-t border-border pt-2">
           <span>
-            {data.source === "live" ? "live" : "mock"} data
+            {data.source === "live" ? "live" : "reference"} data
             {data.asOf ? ` · as of ${data.asOf}` : ""}
           </span>
           <span>Anchored walk-forward · DSR &amp; PBO per Bailey–López de Prado</span>

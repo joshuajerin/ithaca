@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import datetime as dt
 import sys
+import threading
 import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import numpy as np
@@ -38,7 +40,56 @@ from doomberg_core import Core, DataGateway  # noqa: E402
 from doomberg_platform import Platform as DurablePlatform  # noqa: E402
 
 
+class _LocalServer:
+    def __init__(self) -> None:
+        self.requests: list[dict] = []
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802
+                length = int(self.headers.get("content-length") or "0")
+                body = self.rfile.read(length) if length else b""
+                owner.requests.append(
+                    {
+                        "method": "POST",
+                        "path": self.path,
+                        "headers": dict(self.headers),
+                        "body": body,
+                    }
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"ok":true}')
+
+            def log_message(self, *args):  # noqa: D401
+                return
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self._server.server_port}/hook"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+
+    def start(self) -> "_LocalServer":
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=2)
+
+
+@pytest.fixture
+def local_server():
+    server = _LocalServer().start()
+    try:
+        yield server
+    finally:
+        server.stop()
+
+
 # --- synthetic, deterministic price source (replicated pattern) ------------------
+
 
 def _trading_days(n: int, start: str = "2024-01-01") -> list[str]:
     y, m, d = (int(x) for x in start.split("-"))
@@ -51,7 +102,9 @@ def _trading_days(n: int, start: str = "2024-01-01") -> list[str]:
     return out
 
 
-def _make_series(n: int, drift: float, vol: float, seed: int, start_price: float = 100.0) -> list[float]:
+def _make_series(
+    n: int, drift: float, vol: float, seed: int, start_price: float = 100.0
+) -> list[float]:
     rng = np.random.default_rng(seed)
     rets = rng.normal(drift, vol, size=n)
     return list(np.maximum(start_price * np.cumprod(1.0 + rets), 1e-6))
@@ -66,12 +119,20 @@ def make_fetch(series_by_symbol: dict[str, list[float]], dates: list[str]):
             raise ValueError(f"no data for {su}")
         closes = series_by_symbol[su]
         points = [
-            {"d": dates[i], "o": closes[i], "h": closes[i], "l": closes[i],
-             "c": closes[i], "v": 1_000_000.0}
+            {
+                "d": dates[i],
+                "o": closes[i],
+                "h": closes[i],
+                "l": closes[i],
+                "c": closes[i],
+                "v": 1_000_000.0,
+            }
             for i in range(len(dates))
         ]
-        return {"points": points,
-                "quote": {"symbol": su, "price": closes[-1], "asOf": dates[-1] + "T20:00:00Z"}}
+        return {
+            "points": points,
+            "quote": {"symbol": su, "price": closes[-1], "asOf": dates[-1] + "T20:00:00Z"},
+        }
 
     return _fetch
 
@@ -92,8 +153,8 @@ def _recent_dates(n: int) -> list[str]:
 def synthetic_panel():
     dates = _recent_dates(260)
     series = {
-        "AAA": _make_series(len(dates), drift=0.0012, vol=0.012, seed=1),   # strong up
-        "BBB": _make_series(len(dates), drift=0.0002, vol=0.015, seed=2),   # mild up
+        "AAA": _make_series(len(dates), drift=0.0012, vol=0.012, seed=1),  # strong up
+        "BBB": _make_series(len(dates), drift=0.0002, vol=0.015, seed=2),  # mild up
         "CCC": _make_series(len(dates), drift=-0.0008, vol=0.018, seed=3),  # down
     }
     return dates, series
@@ -122,6 +183,7 @@ def spec() -> dict:
 
 
 # --- in-memory platform double ---------------------------------------------------
+
 
 class _MiniTraceStore:
     """Validates every event against the real TraceEvent contract; gap-free seq per run."""
@@ -152,9 +214,12 @@ _TRANSITIONS: dict[str, set[str]] = {
     "queued": {"running"},
     "running": {"succeeded", "failed", "timeout", "promoted"},
     "succeeded": {"promoted"},
-    "failed": set(), "timeout": set(),
-    "promoted": {"live", "retired"}, "live": {"paused", "retired"},
-    "paused": {"live", "retired"}, "retired": set(),
+    "failed": set(),
+    "timeout": set(),
+    "promoted": {"live", "retired"},
+    "live": {"paused", "retired"},
+    "paused": {"live", "retired"},
+    "retired": set(),
 }
 
 
@@ -175,9 +240,14 @@ class _MiniRunStore:
     def create(self, tenant_id: str, kind: str, strategy_id, spec) -> str:
         run_id = str(uuid.uuid4())
         self.rows[(str(tenant_id), run_id)] = {
-            "tenant_id": str(tenant_id), "run_id": run_id, "kind": kind,
-            "strategy_id": strategy_id, "state": "draft", "version": 0,
-            "spec": spec, "result": None,
+            "tenant_id": str(tenant_id),
+            "run_id": run_id,
+            "kind": kind,
+            "strategy_id": strategy_id,
+            "state": "draft",
+            "version": 0,
+            "spec": spec,
+            "result": None,
         }
         return run_id
 
@@ -186,15 +256,23 @@ class _MiniRunStore:
         return dict(row) if row else None
 
     def list(self, tenant_id: str, kind=None):
-        return [dict(r) for (t, _), r in self.rows.items()
-                if t == str(tenant_id) and (kind is None or r["kind"] == kind)]
+        return [
+            dict(r)
+            for (t, _), r in self.rows.items()
+            if t == str(tenant_id) and (kind is None or r["kind"] == kind)
+        ]
 
     def create_research(self, tenant_id: str) -> str:
         run_id = str(uuid.uuid4())
         self.rows[(str(tenant_id), run_id)] = {
-            "tenant_id": str(tenant_id), "run_id": run_id, "kind": "research",
-            "strategy_id": None, "state": "running", "version": 0,
-            "spec": None, "result": None,
+            "tenant_id": str(tenant_id),
+            "run_id": run_id,
+            "kind": "research",
+            "strategy_id": None,
+            "state": "running",
+            "version": 0,
+            "spec": None,
+            "result": None,
         }
         return run_id
 
@@ -219,13 +297,15 @@ class _MiniRunStore:
 
     # conductor-only cross-tenant reads (mirror the real RunStore)
     def claim_queued(self, kinds=("backtest",), limit=16):
-        out = [dict(r) for r in self.rows.values()
-               if r["state"] == "queued" and r["kind"] in kinds]
+        out = [dict(r) for r in self.rows.values() if r["state"] == "queued" and r["kind"] in kinds]
         return out[:limit]
 
     def list_by_state(self, state, kind=None, limit=256):
-        return [dict(r) for r in self.rows.values()
-                if r["state"] == state and (kind is None or r["kind"] == kind)][:limit]
+        return [
+            dict(r)
+            for r in self.rows.values()
+            if r["state"] == state and (kind is None or r["kind"] == kind)
+        ][:limit]
 
 
 class _MiniBookStore:
@@ -241,9 +321,14 @@ class _MiniBookStore:
     def ensure(self, tenant_id: str, run_id: str, *, capital: float = 100_000.0):
         key = (str(tenant_id), str(run_id))
         if key not in self.rows:
-            self.rows[key] = {"tenant_id": str(tenant_id), "run_id": str(run_id),
-                              "capital": float(capital), "weights": {}, "marks": {},
-                              "version": 0}
+            self.rows[key] = {
+                "tenant_id": str(tenant_id),
+                "run_id": str(run_id),
+                "capital": float(capital),
+                "weights": {},
+                "marks": {},
+                "version": 0,
+            }
         return dict(self.rows[key])
 
     def apply(self, tenant_id: str, run_id: str, *, target_weights, marks=None, expect=None):
@@ -253,8 +338,11 @@ class _MiniBookStore:
             raise KeyError(run_id)
         if expect is not None and expect != row["version"]:
             raise RuntimeError(f"book version mismatch: expected {expect}, found {row['version']}")
-        row["weights"] = {str(s).upper(): round(float(w), 6)
-                          for s, w in target_weights.items() if abs(float(w)) > 1e-9}
+        row["weights"] = {
+            str(s).upper(): round(float(w), 6)
+            for s, w in target_weights.items()
+            if abs(float(w)) > 1e-9
+        }
         row["marks"] = {str(s).upper(): float(m) for s, m in (marks or {}).items()}
         row["version"] += 1
         return dict(row)

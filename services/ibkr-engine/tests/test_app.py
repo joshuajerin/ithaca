@@ -140,6 +140,67 @@ class _PreLoginGateway:
             self._thread.join(timeout=2)
 
 
+class _AfterHoursGateway:
+    def __init__(self) -> None:
+        self.requests: list[str] = []
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                owner.requests.append(self.path)
+                if self.path.startswith("/v1/api/iserver/marketdata/snapshot"):
+                    self._json([{"conid": 265598, "84": "214.20", "86": "214.30"}])
+                    return
+                if self.path.startswith("/v1/api/iserver/marketdata/history"):
+                    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+                    self._json({
+                        "data": [
+                            {"t": now_ms - 60_000, "c": 214.10},
+                            {"t": now_ms, "c": 214.25},
+                        ],
+                    })
+                    return
+                self._json({"error": "not found"}, status=404)
+
+            def do_POST(self) -> None:  # noqa: N802
+                owner.requests.append(self.path)
+                if self.path == "/v1/api/iserver/secdef/search":
+                    self._json([{"symbol": "AAPL", "conid": 265598, "secType": "STK"}])
+                    return
+                self._json({"error": "not found"}, status=404)
+
+            def log_message(self, *_args: Any) -> None:
+                return
+
+            def _json(self, payload: Any, *, status: int = 200) -> None:
+                raw = json.dumps(payload).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+        self._handler = Handler
+        self._server: ThreadingHTTPServer | None = None
+        self._thread: threading.Thread | None = None
+        self.url = ""
+
+    def __enter__(self) -> "_AfterHoursGateway":
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler)
+        host, port = self._server.server_address
+        self.url = f"http://{host}:{port}/v1/api"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+
+
 def test_quote_and_read_models(monkeypatch) -> None:
     monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_TOKEN", "engine-token")
     with _Gateway() as gateway:
@@ -149,6 +210,7 @@ def test_quote_and_read_models(monkeypatch) -> None:
 
         status = client.get("/auth/status", headers=headers)
         quote = client.get("/quote?symbol=aapl", headers=headers)
+        extended_quote = client.get("/quote?symbol=aapl&include_extended_hours=true", headers=headers)
         history = client.get("/history?symbol=aapl&period=1d&bar=5min", headers=headers)
         news = client.get("/news?ticker=aapl&limit=2", headers=headers)
         scanner = client.get("/scanner?scan_type=most_active&limit=1", headers=headers)
@@ -163,6 +225,9 @@ def test_quote_and_read_models(monkeypatch) -> None:
     assert quote.json()["data"]["quote"]["price"] == 212.45
     assert quote.json()["data"]["quote"]["source"] == "doomberg-live-data"
     assert quote.json()["data"]["quote"]["entitlement_class"] == "doomberg_live"
+    assert extended_quote.status_code == 200
+    assert extended_quote.json()["data"]["quote"]["extended_hours_requested"] is True
+    assert any("outsideRth=true" in request["path"] for request in gateway.requests)
     assert history.status_code == 200
     assert history.json()["points"][-1]["c"] == 213.0
     assert news.status_code == 200
@@ -176,12 +241,40 @@ def test_quote_and_read_models(monkeypatch) -> None:
     assert orders.json()["orders"] == [{"orderId": "100", "ticker": "AAPL"}]
 
 
+def test_quote_can_use_extended_hours_history_when_snapshot_has_no_last(monkeypatch) -> None:
+    monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_TOKEN", "engine-token")
+    with _AfterHoursGateway() as gateway:
+        monkeypatch.setenv("IBKR_CLIENT_PORTAL_URL", gateway.url)
+        client = TestClient(app)
+        quote = client.get(
+            "/quote?symbol=aapl&extended_hours=true",
+            headers={"Authorization": "Bearer engine-token"},
+        )
+
+    assert quote.status_code == 200
+    body = quote.json()["data"]["quote"]
+    assert body["symbol"] == "AAPL"
+    assert body["price"] == 214.25
+    assert any("outsideRth=true" in request for request in gateway.requests)
+
+
 def test_bearer_token_is_required(monkeypatch) -> None:
     monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_TOKEN", "engine-token")
     client = TestClient(app)
 
     assert client.get("/accounts").status_code == 401
     assert client.get("/accounts", headers={"Authorization": "Bearer bad"}).status_code == 403
+
+
+def test_missing_engine_token_fails_closed_outside_local(monkeypatch) -> None:
+    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.delenv("DOOMBERG_IBKR_ENGINE_TOKEN", raising=False)
+    client = TestClient(app)
+
+    resp = client.get("/accounts")
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "IBKR engine token is not configured"
 
 
 def test_pre_login_gateway_is_reachable_but_requires_auth(monkeypatch) -> None:

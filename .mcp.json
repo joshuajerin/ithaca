@@ -1,10 +1,10 @@
 {
   "mcpServers": {
     "doomberg": {
-      "command": "uv",
-      "args": ["run", "python", "-m", "doomberg_mcp"],
-      "env": {
-        "DOOMBERG_DB": "./doomberg.db"
+      "type": "http",
+      "url": "https://mcp.doomberg.me/mcp",
+      "headers": {
+        "Authorization": "Bearer ${DOOMBERG_MCP_API_KEY}"
       }
     }
   }

@@ -179,7 +179,7 @@ class ClientPortalGateway:
             "raw_count": len(orders),
         }
 
-    def quote(self, symbol: str) -> dict[str, Any]:
+    def quote(self, symbol: str, *, include_extended_hours: bool = False) -> dict[str, Any]:
         symbol = (symbol or "").strip().upper()
         if not symbol:
             raise ClientPortalError("symbol is required")
@@ -193,9 +193,15 @@ class ClientPortalGateway:
         attempts = max(1, int(os.environ.get("IBKR_SNAPSHOT_ATTEMPTS") or "3"))
         delay_s = max(0.0, float(os.environ.get("IBKR_SNAPSHOT_RETRY_DELAY_S") or "1"))
         for attempt in range(attempts):
+            query = (
+                f"/iserver/marketdata/snapshot?conids={urllib.parse.quote(conid)}"
+                f"&fields={fields}"
+            )
+            if include_extended_hours:
+                query = f"{query}&outsideRth=true"
             raw = self._request_json(
                 "GET",
-                f"/iserver/marketdata/snapshot?conids={urllib.parse.quote(conid)}&fields={fields}",
+                query,
             )
             rows = raw if isinstance(raw, list) else raw.get("data") if isinstance(raw, dict) else []
             candidate = rows[0] if isinstance(rows, list) and rows else raw if isinstance(raw, dict) else {}
@@ -206,6 +212,13 @@ class ClientPortalGateway:
                 time.sleep(delay_s)
         received = _now_iso()
         price = _first_number(row, ("31", "last", "lastPrice", "price"))
+        event_time = _event_time(row)
+        if price is None and include_extended_hours:
+            fallback = self._latest_extended_history_quote(symbol, conid)
+            if fallback is not None:
+                price = fallback["price"]
+                event_time = fallback["event_time"]
+                row = {**row, "extended_hours_fallback": fallback["raw"]}
         return {
             "data": {
                 "quote": {
@@ -217,7 +230,8 @@ class ClientPortalGateway:
                     "ask": _first_number(row, ("86", "ask", "askPrice")),
                     "source": PUBLIC_DATA_SOURCE,
                     "entitlement_class": PUBLIC_ENTITLEMENT_CLASS,
-                    "event_time": _event_time(row) or received,
+                    "extended_hours_requested": include_extended_hours,
+                    "event_time": event_time or received,
                     "received_time": received,
                     "raw": _redact(row),
                 }
@@ -273,6 +287,32 @@ class ClientPortalGateway:
             "quote": quote,
             "raw": _redact(raw) if isinstance(raw, dict) else {},
         }
+
+    def _latest_extended_history_quote(self, symbol: str, conid: str) -> dict[str, Any] | None:
+        period = os.environ.get("IBKR_EXTENDED_HISTORY_PERIOD") or "1d"
+        bar = os.environ.get("IBKR_EXTENDED_HISTORY_BAR") or "1min"
+        raw = self._request_json(
+            "GET",
+            "/iserver/marketdata/history?"
+            f"conid={urllib.parse.quote(conid)}&period={urllib.parse.quote(period)}"
+            f"&bar={urllib.parse.quote(bar)}&outsideRth=true",
+        )
+        rows = raw.get("data") if isinstance(raw, dict) else []
+        if not isinstance(rows, list):
+            return None
+        for row in reversed(rows):
+            if not isinstance(row, dict):
+                continue
+            price = _first_number(row, ("c", "close", "31", "last", "lastPrice", "price"))
+            if price is None:
+                continue
+            return {
+                "symbol": symbol,
+                "price": price,
+                "event_time": _event_time({"t": row.get("t")}) or _now_iso(),
+                "raw": row,
+            }
+        return None
 
     def news(self, ticker: str | None = None, *, limit: int = 10) -> dict[str, Any]:
         ticker = (ticker or "").strip().upper() or None

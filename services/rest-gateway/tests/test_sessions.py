@@ -85,7 +85,9 @@ def test_signed_in_event_stream_uses_one_time_ticket(client, clerk_auth):
 
 
 def test_signed_in_event_stream_rejects_query_access_token(client, clerk_auth):
-    token, _tenant_id, _user_id = _clerk_session(client, clerk_auth, email="query-token@sessions.test")
+    token, _tenant_id, _user_id = _clerk_session(
+        client, clerk_auth, email="query-token@sessions.test"
+    )
     created = client.post(
         "/api/sessions",
         json={"prompt": "do not leak token in url"},
@@ -108,3 +110,31 @@ def test_create_session_can_start_realtime_without_prompt(client, stores, tenant
     events = stores.trace.events(tenant_a, body["id"])
     assert "title" not in events[0]["data"]
     assert "prompt" not in events[0]["data"]
+
+
+def test_create_session_dev_tenant_fallback_disabled_in_prod(client, monkeypatch, tenant_a):
+    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+
+    resp = client.post(
+        "/api/sessions",
+        json={"prompt": "should require auth"},
+        headers={"X-Tenant-Id": tenant_a},
+    )
+
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "authentication required"
+
+
+def test_create_session_dev_tenant_fallback_disabled_when_env_missing(
+    client, monkeypatch, tenant_a
+):
+    monkeypatch.delenv("DOOMBERG_ENV", raising=False)
+
+    resp = client.post(
+        "/api/sessions",
+        json={"prompt": "should require auth"},
+        params={"tenant_id": tenant_a},
+    )
+
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "authentication required"

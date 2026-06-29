@@ -27,7 +27,9 @@ from urllib.request import Request, urlopen
 
 DEFAULT_APP_URL = "https://app.doomberg.me"
 DEFAULT_MCP_URL = "https://mcp.doomberg.me/mcp"
-ENV_FILE = Path.home() / ".config" / "doomberg" / "mcp.env"
+CONFIG_DIR = Path.home() / ".config" / "doomberg"
+ENV_FILE = CONFIG_DIR / "mcp.env"
+TOOLS_GUIDE_FILE = CONFIG_DIR / "TOOLS.md"
 SHELL_MARKER = "# Doomberg MCP environment"
 CLIENT_ALIASES = {
     "all": "all",
@@ -163,6 +165,16 @@ def _http_mcp_config(mcp_url: str, api_key: str) -> dict[str, Any]:
     }
 
 
+def _http_mcp_env_config(mcp_url: str) -> dict[str, Any]:
+    return {
+        "type": "http",
+        "url": mcp_url,
+        "headers": {
+            "Authorization": "Bearer ${DOOMBERG_MCP_API_KEY}",
+        },
+    }
+
+
 def _merge_mcp_json(path: Path, name: str, config: dict[str, Any]) -> None:
     data = _read_json_file(path)
     servers = data.get("mcpServers")
@@ -231,12 +243,12 @@ def _install_codex_mcp(name: str, mcp_url: str) -> str:
     return "Codex: registered with `codex mcp add --url`"
 
 
-def _install_claude_code_mcp(name: str, mcp_url: str, api_key: str) -> str:
+def _install_claude_code_mcp(name: str, mcp_url: str, _api_key: str) -> str:
     claude = shutil.which("claude")
     if claude is None:
         path = Path.home() / ".claude" / "mcp.json"
-        _merge_mcp_json(path, name, _http_mcp_config(mcp_url, api_key))
-        return f"Claude Code: claude CLI not found; wrote {path}"
+        _merge_mcp_json(path, name, _http_mcp_env_config(mcp_url))
+        return f"Claude Code: claude CLI not found; wrote {path} with DOOMBERG_MCP_API_KEY env reference"
     subprocess.run([claude, "mcp", "remove", "--scope", "user", name],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
     subprocess.run(
@@ -249,14 +261,14 @@ def _install_claude_code_mcp(name: str, mcp_url: str, api_key: str) -> str:
             "--scope",
             "user",
             "--header",
-            f"Authorization: Bearer {api_key}",
+            "Authorization: Bearer ${DOOMBERG_MCP_API_KEY}",
             name,
             mcp_url,
         ],
         check=True,
         timeout=30,
     )
-    return "Claude Code: registered with `claude mcp add --transport http`"
+    return "Claude Code: registered with `claude mcp add --transport http` using DOOMBERG_MCP_API_KEY"
 
 
 def _install_openclaw_mcp(name: str, mcp_url: str, api_key: str) -> str:
@@ -316,12 +328,17 @@ def _mcp_json_from_text(text: str) -> dict[str, Any] | None:
         return parsed if isinstance(parsed, dict) else None
     except json.JSONDecodeError:
         pass
+    data_lines: list[str] = []
     for raw in text.splitlines():
         line = raw.strip()
         if not line.startswith("data:"):
             continue
         data = line.removeprefix("data:").strip()
         if not data or data == "[DONE]":
+            continue
+        data_lines.append(data)
+    for data in ["\n".join(data_lines), *data_lines]:
+        if not data:
             continue
         try:
             parsed = json.loads(data)
@@ -350,9 +367,37 @@ def _mcp_post(mcp_url: str, api_key: str, body: dict[str, Any],
     return urlopen(request, timeout=timeout)
 
 
+def _header(headers: dict[str, str], name: str) -> str | None:
+    expected = name.lower()
+    for key, value in headers.items():
+        if key.lower() == expected:
+            return value
+    return None
+
+
+def _mcp_exchange(mcp_url: str, api_key: str, body: dict[str, Any],
+                  session_id: str | None = None, timeout: int = 20) -> tuple[dict[str, Any], dict[str, str]]:
+    try:
+        with _mcp_post(mcp_url, api_key, body, session_id=session_id, timeout=timeout) as response:
+            text = response.read().decode("utf-8", errors="replace")
+            headers = dict(response.headers.items())
+    except urlerror.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        method = body.get("method", "request")
+        raise RuntimeError(f"MCP {method} returned HTTP {exc.code}: {detail}") from exc
+    parsed = _mcp_json_from_text(text)
+    if parsed is None:
+        method = body.get("method", "request")
+        raise RuntimeError(f"MCP {method} response was not parseable JSON")
+    if parsed.get("error"):
+        method = body.get("method", "request")
+        raise RuntimeError(f"MCP {method} error: {parsed['error']}")
+    return parsed, headers
+
+
 def _verify_mcp_initialize(mcp_url: str, api_key: str) -> dict[str, Any]:
     try:
-        with _mcp_post(
+        body, headers = _mcp_exchange(
             mcp_url,
             api_key,
             {
@@ -365,18 +410,11 @@ def _verify_mcp_initialize(mcp_url: str, api_key: str) -> dict[str, Any]:
                     "clientInfo": {"name": "doomberg-installer", "version": "1"},
                 },
             },
-        ) as response:
-            text = response.read().decode("utf-8", errors="replace")
-            session_id = response.headers.get("mcp-session-id")
-            body = _mcp_json_from_text(text) or {}
-    except urlerror.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        return {"ok": False, "error": f"MCP initialize returned HTTP {exc.code}: {detail}"}
+        )
     except Exception as exc:
         return {"ok": False, "error": f"MCP initialize failed: {exc}"}
 
-    if "error" in body:
-        return {"ok": False, "error": f"MCP initialize error: {body['error']}"}
+    session_id = _header(headers, "mcp-session-id")
     if not session_id:
         return {"ok": False, "error": "MCP initialize did not return mcp-session-id"}
 
@@ -394,6 +432,246 @@ def _verify_mcp_initialize(mcp_url: str, api_key: str) -> dict[str, Any]:
     except Exception as exc:
         return {"ok": False, "error": f"MCP initialized notification failed: {exc}"}
     return {"ok": True, "session_id": session_id}
+
+
+def _mcp_tool_json(body: dict[str, Any]) -> dict[str, Any] | None:
+    result = body.get("result") or {}
+    structured = result.get("structuredContent")
+    if isinstance(structured, dict):
+        return structured
+    contents = result.get("content") or []
+    if not contents:
+        return None
+    text = contents[0].get("text")
+    if not isinstance(text, str):
+        return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _mcp_content_json(body: dict[str, Any]) -> dict[str, Any] | None:
+    contents = ((body.get("result") or {}).get("contents") or [])
+    if not contents:
+        return None
+    text = contents[0].get("text")
+    if not isinstance(text, str):
+        return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _call_mcp_tool(mcp_url: str, api_key: str, session_id: str, tool_name: str,
+                   arguments: dict[str, Any] | None = None, mid: int = 10) -> dict[str, Any]:
+    body, _headers = _mcp_exchange(
+        mcp_url,
+        api_key,
+        {
+            "jsonrpc": "2.0",
+            "id": mid,
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": arguments or {}},
+        },
+        session_id=session_id,
+    )
+    result = body.get("result") or {}
+    if result.get("isError"):
+        raise RuntimeError(f"MCP tool {tool_name} returned an error: {body}")
+    parsed = _mcp_tool_json(body)
+    if parsed is None:
+        raise RuntimeError(f"MCP tool {tool_name} response was not parseable JSON")
+    return parsed
+
+
+def _read_mcp_resource(mcp_url: str, api_key: str, session_id: str, uri: str,
+                       mid: int = 20) -> dict[str, Any]:
+    body, _headers = _mcp_exchange(
+        mcp_url,
+        api_key,
+        {
+            "jsonrpc": "2.0",
+            "id": mid,
+            "method": "resources/read",
+            "params": {"uri": uri},
+        },
+        session_id=session_id,
+    )
+    parsed = _mcp_content_json(body)
+    if parsed is None:
+        raise RuntimeError(f"MCP resource {uri} response was not parseable JSON")
+    return parsed
+
+
+def _list_mcp_tools(mcp_url: str, api_key: str, session_id: str) -> list[dict[str, Any]]:
+    body, _headers = _mcp_exchange(
+        mcp_url,
+        api_key,
+        {"jsonrpc": "2.0", "id": 30, "method": "tools/list"},
+        session_id=session_id,
+    )
+    tools = (body.get("result") or {}).get("tools") or []
+    return [tool for tool in tools if isinstance(tool, dict)]
+
+
+def _run_agent_init_smoke(mcp_url: str, api_key: str, session_id: str, goal: str) -> dict[str, Any]:
+    result = _call_mcp_tool(
+        mcp_url,
+        api_key,
+        session_id,
+        "doomberg_init",
+        {"goal": goal},
+        mid=40,
+    )
+    if result.get("status") != "ready" or not result.get("session_id"):
+        raise RuntimeError(f"doomberg_init did not return a ready session: {result}")
+    return result
+
+
+def _md_cell(value: Any) -> str:
+    text = str(value or "").replace("\n", " ").replace("|", "\\|").strip()
+    return text or "-"
+
+
+def _build_tools_markdown(
+    *,
+    mcp_url: str,
+    init_result: dict[str, Any],
+    tools: list[dict[str, Any]],
+    toolkits: list[dict[str, Any]],
+    skills_catalog: dict[str, Any],
+) -> str:
+    generated_at = time.strftime("%Y-%m-%d %H:%M:%S %Z")
+    lines = [
+        "# Doomberg MCP Tools",
+        "",
+        f"Generated by the Doomberg installer at {generated_at}.",
+        f"Endpoint: `{mcp_url}`",
+        "",
+        "This file intentionally does not contain bearer tokens. The installer stores the token in `~/.config/doomberg/mcp.env`.",
+        "",
+        "## First-call workflow",
+        "",
+        "1. Call `doomberg_init(goal=\"<user goal>\")` first. The installer has already smoke-tested this call.",
+        "2. Use `list_toolkits` or `search_skills` to pick the smallest relevant surface.",
+        "3. Use `describe_toolkit` or `describe_skill` before uncertain calls.",
+        "4. Use direct tools for interactive answers and `run_skill` for durable backtests or longer work.",
+        "",
+        f"Installer init session: `{init_result.get('session_id', '-')}`",
+        "",
+        "## Toolkits",
+        "",
+    ]
+    if toolkits:
+        for toolkit in toolkits:
+            direct_tools = toolkit.get("direct_tools") or []
+            skills = toolkit.get("skills") or []
+            lines.extend(
+                [
+                    f"### {toolkit.get('name') or toolkit.get('toolkit_id')}",
+                    "",
+                    _md_cell(toolkit.get("description")),
+                    "",
+                    f"- Toolkit id: `{toolkit.get('toolkit_id')}`",
+                    f"- Required first tool: `{toolkit.get('required_first_tool')}`",
+                    "- Direct tools: "
+                    + (", ".join(f"`{tool}`" for tool in direct_tools) if direct_tools else "-"),
+                    "- Related skills: "
+                    + (
+                        ", ".join(f"`{skill.get('skill_id')}`" for skill in skills[:12])
+                        if skills
+                        else "-"
+                    ),
+                    "",
+                ]
+            )
+    else:
+        lines.extend(["No toolkits were returned by the server.", ""])
+
+    lines.extend(
+        [
+            "## Direct MCP tools",
+            "",
+            "| Tool | Description |",
+            "| --- | --- |",
+        ]
+    )
+    for tool in sorted(tools, key=lambda t: str(t.get("name") or "")):
+        lines.append(f"| `{_md_cell(tool.get('name'))}` | {_md_cell(tool.get('description'))} |")
+
+    skills = skills_catalog.get("skills") or []
+    lines.extend(
+        [
+            "",
+            "## Skill catalog",
+            "",
+            f"The server catalog currently reports {skills_catalog.get('count', len(skills))} skills.",
+            "",
+            "| Skill | Runtime | Description |",
+            "| --- | --- | --- |",
+        ]
+    )
+    for skill in skills:
+        if not isinstance(skill, dict):
+            continue
+        lines.append(
+            f"| `{_md_cell(skill.get('skill_id'))}` | {_md_cell(skill.get('runtime_profile'))} | "
+            f"{_md_cell(skill.get('description'))} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Operating boundaries",
+            "",
+        ]
+    )
+    boundaries = init_result.get("boundaries") or {}
+    for key in ("can", "cannot"):
+        values = boundaries.get(key) or []
+        lines.append(f"- {key}: " + (", ".join(str(value) for value in values) if values else "-"))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _write_tools_guide(mcp_url: str, api_key: str, session_id: str,
+                       init_result: dict[str, Any]) -> Path:
+    tools = _list_mcp_tools(mcp_url, api_key, session_id)
+    catalog = _read_mcp_resource(mcp_url, api_key, session_id, "doomberg://toolkits/catalog", mid=31)
+    toolkit_entries = catalog.get("toolkits") or []
+    toolkits: list[dict[str, Any]] = []
+    for index, entry in enumerate(toolkit_entries):
+        if not isinstance(entry, dict) or not entry.get("toolkit_id"):
+            continue
+        toolkits.append(
+            _call_mcp_tool(
+                mcp_url,
+                api_key,
+                session_id,
+                "describe_toolkit",
+                {"toolkit_id": str(entry["toolkit_id"])},
+                mid=32 + index,
+            )
+        )
+    skills_catalog = _read_mcp_resource(mcp_url, api_key, session_id, "doomberg://skills/catalog", mid=50)
+    markdown = _build_tools_markdown(
+        mcp_url=mcp_url,
+        init_result=init_result,
+        tools=tools,
+        toolkits=toolkits,
+        skills_catalog=skills_catalog,
+    )
+    TOOLS_GUIDE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    TOOLS_GUIDE_FILE.write_text(markdown, encoding="utf-8")
+    try:
+        os.chmod(TOOLS_GUIDE_FILE, 0o600)
+    except OSError:
+        pass
+    return TOOLS_GUIDE_FILE
 
 
 def _agent_bootstrap_prompt(name: str) -> str:
@@ -423,6 +701,11 @@ def main(argv: list[str] | None = None) -> int:
         "--agent-init",
         action="store_true",
         help="Agent-driven onboarding: print the approval URL, wait, install, and verify MCP initialize.",
+    )
+    parser.add_argument(
+        "--init-goal",
+        default="Initialize Doomberg MCP after install and show the first-call workflow.",
+        help="Goal passed to doomberg_init during the post-auth MCP smoke.",
     )
     args = parser.parse_args(argv)
 
@@ -472,18 +755,35 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Key id: {key_id}")
     print(f"Token env: {ENV_FILE}")
     print("Each MCP request is authenticated with this key automatically.")
-    if args.agent_init:
-        print("Agent flow: call doomberg_init with the user prompt; it opens the visible session.")
+    print("Agent flow: call doomberg_init with the user prompt; it opens the visible session.")
+    print("Then use list_toolkits/search_skills, describe the relevant surface, and call direct tools or run_skill.")
+
+    init = _verify_mcp_initialize(mcp_url, api_key)
+    init_result: dict[str, Any] | None = None
+    if init.get("ok"):
+        session_id = str(init["session_id"])
+        print(f"MCP initialize: ok (session {session_id})")
+        try:
+            init_result = _run_agent_init_smoke(mcp_url, api_key, session_id, str(args.init_goal))
+            print(f"doomberg_init: ok (research session {init_result['session_id']})")
+        except Exception as exc:
+            print(f"doomberg_init: {exc}")
+            failures.append(str(exc))
+        if init_result is not None:
+            try:
+                guide = _write_tools_guide(mcp_url, api_key, session_id, init_result)
+                print(f"Generated tools guide: {guide}")
+            except Exception as exc:
+                print(f"Generated tools guide: failed: {exc}")
+                if args.agent_init:
+                    failures.append(str(exc))
     else:
-        print("Agent flow: call start_research_session with the user prompt, then call direct tools.")
+        print(f"MCP initialize: {init.get('error')}")
+        if args.agent_init:
+            failures.append(str(init.get("error")))
+
     print("Direct tools include: market_tide, sentiment_get, market_news, vix_term_structure, backtest_run.")
     if args.agent_init:
-        init = _verify_mcp_initialize(mcp_url, api_key)
-        if init.get("ok"):
-            print(f"MCP initialize: ok (session {init['session_id']})")
-        else:
-            print(f"MCP initialize: {init.get('error')}")
-            failures.append(str(init.get("error")))
         print(_agent_bootstrap_prompt(args.name))
     print("Restart any already-open agent app so it picks up the new MCP config/env.")
     if failures and (args.client != "all" or args.agent_init):

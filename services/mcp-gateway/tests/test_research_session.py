@@ -100,6 +100,20 @@ def test_direct_tool_requires_started_research_session(toolset_core):
     assert ts.sink.events() == []
 
 
+def test_existing_run_id_does_not_bypass_research_session_start(toolset_core):
+    ts = _platform_toolset(toolset_core)
+    stray_run_id = str(uuid.uuid4())
+    ts.runs.seed_research(TENANT, stray_run_id)
+
+    out = ts.market_get_ohlcv(
+        "AAA",
+        _ctx={"tenant_id": TENANT, "agent_id": "claude", "run_id": stray_run_id},
+    )
+
+    assert out["error"]["code"] == "SESSION_CONTEXT_REQUIRED"
+    assert ts.sink.events(stray_run_id) == []
+
+
 def test_session_context_can_attach_to_precreated_research_run(toolset_core):
     ts = _platform_toolset(toolset_core)
     run_id = str(uuid.uuid4())
@@ -119,3 +133,27 @@ def test_session_context_can_attach_to_precreated_research_run(toolset_core):
     events = ts.sink.events(run_id)
     assert [e["type"] for e in events] == ["reasoning", "tool_call", "tool_result"]
     assert events[0]["data"]["prompt"] == "what does nvda look like"
+
+
+def test_get_run_requires_started_session_context(toolset_core):
+    ts = _platform_toolset(toolset_core)
+    run_id = str(uuid.uuid4())
+    ts.runs.seed_research(TENANT, run_id)
+
+    class _Empty:
+        def list_by_run(self, *_args):
+            return []
+
+    class _Trace:
+        def events(self, *_args, **_kwargs):
+            return []
+
+    ts.platform = type(
+        "Platform",
+        (),
+        {"runs": ts.runs, "jobs": _Empty(), "artifacts": _Empty(), "trace": _Trace()},
+    )()
+
+    out = ts.get_run(run_id, _ctx={"tenant_id": TENANT, "agent_id": "claude"})
+
+    assert out["error"]["code"] == "SESSION_CONTEXT_REQUIRED"

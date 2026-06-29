@@ -11,8 +11,11 @@ import time
 import uuid
 
 import jwt
+from fastapi.testclient import TestClient
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from doomberg_platform import open_db
+from doomberg_rest import create_app
 
 
 def _spec(name="UI Auth Momentum"):
@@ -32,6 +35,12 @@ def _bearer(key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {key}"}
 
 
+def _fresh_client_for_env():
+    db = open_db(":memory:")
+    app = create_app(db)
+    return db, TestClient(app)
+
+
 def _clerk_keypair() -> tuple[str, str]:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     private_pem = private_key.private_bytes(
@@ -39,25 +48,38 @@ def _clerk_keypair() -> tuple[str, str]:
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
     ).decode()
-    public_pem = private_key.public_key().public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    ).decode()
+    public_pem = (
+        private_key.public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        .decode()
+    )
     return private_pem, public_pem
 
 
-def _clerk_token(private_pem: str, *, sub: str = "user_clerk_123", azp: str = "http://localhost:5174") -> str:
+def _clerk_token(
+    private_pem: str,
+    *,
+    sub: str = "user_clerk_123",
+    azp: str = "http://localhost:5174",
+    issuer: str | None = None,
+) -> str:
     now = int(time.time())
+    claims = {
+        "sub": sub,
+        "email": "clerk-user@example.com",
+        "name": "Clerk User",
+        "azp": azp,
+        "iat": now,
+        "nbf": now - 5,
+        "exp": now + 300,
+    }
+    if issuer:
+        claims["iss"] = issuer
     return jwt.encode(
-        {
-            "sub": sub,
-            "email": "clerk-user@example.com",
-            "name": "Clerk User",
-            "azp": azp,
-            "iat": now,
-            "nbf": now - 5,
-            "exp": now + 300,
-        },
+        claims,
         private_pem,
         algorithm="RS256",
     )
@@ -73,8 +95,7 @@ def test_bearer_key_binds_tenant_authoritatively(client, stores):
     assert r.json()["runs"] == []
 
     # Write path: a proposed strategy lands under the key's tenant.
-    sid = client.post("/api/strategies", json={"spec": _spec()},
-                      headers=_bearer(key)).json()["id"]
+    sid = client.post("/api/strategies", json={"spec": _spec()}, headers=_bearer(key)).json()["id"]
     assert stores.strategies.get(tid, sid) is not None
 
 
@@ -110,6 +131,14 @@ def test_x_tenant_id_fallback_disabled_in_prod(client, monkeypatch):
     assert resp.json()["detail"] == "authentication required"
 
 
+def test_x_tenant_id_fallback_disabled_when_env_missing(client, monkeypatch):
+    monkeypatch.delenv("DOOMBERG_ENV", raising=False)
+    tid = str(uuid.uuid4())
+    resp = client.get("/api/runs", headers={"X-Tenant-Id": tid})
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "authentication required"
+
+
 def test_query_access_token_is_not_a_rest_auth_path(client, stores, monkeypatch):
     monkeypatch.setenv("DOOMBERG_ENV", "prod")
     tid = stores.auth.create_tenant("Acme")
@@ -132,7 +161,9 @@ def test_clerk_session_token_binds_tenant(client, stores, monkeypatch):
     assert resp.status_code == 200
     assert resp.json()["runs"] == []
 
-    user = stores.db.conn.execute("SELECT * FROM users WHERE email=?", ("clerk-user@example.com",)).fetchone()
+    user = stores.db.conn.execute(
+        "SELECT * FROM users WHERE email=?", ("clerk-user@example.com",)
+    ).fetchone()
     assert user is not None
     assert stores.auth.get_tenant(user["tenant_id"]) is not None
 
@@ -161,3 +192,94 @@ def test_clerk_session_rejects_unapproved_origin(client, monkeypatch):
 
     assert resp.status_code == 401
     assert resp.json()["detail"] == "invalid Clerk authorized party"
+
+
+def test_prod_clerk_requires_configured_issuer(client, monkeypatch):
+    private_pem, public_pem = _clerk_keypair()
+    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.setenv("CLERK_PEM_PUBLIC_KEY", public_pem)
+    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "https://app.doomberg.me")
+    monkeypatch.delenv("CLERK_ISSUER", raising=False)
+
+    resp = client.get(
+        "/api/runs",
+        headers=_bearer(_clerk_token(private_pem, azp="https://app.doomberg.me")),
+    )
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "CLERK_ISSUER is required"
+
+
+def test_prod_clerk_requires_configured_authorized_origins(client, monkeypatch):
+    issuer = "https://clerk.doomberg.me"
+    private_pem, public_pem = _clerk_keypair()
+    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.setenv("CLERK_PEM_PUBLIC_KEY", public_pem)
+    monkeypatch.setenv("CLERK_ISSUER", issuer)
+    monkeypatch.delenv("CLERK_ALLOWED_ORIGINS", raising=False)
+
+    resp = client.get(
+        "/api/runs",
+        headers=_bearer(_clerk_token(private_pem, azp="https://app.doomberg.me", issuer=issuer)),
+    )
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "CLERK_ALLOWED_ORIGINS is required"
+
+
+def test_prod_clerk_requires_matching_issuer(client, monkeypatch):
+    private_pem, public_pem = _clerk_keypair()
+    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.setenv("CLERK_PEM_PUBLIC_KEY", public_pem)
+    monkeypatch.setenv("CLERK_ISSUER", "https://clerk.doomberg.me")
+    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "https://app.doomberg.me")
+
+    resp = client.get(
+        "/api/runs",
+        headers=_bearer(
+            _clerk_token(
+                private_pem,
+                azp="https://app.doomberg.me",
+                issuer="https://attacker.example",
+            )
+        ),
+    )
+
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "invalid Clerk issuer"
+
+
+def test_prod_cors_uses_configured_origins(monkeypatch):
+    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "https://app.doomberg.me")
+    db, prod_client = _fresh_client_for_env()
+
+    resp = prod_client.options(
+        "/api/runs",
+        headers={
+            "Origin": "https://app.doomberg.me",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert resp.headers["access-control-allow-origin"] == "https://app.doomberg.me"
+    prod_client.close()
+    db.close()
+
+
+def test_prod_cors_rejects_unconfigured_origin(monkeypatch):
+    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "https://app.doomberg.me")
+    db, prod_client = _fresh_client_for_env()
+
+    resp = prod_client.options(
+        "/api/runs",
+        headers={
+            "Origin": "https://evil.example",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert "access-control-allow-origin" not in resp.headers
+    prod_client.close()
+    db.close()

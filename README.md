@@ -69,6 +69,7 @@ pnpm --filter @doomberg/web run test && pnpm --filter @doomberg/web run build
 
 ```bash
 export DOOMBERG_DB=./doomberg.db              # local SQLite system-of-record (default :memory:)
+export DOOMBERG_ENV=local                     # enables local X-Tenant-Id dev auth fallback
 # Production uses managed Postgres instead:
 # export DOOMBERG_DB=postgresql://user:pass@host:5432/dbname?sslmode=require
 
@@ -112,7 +113,7 @@ uv run python scripts/launch_gate.py --mode local --skip-ibkr
 pnpm --filter @doomberg/web dev
 ```
 
-### Install Doomberg MCP in Codex
+### Install Doomberg MCP in local agents
 
 With the hosted app deployed, a user can link a coding agent in one command:
 
@@ -121,13 +122,20 @@ curl -fsSL https://app.doomberg.me/install.py | python3
 ```
 
 The installer opens the Doomberg app, lets the user sign in or sign up with Clerk,
-then asks for approval to mint a scoped MCP key. After approval it
-registers the hosted streamable-HTTP MCP server as `doomberg` for Cursor,
-Claude Code, Codex, OpenClaw, and Hermes. Codex and Claude Code use their
-native MCP CLIs when present; Cursor, OpenClaw, and Hermes get merged
-`mcpServers` JSON config files without overwriting existing servers. To target
-one client, pass `--client cursor`, `--client claude-code`, `--client codex`,
-`--client openclaw`, or `--client hermes`.
+then asks for approval to mint a scoped MCP key. After approval it stores the
+key in `~/.config/doomberg/mcp.env`, registers the hosted streamable-HTTP MCP
+server as `doomberg`, verifies a real MCP `initialize` handshake, calls
+`doomberg_init` to open a visible onboarding session, and writes the generated
+catalog guide to `~/.config/doomberg/TOOLS.md`.
+
+Cursor, Claude Code, Codex, OpenClaw, and Hermes are configured by default.
+Codex uses `codex mcp add --url ... --bearer-token-env-var DOOMBERG_MCP_API_KEY`.
+Claude Code uses `claude mcp add --transport http --scope user` with an
+`Authorization: Bearer ${DOOMBERG_MCP_API_KEY}` header reference, not a
+hardcoded token. Cursor, OpenClaw, and Hermes get merged `mcpServers` JSON
+config files without overwriting existing servers. To target one client, pass
+`--client cursor`, `--client claude-code`, `--client codex`, `--client openclaw`,
+or `--client hermes`.
 
 See [Agent Client Setup](docs/AGENT_CLIENT_SETUP.md) for per-client behavior and
 [Greptile Automation](docs/GREPTILE_AUTOMATION.md) for automated PR review setup.
@@ -139,7 +147,8 @@ curl -fsSL https://app.doomberg.me/install.py | python3 - --agent-init
 ```
 
 The agent prints the sign-in/signup URL for the user, waits for approval, installs the MCP
-config, verifies a real MCP initialize handshake, then starts with `doomberg_init`. See
+config, verifies a real MCP initialize handshake, calls `doomberg_init`, and generates
+`~/.config/doomberg/TOOLS.md` from the live MCP tool and toolkit catalogs. See
 [Agent-Driven Onboarding](docs/AGENT_DRIVEN_ONBOARDING.md).
 
 All six local processes share the same platform system-of-record via `DOOMBERG_DB`. The browser talks only to the
@@ -168,6 +177,7 @@ MCP `search_skills` and `describe_skill` read those manifests, while `run_skill`
 executes skills present in the runnable registry.
 MCP clients can also read the progressive-discovery resources
 `doomberg://skills/catalog`, `doomberg://skills/{skill_id}/{version}`,
+`doomberg://toolkits/catalog`, `doomberg://toolkits/{toolkit_id}`,
 `doomberg://runs/{run_id}`, `doomberg://policies/current`, `doomberg://accounts`,
 and `doomberg://data/providers`; hosted HTTP resource reads require `data:read` and
 return tenant-scoped, credential-redacted JSON. REST provider responses follow the

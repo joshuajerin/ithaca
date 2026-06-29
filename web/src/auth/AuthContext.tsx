@@ -46,7 +46,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const email = clerkUser.primaryEmailAddress?.emailAddress ?? "";
     return {
       id: clerkUser.id,
-      name: clerkUser.fullName || clerkUser.username || email || "Ithaca user",
+      name: clerkUser.fullName || clerkUser.username || email || "Doomberg user",
       email,
       avatarUrl: clerkUser.imageUrl || undefined,
       provider: "ithaca",

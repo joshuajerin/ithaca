@@ -7,6 +7,10 @@ register and degrade to an ARCHIVE_UNAVAILABLE warning (never crash).
 """
 from __future__ import annotations
 
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
 import numpy as np
 import pytest
 
@@ -105,6 +109,49 @@ class _MiniArchive:
                 "quotes": []}
 
 
+class _LiveNewsServer:
+    def __init__(self, payload):
+        self.payload = payload
+        self.requests = []
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                owner.requests.append({
+                    "path": self.path,
+                    "tenant": self.headers.get("X-Tenant-Id"),
+                })
+                raw = json.dumps(owner.payload).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def log_message(self, *_args):
+                return
+
+        self._handler = Handler
+        self._server = None
+        self._thread = None
+        self.url = ""
+
+    def __enter__(self):
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler)
+        host, port = self._server.server_address
+        self.url = f"http://{host}:{port}"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc):
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+
+
 @pytest.fixture
 def archive_toolset() -> Toolset:
     return Toolset(core=Core(), sink=InMemoryTrace(), archive=_MiniArchive())
@@ -118,6 +165,24 @@ def test_call_skill_traces_like_ohlcv(archive_toolset):
     assert [e["type"] for e in events] == ["tool_call", "tool_result"]
     assert [e["seq"] for e in events] == [0, 1]  # gap-free
     assert events[0]["data"]["name"] == "market.news"  # canonical tool name the read-model pairs on
+
+
+def test_market_news_does_not_fall_back_to_archive_when_live_news_is_configured(archive_toolset, monkeypatch):
+    with _LiveNewsServer({"items": []}) as server:
+        monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
+        monkeypatch.setenv("DOOMBERG_IBKR_NEWS_PATH", "/news")
+
+        out = archive_toolset.call_skill(
+            "market.news",
+            {"ticker": "NVDA", "limit": 5},
+            _ctx={"run_id": R, "tenant_id": R, "agent_id": AGENT},
+        )
+
+    assert out["data"] is None
+    assert out["provenance"]["source"] == "doomberg-live-data"
+    assert out["warnings"][0]["code"] == "LIVE_NEWS_UNAVAILABLE"
+    assert '"headline": "h"' not in json.dumps(out)
+    assert server.requests == [{"path": "/news?limit=5&ticker=NVDA", "tenant": R}]
 
 
 def test_computed_skill_traces_with_computed_source(archive_toolset):

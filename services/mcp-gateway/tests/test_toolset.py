@@ -37,6 +37,16 @@ class _QuoteServer:
                     payload = {"positions": [{"symbol": "AAPL", "quantity": 3, "secret": "x"}]}
                 elif self.path.startswith("/orders"):
                     payload = {"orders": [{"order_id": "100", "symbol": "AAPL", "status": "Submitted"}]}
+                elif self.path.startswith("/news"):
+                    payload = {
+                        "scope": "AAPL",
+                        "items": [{
+                            "headline": "Apple moves higher after hours",
+                            "source": "Doomberg",
+                            "publishedAt": now,
+                        }],
+                        "asOf": now,
+                    }
                 else:
                     payload = {
                         "data": {
@@ -126,7 +136,7 @@ async def test_server_registers_three_tools(toolset):
     mcp, _ = create_server(toolset)
     tools = await mcp.list_tools()
     names = {t.name for t in tools}
-    assert {"market_get_ohlcv", "backtest_run", "propose_strategy"} <= names
+    assert {"market_get_ohlcv", "market_quote", "backtest_run", "propose_strategy"} <= names
     assert {
         "doomberg_init",
         "start_research_session",
@@ -156,11 +166,18 @@ def test_doomberg_init_returns_first_call_workflow(toolset):
     assert out["status"] == "ready"
     assert out["goal_captured"] is True
     assert out["session_id"]
-    assert {step["tool"] for step in out["start_here"]} >= {
-        "search_skills",
-        "describe_skill",
+    assert out["session"]["prompt"] == "research AAPL momentum"
+    assert out["start_here"][0]["tool"] == "start_research_session"
+    assert out["start_here"][0]["status"] == "already_started_by_doomberg_init"
+    assert {tool["name"] for tool in out["direct_tools"]} >= {
+        "market_get_ohlcv",
+        "market_news",
         "run_skill",
+        "get_run",
     }
+    assert {"search_skills", "describe_skill"}.isdisjoint(
+        {step["tool"] for step in out["start_here"][:3]}
+    )
     assert "move money" in out["boundaries"]["cannot"]
 
 
@@ -218,6 +235,9 @@ async def test_toolkit_resources_return_grouped_direct_tools(toolset):
 
     listed = ts.list_toolkits()
     assert any(t["toolkit_id"] == "market-research" for t in listed["toolkits"])
+    market_listing = next(t for t in listed["toolkits"] if t["toolkit_id"] == "market-research")
+    assert "market_get_ohlcv" in market_listing["direct_tools"]
+    assert market_listing["required_first_tool"] == "start_research_session"
 
     toolkit = ts.describe_toolkit("backtest-paper")
     assert toolkit["required_first_tool"] == "start_research_session"
@@ -381,11 +401,44 @@ def test_run_skill_exposes_live_quote_and_blocks_broker_read_skills(toolset_core
     assert positions["status"] == "failed"
     assert positions["error"]["code"] == "POLICY_DENIED"
     assert [request["path"] for request in server.requests] == ["/quote/AAPL"]
-    got = ts.get_run(positions["run_id"], _ctx={"tenant_id": tenant})
+    got = ts.get_run(positions["run_id"], _ctx=ctx)
     assert any(
         event["type"] == "error" and event.get("data", {}).get("error") == "POLICY_DENIED"
         for event in got["events"]
     )
+
+
+def test_direct_market_quote_passes_extended_hours_to_live_engine(toolset, monkeypatch):
+    with _QuoteServer() as server:
+        monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
+        monkeypatch.setenv("DOOMBERG_IBKR_QUOTE_PATH", "/quote/{symbol}")
+
+        out = toolset.market_quote(
+            "aapl",
+            max_freshness_ms=10_000,
+            include_extended_hours=True,
+            _ctx={"run_id": R6, "tenant_id": R6, "agent_id": AGENT},
+        )
+
+    assert out["data"]["symbol"] == "AAPL"
+    assert out["provenance"]["source"] == "doomberg-live-data"
+    assert server.requests == [{"path": "/quote/AAPL?extended_hours=true", "tenant": R6}]
+
+
+def test_direct_market_news_is_live_only_when_engine_configured(toolset, monkeypatch):
+    class _EmptyNewsServer(_QuoteServer):
+        def __init__(self) -> None:
+            super().__init__()
+
+    with _EmptyNewsServer() as server:
+        monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
+        monkeypatch.setenv("DOOMBERG_IBKR_NEWS_PATH", "/empty-news")
+
+        out = toolset.market_news("aapl", _ctx={"run_id": R6, "tenant_id": R6, "agent_id": AGENT})
+
+    assert out["error"]["code"] == "PROVIDER_DEGRADED"
+    assert "live news unavailable" in out["error"]["message"]
+    assert server.requests == [{"path": "/empty-news?limit=50&ticker=AAPL", "tenant": R6}]
 
 
 def test_run_skill_queues_durable_backtest(toolset_core, sample_spec):
@@ -443,9 +496,53 @@ def test_run_skill_interactive_persists_result_and_trace(toolset_core):
     )
 
     assert out["status"] == "succeeded"
-    got = ts.get_run(out["run_id"], _ctx={"tenant_id": tenant})
+    got = ts.get_run(out["run_id"], _ctx=ctx)
     assert got["run"]["result"]["provenance"]["source"] == "yahoo-chart"
     assert any(e["type"] == "tool_result" for e in got["events"])
+
+
+def test_get_run_is_traced_on_active_research_session(toolset_core):
+    platform = Platform(":memory:")
+    tenant = platform.auth.create_tenant("mcp")
+    ts = Toolset(
+        core=toolset_core,
+        sink=PlatformTraceSink(platform.trace),
+        runs=platform.runs,
+        platform=platform,
+    )
+    ctx = {"tenant_id": tenant, "agent_id": "agent"}
+    started = ts.start_research_session("inspect durable run", _ctx=ctx)
+    run_id = platform.runs.create(tenant, "interactive", None, {"skill_id": "market.get_ohlcv"})
+
+    out = ts.get_run(run_id, _ctx=ctx)
+
+    assert out["run"]["run_id"] == run_id
+    events = platform.trace.events(tenant, started["session_id"])
+    assert [event["type"] for event in events] == ["session_open", "tool_call", "tool_result"]
+    assert events[1]["data"]["name"] == "get_run"
+
+
+def test_registered_workflow_tools_require_started_session(toolset_core):
+    platform = Platform(":memory:")
+    tenant = platform.auth.create_tenant("mcp")
+    ts = Toolset(
+        core=toolset_core,
+        sink=PlatformTraceSink(platform.trace),
+        runs=platform.runs,
+        platform=platform,
+    )
+    ctx = {"tenant_id": tenant, "agent_id": "agent"}
+    run_id = platform.runs.create(tenant, "interactive", None, {"skill_id": "market.get_ohlcv"})
+
+    assert ts.subscribe_run(run_id, _ctx=ctx)["error"]["code"] == "SESSION_CONTEXT_REQUIRED"
+    assert ts.triggers_list(_ctx=ctx)["error"]["code"] == "SESSION_CONTEXT_REQUIRED"
+    assert ts.alerts_list(_ctx=ctx)["error"]["code"] == "SESSION_CONTEXT_REQUIRED"
+
+    ts.start_research_session("follow workflow tools", _ctx=ctx)
+
+    assert "events" in ts.subscribe_run(run_id, _ctx=ctx)
+    assert "triggers" in ts.triggers_list(_ctx=ctx)
+    assert "alerts" in ts.alerts_list(_ctx=ctx)
 
 
 def test_mcp_order_intent_flow_is_disabled(toolset_core):
