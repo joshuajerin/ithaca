@@ -25,7 +25,7 @@ export function App() {
   return (
     <div className="app">
       <aside className="rail" aria-label="Primary navigation">
-        <div className="rail-brand" aria-label="Ithaca">
+        <div className="rail-brand" aria-label="Doomberg">
           <DoombergMark size={26} />
         </div>
 

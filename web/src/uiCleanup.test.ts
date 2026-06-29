@@ -23,7 +23,6 @@ describe("customer-facing UI cleanup guards", () => {
     expect(text).toContain("Ithaca MCP");
     expect(text).toContain("Ithaca user");
     expect(text).toContain("ithaca.mintlify.app");
-    // No user-visible "Doomberg" brand text (DoombergMark component name is fine)
     expect(text).not.toMatch(/>\s*Doomberg\s*</);
     expect(text).not.toContain("Doomberg MCP");
     expect(text).not.toContain("Doomberg user");
