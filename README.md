@@ -132,6 +132,16 @@ one client, pass `--client cursor`, `--client claude-code`, `--client codex`,
 See [Agent Client Setup](docs/AGENT_CLIENT_SETUP.md) for per-client behavior and
 [Greptile Automation](docs/GREPTILE_AUTOMATION.md) for automated PR review setup.
 
+For agent-driven setup, ask the agent to run:
+
+```bash
+curl -fsSL https://app.doomberg.me/install.py | python3 - --agent-init
+```
+
+The agent prints the sign-in/signup URL for the user, waits for approval, installs the MCP
+config, verifies a real MCP initialize handshake, then starts with `doomberg_init`. See
+[Agent-Driven Onboarding](docs/AGENT_DRIVEN_ONBOARDING.md).
+
 All six local processes share the same platform system-of-record via `DOOMBERG_DB`. The browser talks only to the
 rest-gateway (`:8000`); its human money-path actions (promote/activate/pause/resume/retire) call the same
 `doomberg_control.actions` the control plane exposes, so there is one money-path implementation, two transports.

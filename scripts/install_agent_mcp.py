@@ -21,7 +21,9 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib import error as urlerror
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
+from urllib.request import Request, urlopen
 
 DEFAULT_APP_URL = "https://app.doomberg.me"
 DEFAULT_MCP_URL = "https://mcp.doomberg.me/mcp"
@@ -308,6 +310,101 @@ def _wait_for_payload(state: CallbackState, timeout: int) -> dict[str, Any]:
     raise SystemExit("Timed out waiting for browser approval.")
 
 
+def _mcp_json_from_text(text: str) -> dict[str, Any] | None:
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        pass
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line.startswith("data:"):
+            continue
+        data = line.removeprefix("data:").strip()
+        if not data or data == "[DONE]":
+            continue
+        try:
+            parsed = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _mcp_post(mcp_url: str, api_key: str, body: dict[str, Any],
+              session_id: str | None = None, timeout: int = 20):
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+    if session_id:
+        headers["mcp-session-id"] = session_id
+    request = Request(
+        mcp_url,
+        data=json.dumps(body).encode("utf-8"),
+        method="POST",
+        headers=headers,
+    )
+    return urlopen(request, timeout=timeout)
+
+
+def _verify_mcp_initialize(mcp_url: str, api_key: str) -> dict[str, Any]:
+    try:
+        with _mcp_post(
+            mcp_url,
+            api_key,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "doomberg-installer", "version": "1"},
+                },
+            },
+        ) as response:
+            text = response.read().decode("utf-8", errors="replace")
+            session_id = response.headers.get("mcp-session-id")
+            body = _mcp_json_from_text(text) or {}
+    except urlerror.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        return {"ok": False, "error": f"MCP initialize returned HTTP {exc.code}: {detail}"}
+    except Exception as exc:
+        return {"ok": False, "error": f"MCP initialize failed: {exc}"}
+
+    if "error" in body:
+        return {"ok": False, "error": f"MCP initialize error: {body['error']}"}
+    if not session_id:
+        return {"ok": False, "error": "MCP initialize did not return mcp-session-id"}
+
+    try:
+        with _mcp_post(
+            mcp_url,
+            api_key,
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            session_id=session_id,
+        ) as response:
+            response.read()
+    except urlerror.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        return {"ok": False, "error": f"MCP initialized notification returned HTTP {exc.code}: {detail}"}
+    except Exception as exc:
+        return {"ok": False, "error": f"MCP initialized notification failed: {exc}"}
+    return {"ok": True, "session_id": session_id}
+
+
+def _agent_bootstrap_prompt(name: str) -> str:
+    return (
+        "After your agent reloads MCP config, call the Doomberg init tool first:\n"
+        f"  {name}.doomberg_init(goal=\"<what you want Doomberg to research or build>\")\n"
+        "Then use search_skills/describe_skill/run_skill for market data, backtests, "
+        "and paper-trading research."
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Install Doomberg MCP into a local agent.")
     parser.add_argument("--app-url", default=os.environ.get("DOOMBERG_APP_URL", DEFAULT_APP_URL))
@@ -321,6 +418,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--no-open", action="store_true")
+    parser.add_argument(
+        "--agent-init",
+        action="store_true",
+        help="Agent-driven onboarding: print the approval URL, wait, install, and verify MCP initialize.",
+    )
     args = parser.parse_args(argv)
 
     state_token = secrets.token_urlsafe(24)
@@ -332,9 +434,12 @@ def main(argv: list[str] | None = None) -> int:
     callback_url = f"http://127.0.0.1:{server.server_port}/callback"
     link = _agent_link_url(args.app_url, callback_url, state_token, args.mcp_url,
                            args.name, args.client)
-    print("Open this URL to sign in and approve Doomberg MCP:")
+    if args.agent_init:
+        print("Send this URL to the user so they can sign in or create an account and approve Doomberg MCP:")
+    else:
+        print("Open this URL to sign in and approve Doomberg MCP:")
     print(link)
-    if not args.no_open:
+    if not args.no_open and not args.agent_init:
         webbrowser.open(link)
 
     try:
@@ -365,8 +470,16 @@ def main(argv: list[str] | None = None) -> int:
     if key_id:
         print(f"Key id: {key_id}")
     print(f"Token env: {ENV_FILE}")
+    if args.agent_init:
+        init = _verify_mcp_initialize(mcp_url, api_key)
+        if init.get("ok"):
+            print(f"MCP initialize: ok (session {init['session_id']})")
+        else:
+            print(f"MCP initialize: {init.get('error')}")
+            failures.append(str(init.get("error")))
+        print(_agent_bootstrap_prompt(args.name))
     print("Restart any already-open agent app so it picks up the new MCP config/env.")
-    if failures and args.client != "all":
+    if failures and (args.client != "all" or args.agent_init):
         return 1
     return 0
 
