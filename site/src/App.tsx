@@ -10,7 +10,7 @@ export default function App({ authMode }: { authMode: AuthMode }) {
     <Routes>
       <Route path="/" element={<Landing authMode={authMode} />} />
       {LEGAL_DOCS.map((doc) => (
-        <Route key={doc.slug} path={`/${doc.slug}`} element={<LegalPage slug={doc.slug} />} />
+        <Route key={doc.slug} path={`/${doc.slug}`} element={<LegalPage slug={doc.slug} authMode={authMode} />} />
       ))}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
