@@ -37,7 +37,7 @@ This plan intentionally starts from the current repo rather than replacing it wh
 - The deployment currently co-locates app services to share a SQLite PVC. `infra/k8s/pvc.yaml` explicitly notes this is durable but not HA.
 - Worker profiles are not truly jobized yet. The Terraform job templates are reference-only and disabled, while runtime execution is still a daemon conductor polling SQLite.
 - Deployment has two public ingress/LB shapes: Terraform-created DigitalOcean Load Balancer plus optional Caddy `LoadBalancer` service. Ownership should be consolidated before production hardening.
-- CI can look green while missing important surfaces: `services/data-archive`, `site`, real worker job entrypoints, HA/Postgres topology, and some lint/security checks are not fully covered.
+- CI can look green while missing important surfaces: `site`, real worker job entrypoints, HA/Postgres topology, and some lint/security checks are not fully covered.
 - There are stale parallel deploy/onboarding surfaces from earlier Vercel/Hermes/Supabase-era hosting that should be retired or clearly marked legacy.
 - Production security footguns remain: wildcard CORS, dev tenant fallback behavior, and SSE access tokens in query strings need tightening before the platform is treated as a control plane.
 
@@ -64,7 +64,7 @@ The existing services can be extended before directories are split:
 - `services/control-plane`: authoritative state transitions, admission control, policy checks, approvals, strategy lifecycle, and execution-intent lifecycle.
 - `services/runtime`: durable worker leases, job execution, checkpoints, artifacts, cancellation, retries, and profile enforcement.
 - `doomberg-core`: pure financial primitives, canonical data contracts, strategy validation, risk math, and no broker writes.
-- `services/data-archive` plus a new provider layer: community/public data, connected-account providers, entitlement routing, dataset snapshots, and normalized archives.
+- live-data provider layer: connected-account providers, entitlement routing, dataset snapshots, and normalized payloads.
 - `web`: live control-plane dashboard, sessions trace UI, provider/entitlement UI, trigger UI, approval/execution UI, artifacts and replay.
 - `infra`: Managed Postgres platform state, Spaces artifacts, split services, worker pools, secrets boundaries, and autoscaling.
 
@@ -347,7 +347,7 @@ Baseline verification:
 
 ```bash
 uv sync --all-packages --extra dev
-for pkg in packages/contracts/py doomberg-core services/data-archive services/platform services/mcp-gateway services/control-plane services/rest-gateway services/runtime; do
+for pkg in packages/contracts/py doomberg-core services/platform services/mcp-gateway services/control-plane services/rest-gateway services/runtime; do
   (cd "$pkg" && PYTHONDONTWRITEBYTECODE=1 uv run --extra dev pytest -q -p no:cacheprovider)
 done
 pnpm run contracts:check
@@ -379,7 +379,7 @@ New required tests:
 - Trigger dry-run and cooldown tests.
 - Execution gateway property tests proving duplicate submissions cannot create duplicate orders.
 - Web tests for dashboard routing, session evidence rendering, source/freshness badges, provider status, triggers, approvals, and execution state.
-- CI updates that include `services/data-archive`, `site`, worker entrypoint smoke tests, and lint/security checks.
+- CI updates that include `site`, worker entrypoint smoke tests, and lint/security checks.
 
 ## Risks And Open Questions
 

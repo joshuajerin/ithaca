@@ -82,30 +82,6 @@ spec:
             capabilities: { drop: ["ALL"] }
           volumeMounts:
             - { name: tmp, mountPath: /tmp }
-        # Apply any new archive.* DDL before the app containers start.
-        # Uses IF NOT EXISTS throughout so it's safe to re-run on every pod start.
-        - name: archive-migrate
-          image: ${WORKER_IMAGE}
-          imagePullPolicy: IfNotPresent
-          args: ["archive-migrate"]
-          env:
-            - name: DOOMBERG_ENV
-              value: "${DOOMBERG_ENV}"
-            - name: DOOMBERG_ARCHIVE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: doomberg-db
-                  key: archive_url
-          resources:
-            requests: { cpu: "100m", memory: 128Mi }
-            limits: { cpu: "500m", memory: 256Mi }
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            capabilities: { drop: ["ALL"] }
-          volumeMounts:
-            - { name: tmp, mountPath: /tmp }
       volumes:
         - name: tmp
           emptyDir: {}
@@ -126,11 +102,6 @@ spec:
                 secretKeyRef:
                   name: doomberg-db
                   key: platform_url
-            - name: DOOMBERG_ARCHIVE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: doomberg-db
-                  key: archive_url
             - name: DOOMBERG_REST_PORT
               value: "8000"
             - name: DOOMBERG_SESSION_SECRET
@@ -231,11 +202,6 @@ spec:
                 secretKeyRef:
                   name: doomberg-db
                   key: platform_url
-            - name: DOOMBERG_ARCHIVE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: doomberg-db
-                  key: archive_url
             - name: DOOMBERG_CONTROL_PORT
               value: "8001"
             - name: DOOMBERG_ADMIN_TOKEN
@@ -326,11 +292,6 @@ spec:
                 secretKeyRef:
                   name: doomberg-db
                   key: platform_url
-            - name: DOOMBERG_ARCHIVE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: doomberg-db
-                  key: archive_url
             - name: FMP_API_KEY
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: fmp_api_key, optional: true }

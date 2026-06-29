@@ -99,20 +99,3 @@ output "load_balancer_id" {
   description = "Load Balancer id."
   value       = digitalocean_loadbalancer.gateways.id
 }
-
-# ---------------------------------------------------------------------------
-# Archive DSN — same Managed-Postgres app DSN, surfaced under the env var name
-# the loader + ArchiveGateway read (DOOMBERG_ARCHIVE_URL). Sensitive.
-# ---------------------------------------------------------------------------
-output "archive_url" {
-  description = "Archive Postgres DSN for DOOMBERG_ARCHIVE_URL (same private app DSN). Sensitive. Null when manage_postgres=false (the prod DB DSN comes from the DOOMBERG_PROD_URL secret instead)."
-  value = var.manage_postgres ? format(
-    "postgresql://%s:%s@%s:%d/%s?sslmode=require",
-    digitalocean_database_user.app[0].name,
-    digitalocean_database_user.app[0].password,
-    digitalocean_database_cluster.postgres[0].private_host,
-    digitalocean_database_cluster.postgres[0].port,
-    digitalocean_database_db.app[0].name,
-  ) : null
-  sensitive = true
-}

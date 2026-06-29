@@ -73,7 +73,6 @@ def test_dev_tenant_header_must_be_uuid(client):
 
 
 def test_ops_status_reports_live_data_and_paper_execution(client, stores, tenant_a, monkeypatch):
-    monkeypatch.setenv("DOOMBERG_ARCHIVE_URL", "postgresql://archive.example/db")
     monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", "https://ibkr.example")
     monkeypatch.setenv("DOOMBERG_IBKR_QUOTE_PATH", "/v1/quote/{symbol}")
     monkeypatch.setenv("DOOMBERG_IBKR_ORDER_PATH", "/v1/orders")

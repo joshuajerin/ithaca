@@ -11,7 +11,6 @@
 #   trigger-engine  :  doomberg-trigger    (python -m doomberg_runtime.trigger_engine)
 #   backtest-runner :  doomberg-backtest   (python -m doomberg_runtime.backtest_runner)
 #   live-runner     :  doomberg-live       (python -m doomberg_runtime.live_runner)
-#   archive-load    :  doomberg-archive-load (python scripts/import_v1_archive.py)
 #
 # CPU-ONLY: base is python:3.12-slim (no CUDA, no GPU libs). numpy is the only
 # heavy dep and runs on CPU.
@@ -39,7 +38,6 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY packages/contracts/py/pyproject.toml packages/contracts/py/
 COPY doomberg-core/pyproject.toml doomberg-core/
-COPY services/data-archive/pyproject.toml services/data-archive/
 COPY services/platform/pyproject.toml services/platform/
 COPY services/mcp-gateway/pyproject.toml services/mcp-gateway/
 COPY services/control-plane/pyproject.toml services/control-plane/

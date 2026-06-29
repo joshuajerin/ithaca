@@ -57,7 +57,7 @@ def test_launch_gate_local_mode_passes_without_external_services(capsys, monkeyp
     assert statuses["mcp resource scope denial"] == "pass"
     assert statuses["live data smoke"] == "skip"
     catalog = next(row for row in body["results"] if row["name"] == "mcp resource catalog")
-    assert catalog["evidence"]["count"] >= 50
+    assert catalog["evidence"]["count"] == 10
     trigger_fire = next(row for row in body["results"] if row["name"] == "trigger realtime fire")
     trigger_dry_run = next(row for row in body["results"] if row["name"] == "trigger dry-run")
     trigger_history = next(row for row in body["results"] if row["name"] == "trigger realtime history")

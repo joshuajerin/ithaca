@@ -12,7 +12,6 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "doomberg-archive",
     "doomberg-contracts",
     "doomberg-control-plane",
     "doomberg-core",
@@ -353,28 +352,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/5a/ff/4723d92f08259c707a974aba27a08d0a822b9555e35ca581bf18d055a364/curl_cffi-0.15.0-cp314-cp314t-win_amd64.whl", hash = "sha256:b624c7ce087bfda967a013ed0a64702a525444e5b6e97d23534d567ccc6525aa", size = 1702771, upload-time = "2026-04-03T11:12:28.201Z" },
     { url = "https://files.pythonhosted.org/packages/59/8c/36bbe06d66fa2b765e4a07199f643a59a9cd1a754207a96335402a9520f4/curl_cffi-0.15.0-cp314-cp314t-win_arm64.whl", hash = "sha256:0b6c0543b993996670e9e4b78e305a2d60809d5681903ffb5568e21a387434d3", size = 1466312, upload-time = "2026-04-03T11:12:30.054Z" },
 ]
-
-[[package]]
-name = "doomberg-archive"
-version = "0.0.0"
-source = { editable = "services/data-archive" }
-dependencies = [
-    { name = "numpy" },
-    { name = "psycopg", extra = ["binary"] },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "doomberg-contracts"

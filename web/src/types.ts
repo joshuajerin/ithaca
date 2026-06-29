@@ -202,7 +202,6 @@ export interface OpsReadinessRow {
 export interface OpsStatus {
   platform: {
     database: string;
-    archive_configured: boolean;
     mcp_allowed_hosts?: string;
   };
   live_data: {

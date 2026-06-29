@@ -91,5 +91,5 @@ rm -f tfplan
 echo ""
 echo "==> Applied. Next steps (see deploy/RUNBOOK.md):"
 echo "    terraform output -raw kubeconfig > /tmp/doomberg.kubeconfig"
-echo "    # create the doomberg-db Secret from the postgres_app_uri / archive_url outputs"
-echo "    # run the archive-load Job, then deploy the gateway/worker manifests"
+echo "    # create the doomberg-db Secret from the postgres_app_uri output"
+echo "    # deploy the gateway/worker manifests"

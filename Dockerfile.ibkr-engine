@@ -16,7 +16,6 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY packages/contracts/py/pyproject.toml packages/contracts/py/
 COPY doomberg-core/pyproject.toml doomberg-core/
-COPY services/data-archive/pyproject.toml services/data-archive/
 COPY services/platform/pyproject.toml services/platform/
 COPY services/mcp-gateway/pyproject.toml services/mcp-gateway/
 COPY services/control-plane/pyproject.toml services/control-plane/

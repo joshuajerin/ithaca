@@ -24,7 +24,7 @@ that tag, and moves `latest` only after a successful prod rollout. The prod job 
 verifies that the deploying SHA still equals `origin/main`.
 
 Each GitHub environment owns its own secrets and variables. Required secrets are
-`DIGITALOCEAN_ACCESS_TOKEN`, `DOOMBERG_ARCHIVE_URL`, `DOOMBERG_SESSION_SECRET`,
+`DIGITALOCEAN_ACCESS_TOKEN`, `DOOMBERG_PLATFORM_DB_URL`, `DOOMBERG_SESSION_SECRET`,
 `CLERK_PUBLISHABLE_KEY`, and either `CLERK_PEM_PUBLIC_KEY` or the
 `CLERK_JWKS_URL` variable. Required variables include `CLERK_ALLOWED_ORIGINS`.
 Production also requires `DOOMBERG_ADMIN_TOKEN`, `DOOMBERG_SMOKE_API_KEY`, and
@@ -140,20 +140,17 @@ terraform output -raw kubeconfig > /tmp/doomberg.kubeconfig
 export KUBECONFIG=/tmp/doomberg.kubeconfig
 kubectl get nodes        # expect 1 backtest (warm) + 2 paper nodes Ready
 
-# DB DSN secret (used by gateways, control-plane, runtime, and the archive loader).
-# platform_url is the platform system-of-record; archive_url is the read-only archive.
+# DB DSN secret used by gateways, control-plane, and runtime.
+# platform_url is the platform system-of-record.
 APP_URI="$(terraform output -raw postgres_app_uri)"
-ARCHIVE_URI="$(terraform output -raw archive_url)"
 kubectl create namespace doomberg-gateway --dry-run=client -o yaml | kubectl apply -f -
 kubectl create namespace doomberg-workers --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n doomberg-gateway create secret generic doomberg-db \
   --from-literal=db_url="${APP_URI}" \
-  --from-literal=platform_url="${APP_URI}" \
-  --from-literal=archive_url="${ARCHIVE_URI}"
+  --from-literal=platform_url="${APP_URI}"
 kubectl -n doomberg-workers create secret generic doomberg-db \
   --from-literal=db_url="${APP_URI}" \
-  --from-literal=platform_url="${APP_URI}" \
-  --from-literal=archive_url="${ARCHIVE_URI}"
+  --from-literal=platform_url="${APP_URI}"
 ```
 
 > `deploy/deploy_services.sh` creates/updates the full `doomberg-db` Secret in
@@ -176,36 +173,9 @@ currently perform legitimate cross-tenant infrastructure reads.
 
 ---
 
-## 6. Seed `archive.*` (one-shot loader Job)
+## 6. Verify live-data wiring
 
-First, upload the ~92 MB `data/v1_archive.json` export to the Spaces artifacts
-bucket once (it is intentionally NOT baked into the image):
-
-```bash
-BUCKET="$(terraform output -raw spaces_bucket_name)"
-# (using s3cmd/aws-cli configured with your SPACES_* keys, region from var.region)
-aws s3 cp data/v1_archive.json "s3://${BUCKET}/seed/v1_archive.json" \
-  --endpoint-url "https://$(terraform output -raw region 2>/dev/null || echo nyc3).digitaloceanspaces.com"
-```
-
-Then run the loader. Terraform renders the Job from `enable_archive_load_job`
-(default `true`) — it runs on apply. To run/re-run it by hand:
-
-```bash
-# Render the manifest's placeholders and apply it:
-sed -e "s|\${ARCHIVE_LOADER_IMAGE}|registry.digitalocean.com/doomberg/doomberg:latest|" \
-    -e "s|\${ARCHIVE_LOADER_ACTIVE_DEADLINE_SECONDS}|3600|" \
-    -e "s|\${ARCHIVE_SRC}|s3://${BUCKET}/seed/v1_archive.json|" \
-    infra/terraform/manifests/archive-load-job.yaml | kubectl apply -f -
-
-kubectl -n doomberg-gateway wait --for=condition=complete job/archive-load --timeout=1h
-kubectl -n doomberg-gateway logs job/archive-load
-```
-
-The loader (`scripts/import_v1_archive.py`, owned by the data-archive stream)
-creates the `archive.*` schema and bulk-loads the 15 market-data tables
-(~240k rows). After a successful load, set `enable_archive_load_job = false` so
-re-applies don't re-seed.
+Market data now comes from the Doomberg live-data engine. Do not seed or deploy a v1 archive.
 
 ---
 
