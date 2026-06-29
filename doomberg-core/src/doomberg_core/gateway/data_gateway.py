@@ -6,9 +6,15 @@ truncation parameter (point-in-time): the worker passes ``as_of = bar_i``, the a
 ``as_of = now``. Point-in-time is a per-source CAPABILITY (the ``pit`` flag) — the gateway
 cannot manufacture it. Free Yahoo data is ``pit='false'`` (restated, survivorship-biased), so
 backtests built on it are honestly labeled and scoped to price/technical strategies.
+
+When ``DATABENTO_API_KEY`` is set, the gateway uses Databento (institutional, point-in-time)
+instead of Yahoo. Set ``DOOMBERG_DATA_SOURCE=databento`` to force Databento, or
+``DOOMBERG_DATA_SOURCE=yahoo`` to force Yahoo. Default is ``auto``: Databento if the API key
+is present, Yahoo otherwise.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from math import isfinite
 
@@ -18,8 +24,24 @@ from ..sources import prices as _prices
 
 __all__ = ["DataGateway", "PricePanel"]
 
+
+def _resolve_source() -> tuple[str, str, bool, callable]:
+    """Pick the active data source based on env config.
+
+    Returns (source_name, pit, fetch_history_callable).
+    """
+    forced = os.environ.get("DOOMBERG_DATA_SOURCE", "auto").lower()
+    has_db_key = bool(os.environ.get("DATABENTO_API_KEY"))
+
+    if forced == "databento" or (forced == "auto" and has_db_key):
+        from ..sources import databento as _db
+        return "databento", "true", True, _db.fetch_price_history
+    else:
+        return "yahoo-chart", "false", False, _prices.fetch_price_history
+
+
 _SOURCE = "yahoo-chart"
-_PIT = "false"  # Yahoo is restated + survivorship-biased; not point-in-time. Honest by default.
+_PIT = "false"
 
 
 def _now_iso() -> str:
@@ -27,7 +49,7 @@ def _now_iso() -> str:
 
 
 def _envelope(data, *, source, as_of, coverage, cost_class, credits, freshness="live",
-              partial=False, warnings=None, cache_hit=False) -> dict:
+              partial=False, warnings=None, cache_hit=False, pit=_PIT) -> dict:
     """Build a ProvenanceEnvelope dict. Shape matches packages/contracts provenance schema."""
     return {
         "data": data,
@@ -36,7 +58,7 @@ def _envelope(data, *, source, as_of, coverage, cost_class, credits, freshness="
             "as_of": as_of or _now_iso(),
             "freshness": freshness,
             "stale_age_sec": 0,
-            "pit": _PIT,
+            "pit": pit,
             "coverage": coverage,
             "cost": {"class": cost_class, "credits": credits},
             "cache_hit": bool(cache_hit),
@@ -145,8 +167,16 @@ class PricePanel:
 class DataGateway:
     """Stateless facade. ``fetch`` is injectable so tests run without network."""
 
-    def __init__(self, fetch_history=_prices.fetch_price_history):
-        self._fetch = fetch_history
+    def __init__(self, fetch_history=None):
+        if fetch_history is not None:
+            self._fetch = fetch_history
+            self._source = _SOURCE
+            self._pit = _PIT
+        else:
+            source, pit, is_pit, fetch = _resolve_source()
+            self._fetch = fetch
+            self._source = source
+            self._pit = pit
         self._ohlcv_cache: dict[tuple[str, str, str, str], dict] = {}
 
     def _history(self, symbol: str, range_: str, interval: str, as_of: str | None = None) -> tuple[list[dict], dict, bool, dict]:
@@ -170,10 +200,11 @@ class DataGateway:
             points, quality, cache_hit, quote = self._history(symbol, range_, interval, as_of)
         except Exception as exc:  # honest failure, not silent mock
             return _envelope(
-                None, source=_SOURCE, as_of=_now_iso(),
+                None, source=self._source, as_of=_now_iso(),
                 coverage={"requested": 1, "resolved": 0, "missing": [symbol.upper()]},
                 cost_class="network", credits=1, freshness="mock", partial=True,
                 warnings=[{"code": "UPSTREAM_ERROR", "scope": symbol.upper(), "detail": str(exc)[:200]}],
+                pit=self._pit,
             )
         data = {"symbol": symbol.upper(), "points": points, "quote": quote, "quality": quality}
         warnings = []
@@ -187,11 +218,11 @@ class DataGateway:
                 ),
             })
         return _envelope(
-            data, source=_SOURCE, as_of=quote.get("asOf") or _now_iso(),
+            data, source=self._source, as_of=quote.get("asOf") or _now_iso(),
             coverage={"requested": 1, "resolved": 1 if points else 0,
                       "missing": [] if points else [symbol.upper()]},
             cost_class="network", credits=1, partial=not points, warnings=warnings,
-            cache_hit=cache_hit,
+            cache_hit=cache_hit, pit=self._pit,
         )
 
     # ---- worker/backtest-facing -------------------------------------------------------
@@ -235,12 +266,12 @@ class DataGateway:
         if not resolved:
             panel = PricePanel([], np.zeros((0, 0)), [], missing, quality_by_symbol)
             prov = _envelope(
-                {"cleaning": quality_by_symbol}, source=_SOURCE, as_of=as_of or _now_iso(),
+                {"cleaning": quality_by_symbol}, source=self._source, as_of=as_of or _now_iso(),
                 coverage={"requested": len(symbols), "resolved": 0, "missing": missing},
                 cost_class="network", credits=len(symbols), freshness="mock", partial=True,
                 warnings=warnings + [{"code": "PARTIAL_COVERAGE", "scope": None,
                                       "detail": "no symbols resolved"}],
-                cache_hit=bool(cache_flags) and all(cache_flags),
+                cache_hit=bool(cache_flags) and all(cache_flags), pit=self._pit,
             )
             return panel, prov
 
@@ -253,9 +284,9 @@ class DataGateway:
                              "detail": "symbols dropped (no overlapping data)"})
         prov = _envelope(
             {"dates": len(dates), "symbols": resolved, "cleaning": quality_by_symbol},
-            source=_SOURCE, as_of=as_of or _now_iso(),
+            source=self._source, as_of=as_of or _now_iso(),
             coverage={"requested": len(symbols), "resolved": len(resolved), "missing": missing},
             cost_class="network", credits=len(symbols), partial=bool(missing), warnings=warnings,
-            cache_hit=bool(cache_flags) and all(cache_flags),
+            cache_hit=bool(cache_flags) and all(cache_flags), pit=self._pit,
         )
         return PricePanel(dates, closes, resolved, missing, quality_by_symbol), prov
