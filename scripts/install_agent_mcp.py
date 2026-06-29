@@ -3,7 +3,7 @@
 
 The installer opens the Doomberg web app, receives a one-time key from the signed-in
 browser session on a localhost callback, then registers the hosted MCP endpoint with
-Codex using its supported streamable-HTTP MCP config.
+the selected local agent clients.
 """
 from __future__ import annotations
 
@@ -27,6 +27,17 @@ DEFAULT_APP_URL = "https://app.doomberg.me"
 DEFAULT_MCP_URL = "https://mcp.doomberg.me/mcp"
 ENV_FILE = Path.home() / ".config" / "doomberg" / "mcp.env"
 SHELL_MARKER = "# Doomberg MCP environment"
+CLIENT_ALIASES = {
+    "all": "all",
+    "cursor": "cursor",
+    "claude": "claude-code",
+    "claude-code": "claude-code",
+    "claudecode": "claude-code",
+    "codex": "codex",
+    "openclaw": "openclaw",
+    "hermes": "hermes",
+}
+DEFAULT_CLIENTS = ("cursor", "claude-code", "codex", "openclaw", "hermes")
 
 
 class CallbackState:
@@ -116,6 +127,56 @@ def _write_env_file(api_key: str, mcp_url: str) -> None:
     os.chmod(ENV_FILE, 0o600)
 
 
+def _read_json_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        backup = path.with_suffix(path.suffix + f".bak.{int(time.time())}")
+        path.rename(backup)
+        print(f"Could not parse {path}; moved it to {backup}: {exc}")
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def _write_json_file(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def _http_mcp_config(mcp_url: str, api_key: str) -> dict[str, Any]:
+    return {
+        "type": "http",
+        "url": mcp_url,
+        "headers": {
+            "Authorization": f"Bearer {api_key}",
+        },
+    }
+
+
+def _merge_mcp_json(path: Path, name: str, config: dict[str, Any]) -> None:
+    data = _read_json_file(path)
+    servers = data.get("mcpServers")
+    if not isinstance(servers, dict):
+        servers = {}
+    servers[name] = config
+    data["mcpServers"] = servers
+    _write_json_file(path, data)
+
+
+def _install_cursor_mcp(name: str, mcp_url: str, api_key: str) -> str:
+    path = Path.home() / ".cursor" / "mcp.json"
+    _merge_mcp_json(path, name, _http_mcp_config(mcp_url, api_key))
+    return f"Cursor: wrote {path}"
+
+
 def _ensure_shell_sources_env() -> None:
     source_line = f'{SHELL_MARKER}\n[ -f "{ENV_FILE}" ] && . "{ENV_FILE}"\n'
     candidates = [Path.home() / ".zshrc", Path.home() / ".bashrc"]
@@ -141,13 +202,14 @@ def _set_launchctl_env(api_key: str, mcp_url: str) -> None:
     subprocess.run(["launchctl", "setenv", "DOOMBERG_MCP_URL", mcp_url], check=False)
 
 
-def _install_codex_mcp(name: str, mcp_url: str) -> None:
+def _install_codex_mcp(name: str, mcp_url: str) -> str:
     codex = shutil.which("codex")
     if codex is None:
-        print("codex CLI not found on PATH; wrote the token env but did not update Codex MCP config.")
-        print(f"Run manually: codex mcp add {name} --url {mcp_url} "
-              "--bearer-token-env-var DOOMBERG_MCP_API_KEY")
-        return
+        return (
+            "Codex: codex CLI not found; run manually: "
+            f"codex mcp add {name} --url {mcp_url} "
+            "--bearer-token-env-var DOOMBERG_MCP_API_KEY"
+        )
     subprocess.run([codex, "mcp", "remove", name], stdout=subprocess.DEVNULL,
                    stderr=subprocess.DEVNULL, check=False)
     subprocess.run(
@@ -162,7 +224,76 @@ def _install_codex_mcp(name: str, mcp_url: str) -> None:
             "DOOMBERG_MCP_API_KEY",
         ],
         check=True,
+        timeout=30,
     )
+    return "Codex: registered with `codex mcp add --url`"
+
+
+def _install_claude_code_mcp(name: str, mcp_url: str, api_key: str) -> str:
+    claude = shutil.which("claude")
+    if claude is None:
+        path = Path.home() / ".claude" / "mcp.json"
+        _merge_mcp_json(path, name, _http_mcp_config(mcp_url, api_key))
+        return f"Claude Code: claude CLI not found; wrote {path}"
+    subprocess.run([claude, "mcp", "remove", "--scope", "user", name],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    subprocess.run(
+        [
+            claude,
+            "mcp",
+            "add",
+            "--transport",
+            "http",
+            "--scope",
+            "user",
+            "--header",
+            f"Authorization: Bearer {api_key}",
+            name,
+            mcp_url,
+        ],
+        check=True,
+        timeout=30,
+    )
+    return "Claude Code: registered with `claude mcp add --transport http`"
+
+
+def _install_openclaw_mcp(name: str, mcp_url: str, api_key: str) -> str:
+    path = Path.home() / ".openclaw" / "mcp.json"
+    _merge_mcp_json(path, name, _http_mcp_config(mcp_url, api_key))
+    return f"OpenClaw: wrote {path}"
+
+
+def _install_hermes_mcp(name: str, mcp_url: str, api_key: str) -> str:
+    path = Path.home() / ".hermes" / "mcp.json"
+    _merge_mcp_json(path, name, _http_mcp_config(mcp_url, api_key))
+    return f"Hermes: wrote {path}"
+
+
+def _normalize_client(raw: str) -> str:
+    key = raw.strip().lower().replace("_", "-").replace(" ", "-")
+    normalized = CLIENT_ALIASES.get(key)
+    if normalized is None:
+        valid = ", ".join(sorted(CLIENT_ALIASES))
+        raise argparse.ArgumentTypeError(f"unsupported client '{raw}'. Expected one of: {valid}")
+    return normalized
+
+
+def _clients_for(client: str) -> tuple[str, ...]:
+    return DEFAULT_CLIENTS if client == "all" else (client,)
+
+
+def _install_client(client: str, name: str, mcp_url: str, api_key: str) -> str:
+    if client == "cursor":
+        return _install_cursor_mcp(name, mcp_url, api_key)
+    if client == "claude-code":
+        return _install_claude_code_mcp(name, mcp_url, api_key)
+    if client == "codex":
+        return _install_codex_mcp(name, mcp_url)
+    if client == "openclaw":
+        return _install_openclaw_mcp(name, mcp_url, api_key)
+    if client == "hermes":
+        return _install_hermes_mcp(name, mcp_url, api_key)
+    raise SystemExit(f"Unsupported client: {client}")
 
 
 def _wait_for_payload(state: CallbackState, timeout: int) -> dict[str, Any]:
@@ -182,7 +313,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--app-url", default=os.environ.get("DOOMBERG_APP_URL", DEFAULT_APP_URL))
     parser.add_argument("--mcp-url", default=os.environ.get("DOOMBERG_MCP_URL", DEFAULT_MCP_URL))
     parser.add_argument("--name", default="doomberg")
-    parser.add_argument("--client", choices=["codex"], default="codex")
+    parser.add_argument(
+        "--client",
+        type=_normalize_client,
+        default="all",
+        help="Agent client to configure: all, cursor, claude-code, codex, openclaw, or hermes.",
+    )
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--no-open", action="store_true")
     args = parser.parse_args(argv)
@@ -212,17 +348,29 @@ def main(argv: list[str] | None = None) -> int:
     _write_env_file(api_key, mcp_url)
     _ensure_shell_sources_env()
     _set_launchctl_env(api_key, mcp_url)
-    _install_codex_mcp(args.name, mcp_url)
+    results: list[str] = []
+    failures: list[str] = []
+    for client in _clients_for(args.client):
+        try:
+            results.append(_install_client(client, args.name, mcp_url, api_key))
+        except Exception as exc:
+            failure = f"{client}: failed: {exc}"
+            failures.append(failure)
+            results.append(failure)
 
     key_id = payload.get("key_id", "")
-    print(f"Doomberg MCP installed as '{args.name}' for Codex.")
+    print(f"Doomberg MCP installed as '{args.name}'.")
+    for result in results:
+        print(f"- {result}")
     if key_id:
         print(f"Key id: {key_id}")
     print(f"Token env: {ENV_FILE}")
     print("Each MCP request is authenticated with this key automatically.")
     print("Agent flow: call start_research_session with the user prompt, then call direct tools.")
     print("Direct tools include: market_tide, sentiment_get, market_news, vix_term_structure, backtest_run.")
-    print("Restart Codex desktop if it was already open so it picks up the launchd env.")
+    print("Restart any already-open agent app so it picks up the new MCP config/env.")
+    if failures and args.client != "all":
+        return 1
     return 0
 
 
