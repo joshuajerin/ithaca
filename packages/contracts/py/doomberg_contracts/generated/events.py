@@ -51,6 +51,7 @@ class EventType(Enum):
     fill_reconciled = "fill_reconciled"
     provider_status = "provider_status"
     trigger_fired = "trigger_fired"
+    notification_queued = "notification_queued"
     mark = "mark"
     fill = "fill"
     denial = "denial"

@@ -48,6 +48,7 @@ def keys(platform, tenant) -> dict[str, str]:
     full, _ = platform.auth.mint_key(tenant, ["data:read", "strategy:author"])
     run_only, _ = platform.auth.mint_key(tenant, ["data:read", "runs:write"])
     read_only, _ = platform.auth.mint_key(tenant, ["data:read"])
+    alert_read, _ = platform.auth.mint_key(tenant, ["data:read", "alerts:read"])
     no_scope, _ = platform.auth.mint_key(tenant, [])  # a tenant key with no capabilities
     revoked, revoked_id = platform.auth.mint_key(tenant, ["data:read"])
     platform.auth.revoke_key(revoked_id)
@@ -55,6 +56,7 @@ def keys(platform, tenant) -> dict[str, str]:
         "full": full,
         "run_only": run_only,
         "read_only": read_only,
+        "alert_read": alert_read,
         "no_scope": no_scope,
         "revoked": revoked,
     }
@@ -133,6 +135,11 @@ def test_scope_policy_recognizes_calls():
     }).encode()
     assert _scope_needed(body) == set()
     assert _requires_data_read(body) is True
+    body = json.dumps({
+        "method": "resources/read",
+        "params": {"uri": "doomberg://alerts/open"},
+    }).encode()
+    assert _scope_needed(body) == {"alerts:read"}
     body = json.dumps({"method": "resources/list"}).encode()
     assert _requires_data_read(body) is True
     # garbage body: never raises, gates nothing extra
@@ -239,6 +246,17 @@ def test_resource_read_requires_data_read_scope(middleware, keys):
 
     assert denied["status"] == 403 and denied["passed"] is False
     assert allowed["passed"] is True and allowed["principal"].has("data:read")
+
+
+def test_alert_resource_requires_alert_read_scope(middleware, keys):
+    body = {"jsonrpc": "2.0", "id": 1, "method": "resources/read",
+            "params": {"uri": "doomberg://alerts/open"}}
+
+    denied = _run_mw(middleware, token=keys["read_only"], body=body)
+    allowed = _run_mw(middleware, token=keys["alert_read"], body=body)
+
+    assert denied["status"] == 403 and denied["passed"] is False
+    assert allowed["passed"] is True and allowed["principal"].has("alerts:read")
 
 
 def test_propose_requires_strategy_author_scope(middleware, keys):

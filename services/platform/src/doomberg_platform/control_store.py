@@ -34,6 +34,22 @@ def _trigger_state(state: str) -> str:
     return state
 
 
+def _notification_state(state: str) -> str:
+    state = str(state).strip().lower()
+    if state == "open":
+        return "open"
+    if state not in {"queued", "sending", "sent", "partial", "failed", "acked"}:
+        raise ValueError("state must be queued, sending, sent, partial, failed, or acked")
+    return state
+
+
+def _target_state(state: str) -> str:
+    state = str(state).strip().lower()
+    if state not in {"active", "paused", "retired"}:
+        raise ValueError("state must be active, paused, or retired")
+    return state
+
+
 def _order_row_to_dict(row: Any) -> dict[str, Any]:
     return {
         "tenant_id": row["tenant_id"],
@@ -938,3 +954,421 @@ class TriggerStore:
             tuple(params),
         ).fetchall()
         return [f for r in rows if (f := self.get_firing(str(tenant_id), r["firing_id"])) is not None]
+
+
+class TriggerBaselineStore:
+    def __init__(self, db: Db) -> None:
+        self._db = db
+
+    def get(self, tenant_id: str, trigger_id: str, baseline_key: str) -> dict[str, Any] | None:
+        row = self._db.conn.execute(
+            "SELECT * FROM trigger_baselines WHERE tenant_id = ? AND trigger_id = ? AND baseline_key = ?",
+            (str(tenant_id), str(trigger_id), str(baseline_key)),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "tenant_id": row["tenant_id"],
+            "trigger_id": row["trigger_id"],
+            "baseline_key": row["baseline_key"],
+            "type": row["baseline_type"],
+            "symbol": row["symbol"],
+            "price": row["price"],
+            "time": row["baseline_time"],
+            "trading_day": row["trading_day"],
+            "payload": _loads(row["payload"], {}),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def upsert(
+        self,
+        tenant_id: str,
+        trigger_id: str,
+        *,
+        baseline_key: str,
+        baseline_type: str,
+        symbol: str,
+        price: float,
+        baseline_time: str,
+        trading_day: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        now = _now()
+        with self._db.write_lock:
+            with self._db.conn as conn:
+                conn.execute(
+                    "INSERT INTO trigger_baselines "
+                    "(tenant_id, trigger_id, baseline_key, baseline_type, symbol, price, "
+                    " baseline_time, trading_day, payload, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(tenant_id, trigger_id, baseline_key) DO UPDATE SET "
+                    "baseline_type = excluded.baseline_type, symbol = excluded.symbol, "
+                    "price = excluded.price, baseline_time = excluded.baseline_time, "
+                    "trading_day = excluded.trading_day, payload = excluded.payload, "
+                    "updated_at = excluded.updated_at",
+                    (
+                        str(tenant_id),
+                        str(trigger_id),
+                        str(baseline_key),
+                        str(baseline_type),
+                        str(symbol).upper(),
+                        float(price),
+                        baseline_time,
+                        trading_day,
+                        json.dumps(payload or {}),
+                        now,
+                        now,
+                    ),
+                )
+        return self.get(tenant_id, trigger_id, baseline_key)
+
+
+class DeliveryTargetStore:
+    def __init__(self, db: Db) -> None:
+        self._db = db
+
+    def upsert(
+        self,
+        tenant_id: str,
+        *,
+        kind: str,
+        config: dict[str, Any] | None = None,
+        target_id: str | None = None,
+        state: str = "active",
+        secret_ref: str | None = None,
+        capabilities: list[str] | None = None,
+    ) -> dict[str, Any]:
+        target_id = target_id or str(uuid.uuid4())
+        state = _target_state(state)
+        now = _now()
+        with self._db.write_lock:
+            with self._db.conn as conn:
+                conn.execute(
+                    "INSERT INTO delivery_targets "
+                    "(tenant_id, target_id, kind, state, config, secret_ref, capabilities, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(tenant_id, target_id) DO UPDATE SET "
+                    "kind = excluded.kind, state = excluded.state, config = excluded.config, "
+                    "secret_ref = excluded.secret_ref, capabilities = excluded.capabilities, "
+                    "updated_at = excluded.updated_at",
+                    (
+                        str(tenant_id),
+                        str(target_id),
+                        str(kind),
+                        state,
+                        json.dumps(config or {}),
+                        secret_ref,
+                        json.dumps(capabilities or []),
+                        now,
+                        now,
+                    ),
+                )
+        return self.get(tenant_id, target_id)
+
+    def get(self, tenant_id: str, target_id: str) -> dict[str, Any] | None:
+        row = self._db.conn.execute(
+            "SELECT * FROM delivery_targets WHERE tenant_id = ? AND target_id = ?",
+            (str(tenant_id), str(target_id)),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "tenant_id": row["tenant_id"],
+            "target_id": row["target_id"],
+            "kind": row["kind"],
+            "state": row["state"],
+            "config": _loads(row["config"], {}),
+            "secret_ref": row["secret_ref"],
+            "capabilities": _loads(row["capabilities"], []),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def list(
+        self,
+        tenant_id: str,
+        *,
+        kinds: list[str] | None = None,
+        state: str | None = "active",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses = ["tenant_id = ?"]
+        params: list[Any] = [str(tenant_id)]
+        if state is not None:
+            clauses.append("state = ?")
+            params.append(_target_state(state))
+        if kinds:
+            placeholders = ", ".join(["?"] * len(kinds))
+            clauses.append(f"kind IN ({placeholders})")
+            params.extend([str(k) for k in kinds])
+        params.append(max(1, min(int(limit), 500)))
+        rows = self._db.conn.execute(
+            "SELECT target_id FROM delivery_targets WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY created_at ASC, target_id ASC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+        return [t for r in rows if (t := self.get(str(tenant_id), r["target_id"])) is not None]
+
+
+class NotificationStore:
+    def __init__(self, db: Db) -> None:
+        self._db = db
+
+    def enqueue(
+        self,
+        tenant_id: str,
+        *,
+        event_type: str,
+        subject_type: str,
+        subject_id: str,
+        payload: dict[str, Any],
+        priority: str = "normal",
+        dedupe_key: str | None = None,
+        max_attempts: int = 10,
+        next_attempt_at: str | None = None,
+    ) -> dict[str, Any]:
+        notification_id = str(uuid.uuid4())
+        now = _now()
+        next_attempt_at = next_attempt_at or now
+        with self._db.write_lock:
+            with self._db.conn as conn:
+                if dedupe_key is None:
+                    conn.execute(
+                        "INSERT INTO notification_outbox "
+                        "(tenant_id, notification_id, event_type, subject_type, subject_id, priority, "
+                        " state, dedupe_key, payload, attempts, max_attempts, next_attempt_at, "
+                        " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, 0, ?, ?, ?, ?)",
+                        (
+                            str(tenant_id),
+                            notification_id,
+                            event_type,
+                            subject_type,
+                            str(subject_id),
+                            priority,
+                            None,
+                            json.dumps(payload),
+                            int(max_attempts),
+                            next_attempt_at,
+                            now,
+                            now,
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        "INSERT INTO notification_outbox "
+                        "(tenant_id, notification_id, event_type, subject_type, subject_id, priority, "
+                        " state, dedupe_key, payload, attempts, max_attempts, next_attempt_at, "
+                        " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, 0, ?, ?, ?, ?) "
+                        "ON CONFLICT(tenant_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
+                        (
+                            str(tenant_id),
+                            notification_id,
+                            event_type,
+                            subject_type,
+                            str(subject_id),
+                            priority,
+                            dedupe_key,
+                            json.dumps(payload),
+                            int(max_attempts),
+                            next_attempt_at,
+                            now,
+                            now,
+                        ),
+                    )
+                    row = conn.execute(
+                        "SELECT notification_id FROM notification_outbox WHERE tenant_id = ? AND dedupe_key = ?",
+                        (str(tenant_id), dedupe_key),
+                    ).fetchone()
+                    if row is not None:
+                        notification_id = row["notification_id"]
+        return self.get(tenant_id, notification_id)
+
+    def get(self, tenant_id: str, notification_id: str) -> dict[str, Any] | None:
+        row = self._db.conn.execute(
+            "SELECT * FROM notification_outbox WHERE tenant_id = ? AND notification_id = ?",
+            (str(tenant_id), str(notification_id)),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "tenant_id": row["tenant_id"],
+            "notification_id": row["notification_id"],
+            "event_type": row["event_type"],
+            "subject_type": row["subject_type"],
+            "subject_id": row["subject_id"],
+            "priority": row["priority"],
+            "state": row["state"],
+            "dedupe_key": row["dedupe_key"],
+            "payload": _loads(row["payload"], {}),
+            "attempts": row["attempts"],
+            "max_attempts": row["max_attempts"],
+            "next_attempt_at": row["next_attempt_at"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "sent_at": row["sent_at"],
+        }
+
+    def list(
+        self,
+        tenant_id: str,
+        *,
+        state: str | None = "open",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses = ["tenant_id = ?"]
+        params: list[Any] = [str(tenant_id)]
+        if state:
+            state = _notification_state(state)
+            if state == "open":
+                clauses.append("state != 'acked'")
+            else:
+                clauses.append("state = ?")
+                params.append(state)
+        params.append(max(1, min(int(limit), 500)))
+        rows = self._db.conn.execute(
+            "SELECT notification_id FROM notification_outbox WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY created_at DESC, notification_id DESC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+        return [n for r in rows if (n := self.get(str(tenant_id), r["notification_id"])) is not None]
+
+    def ack(self, tenant_id: str, notification_id: str) -> dict[str, Any]:
+        now = _now()
+        with self._db.write_lock:
+            with self._db.conn as conn:
+                cur = conn.execute(
+                    "UPDATE notification_outbox SET state = 'acked', updated_at = ? "
+                    "WHERE tenant_id = ? AND notification_id = ?",
+                    (now, str(tenant_id), str(notification_id)),
+                )
+                if cur.rowcount == 0:
+                    raise KeyError(notification_id)
+        return self.get(tenant_id, notification_id)
+
+    def claim_available(
+        self,
+        *,
+        worker_id: str,
+        limit: int = 25,
+        now: str | None = None,
+    ) -> list[dict[str, Any]]:
+        now = now or _now()
+        claimed: list[dict[str, Any]] = []
+        with self._db.write_lock:
+            with self._db.conn as conn:
+                rows = conn.execute(
+                    "SELECT tenant_id, notification_id FROM notification_outbox "
+                    "WHERE state IN ('queued', 'partial', 'failed') "
+                    "AND attempts < max_attempts AND next_attempt_at <= ? "
+                    "ORDER BY priority DESC, created_at ASC LIMIT ?",
+                    (now, max(1, min(int(limit), 100))),
+                ).fetchall()
+                for row in rows:
+                    cur = conn.execute(
+                        "UPDATE notification_outbox "
+                        "SET state = 'sending', attempts = attempts + 1, updated_at = ? "
+                        "WHERE tenant_id = ? AND notification_id = ? "
+                        "AND state IN ('queued', 'partial', 'failed')",
+                        (now, row["tenant_id"], row["notification_id"]),
+                    )
+                    if cur.rowcount == 1:
+                        item = self.get(row["tenant_id"], row["notification_id"])
+                        if item is not None:
+                            claimed.append(item)
+        return claimed
+
+    def record_attempt(
+        self,
+        tenant_id: str,
+        notification_id: str,
+        target_id: str,
+        *,
+        state: str,
+        request: dict[str, Any],
+        response: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> dict[str, Any]:
+        attempt_id = str(uuid.uuid4())
+        now = _now()
+        with self._db.write_lock:
+            with self._db.conn as conn:
+                conn.execute(
+                    "INSERT INTO notification_attempts "
+                    "(tenant_id, attempt_id, notification_id, target_id, state, request, response, error, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        str(tenant_id),
+                        attempt_id,
+                        str(notification_id),
+                        str(target_id),
+                        state,
+                        json.dumps(request),
+                        json.dumps(response) if response is not None else None,
+                        error,
+                        now,
+                    ),
+                )
+        return self.get_attempt(tenant_id, attempt_id)
+
+    def get_attempt(self, tenant_id: str, attempt_id: str) -> dict[str, Any] | None:
+        row = self._db.conn.execute(
+            "SELECT * FROM notification_attempts WHERE tenant_id = ? AND attempt_id = ?",
+            (str(tenant_id), str(attempt_id)),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "tenant_id": row["tenant_id"],
+            "attempt_id": row["attempt_id"],
+            "notification_id": row["notification_id"],
+            "target_id": row["target_id"],
+            "state": row["state"],
+            "request": _loads(row["request"], {}),
+            "response": _loads(row["response"], None),
+            "error": row["error"],
+            "created_at": row["created_at"],
+        }
+
+    def list_attempts(self, tenant_id: str, notification_id: str) -> list[dict[str, Any]]:
+        rows = self._db.conn.execute(
+            "SELECT attempt_id FROM notification_attempts "
+            "WHERE tenant_id = ? AND notification_id = ? ORDER BY created_at ASC",
+            (str(tenant_id), str(notification_id)),
+        ).fetchall()
+        return [a for r in rows if (a := self.get_attempt(str(tenant_id), r["attempt_id"])) is not None]
+
+    def mark_sent_or_partial(self, tenant_id: str, notification_id: str, *, failures: int = 0) -> dict[str, Any]:
+        state = "sent" if failures == 0 else "partial"
+        now = _now()
+        with self._db.write_lock:
+            with self._db.conn as conn:
+                conn.execute(
+                    "UPDATE notification_outbox SET state = ?, sent_at = ?, updated_at = ? "
+                    "WHERE tenant_id = ? AND notification_id = ?",
+                    (state, now if state == "sent" else None, now, str(tenant_id), str(notification_id)),
+                )
+        return self.get(tenant_id, notification_id)
+
+    def retry_later(
+        self,
+        tenant_id: str,
+        notification_id: str,
+        *,
+        delay_seconds: int,
+        state: str = "failed",
+    ) -> dict[str, Any]:
+        now_dt = datetime.now(timezone.utc)
+        next_attempt = now_dt.timestamp() + max(1, int(delay_seconds))
+        next_iso = datetime.fromtimestamp(next_attempt, tz=timezone.utc).isoformat()
+        now = now_dt.isoformat()
+        with self._db.write_lock:
+            with self._db.conn as conn:
+                conn.execute(
+                    "UPDATE notification_outbox SET state = ?, next_attempt_at = ?, updated_at = ? "
+                    "WHERE tenant_id = ? AND notification_id = ?",
+                    (_notification_state(state), next_iso, now, str(tenant_id), str(notification_id)),
+                )
+        return self.get(tenant_id, notification_id)

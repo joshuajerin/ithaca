@@ -28,7 +28,10 @@ ALL_GATE_SCOPES = [
     "approvals:read",
     "approvals:decide",
     "providers:write",
+    "triggers:read",
     "triggers:write",
+    "alerts:read",
+    "alerts:ack",
     "artifacts:read",
     "deploy:backtest",
     "deploy:paper",
@@ -996,7 +999,7 @@ def _check_realtime_trigger(
     symbol: str,
     require_live_ibkr: bool,
 ) -> list[GateResult]:
-    from doomberg_runtime import HttpQuoteClient, StaticQuoteClient, TriggerEngine
+    from doomberg_runtime import HttpQuoteClient, NotificationDispatcher, StaticQuoteClient, TriggerEngine
 
     symbol = (symbol or "AAPL").upper()
     results: list[GateResult] = []
@@ -1273,6 +1276,73 @@ def _check_realtime_trigger(
                                 count=len(rows),
                             )
                         )
+
+                alerts, alerts_failure = _get_json(
+                    rest,
+                    "/api/alerts",
+                    token=token,
+                    tenant_id=tenant_id,
+                    name="trigger notification outbox",
+                )
+                if alerts_failure:
+                    results.append(alerts_failure)
+                else:
+                    notification_id = str(outcome.get("notification_id") or "")
+                    alert_rows = (alerts or {}).get("alerts") or []
+                    alert = next(
+                        (
+                            row
+                            for row in alert_rows
+                            if row.get("notification_id") == notification_id
+                            and (row.get("payload") or {}).get("run_id") == run_id
+                        ),
+                        None,
+                    )
+                    if alert is None:
+                        results.append(
+                            _fail(
+                                "trigger notification outbox",
+                                "trigger fire did not create a matching durable alert",
+                                notification_id=notification_id,
+                                run_id=run_id,
+                                alert_count=len(alert_rows),
+                            )
+                        )
+                    else:
+                        results.append(
+                            _pass(
+                                "trigger notification outbox",
+                                "trigger fire created a durable alert",
+                                notification_id=notification_id,
+                                state=alert.get("state"),
+                                run_id=run_id,
+                            )
+                        )
+                        dispatched = NotificationDispatcher(
+                            stores,
+                            worker_id="launch-gate-notifications",
+                        ).poll_once()
+                        alert_tenant_id = str(alert.get("tenant_id") or tenant_id)
+                        updated = stores.notifications.get(alert_tenant_id, notification_id)
+                        if updated is None or updated.get("state") != "sent":
+                            results.append(
+                                _fail(
+                                    "trigger notification dispatch",
+                                    "notification dispatcher did not mark alert sent",
+                                    notification_id=notification_id,
+                                    dispatch=dispatched,
+                                    state=updated.get("state") if updated else None,
+                                )
+                            )
+                        else:
+                            results.append(
+                                _pass(
+                                    "trigger notification dispatch",
+                                    "dispatcher marked the durable alert sent",
+                                    notification_id=notification_id,
+                                    delivered=dispatched.get("delivered"),
+                                )
+                            )
 
     cleanup, cleanup_failure = _post_json(
         rest,

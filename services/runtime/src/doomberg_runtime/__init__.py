@@ -14,6 +14,7 @@ from .backtest_runner import result_hash, run_backtest_job
 from .calendar import AlwaysOpen, MarketCalendar, RegularHoursCalendar
 from .deadline import Deadline, DeadlineExceeded
 from .live_runner import DEFAULT_MAX_STALENESS_S, run_paper_tick
+from .notifications import NotificationDispatcher, webhook_signature
 from .orchestrator import BacktestWorker, PaperScheduler, TriggerJobWorker
 
 
@@ -42,6 +43,8 @@ __all__ = [
     "BacktestWorker",
     "TriggerJobWorker",
     "PaperScheduler",
+    "NotificationDispatcher",
+    "webhook_signature",
     "TriggerEngine",
     "HttpQuoteClient",
     "StaticQuoteClient",

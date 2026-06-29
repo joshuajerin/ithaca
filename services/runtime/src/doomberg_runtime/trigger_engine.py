@@ -27,6 +27,7 @@ from doomberg_core.providers import (
 )
 
 from ._trace import emit
+from .baselines import BaselineResolver
 from .leader import acquire_loop_lease, process_owner, release_loop_lease
 
 __all__ = [
@@ -183,6 +184,7 @@ class TriggerEngine:
         self.platform = platform
         self.quote_client = quote_client or HttpQuoteClient()
         self.worker_id = worker_id
+        self.baselines = BaselineResolver(platform)
 
     def poll_once(self, *, now: datetime | None = None, limit: int = 256) -> dict[str, Any]:
         now = now or _now()
@@ -316,7 +318,7 @@ class TriggerEngine:
         now: datetime,
     ) -> dict[str, Any]:
         freshness_seconds = max(0.0, float(quote.get("freshness_ms") or 0) / 1000.0)
-        return {
+        context = {
             "tenant_id": trigger["tenant_id"],
             "trigger_id": trigger["trigger_id"],
             "trigger_name": trigger["name"],
@@ -335,6 +337,35 @@ class TriggerEngine:
             "policy": policy,
             "now": now.isoformat(),
         }
+        try:
+            baseline = self.baselines.resolve(
+                tenant_id=str(trigger["tenant_id"]),
+                trigger_id=str(trigger["trigger_id"]),
+                policy=policy,
+                quote=quote,
+                now=now,
+            )
+        except ValueError as exc:
+            raise TriggerEvaluationError(str(exc)) from exc
+        if baseline is not None:
+            baseline_price = float(baseline["price"])
+            price = float(quote["price"])
+            change_abs = price - baseline_price
+            change_pct = (change_abs / baseline_price) * 100.0
+            context.update(
+                {
+                    "baseline_type": baseline["type"],
+                    "baseline_price": baseline_price,
+                    "baseline_time": baseline["time"],
+                    "change_abs": change_abs,
+                    "change_pct": change_pct,
+                    "trading_day": baseline["trading_day"],
+                }
+            )
+        else:
+            event_time = _parse_time(quote.get("event_time"), default=now)
+            context["trading_day"] = event_time.date().isoformat()
+        return context
 
     def _condition(self, condition: dict[str, Any], context: dict[str, Any]) -> _Decision:
         if not condition:
@@ -466,6 +497,36 @@ class TriggerEngine:
         run_skill = action.get("run_skill") or "market.quote"
         mode = action.get("mode") or "analyze"
         dedupe_key = self._dedupe_key(controls, context)
+        if mode == "notify":
+            firing = self.platform.triggers.record_firing(
+                tenant_id,
+                trigger_id,
+                run_id="",
+                dedupe_key=dedupe_key,
+                event_time=context["event_time"] or now.isoformat(),
+                payload={"context": self._safe_context(context), "action": action},
+            )
+            notification = self._enqueue_notification(
+                trigger,
+                policy,
+                context,
+                action,
+                firing=firing,
+                run_id=None,
+                approval=None,
+                dedupe_key=dedupe_key,
+            )
+            return {
+                "fired": True,
+                "trigger_id": trigger_id,
+                "tenant_id": tenant_id,
+                "run_id": None,
+                "job_id": None,
+                "approval_id": None,
+                "firing_id": firing["firing_id"],
+                "notification_id": notification.get("notification_id") if notification else None,
+                "state": "notified",
+            }
         spec = {
             "trigger_id": trigger_id,
             "trigger_name": trigger["name"],
@@ -477,6 +538,9 @@ class TriggerEngine:
                 "entitlement_class": context["entitlement_class"],
                 "event_time": context["event_time"],
                 "freshness_seconds": context["data_freshness_seconds"],
+                "baseline_price": context.get("baseline_price"),
+                "baseline_type": context.get("baseline_type"),
+                "change_pct": context.get("change_pct"),
             },
             "action": {"run_skill": run_skill, "mode": mode},
         }
@@ -545,6 +609,28 @@ class TriggerEngine:
             event_time=context["event_time"] or now.isoformat(),
             payload={"context": self._safe_context(context), "action": action},
         )
+        notification = self._enqueue_notification(
+            trigger,
+            policy,
+            context,
+            action,
+            firing=firing,
+            run_id=run_id,
+            approval=approval,
+            dedupe_key=dedupe_key,
+        )
+        if notification is not None:
+            emit(
+                self.platform.trace,
+                tenant_id=tenant_id,
+                run_id=run_id,
+                type="notification_queued",
+                actor={"kind": "system", "id": self.worker_id},
+                data={
+                    "notification_id": notification["notification_id"],
+                    "channels": (policy.get("notify") or {}).get("channels", []),
+                },
+            )
         return {
             "fired": True,
             "trigger_id": trigger_id,
@@ -553,8 +639,68 @@ class TriggerEngine:
             "job_id": job["job_id"] if job else None,
             "approval_id": approval["approval_id"] if approval else None,
             "firing_id": firing["firing_id"],
+            "notification_id": notification.get("notification_id") if notification else None,
             "state": self.platform.runs.get(tenant_id, run_id)["state"],
         }
+
+    def _allowed_agent_actions(self, policy: dict[str, Any]) -> dict[str, list[str]]:
+        mode = ((policy.get("action") or {}).get("mode") or "analyze").strip().lower()
+        allowed = ["market_quote", "market_news", "vol_realized", "run_skill", "get_run", "alerts_ack"]
+        if mode == "notify":
+            allowed = ["get_run", "alerts_ack"]
+        if mode == "propose":
+            allowed.append("propose_strategy")
+        return {
+            "allowed": allowed,
+            "blocked": ["broker_order", "approval_decide", "live_execution"],
+        }
+
+    def _enqueue_notification(
+        self,
+        trigger: dict[str, Any],
+        policy: dict[str, Any],
+        context: dict[str, Any],
+        action: dict[str, Any],
+        *,
+        firing: dict[str, Any],
+        run_id: str | None,
+        approval: dict[str, Any] | None,
+        dedupe_key: str,
+    ) -> dict[str, Any] | None:
+        notifications = getattr(self.platform, "notifications", None)
+        if notifications is None:
+            return None
+        tenant_id = str(trigger["tenant_id"])
+        notify = policy.get("notify") or {}
+        actions = self._allowed_agent_actions(policy)
+        payload = {
+            "type": "trigger.fired",
+            "trigger_id": str(trigger["trigger_id"]),
+            "trigger_name": trigger["name"],
+            "firing_id": firing["firing_id"],
+            "run_id": run_id,
+            "symbol": context["symbol"],
+            "price": context["price"],
+            "baseline_price": context.get("baseline_price"),
+            "baseline_type": context.get("baseline_type"),
+            "change_pct": context.get("change_pct"),
+            "event_time": context["event_time"],
+            "freshness_seconds": context["data_freshness_seconds"],
+            "action": action,
+            "approval_id": approval["approval_id"] if approval else None,
+            "allowed_agent_actions": actions["allowed"],
+            "blocked_agent_actions": actions["blocked"],
+            "channels": notify.get("channels") or ["doomberg_ui"],
+        }
+        return notifications.enqueue(
+            tenant_id,
+            event_type="trigger.fired",
+            subject_type="trigger_firing",
+            subject_id=firing["firing_id"],
+            priority=notify.get("priority") or "normal",
+            dedupe_key=f"trigger:{trigger['trigger_id']}:{dedupe_key}:{context.get('trading_day')}",
+            payload=payload,
+        )
 
     def _complete_quote_run(
         self,

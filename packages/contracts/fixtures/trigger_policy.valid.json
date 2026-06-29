@@ -1,29 +1,34 @@
 {
-  "trigger_id": "trg_nvda_price",
-  "name": "NVDA live review",
-  "state": "active",
+  "version": "trigger.policy.v1",
   "when": {
-    "event": "price.threshold",
-    "universe": ["NVDA"]
+    "event": "market.quote",
+    "universe": ["NVDA"],
+    "baseline": {
+      "type": "previous_close"
+    }
   },
   "condition": {
     "all": [
-      { "price": { "gte": 900 } },
+      { "change_pct": { "lte": -2.0 } },
       { "data_freshness_seconds": { "lte": 10 } }
     ]
   },
   "controls": {
-    "dedupe_key": "${symbol}",
-    "cooldown_seconds": 1200,
+    "dedupe_key": "${trigger_id}:${symbol}:${trading_day}:down2",
+    "cooldown": "30m",
     "max_runs_per_day": 8,
     "require_connected_live_data": true,
-    "approval_required": true
+    "approval_required": false
   },
   "action": {
-    "run_skill": "market.quote",
-    "mode": "propose"
+    "mode": "analyze",
+    "run_skill": "market.news",
+    "input": {
+      "limit": 10
+    }
   },
   "notify": {
-    "channels": ["dashboard"]
+    "channels": ["doomberg_ui", "claude_channel", "webhook"],
+    "priority": "high"
   }
 }

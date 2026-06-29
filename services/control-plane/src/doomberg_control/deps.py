@@ -33,13 +33,16 @@ from doomberg_platform import (
     ArtifactStore,
     AuthStore,
     BookStore,
+    DeliveryTargetStore,
     ExecutionStore,
     JobStore,
     LeaseStore,
+    NotificationStore,
     ProviderStore,
     RunStore,
     StrategyStore,
     TraceStore,
+    TriggerBaselineStore,
     TriggerStore,
     open_db,
 )
@@ -111,6 +114,9 @@ class Platform:
         self.providers = ProviderStore(self.db)
         self.execution = ExecutionStore(self.db)
         self.triggers = TriggerStore(self.db)
+        self.baselines = TriggerBaselineStore(self.db)
+        self.notifications = NotificationStore(self.db)
+        self.delivery_targets = DeliveryTargetStore(self.db)
         # the runtime worker expects the trace store as `.trace`; expose both names so a
         # control-plane Platform can be handed straight to run_backtest_job/run_paper_tick.
         self.trace = self.traces

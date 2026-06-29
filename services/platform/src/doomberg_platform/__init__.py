@@ -14,7 +14,16 @@ from __future__ import annotations
 
 from .auth_store import VALID_SCOPES, AuthStore, hash_secret
 from .book_store import BookConflict, BookNotFound, BookStore
-from .control_store import ApprovalStore, ArtifactStore, ExecutionStore, ProviderStore, TriggerStore
+from .control_store import (
+    ApprovalStore,
+    ArtifactStore,
+    DeliveryTargetStore,
+    ExecutionStore,
+    NotificationStore,
+    ProviderStore,
+    TriggerBaselineStore,
+    TriggerStore,
+)
 from .db import Db, open_db
 from .job_store import JobConflict, JobNotFound, JobStore
 from .job_profiles import (
@@ -61,6 +70,9 @@ __all__ = [
     "ProviderStore",
     "ExecutionStore",
     "TriggerStore",
+    "TriggerBaselineStore",
+    "NotificationStore",
+    "DeliveryTargetStore",
     "VALID_SCOPES",
     "hash_secret",
     "TransitionError",

@@ -130,6 +130,8 @@ async def test_server_registers_three_tools(toolset):
     assert {"start_research_session", "session_context", "search_skills", "describe_skill",
             "run_skill", "get_run", "subscribe_run",
             "cancel_run", "list_approvals", "decide_approval", "get_artifact"} <= names
+    assert {"triggers_create", "triggers_dry_run", "triggers_list", "triggers_set_state",
+            "trigger_firings_list", "alerts_list", "alerts_subscribe", "alerts_ack"} <= names
     assert {"create_order_intent", "preview_order_intent", "get_order_intent",
             "submit_order_intent"}.isdisjoint(names)
     assert "ibkr_smoke" not in names
@@ -147,6 +149,9 @@ async def test_server_registers_control_plane_resources(toolset):
         "doomberg://policies/current",
         "doomberg://accounts",
         "doomberg://data/providers",
+        "doomberg://triggers",
+        "doomberg://alerts/open",
+        "doomberg://trigger-firings/recent",
     } <= uris
 
     templates = await mcp.list_resource_templates()
@@ -154,6 +159,8 @@ async def test_server_registers_control_plane_resources(toolset):
     assert {
         "doomberg://skills/{skill_id}/{version}",
         "doomberg://runs/{run_id}",
+        "doomberg://triggers/{trigger_id}",
+        "doomberg://alerts/{notification_id}",
     } <= template_uris
 
 

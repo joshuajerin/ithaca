@@ -55,7 +55,20 @@ SCOPE_BY_TOOL = {
     "list_approvals": "approvals:read",
     "decide_approval": "approvals:decide",
     "get_artifact": "artifacts:read",
+    "triggers_create": "triggers:write",
+    "triggers_dry_run": "triggers:write",
+    "triggers_list": "triggers:read",
+    "triggers_set_state": "triggers:write",
+    "trigger_firings_list": "triggers:read",
+    "alerts_list": "alerts:read",
+    "alerts_subscribe": "alerts:read",
+    "alerts_ack": "alerts:ack",
 }  # extra scope per tool name
+SCOPE_BY_RESOURCE_PREFIX = {
+    "doomberg://alerts": "alerts:read",
+    "doomberg://triggers": "triggers:read",
+    "doomberg://trigger-firings": "triggers:read",
+}
 
 
 @dataclass(frozen=True)
@@ -113,14 +126,20 @@ def _scope_needed(body: bytes) -> set[str] | None:
     needs: set[str] = set()
     is_tool_call = False
     for m in msgs:
-        if not isinstance(m, dict) or m.get("method") != "tools/call":
+        if not isinstance(m, dict):
             continue
-        is_tool_call = True
-        name = (m.get("params") or {}).get("name")
-        if name in SCOPE_BY_TOOL:
-            needs.add(SCOPE_BY_TOOL[name])
+        if m.get("method") == "tools/call":
+            is_tool_call = True
+            name = (m.get("params") or {}).get("name")
+            if name in SCOPE_BY_TOOL:
+                needs.add(SCOPE_BY_TOOL[name])
+        if m.get("method") == "resources/read":
+            uri = str((m.get("params") or {}).get("uri") or "")
+            for prefix, scope in SCOPE_BY_RESOURCE_PREFIX.items():
+                if uri.startswith(prefix):
+                    needs.add(scope)
     if not is_tool_call:
-        return set()
+        return needs
     return needs
 
 

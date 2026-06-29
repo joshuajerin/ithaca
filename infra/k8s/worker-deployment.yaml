@@ -106,7 +106,7 @@ spec:
         - name: tmp
           emptyDir: {}
       containers:
-        # --- conductor: backtest worker + trigger job worker + paper scheduler.
+        # --- conductor: backtest worker + trigger job worker + notification dispatcher + paper scheduler.
         - name: conductor
           image: ${WORKER_IMAGE}
           imagePullPolicy: IfNotPresent
@@ -127,6 +127,8 @@ spec:
             - name: DOOMBERG_BACKTEST_INTERVAL_S
               value: "2"
             - name: DOOMBERG_TRIGGER_JOB_INTERVAL_S
+              value: "2"
+            - name: DOOMBERG_NOTIFICATION_INTERVAL_S
               value: "2"
             - name: DOOMBERG_PAPER_INTERVAL_S
               value: "60"

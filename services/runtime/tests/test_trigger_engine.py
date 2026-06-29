@@ -6,7 +6,7 @@ import datetime as dt
 import threading
 import time
 
-from doomberg_runtime import StaticQuoteClient, TriggerEngine, TriggerJobWorker
+from doomberg_runtime import NotificationDispatcher, StaticQuoteClient, TriggerEngine, TriggerJobWorker, webhook_signature
 
 
 def _policy(*, cooldown="20m", require_live=True, approval_required=False):
@@ -81,15 +81,96 @@ def test_trigger_engine_fires_quote_run_and_cooldown_blocks_repeat(durable_platf
     assert run["result"]["data"]["symbol"] == "NVDA"
     assert run["result"]["provenance"]["source"] == "doomberg-live-data"
     types = [event["type"] for event in durable_platform.trace.events(tenant, run_id)]
-    assert types == ["trigger_fired", "tool_call", "tool_result", "run_transition"]
+    assert types == ["trigger_fired", "tool_call", "tool_result", "run_transition", "notification_queued"]
     assert durable_platform.triggers.latest_firing(
         tenant, trigger["trigger_id"], dedupe_key="NVDA"
     )["run_id"] == run_id
+    alerts = durable_platform.notifications.list(tenant)
+    assert len(alerts) == 1
+    assert alerts[0]["event_type"] == "trigger.fired"
+    assert alerts[0]["payload"]["run_id"] == run_id
 
     second = engine.poll_once(now=now + dt.timedelta(minutes=5))
 
     assert second["fired"] == []
     assert second["skipped"][0]["reason"] == "COOLDOWN"
+
+
+def test_trigger_engine_fires_percent_change_from_previous_close(durable_platform, tenant_id):
+    tenant = durable_platform.auth.create_tenant("trigger tenant")
+    now = dt.datetime(2026, 6, 24, 13, 30, tzinfo=dt.timezone.utc)
+    policy = _policy(cooldown="0s")
+    policy["when"] = {
+        "event": "market.quote",
+        "universe": ["NVDA"],
+        "baseline": {"type": "previous_close"},
+    }
+    policy["condition"] = {"change_pct": {"lte": -2.0}}
+    policy["controls"]["dedupe_key"] = "${symbol}:${trading_day}:down2"
+    trigger = _active_trigger(durable_platform, tenant, policy)
+
+    engine = TriggerEngine(
+        durable_platform,
+        quote_client=StaticQuoteClient(
+            {
+                "NVDA": {
+                    "symbol": "NVDA",
+                    "price": 97.99,
+                    "previous_close": 100,
+                    "as_of": now.isoformat(),
+                    "received_time": now.isoformat(),
+                    "source": "doomberg-live-data",
+                    "entitlement_class": "doomberg_live",
+                }
+            }
+        ),
+    )
+
+    result = engine.poll_once(now=now)
+
+    assert result["fired"][0]["trigger_id"] == trigger["trigger_id"]
+    firing = durable_platform.triggers.list_firings(tenant)[0]
+    ctx = firing["payload"]["context"]
+    assert ctx["baseline_price"] == 100
+    assert ctx["change_pct"] < -2.0
+    assert ctx["dedupe_key"] if "dedupe_key" in ctx else True
+    alert = durable_platform.notifications.list(tenant)[0]
+    assert alert["payload"]["change_pct"] < -2.0
+
+
+def test_trigger_engine_percent_change_does_not_fire_above_threshold(durable_platform, tenant_id):
+    tenant = durable_platform.auth.create_tenant("trigger tenant")
+    now = dt.datetime(2026, 6, 24, 13, 30, tzinfo=dt.timezone.utc)
+    policy = _policy(cooldown="0s")
+    policy["when"] = {
+        "event": "market.quote",
+        "universe": ["NVDA"],
+        "baseline": {"type": "previous_close"},
+    }
+    policy["condition"] = {"change_pct": {"lte": -2.0}}
+    _active_trigger(durable_platform, tenant, policy)
+    engine = TriggerEngine(
+        durable_platform,
+        quote_client=StaticQuoteClient(
+            {
+                "NVDA": {
+                    "symbol": "NVDA",
+                    "price": 98.01,
+                    "previous_close": 100,
+                    "as_of": now.isoformat(),
+                    "received_time": now.isoformat(),
+                    "source": "doomberg-live-data",
+                    "entitlement_class": "doomberg_live",
+                }
+            }
+        ),
+    )
+
+    result = engine.poll_once(now=now)
+
+    assert result["fired"] == []
+    assert result["skipped"][0]["reason"] == "CONDITION_FALSE"
+    assert durable_platform.notifications.list(tenant) == []
 
 
 def test_trigger_engine_run_forever_requires_leadership(durable_platform, monkeypatch):
@@ -314,3 +395,31 @@ def test_trigger_job_worker_completes_non_quote_trigger_action(durable_platform,
     assert run["state"] == "succeeded"
     assert run["result"]["provenance"]["source"] == "computed"
     assert durable_platform.jobs.list_by_run(tenant, run_id)[0]["state"] == "succeeded"
+
+
+def test_notification_dispatcher_marks_implicit_ui_delivery_sent(durable_platform, tenant_id):
+    tenant = durable_platform.auth.create_tenant("trigger tenant")
+    alert = durable_platform.notifications.enqueue(
+        tenant,
+        event_type="trigger.fired",
+        subject_type="trigger_firing",
+        subject_id="fir_1",
+        priority="high",
+        payload={"channels": ["doomberg_ui"], "symbol": "NVDA"},
+    )
+
+    result = NotificationDispatcher(durable_platform).poll_once()
+
+    assert result["delivered"] == [alert["notification_id"]]
+    updated = durable_platform.notifications.get(tenant, alert["notification_id"])
+    assert updated["state"] == "sent"
+    attempts = durable_platform.notifications.list_attempts(tenant, alert["notification_id"])
+    assert attempts[0]["target_id"] == "doomberg_ui:implicit"
+    assert attempts[0]["state"] == "succeeded"
+
+
+def test_webhook_signature_is_stable():
+    body = b'{"type":"trigger.fired"}'
+    sig = webhook_signature("secret", "2026-06-24T13:30:00+00:00", body)
+    assert sig.startswith("hmac-sha256=")
+    assert sig == webhook_signature("secret", "2026-06-24T13:30:00+00:00", body)

@@ -38,7 +38,7 @@ REPLACEMENTS: dict[str, list[tuple[str, str]]] = {
         ("artifact_types: list[str] | None = []", "artifact_types: list[str] = []"),
     ],
     "trigger_policy.py": [
-        ("notify: dict[str, Any] | None = {}", "notify: dict[str, Any] = {}"),
+        ("notify: Notify | None = {}", "notify: Notify = {}"),
     ],
 }
 

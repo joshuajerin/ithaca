@@ -8,7 +8,16 @@ from __future__ import annotations
 
 from .auth_store import AuthStore
 from .book_store import BookStore
-from .control_store import ApprovalStore, ArtifactStore, ExecutionStore, ProviderStore, TriggerStore
+from .control_store import (
+    ApprovalStore,
+    ArtifactStore,
+    DeliveryTargetStore,
+    ExecutionStore,
+    NotificationStore,
+    ProviderStore,
+    TriggerBaselineStore,
+    TriggerStore,
+)
 from .db import Db, open_db
 from .job_store import JobStore
 from .lease_store import LeaseStore
@@ -36,6 +45,9 @@ class Platform:
         self.providers = ProviderStore(self.db)
         self.execution = ExecutionStore(self.db)
         self.triggers = TriggerStore(self.db)
+        self.baselines = TriggerBaselineStore(self.db)
+        self.notifications = NotificationStore(self.db)
+        self.delivery_targets = DeliveryTargetStore(self.db)
 
     # the control plane referred to this store as `.traces`; keep both names valid.
     @property

@@ -79,6 +79,7 @@
         "fill_reconciled",
         "provider_status",
         "trigger_fired",
+        "notification_queued",
         "mark",
         "fill",
         "denial",

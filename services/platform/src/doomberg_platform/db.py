@@ -339,6 +339,86 @@ CREATE TABLE IF NOT EXISTS trigger_firings (
 CREATE INDEX IF NOT EXISTS idx_trigger_firings_lookup
     ON trigger_firings (tenant_id, trigger_id, dedupe_key, event_time);
 
+-- Trigger baselines let percentage-move policies compare a live quote against a durable
+-- reference such as a fixed price, last firing, or first snapshot captured at activation.
+CREATE TABLE IF NOT EXISTS trigger_baselines (
+    tenant_id       TEXT NOT NULL,
+    trigger_id      TEXT NOT NULL,
+    baseline_key    TEXT NOT NULL,
+    baseline_type   TEXT NOT NULL,
+    symbol          TEXT NOT NULL,
+    price           REAL NOT NULL,
+    baseline_time   TEXT NOT NULL,
+    trading_day     TEXT NOT NULL,
+    payload         TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, trigger_id, baseline_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trigger_baselines_lookup
+    ON trigger_baselines (tenant_id, trigger_id, symbol, baseline_type);
+
+-- Durable notification outbox. Trigger detection writes here; worker delivery is retried
+-- independently of MCP/WebSocket/client availability.
+CREATE TABLE IF NOT EXISTS notification_outbox (
+    tenant_id          TEXT NOT NULL,
+    notification_id    TEXT NOT NULL,
+    event_type         TEXT NOT NULL,
+    subject_type       TEXT NOT NULL,
+    subject_id         TEXT NOT NULL,
+    priority           TEXT NOT NULL,
+    state              TEXT NOT NULL,
+    dedupe_key         TEXT,
+    payload            TEXT NOT NULL,
+    attempts           INTEGER NOT NULL DEFAULT 0,
+    max_attempts       INTEGER NOT NULL DEFAULT 10,
+    next_attempt_at    TEXT NOT NULL,
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL,
+    sent_at            TEXT,
+    PRIMARY KEY (tenant_id, notification_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_dedupe
+    ON notification_outbox (tenant_id, dedupe_key)
+    WHERE dedupe_key IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_notification_claim
+    ON notification_outbox (state, next_attempt_at, created_at);
+
+CREATE TABLE IF NOT EXISTS delivery_targets (
+    tenant_id       TEXT NOT NULL,
+    target_id       TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    state           TEXT NOT NULL,
+    config          TEXT NOT NULL,
+    secret_ref      TEXT,
+    capabilities    TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, target_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_delivery_targets_kind
+    ON delivery_targets (tenant_id, kind, state);
+
+CREATE TABLE IF NOT EXISTS notification_attempts (
+    tenant_id        TEXT NOT NULL,
+    attempt_id       TEXT NOT NULL,
+    notification_id  TEXT NOT NULL,
+    target_id        TEXT NOT NULL,
+    state            TEXT NOT NULL,
+    request          TEXT NOT NULL,
+    response         TEXT,
+    error            TEXT,
+    created_at       TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, attempt_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_notification_attempts_notification
+    ON notification_attempts (tenant_id, notification_id, created_at);
+
 -- Execution records. Broker writes must pass through the deterministic execution gateway;
 -- these rows establish the order-intent, broker-order, and fill audit surface.
 CREATE TABLE IF NOT EXISTS order_intents (

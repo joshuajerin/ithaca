@@ -1054,6 +1054,216 @@ class Toolset:
             "This deployment is data and backtest only.",
         )
 
+    def _require_platform(self) -> dict | None:
+        if self.platform is None:
+            return self._typed_error(
+                "JOB_QUEUED",
+                "durable platform stores are unavailable in this toolset",
+                "Use the hosted MCP endpoint or REST API.",
+            )
+        return None
+
+    def _validate_trigger_policy(self, policy: dict) -> None:
+        if not isinstance(policy, dict):
+            raise ValueError("policy must be an object")
+        when = policy.get("when")
+        if not isinstance(when, dict):
+            raise ValueError("policy.when must be an object")
+        event = when.get("event") or "price.threshold"
+        if event not in {"price.threshold", "market.price", "market.quote"}:
+            raise ValueError(f"unsupported trigger event: {event}")
+        universe = when.get("universe")
+        if not ((isinstance(universe, list) and universe) or isinstance(when.get("symbol"), str)):
+            raise ValueError("policy.when must include universe or symbol")
+        baseline = when.get("baseline")
+        if baseline is not None:
+            if not isinstance(baseline, dict):
+                raise ValueError("policy.when.baseline must be an object")
+            if baseline.get("type") not in {
+                "previous_close",
+                "session_open",
+                "fixed_price",
+                "last_firing",
+                "snapshot",
+                "snapshot_on_activation",
+            }:
+                raise ValueError(f"unsupported baseline type: {baseline.get('type')}")
+        action = policy.get("action") or {}
+        mode = action.get("mode") or "analyze"
+        if mode not in {"notify", "observe", "analyze", "propose", "execute"}:
+            raise ValueError(f"unsupported action mode: {mode}")
+        if mode == "execute":
+            raise ValueError("execute mode is disabled in v1")
+
+    def triggers_create(
+        self,
+        name: str,
+        policy: dict,
+        state: str = "draft",
+        _ctx: dict | None = None,
+    ) -> dict:
+        err = self._require_platform()
+        if err:
+            return err
+        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
+        try:
+            self._validate_trigger_policy(policy)
+            return self.platform.triggers.create(tenant_id, name=name, policy=policy, state=state)
+        except Exception as exc:
+            return self._typed_error(
+                "POLICY_DENIED",
+                "trigger policy could not be created",
+                "Validate the TriggerPolicy and retry as draft or active.",
+                {"detail": str(exc)[:300]},
+            )
+
+    def triggers_dry_run(
+        self,
+        name: str,
+        policy: dict,
+        quote: dict | None = None,
+        _ctx: dict | None = None,
+    ) -> dict:
+        err = self._require_platform()
+        if err:
+            return err
+        from doomberg_runtime import TriggerEngine, TriggerEvaluationError
+
+        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
+        try:
+            self._validate_trigger_policy(policy)
+            return TriggerEngine(self.platform, worker_id="mcp-trigger-dry-run").dry_run(
+                {
+                    "tenant_id": tenant_id,
+                    "trigger_id": "dry-run-" + uuid.uuid4().hex,
+                    "name": name,
+                    "state": "draft",
+                    "policy": policy,
+                },
+                quote=quote,
+            )
+        except (ValueError, TriggerEvaluationError) as exc:
+            return self._typed_error(
+                "POLICY_DENIED",
+                "trigger policy dry-run failed",
+                "Fix the policy, baseline, or quote and retry.",
+                {"detail": str(exc)[:300]},
+            )
+
+    def triggers_list(self, state: str | None = None, limit: int = 100,
+                      _ctx: dict | None = None) -> dict:
+        err = self._require_platform()
+        if err:
+            return err
+        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
+        return {"triggers": self.platform.triggers.list(tenant_id, state=state, limit=limit)}
+
+    def triggers_set_state(self, trigger_id: str, state: str, _ctx: dict | None = None) -> dict:
+        err = self._require_platform()
+        if err:
+            return err
+        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
+        try:
+            return self.platform.triggers.set_state(tenant_id, trigger_id, state)
+        except Exception as exc:
+            return self._typed_error(
+                "ORDER_STATE_CONFLICT",
+                "trigger state could not be changed",
+                "Check the trigger_id and requested state.",
+                {"detail": str(exc)[:200]},
+            )
+
+    def trigger_firings_list(
+        self,
+        trigger_id: str | None = None,
+        limit: int = 100,
+        _ctx: dict | None = None,
+    ) -> dict:
+        err = self._require_platform()
+        if err:
+            return err
+        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
+        return {
+            "firings": self.platform.triggers.list_firings(
+                tenant_id,
+                trigger_id=trigger_id,
+                limit=limit,
+            )
+        }
+
+    def alerts_list(self, state: str | None = "open", limit: int = 100,
+                    _ctx: dict | None = None) -> dict:
+        err = self._require_platform()
+        if err:
+            return err
+        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
+        return {"alerts": self.platform.notifications.list(tenant_id, state=state, limit=limit)}
+
+    def alerts_subscribe(self, cursor: str = "-1", limit: int = 50,
+                         _ctx: dict | None = None) -> dict:
+        err = self._require_platform()
+        if err:
+            return err
+        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
+        alerts = list(reversed(self.platform.notifications.list(tenant_id, state="open", limit=limit)))
+        if cursor and cursor != "-1":
+            passed = False
+            filtered = []
+            for alert in alerts:
+                if passed:
+                    filtered.append(alert)
+                elif alert["notification_id"] == cursor:
+                    passed = True
+            alerts = filtered
+        next_cursor = alerts[-1]["notification_id"] if alerts else cursor
+        return {"cursor": next_cursor, "alerts": alerts}
+
+    def alerts_ack(self, notification_id: str, _ctx: dict | None = None) -> dict:
+        err = self._require_platform()
+        if err:
+            return err
+        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
+        try:
+            return self.platform.notifications.ack(tenant_id, notification_id)
+        except KeyError:
+            return self._typed_error(
+                "INVALID_SYMBOL",
+                "alert not found",
+                "Check the notification_id and tenant credential.",
+            )
+
+    def triggers_resource(self, _ctx: dict | None = None) -> dict:
+        return self.triggers_list(limit=100, _ctx=_ctx)
+
+    def trigger_resource(self, trigger_id: str, _ctx: dict | None = None) -> dict:
+        err = self._require_platform()
+        if err:
+            return err
+        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
+        trigger = self.platform.triggers.get(tenant_id, trigger_id)
+        if trigger is None:
+            return self._typed_error("INVALID_SYMBOL", "trigger not found", "Check the trigger_id.")
+        return {"trigger": trigger}
+
+    def alerts_resource(self, _ctx: dict | None = None) -> dict:
+        return self.alerts_list(state="open", limit=100, _ctx=_ctx)
+
+    def alert_resource(self, notification_id: str, _ctx: dict | None = None) -> dict:
+        err = self._require_platform()
+        if err:
+            return err
+        tenant_id = (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT
+        alert = self.platform.notifications.get(tenant_id, notification_id)
+        if alert is None:
+            return self._typed_error("INVALID_SYMBOL", "alert not found", "Check the notification_id.")
+        return {
+            "alert": alert,
+            "attempts": self.platform.notifications.list_attempts(tenant_id, notification_id),
+        }
+
+    def trigger_firings_resource(self, _ctx: dict | None = None) -> dict:
+        return self.trigger_firings_list(limit=100, _ctx=_ctx)
+
     def ibkr_smoke(
         self,
         symbol: str = "AAPL",
@@ -1131,7 +1341,10 @@ class Toolset:
                 "approvals:read",
                 "approvals:decide",
                 "providers:write",
+                "triggers:read",
                 "triggers:write",
+                "alerts:read",
+                "alerts:ack",
                 "artifacts:read",
                 "deploy:backtest",
             }
@@ -1317,6 +1530,51 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     def data_providers_resource() -> str:
         return _json_resource(ts.data_providers_resource(_ctx=_ctx()))
 
+    @mcp.resource(
+        "doomberg://triggers",
+        name="triggers",
+        description="Tenant-scoped trigger policies.",
+        mime_type="application/json",
+    )
+    def triggers_resource() -> str:
+        return _json_resource(ts.triggers_resource(_ctx=_ctx()))
+
+    @mcp.resource(
+        "doomberg://triggers/{trigger_id}",
+        name="trigger",
+        description="One tenant-scoped trigger policy.",
+        mime_type="application/json",
+    )
+    def trigger_resource(trigger_id: str) -> str:
+        return _json_resource(ts.trigger_resource(trigger_id, _ctx=_ctx()))
+
+    @mcp.resource(
+        "doomberg://alerts/open",
+        name="alerts_open",
+        description="Open durable Doomberg alerts.",
+        mime_type="application/json",
+    )
+    def alerts_open_resource() -> str:
+        return _json_resource(ts.alerts_resource(_ctx=_ctx()))
+
+    @mcp.resource(
+        "doomberg://alerts/{notification_id}",
+        name="alert",
+        description="One durable Doomberg alert and delivery attempts.",
+        mime_type="application/json",
+    )
+    def alert_resource(notification_id: str) -> str:
+        return _json_resource(ts.alert_resource(notification_id, _ctx=_ctx()))
+
+    @mcp.resource(
+        "doomberg://trigger-firings/recent",
+        name="trigger_firings_recent",
+        description="Recent tenant-scoped trigger firings.",
+        mime_type="application/json",
+    )
+    def trigger_firings_recent_resource() -> str:
+        return _json_resource(ts.trigger_firings_resource(_ctx=_ctx()))
+
     @mcp.tool(description="Optional helper only: search Doomberg skills when no direct named tool fits.")
     def search_skills(query: str = "", asset_class: str | None = None,
                       intent: str | None = None) -> dict:
@@ -1351,6 +1609,38 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     @mcp.tool(description="Approve or deny a pending approval request.")
     def decide_approval(approval_id: str, decision: str, reason: str | None = None) -> dict:
         return ts.decide_approval(approval_id, decision, reason=reason, _ctx=_ctx())
+
+    @mcp.tool(description="Create a durable trigger policy as draft or active.")
+    def triggers_create(name: str, policy: dict, state: str = "draft") -> dict:
+        return ts.triggers_create(name, policy, state=state, _ctx=_ctx())
+
+    @mcp.tool(description="Evaluate a trigger policy without creating runs, firings, jobs, approvals, or alerts.")
+    def triggers_dry_run(name: str, policy: dict, quote: dict | None = None) -> dict:
+        return ts.triggers_dry_run(name, policy, quote=quote, _ctx=_ctx())
+
+    @mcp.tool(description="List tenant trigger policies.")
+    def triggers_list(state: str | None = None, limit: int = 100) -> dict:
+        return ts.triggers_list(state=state, limit=limit, _ctx=_ctx())
+
+    @mcp.tool(description="Set a trigger state to draft, active, paused, or retired.")
+    def triggers_set_state(trigger_id: str, state: str) -> dict:
+        return ts.triggers_set_state(trigger_id, state, _ctx=_ctx())
+
+    @mcp.tool(description="List recent trigger firings.")
+    def trigger_firings_list(trigger_id: str | None = None, limit: int = 100) -> dict:
+        return ts.trigger_firings_list(trigger_id=trigger_id, limit=limit, _ctx=_ctx())
+
+    @mcp.tool(description="List durable Doomberg alerts for this tenant.")
+    def alerts_list(state: str | None = "open", limit: int = 100) -> dict:
+        return ts.alerts_list(state=state, limit=limit, _ctx=_ctx())
+
+    @mcp.tool(description="Poll tenant alerts after a cursor. Use repeatedly to catch trigger alerts.")
+    def alerts_subscribe(cursor: str = "-1", limit: int = 50) -> dict:
+        return ts.alerts_subscribe(cursor=cursor, limit=limit, _ctx=_ctx())
+
+    @mcp.tool(description="Acknowledge one durable Doomberg alert.")
+    def alerts_ack(notification_id: str) -> dict:
+        return ts.alerts_ack(notification_id, _ctx=_ctx())
 
     @mcp.tool(description="Fetch artifact metadata by id. Artifact content is addressed by returned URI.")
     def get_artifact(artifact_id: str) -> dict:

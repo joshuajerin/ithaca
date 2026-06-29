@@ -4,34 +4,120 @@
   "title": "TriggerPolicy",
   "type": "object",
   "additionalProperties": false,
-  "required": ["trigger_id", "name", "state", "when", "condition", "controls", "action"],
+  "required": ["when", "condition", "controls", "action"],
   "properties": {
-    "trigger_id": { "type": "string" },
-    "name": { "type": "string", "minLength": 1 },
-    "state": { "type": "string", "enum": ["draft", "active", "paused", "retired"] },
-    "when": { "type": "object" },
-    "condition": { "type": "object" },
+    "version": {
+      "type": "string",
+      "const": "trigger.policy.v1",
+      "default": "trigger.policy.v1"
+    },
+    "when": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event"],
+      "properties": {
+        "event": {
+          "type": "string",
+          "enum": ["price.threshold", "market.price", "market.quote"]
+        },
+        "universe": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "symbol": { "type": "string", "minLength": 1 },
+        "baseline": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "previous_close",
+                "session_open",
+                "fixed_price",
+                "last_firing",
+                "snapshot",
+                "snapshot_on_activation",
+                "rolling_window"
+              ]
+            },
+            "price": { "type": "number", "exclusiveMinimum": 0 },
+            "fallback_price": { "type": "number", "exclusiveMinimum": 0 },
+            "window": { "type": "string" },
+            "time": { "type": "string" },
+            "trading_day": { "type": "string" }
+          }
+        }
+      },
+      "anyOf": [
+        { "required": ["universe"] },
+        { "required": ["symbol"] }
+      ]
+    },
+    "condition": {
+      "type": "object"
+    },
     "controls": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "dedupe_key": { "type": ["string", "null"] },
+        "cooldown": { "type": ["string", "integer", "null"] },
         "cooldown_seconds": { "type": ["integer", "null"], "minimum": 0 },
         "max_runs_per_day": { "type": ["integer", "null"], "minimum": 0 },
         "max_compute_cost_usd_per_day": { "type": ["number", "null"], "minimum": 0 },
         "require_connected_live_data": { "type": "boolean", "default": false },
-        "approval_required": { "type": "boolean", "default": true }
+        "approval_required": { "type": "boolean", "default": false },
+        "data_freshness_seconds": { "type": ["number", "null"], "minimum": 0 },
+        "max_freshness_seconds": { "type": ["number", "null"], "minimum": 0 }
       }
     },
     "action": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["run_skill", "mode"],
+      "required": ["mode"],
       "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["notify", "observe", "analyze", "propose", "execute"]
+        },
         "run_skill": { "type": "string" },
-        "mode": { "type": "string", "enum": ["observe", "analyze", "propose", "execute"] }
+        "input": { "type": "object" }
       }
     },
-    "notify": { "type": "object", "default": {} }
+    "notify": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "doomberg_ui",
+              "claude_channel",
+              "claude_ws",
+              "generic_mcp_resource",
+              "webhook",
+              "openclaw_webhook",
+              "hermes_webhook",
+              "slack",
+              "email",
+              "telegram",
+              "mobile_push"
+            ]
+          },
+          "default": ["doomberg_ui"]
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["low", "normal", "high", "critical"],
+          "default": "normal"
+        }
+      },
+      "default": {}
+    }
   }
 }

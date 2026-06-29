@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import asyncio
+import json
 import os
 import secrets
 import urllib.parse
@@ -49,13 +51,16 @@ from doomberg_platform import (
     ApprovalStore,
     ArtifactStore,
     BookStore,
+    DeliveryTargetStore,
     ExecutionStore,
     JobStore,
     LeaseStore,
+    NotificationStore,
     ProviderStore,
     RunStore,
     StrategyStore,
     TraceStore,
+    TriggerBaselineStore,
     TriggerStore,
     UserStore,
     open_db,
@@ -88,6 +93,9 @@ class Stores:
         self.providers = ProviderStore(db)
         self.execution = ExecutionStore(db)
         self.triggers = TriggerStore(db)
+        self.baselines = TriggerBaselineStore(db)
+        self.notifications = NotificationStore(db)
+        self.delivery_targets = DeliveryTargetStore(db)
         self.core = Core()
 
 
@@ -298,7 +306,10 @@ def _human_scopes() -> list[str]:
         "approvals:read",
         "approvals:decide",
         "providers:write",
+        "triggers:read",
         "triggers:write",
+        "alerts:read",
+        "alerts:ack",
         "artifacts:read",
         "deploy:backtest",
     ]
@@ -492,6 +503,86 @@ def _redeem_sse_ticket(stores: Stores, ticket: str, run_id: str) -> str:
             return str(row["tenant_id"])
 
 
+def _mint_alerts_sse_ticket(stores: Stores, ctx: Ctx) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(seconds=_sse_ticket_ttl_seconds())
+    ticket_id = uuid.uuid4().hex
+    secret = secrets.token_urlsafe(32)
+    token = f"{ticket_id}.{secret}"
+    with stores.db.write_lock:
+        with stores.db.conn as conn:
+            conn.execute(
+                "DELETE FROM sse_tickets WHERE expires_at < ? OR used_at IS NOT NULL",
+                (now.isoformat(),),
+            )
+            conn.execute(
+                "INSERT INTO sse_tickets "
+                "(ticket_id, tenant_id, run_id, principal_id, secret_hash, created_at, expires_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    ticket_id,
+                    ctx.tenant_id,
+                    "__alerts__",
+                    str(ctx.actor_id),
+                    _hash_sse_secret(secret),
+                    now.isoformat(),
+                    expires.isoformat(),
+                ),
+            )
+    return {
+        "sse_ticket": token,
+        "tenant_id": ctx.tenant_id,
+        "expires_at": expires.isoformat(),
+        "single_use": True,
+    }
+
+
+def _alert_sse_frame(notification: dict[str, Any]) -> str:
+    event = {
+        "id": notification["notification_id"],
+        "type": notification["event_type"],
+        "notification": notification,
+    }
+    return (
+        f"id: {notification['notification_id']}\n"
+        f"event: {notification['event_type']}\n"
+        f"data: {json.dumps(event, default=str)}\n\n"
+    )
+
+
+async def _alert_event_stream(
+    stores: Stores,
+    tenant_id: str,
+    *,
+    after_id: str | None = None,
+    replay_only: bool = False,
+    poll_seconds: float = 2.0,
+):
+    seen: set[str] = set()
+    alerts = list(reversed(stores.notifications.list(tenant_id, state="open", limit=500)))
+    emit = after_id is None
+    for alert in alerts:
+        seen.add(alert["notification_id"])
+        if not emit:
+            emit = alert["notification_id"] == after_id
+            continue
+        yield _alert_sse_frame(alert)
+    if replay_only:
+        return
+    while True:
+        await asyncio.sleep(max(0.5, poll_seconds))
+        current = list(reversed(stores.notifications.list(tenant_id, state="open", limit=500)))
+        emitted = False
+        for alert in current:
+            if alert["notification_id"] in seen:
+                continue
+            seen.add(alert["notification_id"])
+            emitted = True
+            yield _alert_sse_frame(alert)
+        if not emitted:
+            yield ": keepalive\n\n"
+
+
 def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
     connections = stores.providers.list_connections(tenant_id)
     snapshots = stores.providers.list_snapshots(tenant_id, limit=25)
@@ -673,6 +764,38 @@ def _require_scope(ctx: Ctx, scope: str) -> None:
         raise HTTPException(status_code=403, detail=f"missing required scope: {scope}")
 
 
+def _validate_trigger_policy(policy: dict[str, Any]) -> None:
+    if not isinstance(policy, dict):
+        raise ValueError("policy must be an object")
+    when = policy.get("when")
+    if not isinstance(when, dict):
+        raise ValueError("policy.when must be an object")
+    event = when.get("event") or "price.threshold"
+    if event not in {"price.threshold", "market.price", "market.quote"}:
+        raise ValueError(f"unsupported trigger event: {event}")
+    universe = when.get("universe")
+    if not ((isinstance(universe, list) and universe) or isinstance(when.get("symbol"), str)):
+        raise ValueError("policy.when must include universe or symbol")
+    baseline = when.get("baseline")
+    if baseline is not None:
+        if not isinstance(baseline, dict):
+            raise ValueError("policy.when.baseline must be an object")
+        if baseline.get("type") not in {
+            "previous_close",
+            "session_open",
+            "fixed_price",
+            "last_firing",
+            "snapshot",
+            "snapshot_on_activation",
+        }:
+            raise ValueError(f"unsupported baseline type: {baseline.get('type')}")
+    mode = (policy.get("action") or {}).get("mode") or "analyze"
+    if mode not in {"notify", "observe", "analyze", "propose", "execute"}:
+        raise ValueError(f"unsupported action mode: {mode}")
+    if mode == "execute":
+        raise ValueError("execute mode is disabled in v1")
+
+
 def _session_summary(row: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
     """Add prompt/tool-count metadata to a research run row for the Sessions list."""
     prompt = None
@@ -798,6 +921,9 @@ def create_app(db: Any | None = None) -> FastAPI:
         "runs:write",
         "runs:cancel",
         "approvals:read",
+        "triggers:read",
+        "alerts:read",
+        "alerts:ack",
         "artifacts:read",
         "deploy:backtest",
     ]
@@ -1194,25 +1320,112 @@ def create_app(db: Any | None = None) -> FastAPI:
     def list_triggers(
         state: str | None = None,
         limit: int = 100,
-        tenant_id: str = Depends(require_tenant),
+        ctx: Ctx = Depends(_ctx),
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
-        return {"triggers": stores.triggers.list(tenant_id, state=state, limit=limit)}
+        _require_scope(ctx, "triggers:read")
+        return {"triggers": stores.triggers.list(ctx.tenant_id, state=state, limit=limit)}
 
     @app.get("/api/trigger-firings")
     def list_trigger_firings(
         trigger_id: str | None = None,
         limit: int = 100,
-        tenant_id: str = Depends(require_tenant),
+        ctx: Ctx = Depends(_ctx),
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
+        _require_scope(ctx, "triggers:read")
         return {
             "firings": stores.triggers.list_firings(
-                tenant_id,
+                ctx.tenant_id,
                 trigger_id=trigger_id,
                 limit=limit,
             )
         }
+
+    @app.get("/api/alerts")
+    def list_alerts(
+        state: str | None = "open",
+        limit: int = 100,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        _require_scope(ctx, "alerts:read")
+        return {"alerts": stores.notifications.list(ctx.tenant_id, state=state, limit=limit)}
+
+    @app.post("/api/alerts/events-ticket", status_code=201)
+    def mint_alert_events_ticket(
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        _require_scope(ctx, "alerts:read")
+        return _mint_alerts_sse_ticket(stores, ctx)
+
+    @app.get("/api/alerts/events")
+    def stream_alert_events(
+        request: Request,
+        stores: Stores = Depends(get_stores),
+        last_event_id: str | None = Header(default=None),
+        authorization: str | None = Header(default=None, alias="Authorization"),
+        x_tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+        tenant_id: str | None = Query(default=None),
+        access_token: str | None = Query(default=None),
+        sse_ticket: str | None = Query(default=None),
+    ) -> StreamingResponse:
+        if sse_ticket:
+            resolved_tenant_id = _redeem_sse_ticket(stores, sse_ticket, "__alerts__")
+        elif access_token:
+            raise HTTPException(
+                status_code=401,
+                detail="use /api/alerts/events-ticket instead of access_token query auth",
+            )
+        else:
+            resolved_tenant_id = require_tenant(
+                request,
+                authorization=authorization,
+                x_tenant_id=x_tenant_id,
+                tenant_id=tenant_id,
+            )
+        after_id = request.query_params.get("after_id") or last_event_id
+        replay_only = request.query_params.get("replay_only") == "1"
+        stream = _alert_event_stream(
+            stores,
+            resolved_tenant_id,
+            after_id=after_id,
+            replay_only=replay_only,
+        )
+        return StreamingResponse(
+            stream,
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.get("/api/alerts/{notification_id}")
+    def get_alert(
+        notification_id: str,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        _require_scope(ctx, "alerts:read")
+        alert = stores.notifications.get(ctx.tenant_id, notification_id)
+        if alert is None:
+            raise HTTPException(status_code=404, detail="alert not found")
+        return {"alert": alert, "attempts": stores.notifications.list_attempts(ctx.tenant_id, notification_id)}
+
+    @app.post("/api/alerts/{notification_id}/ack")
+    def ack_alert(
+        notification_id: str,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        _require_scope(ctx, "alerts:ack")
+        try:
+            return stores.notifications.ack(ctx.tenant_id, notification_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="alert not found") from exc
 
     @app.post("/api/triggers/dry-run")
     def dry_run_trigger(
@@ -1231,11 +1444,12 @@ def create_app(db: Any | None = None) -> FastAPI:
             "policy": body.policy,
         }
         try:
+            _validate_trigger_policy(body.policy)
             return TriggerEngine(stores, worker_id="rest-trigger-dry-run").dry_run(
                 trigger,
                 quote=body.quote,
             )
-        except TriggerEvaluationError as exc:
+        except (ValueError, TriggerEvaluationError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/api/triggers", status_code=201)
@@ -1246,6 +1460,7 @@ def create_app(db: Any | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         _require_scope(ctx, "triggers:write")
         try:
+            _validate_trigger_policy(body.policy)
             return stores.triggers.create(
                 ctx.tenant_id,
                 name=body.name,

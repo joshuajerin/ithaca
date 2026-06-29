@@ -4,16 +4,73 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 
-class State(Enum):
-    draft = "draft"
-    active = "active"
-    paused = "paused"
-    retired = "retired"
+class Event(Enum):
+    price_threshold = "price.threshold"
+    market_price = "market.price"
+    market_quote = "market.quote"
+
+
+class UniverseItem(RootModel[str]):
+    root: str = Field(..., min_length=1)
+
+
+class Type(Enum):
+    previous_close = "previous_close"
+    session_open = "session_open"
+    fixed_price = "fixed_price"
+    last_firing = "last_firing"
+    snapshot = "snapshot"
+    snapshot_on_activation = "snapshot_on_activation"
+    rolling_window = "rolling_window"
+
+
+class Baseline(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    type: Type
+    price: float | None = Field(None, gt=0.0)
+    fallback_price: float | None = Field(None, gt=0.0)
+    window: str | None = None
+    time: str | None = None
+    trading_day: str | None = None
+
+
+class When(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    event: Event
+    universe: list[UniverseItem] = Field(..., min_length=1)
+    symbol: str | None = Field(None, min_length=1)
+    baseline: Baseline | None = None
+
+
+class Baseline1(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    type: Type
+    price: float | None = Field(None, gt=0.0)
+    fallback_price: float | None = Field(None, gt=0.0)
+    window: str | None = None
+    time: str | None = None
+    trading_day: str | None = None
+
+
+class When1(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    event: Event
+    universe: list[UniverseItem] | None = Field(None, min_length=1)
+    symbol: str = Field(..., min_length=1)
+    baseline: Baseline1 | None = None
 
 
 class Controls(BaseModel):
@@ -21,14 +78,18 @@ class Controls(BaseModel):
         extra="forbid",
     )
     dedupe_key: str | None = None
+    cooldown: str | int | None = None
     cooldown_seconds: int | None = Field(None, ge=0)
     max_runs_per_day: int | None = Field(None, ge=0)
     max_compute_cost_usd_per_day: float | None = Field(None, ge=0.0)
     require_connected_live_data: bool | None = False
-    approval_required: bool | None = True
+    approval_required: bool | None = False
+    data_freshness_seconds: float | None = Field(None, ge=0.0)
+    max_freshness_seconds: float | None = Field(None, ge=0.0)
 
 
 class Mode(Enum):
+    notify = "notify"
     observe = "observe"
     analyze = "analyze"
     propose = "propose"
@@ -39,19 +100,47 @@ class Action(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    run_skill: str
     mode: Mode
+    run_skill: str | None = None
+    input: dict[str, Any] | None = None
+
+
+class Channel(Enum):
+    doomberg_ui = "doomberg_ui"
+    claude_channel = "claude_channel"
+    claude_ws = "claude_ws"
+    generic_mcp_resource = "generic_mcp_resource"
+    webhook = "webhook"
+    openclaw_webhook = "openclaw_webhook"
+    hermes_webhook = "hermes_webhook"
+    slack = "slack"
+    email = "email"
+    telegram = "telegram"
+    mobile_push = "mobile_push"
+
+
+class Priority(Enum):
+    low = "low"
+    normal = "normal"
+    high = "high"
+    critical = "critical"
+
+
+class Notify(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    channels: list[Channel] | None = ["doomberg_ui"]
+    priority: Priority | None = "normal"
 
 
 class TriggerPolicy(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    trigger_id: str
-    name: str = Field(..., min_length=1)
-    state: State
-    when: dict[str, Any]
+    version: Literal["trigger.policy.v1"] = "trigger.policy.v1"
+    when: When | When1
     condition: dict[str, Any]
     controls: Controls
     action: Action
-    notify: dict[str, Any] = {}
+    notify: Notify = {}

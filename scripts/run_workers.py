@@ -21,7 +21,14 @@ from contextlib import suppress
 from doomberg_control.money import make_applier
 from doomberg_core import Core
 from doomberg_platform import Platform
-from doomberg_runtime import AlwaysOpen, BacktestWorker, PaperScheduler, RegularHoursCalendar, TriggerJobWorker
+from doomberg_runtime import (
+    AlwaysOpen,
+    BacktestWorker,
+    NotificationDispatcher,
+    PaperScheduler,
+    RegularHoursCalendar,
+    TriggerJobWorker,
+)
 from doomberg_runtime.leader import acquire_loop_lease, process_owner, release_loop_lease
 
 
@@ -35,6 +42,7 @@ def main() -> int:
 
     backtest_interval = float(os.environ.get("DOOMBERG_BACKTEST_INTERVAL_S", "2"))
     trigger_job_interval = float(os.environ.get("DOOMBERG_TRIGGER_JOB_INTERVAL_S", "2"))
+    notification_interval = float(os.environ.get("DOOMBERG_NOTIFICATION_INTERVAL_S", "2"))
     paper_interval = float(os.environ.get("DOOMBERG_PAPER_INTERVAL_S", "60"))
     paper_lease_ttl = float(os.environ.get(
         "DOOMBERG_PAPER_LEASE_TTL_S",
@@ -45,6 +53,7 @@ def main() -> int:
 
     worker = BacktestWorker(platform, core)
     trigger_worker = TriggerJobWorker(platform, core)
+    notification_dispatcher = NotificationDispatcher(platform)
     scheduler = PaperScheduler(platform, core, make_applier(platform), calendar=calendar)
     paper_owner_id = process_owner("paper-scheduler")
 
@@ -68,6 +77,12 @@ def main() -> int:
                          name="backtest-worker", daemon=True),
         threading.Thread(target=trigger_worker.run_forever, kwargs={"interval_s": trigger_job_interval, "stop": stop},
                          name="trigger-job-worker", daemon=True),
+        threading.Thread(
+            target=notification_dispatcher.run_forever,
+            kwargs={"interval_s": notification_interval, "stop": stop},
+            name="notification-dispatcher",
+            daemon=True,
+        ),
         threading.Thread(target=run_paper_scheduler, name="paper-scheduler", daemon=True),
     ]
 
@@ -76,6 +91,7 @@ def main() -> int:
 
     print(f"doomberg conductor up — db={db}, backtest every {backtest_interval}s, "
           f"trigger jobs every {trigger_job_interval}s, paper every {paper_interval}s, "
+          f"notifications every {notification_interval}s, "
           f"paper lease ttl={paper_lease_ttl}s owner={paper_owner_id}, "
           f"calendar={type(calendar).__name__}")
     for t in threads:
