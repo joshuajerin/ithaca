@@ -81,7 +81,7 @@ export function AgentLink() {
         </div>
       </div>
       <section className="set-section">
-        <div className="set-h">Ithaca MCP</div>
+        <div className="set-h">Doomberg MCP</div>
         <div className="set-card">
           <div className="set-field">
             <label>Agent config</label>
@@ -116,7 +116,7 @@ export function AgentLink() {
             </div>
             {status === "done" && (
               <div className="set-hint">
-                Ithaca MCP is installed. You can close this tab and return to the coding agent.
+                Doomberg MCP is installed. You can close this tab and return to the coding agent.
               </div>
             )}
           </div>
