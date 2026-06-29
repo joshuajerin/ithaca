@@ -14,6 +14,7 @@ def test_install_script_is_served(client):
     for agent_client in ["cursor", "claude-code", "codex", "openclaw", "hermes"]:
         assert agent_client in resp.text
     assert "codex" in resp.text
+    assert "--agent-init" in resp.text
 
 
 def _installer_module():
@@ -60,3 +61,23 @@ def test_installer_client_aliases():
         "openclaw",
         "hermes",
     )
+
+
+def test_installer_agent_bootstrap_prompt():
+    installer = _installer_module()
+    prompt = installer._agent_bootstrap_prompt("doomberg")
+    assert "doomberg.doomberg_init" in prompt
+    assert "search_skills" in prompt
+
+
+def test_installer_parses_streamable_http_json():
+    installer = _installer_module()
+    assert installer._mcp_json_from_text('{"jsonrpc":"2.0","id":1,"result":{}}') == {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {},
+    }
+    assert installer._mcp_json_from_text('event: message\ndata: {"jsonrpc":"2.0","result":{"ok":true}}\n\n') == {
+        "jsonrpc": "2.0",
+        "result": {"ok": True},
+    }

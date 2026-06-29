@@ -127,11 +127,26 @@ async def test_server_registers_three_tools(toolset):
     tools = await mcp.list_tools()
     names = {t.name for t in tools}
     assert {"market_get_ohlcv", "backtest_run", "propose_strategy"} <= names
+    assert "doomberg_init" in names
     assert {"search_skills", "describe_skill", "run_skill", "get_run", "subscribe_run",
             "cancel_run", "list_approvals", "decide_approval", "get_artifact"} <= names
     assert {"create_order_intent", "preview_order_intent", "get_order_intent",
             "submit_order_intent"}.isdisjoint(names)
     assert "ibkr_smoke" not in names
+
+
+def test_doomberg_init_returns_first_call_workflow(toolset):
+    out = toolset.doomberg_init(goal="research AAPL momentum")
+
+    assert out["status"] == "ready"
+    assert out["goal_captured"] is True
+    assert out["session_id"]
+    assert {step["tool"] for step in out["start_here"]} >= {
+        "search_skills",
+        "describe_skill",
+        "run_skill",
+    }
+    assert "move money" in out["boundaries"]["cannot"]
 
 
 async def test_server_registers_control_plane_resources(toolset):
