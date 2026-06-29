@@ -266,6 +266,17 @@ def test_bearer_token_is_required(monkeypatch) -> None:
     assert client.get("/accounts", headers={"Authorization": "Bearer bad"}).status_code == 403
 
 
+def test_missing_engine_token_fails_closed_outside_local(monkeypatch) -> None:
+    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.delenv("DOOMBERG_IBKR_ENGINE_TOKEN", raising=False)
+    client = TestClient(app)
+
+    resp = client.get("/accounts")
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "IBKR engine token is not configured"
+
+
 def test_pre_login_gateway_is_reachable_but_requires_auth(monkeypatch) -> None:
     monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_TOKEN", "engine-token")
     with _PreLoginGateway() as gateway:

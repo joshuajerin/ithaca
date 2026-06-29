@@ -5,8 +5,16 @@ from __future__ import annotations
 import datetime as dt
 import threading
 import time
+import urllib.error
 
-from doomberg_runtime import NotificationDispatcher, StaticQuoteClient, TriggerEngine, TriggerJobWorker, webhook_signature
+from doomberg_runtime import (
+    NotificationDispatcher,
+    StaticQuoteClient,
+    TriggerEngine,
+    TriggerJobWorker,
+    webhook_signature,
+)
+from doomberg_runtime.notifications import PermanentDeliveryError, WebhookAdapter
 
 
 def _policy(*, cooldown="20m", require_live=True, approval_required=False):
@@ -81,10 +89,19 @@ def test_trigger_engine_fires_quote_run_and_cooldown_blocks_repeat(durable_platf
     assert run["result"]["data"]["symbol"] == "NVDA"
     assert run["result"]["provenance"]["source"] == "doomberg-live-data"
     types = [event["type"] for event in durable_platform.trace.events(tenant, run_id)]
-    assert types == ["trigger_fired", "tool_call", "tool_result", "run_transition", "notification_queued"]
-    assert durable_platform.triggers.latest_firing(
-        tenant, trigger["trigger_id"], dedupe_key="NVDA"
-    )["run_id"] == run_id
+    assert types == [
+        "trigger_fired",
+        "tool_call",
+        "tool_result",
+        "run_transition",
+        "notification_queued",
+    ]
+    assert (
+        durable_platform.triggers.latest_firing(tenant, trigger["trigger_id"], dedupe_key="NVDA")[
+            "run_id"
+        ]
+        == run_id
+    )
     alerts = durable_platform.notifications.list(tenant)
     assert len(alerts) == 1
     assert alerts[0]["event_type"] == "trigger.fired"
@@ -423,3 +440,131 @@ def test_webhook_signature_is_stable():
     sig = webhook_signature("secret", "2026-06-24T13:30:00+00:00", body)
     assert sig.startswith("hmac-sha256=")
     assert sig == webhook_signature("secret", "2026-06-24T13:30:00+00:00", body)
+
+
+def test_webhook_delivery_rejects_private_targets(monkeypatch):
+    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    adapter = WebhookAdapter()
+    notification = {
+        "event_type": "trigger.fired",
+        "notification_id": "notif_1",
+        "priority": "high",
+        "created_at": "2026-06-24T13:30:00+00:00",
+        "payload": {},
+    }
+    target = {
+        "config": {"url": "http://127.0.0.1:8080/hook", "hmac_secret": "secret"},
+        "secret_ref": None,
+    }
+
+    try:
+        adapter.deliver(notification, target)
+    except PermanentDeliveryError as exc:
+        assert "HTTPS" in str(exc) or "public address" in str(exc)
+    else:
+        raise AssertionError("private webhook target should be rejected before network I/O")
+
+
+def test_webhook_delivery_rejects_public_http_targets(monkeypatch):
+    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    adapter = WebhookAdapter()
+    notification = {
+        "event_type": "trigger.fired",
+        "notification_id": "notif_1",
+        "priority": "high",
+        "created_at": "2026-06-24T13:30:00+00:00",
+        "payload": {},
+    }
+    target = {
+        "config": {"url": "http://example.com/hook", "hmac_secret": "secret"},
+        "secret_ref": None,
+    }
+
+    try:
+        adapter.deliver(notification, target)
+    except PermanentDeliveryError as exc:
+        assert "HTTPS" in str(exc)
+    else:
+        raise AssertionError("public webhook target should require HTTPS")
+
+
+def test_webhook_delivery_rejects_userinfo(monkeypatch):
+    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    adapter = WebhookAdapter()
+    notification = {
+        "event_type": "trigger.fired",
+        "notification_id": "notif_1",
+        "priority": "high",
+        "created_at": "2026-06-24T13:30:00+00:00",
+        "payload": {},
+    }
+    target = {
+        "config": {"url": "https://user:pass@example.com/hook", "hmac_secret": "secret"},
+        "secret_ref": None,
+    }
+
+    try:
+        adapter.deliver(notification, target)
+    except PermanentDeliveryError as exc:
+        assert "userinfo" in str(exc)
+    else:
+        raise AssertionError("webhook target with userinfo should be rejected")
+
+
+def test_webhook_delivery_rejects_redirects(monkeypatch):
+    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    adapter = WebhookAdapter()
+    notification = {
+        "event_type": "trigger.fired",
+        "notification_id": "notif_1",
+        "priority": "high",
+        "created_at": "2026-06-24T13:30:00+00:00",
+        "payload": {},
+    }
+    target = {
+        "config": {"url": "https://example.com/hook", "hmac_secret": "secret"},
+        "secret_ref": None,
+    }
+
+    class FakeRedirectOpener:
+        def open(self, req, timeout):
+            raise urllib.error.HTTPError(
+                req.full_url,
+                302,
+                "Found",
+                {"Location": "http://127.0.0.1:8080/hook"},
+                None,
+            )
+
+    adapter._opener = FakeRedirectOpener()
+
+    try:
+        adapter.deliver(notification, target)
+    except PermanentDeliveryError as exc:
+        assert "redirect" in str(exc).lower()
+    else:
+        raise AssertionError("webhook redirects should be rejected")
+
+
+def test_private_webhook_targets_require_local_explicit_opt_in(monkeypatch, local_server):
+    monkeypatch.setenv("DOOMBERG_ENV", "test")
+    monkeypatch.setenv("DOOMBERG_ALLOW_PRIVATE_WEBHOOKS", "1")
+    adapter = WebhookAdapter()
+    notification = {
+        "event_type": "trigger.fired",
+        "notification_id": "notif_1",
+        "priority": "high",
+        "created_at": "2026-06-24T13:30:00+00:00",
+        "payload": {},
+    }
+    target = {
+        "config": {"url": local_server.url, "hmac_secret": "secret"},
+        "secret_ref": None,
+        "kind": "webhook",
+        "target_id": "local",
+    }
+
+    delivered = adapter.deliver(notification, target)
+
+    assert delivered["status"] == 200
+    assert local_server.requests[0]["headers"]["X-Doomberg-Signature"].startswith("hmac-sha256=")

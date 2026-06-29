@@ -209,6 +209,10 @@ def _clerk_configured() -> bool:
     return bool(_clerk_public_key() or _clerk_jwks_url())
 
 
+def _strict_clerk_claim_checks_required() -> bool:
+    return not _allow_dev_tenant_header()
+
+
 _CLERK_JWKS_CLIENTS: dict[str, PyJWKClient] = {}
 
 
@@ -242,11 +246,16 @@ def _decode_clerk_token(token: str) -> dict[str, Any] | None:
     except Exception as exc:
         raise HTTPException(status_code=401, detail="could not verify Clerk token") from exc
 
+    strict_claims = _strict_clerk_claim_checks_required()
     issuer = os.environ.get("CLERK_ISSUER", "").strip()
+    if strict_claims and not issuer:
+        raise HTTPException(status_code=503, detail="CLERK_ISSUER is required")
     if issuer and claims.get("iss") != issuer:
         raise HTTPException(status_code=401, detail="invalid Clerk issuer")
 
     allowed_origins = set(_csv_env("CLERK_ALLOWED_ORIGINS"))
+    if strict_claims and not allowed_origins:
+        raise HTTPException(status_code=503, detail="CLERK_ALLOWED_ORIGINS is required")
     azp = claims.get("azp")
     if allowed_origins and azp not in allowed_origins:
         raise HTTPException(status_code=401, detail="invalid Clerk authorized party")
@@ -284,7 +293,9 @@ def _upsert_clerk_user(stores: "Stores", claims: dict[str, Any]) -> dict[str, An
     ).fetchone()
     if existing_link:
         existing_user = stores.users.get_by_id(existing_link["user_id"])
-        tenant_id = existing_user["tenant_id"] if existing_user else stores.auth.create_tenant(str(name))
+        tenant_id = (
+            existing_user["tenant_id"] if existing_user else stores.auth.create_tenant(str(name))
+        )
     else:
         existing_by_email = stores.db.conn.execute(
             "SELECT id, tenant_id FROM users WHERE email=?",
@@ -371,7 +382,13 @@ def _allow_dev_tenant_header() -> bool:
     if override is not None:
         return override.strip().lower() in {"1", "true", "yes", "on"}
     env = (os.environ.get("DOOMBERG_ENV") or "").strip().lower()
-    return env in {"", "test", "local"}
+    return env in {"test", "local", "dev", "development"}
+
+
+def _cors_allowed_origins() -> list[str]:
+    if _allow_dev_tenant_header():
+        return ["*"]
+    return _csv_env("CLERK_ALLOWED_ORIGINS")
 
 
 def _env_flag(name: str) -> bool:
@@ -406,7 +423,8 @@ def _public_provider_connection(connection: dict[str, Any]) -> dict[str, Any]:
         "provider": PUBLIC_DATA_SOURCE if is_private_live else provider,
         "state": connection.get("state"),
         "capabilities": [
-            cap for cap in (connection.get("capabilities") or [])
+            cap
+            for cap in (connection.get("capabilities") or [])
             if str(cap).strip().lower() not in {"orders", "trading", "execution"}
         ],
         "entitlements": [
@@ -594,10 +612,15 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
     leases = stores.leases.list()
 
     connected = [c for c in connections if c.get("state") == "connected"]
-    private_live_names = {"ibkr", "ibkr-engine", "interactive_brokers", "interactive-brokers", PUBLIC_DATA_SOURCE}
+    private_live_names = {
+        "ibkr",
+        "ibkr-engine",
+        "interactive_brokers",
+        "interactive-brokers",
+        PUBLIC_DATA_SOURCE,
+    }
     private_live_connections = [
-        c for c in connected
-        if str(c.get("provider") or "").strip().lower() in private_live_names
+        c for c in connected if str(c.get("provider") or "").strip().lower() in private_live_names
     ]
     quote_caps = {"quote", "quotes", "market_data", "market-data", "data"}
     live_quote_provider = any(_has_capability(c, quote_caps) for c in private_live_connections)
@@ -715,7 +738,9 @@ def require_tenant(
         raise HTTPException(status_code=401, detail="authentication required")
     resolved = x_tenant_id or tenant_id
     if not resolved:
-        raise HTTPException(status_code=400, detail="X-Tenant-Id header (or ?tenant_id=) is required")
+        raise HTTPException(
+            status_code=400, detail="X-Tenant-Id header (or ?tenant_id=) is required"
+        )
     return _validate_tenant_id(resolved)
 
 
@@ -746,7 +771,9 @@ def _ctx(
         raise HTTPException(status_code=401, detail="authentication required")
     resolved = x_tenant_id or tenant_id
     if not resolved:
-        raise HTTPException(status_code=400, detail="X-Tenant-Id header (or ?tenant_id=) is required")
+        raise HTTPException(
+            status_code=400, detail="X-Tenant-Id header (or ?tenant_id=) is required"
+        )
     resolved = _validate_tenant_id(resolved)
     return Ctx(
         tenant_id=resolved,
@@ -860,10 +887,10 @@ def create_app(db: Any | None = None) -> FastAPI:
     app = FastAPI(title="doomberg-rest-gateway", version="0.0.0")
     app.state.stores = stores
 
-    # Permissive CORS for local dev only. PIN allowed origins in prod.
+    # Permissive CORS for local/dev only. Deployed environments use Clerk/app origins.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=_cors_allowed_origins(),
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -945,8 +972,12 @@ def create_app(db: Any | None = None) -> FastAPI:
             plaintext, key_id = stores.auth.mint_key(user["tenant_id"], scopes)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return {"api_key": plaintext, "key_id": key_id, "scopes": scopes,
-                "tenant_id": user["tenant_id"]}
+        return {
+            "api_key": plaintext,
+            "key_id": key_id,
+            "scopes": scopes,
+            "tenant_id": user["tenant_id"],
+        }
 
     @app.get("/api/auth/keys")
     def list_api_keys(
@@ -1022,8 +1053,7 @@ def create_app(db: Any | None = None) -> FastAPI:
         rows = stores.runs.list(tenant_id, kind="research")
         return {
             "sessions": [
-                _session_summary(row, stores.trace.events(tenant_id, row["run_id"]))
-                for row in rows
+                _session_summary(row, stores.trace.events(tenant_id, row["run_id"])) for row in rows
             ]
         }
 
@@ -1052,13 +1082,12 @@ def create_app(db: Any | None = None) -> FastAPI:
             actor_kind = (principal.get("actor_kind") or "user").strip().lower()
             actor_id = (principal.get("key_id") or "ui").strip() or "ui"
         else:
-            resolved_tenant = x_tenant_id or tenant_id
-            if not resolved_tenant:
-                raise HTTPException(
-                    status_code=400,
-                    detail="X-Tenant-Id header (or ?tenant_id=) is required",
-                )
-            resolved_tenant = _validate_tenant_id(resolved_tenant)
+            resolved_tenant = require_tenant(
+                request=request,
+                authorization=None,
+                x_tenant_id=x_tenant_id,
+                tenant_id=tenant_id,
+            )
             actor_kind = (x_actor_kind or "user").strip().lower()
             actor_id = (x_actor_id or "ui").strip() or "ui"
 
@@ -1074,16 +1103,18 @@ def create_app(db: Any | None = None) -> FastAPI:
             data["title"] = title
         if prompt:
             data["prompt"] = prompt
-        stores.trace.append({
-            "run_id": run_id,
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "type": "session_open",
-            "tenant_id": resolved_tenant,
-            "session_id": run_id,
-            "origin_session_id": run_id,
-            "actor": {"kind": actor_kind, "id": actor_id},
-            "data": data,
-        })
+        stores.trace.append(
+            {
+                "run_id": run_id,
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "type": "session_open",
+                "tenant_id": resolved_tenant,
+                "session_id": run_id,
+                "origin_session_id": run_id,
+                "actor": {"kind": actor_kind, "id": actor_id},
+                "data": data,
+            }
+        )
         run = stores.runs.get(resolved_tenant, run_id)
         events = stores.trace.events(resolved_tenant, run_id)
         shaped = shape_run(run, events)
@@ -1177,7 +1208,9 @@ def create_app(db: Any | None = None) -> FastAPI:
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
         _require_scope(ctx, "artifacts:read")
-        return {"artifacts": stores.artifacts.list(ctx.tenant_id, run_id=run_id, kind=kind, limit=limit)}
+        return {
+            "artifacts": stores.artifacts.list(ctx.tenant_id, run_id=run_id, kind=kind, limit=limit)
+        }
 
     @app.get("/api/artifacts/{artifact_id}")
     def get_artifact(
@@ -1200,7 +1233,11 @@ def create_app(db: Any | None = None) -> FastAPI:
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
         _require_scope(ctx, "approvals:read")
-        return {"approvals": stores.approvals.list(ctx.tenant_id, run_id=run_id, state=state, limit=limit)}
+        return {
+            "approvals": stores.approvals.list(
+                ctx.tenant_id, run_id=run_id, state=state, limit=limit
+            )
+        }
 
     @app.post("/api/approvals/{approval_id}/decide")
     def decide_approval(
@@ -1223,21 +1260,25 @@ def create_app(db: Any | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except KeyError as exc:
-            raise HTTPException(status_code=404, detail="approval not found or already decided") from exc
+            raise HTTPException(
+                status_code=404, detail="approval not found or already decided"
+            ) from exc
         if approval is None:
             raise HTTPException(status_code=404, detail="approval not found")
-        stores.trace.append({
-            "run_id": approval["run_id"],
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "type": "approval_decided",
-            "tenant_id": ctx.tenant_id,
-            "actor": {"kind": ctx.actor_kind, "id": ctx.actor_id},
-            "data": {
-                "approval_id": approval_id,
-                "decision": body.decision,
-                "reason": body.reason,
-            },
-        })
+        stores.trace.append(
+            {
+                "run_id": approval["run_id"],
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "type": "approval_decided",
+                "tenant_id": ctx.tenant_id,
+                "actor": {"kind": ctx.actor_kind, "id": ctx.actor_id},
+                "data": {
+                    "approval_id": approval_id,
+                    "decision": body.decision,
+                    "reason": body.reason,
+                },
+            }
+        )
         return approval
 
     @app.get("/api/providers")
@@ -1261,18 +1302,23 @@ def create_app(db: Any | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         _require_scope(ctx, "providers:write")
         body.capabilities = [
-            cap for cap in body.capabilities
+            cap
+            for cap in body.capabilities
             if str(cap).strip().lower() not in {"orders", "trading", "execution"}
         ]
         provider_name = str(body.provider or "").strip().lower()
         credential_ref = body.credential_ref
-        if provider_name in {
-            "ibkr",
-            "ibkr-engine",
-            "interactive_brokers",
-            "interactive-brokers",
-            PUBLIC_DATA_SOURCE,
-        } and not credential_ref:
+        if (
+            provider_name
+            in {
+                "ibkr",
+                "ibkr-engine",
+                "interactive_brokers",
+                "interactive-brokers",
+                PUBLIC_DATA_SOURCE,
+            }
+            and not credential_ref
+        ):
             credential_ref = "env:DOOMBERG_IBKR_ENGINE_TOKEN"
         connection = stores.providers.upsert_connection(
             ctx.tenant_id,
@@ -1319,7 +1365,8 @@ def create_app(db: Any | None = None) -> FastAPI:
         records = [
             record
             for intent in intents
-            if (record := stores.execution.get_record(ctx.tenant_id, intent["intent_id"])) is not None
+            if (record := stores.execution.get_record(ctx.tenant_id, intent["intent_id"]))
+            is not None
         ]
         return {"order_intents": records}
 
@@ -1464,7 +1511,10 @@ def create_app(db: Any | None = None) -> FastAPI:
         alert = stores.notifications.get(ctx.tenant_id, notification_id)
         if alert is None:
             raise HTTPException(status_code=404, detail="alert not found")
-        return {"alert": alert, "attempts": stores.notifications.list_attempts(ctx.tenant_id, notification_id)}
+        return {
+            "alert": alert,
+            "attempts": stores.notifications.list_attempts(ctx.tenant_id, notification_id),
+        }
 
     @app.post("/api/alerts/{notification_id}/ack")
     def ack_alert(
@@ -1554,9 +1604,14 @@ def create_app(db: Any | None = None) -> FastAPI:
         if body.kind not in {"backtest", "paper"}:
             raise HTTPException(status_code=422, detail="kind must be backtest or paper")
         try:
-            return actions.create_run(stores, ctx, strategy_id=body.strategy_id,
-                                      kind=body.kind, range_=body.range,
-                                      idempotency_key=body.idempotency_key)
+            return actions.create_run(
+                stores,
+                ctx,
+                strategy_id=body.strategy_id,
+                kind=body.kind,
+                range_=body.range,
+                idempotency_key=body.idempotency_key,
+            )
         except ActionError as err:
             raise HTTPException(status_code=err.status, detail=err.detail) from err
 
@@ -1573,18 +1628,26 @@ def create_app(db: Any | None = None) -> FastAPI:
             raise HTTPException(status_code=err.status, detail=err.detail) from err
 
     def _action_route(fn):
-        def route(run_id: str, ctx: Ctx = Depends(_ctx),
-                  stores: Stores = Depends(get_stores)) -> dict[str, Any]:
+        def route(
+            run_id: str, ctx: Ctx = Depends(_ctx), stores: Stores = Depends(get_stores)
+        ) -> dict[str, Any]:
             return _do(fn, stores, ctx, run_id)
+
         return route
 
     for _name, _fn in (
-        ("promote", actions.promote_run), ("activate", actions.activate_run),
-        ("pause", actions.pause_run), ("resume", actions.resume_run),
+        ("promote", actions.promote_run),
+        ("activate", actions.activate_run),
+        ("pause", actions.pause_run),
+        ("resume", actions.resume_run),
         ("retire", actions.retire_run),
     ):
-        app.add_api_route(f"/api/runs/{{run_id}}/{_name}", _action_route(_fn),
-                          methods=["POST"], name=f"run_{_name}")
+        app.add_api_route(
+            f"/api/runs/{{run_id}}/{_name}",
+            _action_route(_fn),
+            methods=["POST"],
+            name=f"run_{_name}",
+        )
 
     # ---- live trace stream -------------------------------------------------------------
     @app.get("/api/runs/{run_id}/events")
@@ -1628,8 +1691,12 @@ def create_app(db: Any | None = None) -> FastAPI:
         deadline_seconds = float(deadline) if deadline is not None else None
 
         stream = event_stream(
-            stores.trace, resolved_tenant_id, run_id,
-            after_seq=after_seq, deadline_seconds=deadline_seconds, replay_only=replay_only,
+            stores.trace,
+            resolved_tenant_id,
+            run_id,
+            after_seq=after_seq,
+            deadline_seconds=deadline_seconds,
+            replay_only=replay_only,
         )
         return StreamingResponse(
             stream,

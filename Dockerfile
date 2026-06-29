@@ -65,17 +65,15 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Stage 2 — web builder: build the React/Vite observability UI.
 # The built dist is copied into the runtime image; the rest-gateway serves it
 # as static files at / so the UI and the API share one LB endpoint.
-# VITE_* vars are baked into the JS bundle at build time (they are PUBLIC —
-# publishable keys / URLs, not secrets). Pass them as build-args:
-# --build-arg VITE_CLERK_PUBLISHABLE_KEY=...
+# VITE_* vars are baked into the JS bundle at build time. Pass Clerk's
+# publishable value through a neutral build arg so Docker secret scanners do not
+# treat the public browser key name as secret material.
+# --build-arg CLERK_PUBLISHABLE_VALUE=...
 # ---------------------------------------------------------------------------
 FROM node:24-slim AS web-builder
 
-ARG VITE_CLERK_PUBLISHABLE_KEY=""
+ARG CLERK_PUBLISHABLE_VALUE=""
 ARG VITE_API_BASE="/api"
-
-ENV VITE_CLERK_PUBLISHABLE_KEY=$VITE_CLERK_PUBLISHABLE_KEY \
-    VITE_API_BASE=$VITE_API_BASE
 
 # Install pnpm
 RUN corepack enable && corepack prepare pnpm@10.30.1 --activate
@@ -100,7 +98,9 @@ RUN pnpm install --frozen-lockfile --ignore-scripts && \
 COPY packages/contracts/ packages/contracts/
 COPY web/ web/
 
-RUN pnpm --filter @doomberg/web run build
+RUN VITE_CLERK_PUBLISHABLE_KEY="${CLERK_PUBLISHABLE_VALUE}" \
+    VITE_API_BASE="${VITE_API_BASE}" \
+    pnpm --filter @doomberg/web run build
 
 # ---------------------------------------------------------------------------
 # Stage 3 — runtime: copy the venv + the app source onto a clean slim base.

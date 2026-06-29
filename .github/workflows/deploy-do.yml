@@ -76,15 +76,15 @@ jobs:
     runs-on: self-hosted
     needs: [classify, deploy-config-preflight]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
           cache: pnpm
@@ -109,10 +109,10 @@ jobs:
           pnpm --filter @doomberg/web run test
           pnpm --filter @doomberg/web run build
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
       - name: Docker image build smoke
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
           file: ./Dockerfile
@@ -124,7 +124,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: IBKR engine image build smoke
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
           file: ./Dockerfile.ibkr-engine
@@ -151,7 +151,7 @@ jobs:
           docker run --rm doomberg-ibkr-engine:ci python -c \
             'import doomberg_ibkr_engine; print("ibkr engine imports OK")'
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
         with:
           terraform_version: "1.15.6"
 
@@ -186,6 +186,7 @@ jobs:
           CLERK_PEM_PUBLIC_KEY: ${{ secrets.CLERK_PEM_PUBLIC_KEY }}
           CLERK_JWKS_URL: ${{ vars.CLERK_JWKS_URL }}
           CLERK_ALLOWED_ORIGINS: ${{ vars.CLERK_ALLOWED_ORIGINS }}
+          CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
           DOOMBERG_ADMIN_TOKEN: ${{ secrets.DOOMBERG_ADMIN_TOKEN }}
           DOOMBERG_SMOKE_API_KEY: ${{ secrets.DOOMBERG_SMOKE_API_KEY }}
           DOOMBERG_SMOKE_NO_SCOPE_API_KEY: ${{ secrets.DOOMBERG_SMOKE_NO_SCOPE_API_KEY }}
@@ -211,6 +212,7 @@ jobs:
           require_env DOOMBERG_SESSION_SECRET
           require_env CLERK_PUBLISHABLE_KEY
           require_env CLERK_ALLOWED_ORIGINS
+          require_env CLERK_ISSUER
           require_env DO_CLUSTER_NAME
           require_env K8S_GATEWAY_NAMESPACE
           require_env K8S_WORKER_NAMESPACE
@@ -239,13 +241,13 @@ jobs:
     needs: [classify, checks]
     environment: ${{ needs.classify.outputs.deploy_env }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
-      - uses: digitalocean/action-doctl@v2
+      - uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
@@ -259,7 +261,7 @@ jobs:
         run: doctl registry login --expiry-seconds 1200
 
       - name: Build and push immutable image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
           file: ./Dockerfile
@@ -269,12 +271,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            VITE_CLERK_PUBLISHABLE_KEY=${{ secrets.CLERK_PUBLISHABLE_KEY }}
+            CLERK_PUBLISHABLE_VALUE=${{ secrets.CLERK_PUBLISHABLE_KEY }}
             VITE_API_BASE=/api
 
       - name: Build and push immutable IBKR engine image
         if: needs.classify.outputs.deploy_env == 'prod' && vars.IBKR_ENGINE_ENABLED != '0'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
           file: ./Dockerfile.ibkr-engine
@@ -293,13 +295,12 @@ jobs:
       group: deploy-${{ needs.classify.outputs.deploy_env }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-        with:
           fetch-depth: 0
 
-      - uses: digitalocean/action-doctl@v2
+      - uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
@@ -426,9 +427,9 @@ jobs:
     if: needs.classify.outputs.push_latest == 'true'
     environment: prod
     steps:
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
-      - uses: digitalocean/action-doctl@v2
+      - uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 

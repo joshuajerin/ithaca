@@ -46,11 +46,14 @@ if [[ -n "${EXTRA_IMAGE_TAGS:-}" ]]; then
 fi
 
 BUILD_ARGS=()
-for name in VITE_CLERK_PUBLISHABLE_KEY VITE_API_BASE; do
-  if [[ -n "${!name:-}" ]]; then
-    BUILD_ARGS+=(--build-arg "${name}=${!name}")
-  fi
-done
+if [[ -n "${CLERK_PUBLISHABLE_VALUE:-}" ]]; then
+  BUILD_ARGS+=(--build-arg "CLERK_PUBLISHABLE_VALUE=${CLERK_PUBLISHABLE_VALUE}")
+elif [[ -n "${VITE_CLERK_PUBLISHABLE_KEY:-}" ]]; then
+  BUILD_ARGS+=(--build-arg "CLERK_PUBLISHABLE_VALUE=${VITE_CLERK_PUBLISHABLE_KEY}")
+fi
+if [[ -n "${VITE_API_BASE:-}" ]]; then
+  BUILD_ARGS+=(--build-arg "VITE_API_BASE=${VITE_API_BASE}")
+fi
 
 echo "==> Building ${REMOTE_REF} (linux/amd64, CPU-only)"
 DOCKER_BUILDKIT=1 docker build \

@@ -6,7 +6,8 @@ the rest-gateway), and translate :class:`ActionError` into an HTTP error. All th
 — tenant scope, human-only money actions, declarative-spec-only, audited denials — live in
 ``actions`` so they hold no matter which transport invoked them.
 
-Endpoints (all require ``X-Tenant-Id`` → :class:`Ctx`):
+Endpoints resolve a :class:`Ctx` from a bearer API key in deployed environments, with
+``X-Tenant-Id`` accepted only in local/test dev fallback mode:
 - ``POST /strategies``            propose a spec (validate → persist draft → trace).
 - ``POST /runs``                  create a run (``backtest``|``paper``), land it ``queued``.
 - ``POST /runs/{id}/cancel``      cancel a queued/running run and its worker jobs.
@@ -17,8 +18,10 @@ Endpoints (all require ``X-Tenant-Id`` → :class:`Ctx`):
 - ``POST /runs/{id}/retire``      HUMAN. → ``retired``.
 - ``GET  /runs`` / ``GET /runs/{id}``  tenant-scoped reads.
 """
+
 from __future__ import annotations
 
+import hmac
 import os
 from typing import Any, Literal
 
@@ -77,7 +80,7 @@ def _require_admin(x_admin_token: str | None) -> None:
     expected = os.environ.get("DOOMBERG_ADMIN_TOKEN")
     if not expected:
         raise HTTPException(status_code=404, detail="not found")
-    if not x_admin_token or x_admin_token != expected:
+    if not x_admin_token or not hmac.compare_digest(x_admin_token, expected):
         raise HTTPException(status_code=401, detail="admin token required")
 
 
@@ -114,9 +117,14 @@ def create_app() -> FastAPI:
         platform: Platform = Depends(get_platform),
     ) -> dict[str, Any]:
         try:
-            return actions.create_run(platform, ctx, strategy_id=body.strategy_id,
-                                      kind=body.kind, range_=body.range,
-                                      idempotency_key=body.idempotency_key)
+            return actions.create_run(
+                platform,
+                ctx,
+                strategy_id=body.strategy_id,
+                kind=body.kind,
+                range_=body.range,
+                idempotency_key=body.idempotency_key,
+            )
         except ActionError as err:
             _raise(err)
 
@@ -133,40 +141,45 @@ def create_app() -> FastAPI:
             _raise(err)
 
     @app.post("/runs/{run_id}/promote")
-    def promote_run(run_id: str, ctx: Ctx = Depends(get_ctx),
-                    platform: Platform = Depends(get_platform)) -> dict[str, Any]:
+    def promote_run(
+        run_id: str, ctx: Ctx = Depends(get_ctx), platform: Platform = Depends(get_platform)
+    ) -> dict[str, Any]:
         try:
             return actions.promote_run(platform, ctx, run_id)
         except ActionError as err:
             _raise(err)
 
     @app.post("/runs/{run_id}/activate")
-    def activate_run(run_id: str, ctx: Ctx = Depends(get_ctx),
-                     platform: Platform = Depends(get_platform)) -> dict[str, Any]:
+    def activate_run(
+        run_id: str, ctx: Ctx = Depends(get_ctx), platform: Platform = Depends(get_platform)
+    ) -> dict[str, Any]:
         try:
             return actions.activate_run(platform, ctx, run_id)
         except ActionError as err:
             _raise(err)
 
     @app.post("/runs/{run_id}/pause")
-    def pause_run(run_id: str, ctx: Ctx = Depends(get_ctx),
-                  platform: Platform = Depends(get_platform)) -> dict[str, Any]:
+    def pause_run(
+        run_id: str, ctx: Ctx = Depends(get_ctx), platform: Platform = Depends(get_platform)
+    ) -> dict[str, Any]:
         try:
             return actions.pause_run(platform, ctx, run_id)
         except ActionError as err:
             _raise(err)
 
     @app.post("/runs/{run_id}/resume")
-    def resume_run(run_id: str, ctx: Ctx = Depends(get_ctx),
-                   platform: Platform = Depends(get_platform)) -> dict[str, Any]:
+    def resume_run(
+        run_id: str, ctx: Ctx = Depends(get_ctx), platform: Platform = Depends(get_platform)
+    ) -> dict[str, Any]:
         try:
             return actions.resume_run(platform, ctx, run_id)
         except ActionError as err:
             _raise(err)
 
     @app.post("/runs/{run_id}/retire")
-    def retire_run(run_id: str, ctx: Ctx = Depends(get_ctx),
-                   platform: Platform = Depends(get_platform)) -> dict[str, Any]:
+    def retire_run(
+        run_id: str, ctx: Ctx = Depends(get_ctx), platform: Platform = Depends(get_platform)
+    ) -> dict[str, Any]:
         try:
             return actions.retire_run(platform, ctx, run_id)
         except ActionError as err:
@@ -271,8 +284,12 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         # The plaintext is returned exactly ONCE — it is unrecoverable thereafter.
-        return {"key_id": key_id, "api_key": plaintext, "scopes": body.scopes,
-                "tenant_id": tenant_id}
+        return {
+            "key_id": key_id,
+            "api_key": plaintext,
+            "scopes": body.scopes,
+            "tenant_id": tenant_id,
+        }
 
     return app
 
