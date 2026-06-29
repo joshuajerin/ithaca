@@ -5,14 +5,8 @@ import { SessionDetail } from "./pages/SessionDetail";
 import { Deployments } from "./pages/Deployments";
 import { DeploymentDetail } from "./pages/DeploymentDetail";
 import { Settings } from "./pages/Settings";
-import { Docs } from "./pages/Docs";
 import { AuthPage } from "./pages/AuthPage";
 import { AgentLink } from "./pages/AgentLink";
-// Legacy routes kept so existing bookmarks don't 404
-import { RunsList } from "./pages/RunsList";
-import { RunDetail } from "./pages/RunDetail";
-import { Deploys } from "./pages/Deploys";
-import { Trades } from "./pages/Trades";
 import { useAuth } from "./auth/AuthContext";
 import { DoombergMark } from "./auth/icons";
 import { LEGAL_LINKS, legalUrl } from "./lib/legal";
@@ -171,13 +165,13 @@ export function App() {
           <Route path="/deployments" element={<Deployments />} />
           <Route path="/deployments/:id" element={<DeploymentDetail />} />
           <Route path="/settings" element={<Settings />} />
-          <Route path="/docs" element={<Docs />} />
 
-          {/* Legacy routes — preserved so existing bookmarks don't 404 */}
-          <Route path="/runs" element={<RunsList />} />
-          <Route path="/runs/:id" element={<RunDetail />} />
-          <Route path="/deploys" element={<Deploys />} />
-          <Route path="/trades" element={<Trades />} />
+          {/* Legacy redirects — old bookmarks go to the right place */}
+          <Route path="/runs" element={<Navigate to="/deployments" replace />} />
+          <Route path="/runs/:id" element={<Navigate to="/deployments" replace />} />
+          <Route path="/deploys" element={<Navigate to="/deployments" replace />} />
+          <Route path="/trades" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/docs" element={<Navigate to="/settings" replace />} />
           <Route path="/agent-link" element={<AgentLink />} />
           <Route path="/session-detail/:id" element={<SessionDetail />} />
 
