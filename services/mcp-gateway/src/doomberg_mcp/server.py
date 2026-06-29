@@ -505,6 +505,51 @@ class Toolset:
             _ctx=_ctx,
         )
 
+    def doomberg_init(self, goal: str | None = None, _ctx: dict | None = None) -> dict:
+        """First tool call after an agent installs Doomberg MCP.
+
+        This gives the agent a small, explicit bootstrap contract instead of forcing it to infer
+        the workflow from the full tool list.
+        """
+        visible_prompt = str(goal or "").strip() or "Initialize Doomberg MCP session"
+        session = self.session_context(
+            prompt=visible_prompt,
+            title="Doomberg onboarding",
+            _ctx=_ctx,
+        )
+        return {
+            "status": "ready",
+            "session_id": session["session_id"],
+            "goal_captured": bool(goal),
+            "start_here": [
+                {
+                    "tool": "search_skills",
+                    "when": "Find the smallest tool set for a market-data, research, or backtest task.",
+                },
+                {
+                    "tool": "describe_skill",
+                    "when": "Inspect exact inputs before calling a catalog skill.",
+                },
+                {
+                    "tool": "run_skill",
+                    "when": "Create a durable run for backtests or longer research jobs.",
+                },
+                {
+                    "tool": "market_get_ohlcv",
+                    "when": "Fetch quick OHLCV history for one symbol.",
+                },
+                {
+                    "tool": "propose_strategy",
+                    "when": "Register a validated draft StrategySpec for human review.",
+                },
+            ],
+            "boundaries": {
+                "can": ["read market data", "run backtests", "draft strategy proposals", "paper-trading research"],
+                "cannot": ["deploy live strategies", "move money", "read raw broker credentials"],
+            },
+            "dashboard_url": "https://app.doomberg.me/dashboard",
+        }
+
     def market_get_ohlcv(self, symbol: str, range: str = "6mo", interval: str = "1d",
                          _ctx: dict | None = None) -> dict:
         required = self._require_research_session(_ctx)
@@ -1878,6 +1923,10 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     def session_context(prompt: str | None = None, title: str | None = None,
                         session_id: str | None = None) -> dict:
         return ts.session_context(prompt=prompt, title=title, session_id=session_id, _ctx=_ctx())
+
+    @mcp.tool(description="Initialize Doomberg for this agent session and return the first-call workflow.")
+    def doomberg_init(goal: str | None = None) -> dict:
+        return ts.doomberg_init(goal=goal, _ctx=_ctx())
 
     @mcp.tool(description="Direct tool after start_research_session: fetch OHLCV price history for one symbol, with provenance.")
     def market_get_ohlcv(symbol: str, range: str = "6mo", interval: str = "1d") -> dict:
