@@ -138,9 +138,6 @@ export function Settings() {
                 <div style={{ fontSize: 12, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
                   {user.email}
                 </div>
-                <div style={{ fontSize: 11, color: "var(--muted-dim)", marginTop: 2 }}>
-                  {user.provider ?? "Ithaca"}
-                </div>
               </div>
               <button className="settings-btn" onClick={manageAccount}>
                 Manage account
@@ -257,7 +254,6 @@ export function Settings() {
           <div className="fcard" style={{ display: "flex", flexDirection: "column", gap: 0 }}>
             {[
               { name: "MCP Server",    blurb: "Tool-call bridge for agent workflows",   status: "active" },
-              { name: "Ithaca Auth",   blurb: "Identity and session management",          status: "active" },
               { name: "Mintlify Docs", blurb: "Documentation and API reference",         status: "active", href: "https://ithaca.mintlify.app" },
             ].map((int, i, arr) => (
               <div key={int.name} style={{
@@ -270,7 +266,7 @@ export function Settings() {
                   background: "var(--panel-2)", border: "1px solid var(--border)",
                   display: "grid", placeItems: "center", flexShrink: 0, fontSize: 14,
                 }}>
-                  {int.name === "MCP Server"    ? "⚡" : int.name === "Ithaca Auth" ? "🔐" : "📄"}
+                  {int.name === "MCP Server"    ? "⚡" : "📄"}
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 550, color: "var(--fg)" }}>{int.name}</div>
@@ -305,7 +301,7 @@ export function Settings() {
                   Signed in as <strong style={{ fontWeight: 650 }}>{user.email}</strong>
                 </div>
                 <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                  Provider: {user.provider ?? "Ithaca"} · Session is active
+                  Session is active
                 </div>
               </div>
               <button className="settings-btn danger" onClick={signOut}>
