@@ -4,7 +4,7 @@ export const APP_URL: string =
   (import.meta.env.VITE_APP_URL as string | undefined) ?? "http://localhost:5173/";
 
 export const DOCS_URL: string =
-  (import.meta.env.VITE_DOCS_URL as string | undefined) ?? "https://ithaca.mintlify.app/";
+  (import.meta.env.VITE_DOCS_URL as string | undefined) ?? "https://docs.doomberg.me/";
 
 export const TERMS_URL: string =
   (import.meta.env.VITE_TERMS_URL as string | undefined) ?? DOCS_URL;

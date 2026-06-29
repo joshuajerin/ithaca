@@ -5,6 +5,10 @@ import { DoombergMark } from "../auth/icons";
 import { legalUrl } from "../lib/legal";
 
 const embeddedClerkAppearance = {
+  variables: {
+    fontFamily: '"Pliant", "Helvetica Neue", Helvetica, ui-sans-serif, system-ui, sans-serif',
+    fontFamilyButtons: '"Pliant", "Helvetica Neue", Helvetica, ui-sans-serif, system-ui, sans-serif',
+  },
   elements: {
     footerAction: {
       display: "none",

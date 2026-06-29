@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { HashRouter } from "react-router-dom";
+import { BrowserRouter } from "react-router-dom";
 import { Analytics } from "@vercel/analytics/react";
 import { ClerkProvider } from "@clerk/react";
 import { App } from "./App";
@@ -22,6 +22,13 @@ const clerkLocalization = {
     },
   },
 };
+
+const clerkAppearance = {
+  variables: {
+    fontFamily: '"Pliant", "Helvetica Neue", Helvetica, ui-sans-serif, system-ui, sans-serif',
+    fontFamilyButtons: '"Pliant", "Helvetica Neue", Helvetica, ui-sans-serif, system-ui, sans-serif',
+  },
+} as const;
 
 function MissingClerkConfig() {
   return (
@@ -45,11 +52,15 @@ function MissingClerkConfig() {
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     {clerkPublishableKey ? (
-      <ClerkProvider publishableKey={clerkPublishableKey} localization={clerkLocalization}>
+      <ClerkProvider
+        publishableKey={clerkPublishableKey}
+        localization={clerkLocalization}
+        appearance={clerkAppearance}
+      >
         <AuthProvider>
-          <HashRouter>
+          <BrowserRouter>
             <App />
-          </HashRouter>
+          </BrowserRouter>
           <Analytics />
         </AuthProvider>
       </ClerkProvider>
