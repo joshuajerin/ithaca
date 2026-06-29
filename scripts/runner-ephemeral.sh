@@ -1,37 +1,22 @@
 #!/usr/bin/env bash
-# Ephemeral GitHub Actions runner — auto-registers, runs ONE job, then self-destructs.
-# Created by the autoscaler on a fresh DO droplet via user-data.
-# Placeholders __REPO__, __TOKEN__, __NAME__, __SSH_KEY_ID__ are replaced by the autoscaler.
+# Ephemeral GitHub Actions runner — boots from pre-baked snapshot with all tools.
+# Only registers the runner, runs ONE job, then self-destructs.
+# Placeholders __REPO__, __TOKEN__, __NAME__ are replaced by the autoscaler.
 set -euo pipefail
 
 REPO="__REPO__"
 TOKEN="__TOKEN__"
 RUNNER_NAME="__NAME__"
 
-echo "[runner] Starting ephemeral runner for $REPO as $RUNNER_NAME"
+echo "[runner] Starting ephemeral runner for $REPO as $RUNNER_NAME (snapshot-based)"
 
-# Install essentials
-apt-get update -qq && apt-get install -y -qq curl unzip jq sudo lsb-release
+# Tools already installed in the snapshot:
+#   Node 24, pnpm, uv, Docker, Terraform, unzip, jq
+# Just need to register the runner.
 
-# Create runner user
+# Create runner user (may already exist from snapshot)
 useradd -m -s /bin/bash runner 2>/dev/null || true
-
-# Install Node 24
-curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
-apt-get install -y -qq nodejs
-npm install -g pnpm
-
-# Install uv
-su - runner -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
-
-# Install Docker
-curl -fsSL https://get.docker.com | sh
 usermod -aG docker runner
-
-# Install Terraform
-wget -qO- https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" > /etc/apt/sources.list.d/hashicorp.list
-apt-get update -qq && apt-get install -y -qq terraform
 
 # Download and configure the runner
 su - runner -c "cd /home/runner && \
@@ -47,9 +32,8 @@ echo "[runner] Runner started, waiting for job completion..."
 
 # Wait for the runner service to stop (ephemeral runners exit after one job)
 while systemctl is-active --quiet actions.runner.*.service 2>/dev/null; do
-  sleep 30
+  sleep 10
 done
 
 echo "[runner] Job complete. Self-destroying droplet."
-# Tag for cleanup, then poweroff
 poweroff

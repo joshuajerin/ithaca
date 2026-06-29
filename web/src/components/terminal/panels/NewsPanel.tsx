@@ -6,31 +6,35 @@ import { ExternalLink, Search, X } from "lucide-react";
 
 type SentimentFilter = "all" | "positive" | "negative" | "neutral";
 
-export function NewsPanel({ data }: { data: NewsData }) {
+export function NewsPanel({ data }: { data: NewsData | null | undefined }) {
   const [keyword, setKeyword] = React.useState("");
   const [source, setSource] = React.useState<string>("all");
   const [sentiment, setSentiment] = React.useState<SentimentFilter>("all");
+  const items = React.useMemo(() => (
+    Array.isArray(data?.items) ? data.items : []
+  ), [data?.items]);
 
   const sources = React.useMemo(() => {
     const seen = new Set<string>();
-    for (const item of data.items) {
+    for (const item of items) {
       if (item.source) seen.add(item.source);
     }
     return Array.from(seen).sort((a, b) => a.localeCompare(b));
-  }, [data.items]);
+  }, [items]);
 
   const filtered = React.useMemo(() => {
     const kw = keyword.trim().toLowerCase();
-    return data.items.filter((item) => {
+    return items.filter((item) => {
       if (source !== "all" && item.source !== source) return false;
       if (sentiment !== "all" && (item.sentiment || "neutral") !== sentiment) return false;
       if (kw) {
-        const hay = `${item.headline} ${item.summary} ${item.tickers.join(" ")}`.toLowerCase();
+        const tickers = Array.isArray(item.tickers) ? item.tickers : [];
+        const hay = `${item.headline} ${item.summary} ${tickers.join(" ")}`.toLowerCase();
         if (!hay.includes(kw)) return false;
       }
       return true;
     });
-  }, [data.items, keyword, source, sentiment]);
+  }, [items, keyword, source, sentiment]);
 
   const hasActiveFilters = keyword.trim() !== "" || source !== "all" || sentiment !== "all";
 
@@ -53,7 +57,7 @@ export function NewsPanel({ data }: { data: NewsData }) {
       <div className="flex items-center justify-between gap-2 mb-3 shrink-0">
         <div className="editorial-label text-[9px] text-muted-foreground nums-tabular">
           {filtered.length}
-          {filtered.length !== data.items.length ? ` / ${data.items.length}` : ""}
+          {filtered.length !== items.length ? ` / ${items.length}` : ""}
         </div>
       </div>
 
@@ -124,7 +128,7 @@ export function NewsPanel({ data }: { data: NewsData }) {
                   {item.sentiment === 'negative' && <span className="border border-muted-foreground px-1">Neg</span>}
                 </div>
                 <div className="flex gap-1 shrink-0">
-                  {item.tickers.map(t => (
+                  {(Array.isArray(item.tickers) ? item.tickers : []).map(t => (
                     <span key={t} className="editorial-label text-[8px] border border-border px-1 py-0.5">{t}</span>
                   ))}
                 </div>
@@ -144,10 +148,10 @@ export function NewsPanel({ data }: { data: NewsData }) {
               </p>
             </div>
           ))}
-          {data.items.length === 0 && (
-            <div className="font-serif text-sm text-muted-foreground text-center py-6 italic">No recent news found.</div>
+          {items.length === 0 && (
+            <div className="font-serif text-sm text-muted-foreground text-center py-6 italic">No recent IBKR headlines available.</div>
           )}
-          {data.items.length > 0 && filtered.length === 0 && (
+          {items.length > 0 && filtered.length === 0 && (
             <div className="font-serif text-sm text-muted-foreground text-center py-6 italic">No headlines match your filters.</div>
           )}
         </div>

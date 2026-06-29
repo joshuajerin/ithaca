@@ -11,9 +11,7 @@ separate namespace pair with distinct NodePorts and secrets.
 ## App/Worker Split
 
 The platform system-of-record is now Postgres: every app container receives
-`DOOMBERG_DB` from the `doomberg-db.platform_url` Secret key. The read-only
-archive uses `DOOMBERG_ARCHIVE_URL` from `doomberg-db.archive_url`; those DSNs
-may point at the same managed database with different schemas.
+`DOOMBERG_DB` from the `doomberg-db.platform_url` Secret key.
 
 `app-deployment.yaml` runs only the stateless ingress/control roles:
 `rest-gateway`, `control-plane`, and `mcp-gateway`. `worker-deployment.yaml`
@@ -46,9 +44,7 @@ replicas and one dev worker replica.
 
 The `doomberg-db` Secret is created in both the gateway and worker namespaces by
 `deploy/deploy_services.sh`, along with the image tag and replica counts.
-Set `DOOMBERG_PLATFORM_DB_URL` for the platform store and `DOOMBERG_ARCHIVE_URL`
-for archive reads. If `DOOMBERG_ARCHIVE_URL` is omitted, the deploy script uses
-the platform DSN for both.
+Set `DOOMBERG_PLATFORM_DB_URL` for the platform store.
 
 Set `IBKR_ENGINE_ENABLED=1` to deploy the managed in-cluster IBKR engine. The
 Client Portal Java process runs as the dedicated `ibkr-gateway` Deployment and

@@ -9,9 +9,10 @@
 #   GH_PAT              — GitHub personal access token (repo scope)
 #   REPOS               — space-separated list of repos (e.g. "joshuajerin/doomberg joshuajerin/ithaca-docs")
 #   SSH_KEY_ID          — DO SSH key ID to inject into ephemeral droplets
-#   DROPLET_SIZE        — DO droplet slug (default: s-2vcpu-4gb)
+#   DROPLET_SIZE        — DO droplet slug (default: s-4vcpu-8gb)
 #   DROPLET_REGION      — DO region (default: nyc1)
-#   MAX_RUNNERS         — max concurrent ephemeral runners (default: 4)
+#   MAX_RUNNERS         — max concurrent ephemeral runners (default: 6)
+#   SNAPSHOT_ID         — DO snapshot ID with pre-installed tools (default: 234895636)
 #   BASE_RUNNER droplet — name of the persistent base runner (excluded from cleanup)
 
 set -eo pipefail
@@ -26,9 +27,10 @@ DO_TOKEN="${DO_TOKEN:?DO_TOKEN not set}"
 GH_PAT="${GH_PAT:?GH_PAT not set}"
 REPOS="${REPOS:?REPOS not set}"
 SSH_KEY_ID="${SSH_KEY_ID:?SSH_KEY_ID not set}"
-DROPLET_SIZE="${DROPLET_SIZE:-s-2vcpu-4gb}"
+DROPLET_SIZE="${DROPLET_SIZE:-s-4vcpu-8gb}"
 DROPLET_REGION="${DROPLET_REGION:-nyc1}"
-MAX_RUNNERS="${MAX_RUNNERS:-4}"
+MAX_RUNNERS="${MAX_RUNNERS:-6}"
+SNAPSHOT_ID="${SNAPSHOT_ID:-234895636}"
 BASE_RUNNER="${BASE_RUNNER:-runner}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 USER_DATA_SCRIPT="$SCRIPT_DIR/runner-ephemeral.sh"
@@ -74,7 +76,7 @@ create_runner() {
 
   doctl compute droplet create "$name" \
     --size "$DROPLET_SIZE" \
-    --image ubuntu-24-04-x64 \
+    --image "$SNAPSHOT_ID" \
     --region "$DROPLET_REGION" \
     --ssh-keys "$SSH_KEY_ID" \
     --tag-names "ephemeral-runner,$repo" \

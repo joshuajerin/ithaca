@@ -44,6 +44,19 @@ _TYPED_ERROR_CODES = [
     "DUPLICATE_IDEMPOTENCY_KEY",
 ]
 
+_PUBLIC_SKILL_IDS = {
+    "backtest.run",
+    "market.get_ohlcv",
+    "market.movers",
+    "market.news",
+    "market.quote",
+    "market.screener",
+    "options.greeks",
+    "options.implied_vol",
+    "risk.stress",
+    "vix.term_structure",
+}
+
 _TOOLKITS: dict[str, dict] = {
     "session": {
         "name": "Research Session",
@@ -60,74 +73,37 @@ _TOOLKITS: dict[str, dict] = {
     },
     "market-research": {
         "name": "Market Research",
-        "description": "Live/archive prices, news, movers, sentiment, breadth, macro, and volatility context.",
+        "description": "Doomberg live-data quotes, history, news, movers, screeners, and volatility context.",
         "direct_tools": [
             "market_quote",
             "market_get_ohlcv",
             "market_news",
             "market_screener",
             "market_movers",
-            "market_tide",
-            "sentiment_get",
-            "macro_dashboard",
             "vix_term_structure",
         ],
         "skill_ids": [
             "market.news",
             "market.screener",
             "market.movers",
-            "market.tide",
-            "sentiment.get",
-            "macro.dashboard",
             "vix.term_structure",
         ],
         "required_first_tool": "start_research_session",
     },
-    "fundamentals": {
-        "name": "Fundamentals",
-        "description": "Single-name, peer, PIT, financial statement, earnings, analyst, and ownership research.",
+    "computed-risk": {
+        "name": "Computed Risk",
+        "description": "Pure computed options, risk shock, and volatility context without archive data.",
         "direct_tools": [
-            "fundamentals_get",
-            "fundamentals_compare",
-            "fundamentals_pit",
-            "financials_income",
-            "financials_balance",
-            "financials_cashflow",
-            "analyst_ratings",
-            "institutional_holdings",
-            "institutional_flows",
-        ],
-        "skill_ids": [
-            "fundamentals.get",
-            "fundamentals.compare",
-            "fundamentals.pit",
-            "financials.income",
-            "financials.balance",
-            "financials.cashflow",
-            "analyst.ratings",
-            "institutional.holdings",
-            "institutional.flows",
-        ],
-        "required_first_tool": "start_research_session",
-    },
-    "portfolio-risk": {
-        "name": "Portfolio And Risk",
-        "description": "Portfolio optimization, stress, factors, correlation, scenarios, and Monte Carlo analysis.",
-        "direct_tools": [
-            "portfolio_optimize",
+            "options_greeks",
+            "options_implied_vol",
             "risk_stress",
-            "factor_exposures",
-            "correlation_matrix",
-            "scenario_project",
-            "montecarlo_simulate",
+            "vix_term_structure",
         ],
         "skill_ids": [
-            "portfolio.optimize",
+            "options.greeks",
+            "options.implied_vol",
             "risk.stress",
-            "factor.exposures",
-            "correlation.matrix",
-            "scenario.project",
-            "montecarlo.simulate",
+            "vix.term_structure",
         ],
         "required_first_tool": "start_research_session",
     },
@@ -145,43 +121,6 @@ _TOOLKITS: dict[str, dict] = {
             "get_artifact",
         ],
         "skill_ids": ["tearsheet", "walkforward.run"],
-        "required_first_tool": "start_research_session",
-    },
-    "events-and-positioning": {
-        "name": "Events And Positioning",
-        "description": "Congress, insider, shorting, ETF, economic, FDA, earnings, and catalyst tools.",
-        "direct_tools": [
-            "congress_trades",
-            "politician_portfolio",
-            "congress_screener",
-            "congress_late_filings",
-            "insider_activity",
-            "short_interest",
-            "short_volume",
-            "short_ftd",
-            "short_screener",
-            "etf_holdings",
-            "etf_exposure",
-            "economic_calendar",
-            "fda_calendar",
-            "earnings_calendar",
-        ],
-        "skill_ids": [
-            "congress.trades",
-            "politician.portfolio",
-            "congress.screener",
-            "congress.late_filings",
-            "insider.activity",
-            "short.interest",
-            "short.volume",
-            "short.ftd",
-            "short.screener",
-            "etf.holdings",
-            "etf.exposure",
-            "economic.calendar",
-            "fda.calendar",
-            "earnings.calendar",
-        ],
         "required_first_tool": "start_research_session",
     },
 }
@@ -270,7 +209,14 @@ def _ibkr_skill_envelope(data: dict, *, as_of: str | None = None) -> dict:
 def _live_news_unavailable_envelope(reason: str, *, scope: str | None = None) -> dict:
     scope = (scope or "Markets").strip().upper() or "Markets"
     return {
-        "data": None,
+        "data": {
+            "scope": scope,
+            "items": [],
+            "count": 0,
+            "sentimentMix": {"positive": 0, "negative": 0, "neutral": 0},
+            "asOf": datetime.now(timezone.utc).isoformat(),
+            "provider": PUBLIC_DATA_SOURCE,
+        },
         "provenance": {
             "source": PUBLIC_DATA_SOURCE,
             "as_of": datetime.now(timezone.utc).isoformat(),
@@ -288,6 +234,42 @@ def _live_news_unavailable_envelope(reason: str, *, scope: str | None = None) ->
             "detail": reason or "live news is unavailable from the configured live data engine",
         }],
     }
+
+
+def _market_activity_news_items(rows: list[dict], *, as_of: str, limit: int) -> list[dict]:
+    items: list[dict] = []
+    for idx, row in enumerate(rows[:limit], start=1):
+        symbol = str(row.get("symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        rank = row.get("rank") or idx
+        bits = []
+        name = row.get("name")
+        exchange = row.get("exchange")
+        price = row.get("price")
+        change_pct = row.get("changePct")
+        if name:
+            bits.append(str(name))
+        if exchange:
+            bits.append(f"listed on {exchange}")
+        if price is not None:
+            bits.append(f"last price {price}")
+        if change_pct is not None:
+            bits.append(f"change {change_pct}%")
+        summary = "; ".join(bits) or "Recent live market-activity signal from Doomberg live data."
+        items.append({
+            "id": f"market-activity-{symbol}-{rank}",
+            "headline": f"{symbol} active in Doomberg live market scan",
+            "source": PUBLIC_DATA_SOURCE,
+            "summary": summary,
+            "url": None,
+            "publishedAt": as_of,
+            "sentiment": None,
+            "tickers": [symbol],
+            "sector": None,
+            "kind": "market_activity",
+        })
+    return items
 
 
 def _sanitize_live_data(value):
@@ -344,8 +326,7 @@ class Toolset:
         self.sink = sink or InMemoryTrace()
         self.platform = platform
         self.runs = runs  # optional RunStore-like; enables persistent research sessions
-        # The archive-backed Skill catalog. ``archive`` is duck-typed to ArchiveGateway; None is
-        # fine (skills then return an ARCHIVE_UNAVAILABLE warning instead of crashing).
+        # Legacy SkillSet is retained for pure computed catalog tools; no hosted archive is wired.
         self.skills = SkillSet(archive)
         self._proc_session = uuid.uuid4().hex  # groups a stdio process's calls when ctx has none
         self._sessions: dict[tuple[str, str], str] = {}  # (tenant, session) -> research run_id
@@ -617,28 +598,37 @@ class Toolset:
         ctx = dict(_ctx or {})
         tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
         client = IbkrEngineClient()
-        if client.configured():
-            try:
-                period, bar = self._ibkr_history_window(range, interval)
-                raw = client.history(symbol, period=period, bar=bar, tenant_id=tenant_id)
-                points = raw.get("points") or []
-                if points:
-                    out = _ibkr_skill_envelope(
-                        {
-                            "symbol": str(raw.get("symbol") or symbol).upper(),
-                            "points": points,
-                            "quote": raw.get("quote") or {},
-                            "provider": PUBLIC_DATA_SOURCE,
-                            "period": raw.get("period") or period,
-                            "bar": raw.get("bar") or bar,
-                        },
-                        as_of=(raw.get("quote") or {}).get("asOf") or points[-1].get("t") or points[-1].get("d"),
-                    )
-                    tr.tool_result("market.get_ohlcv", span, _provenance_summary(out))
-                    return out
-            except IbkrEngineError:
-                pass
-        out = self.core.run_tool("market.get_ohlcv", {"symbol": symbol, "range": range, "interval": interval})
+        if not client.configured():
+            out = self._typed_error(
+                "BROKER_CONNECTION_REQUIRED",
+                "live history requires the Doomberg live-data engine",
+                "Configure DOOMBERG_IBKR_ENGINE_URL and rerun market_get_ohlcv.",
+            )
+            tr.tool_result("market.get_ohlcv", span, {"source": PUBLIC_DATA_SOURCE, "ok": False,
+                                                      "code": out["error"]["code"]})
+            return out
+        try:
+            period, bar = self._ibkr_history_window(range, interval)
+            raw = client.history(symbol, period=period, bar=bar, tenant_id=tenant_id)
+            points = raw.get("points") or []
+            out = _ibkr_skill_envelope(
+                {
+                    "symbol": str(raw.get("symbol") or symbol).upper(),
+                    "points": points,
+                    "quote": raw.get("quote") or {},
+                    "provider": PUBLIC_DATA_SOURCE,
+                    "period": raw.get("period") or period,
+                    "bar": raw.get("bar") or bar,
+                },
+                as_of=(raw.get("quote") or {}).get("asOf")
+                or (points[-1].get("t") or points[-1].get("d") if points else None),
+            )
+        except IbkrEngineError as exc:
+            out = self._typed_error(
+                "PROVIDER_DEGRADED",
+                f"live history unavailable: {exc}",
+                "Check the Doomberg live-data engine history route and IBKR session entitlements.",
+            )
         tr.tool_result("market.get_ohlcv", span, _provenance_summary(out))
         return out
 
@@ -704,8 +694,7 @@ class Toolset:
         """Live market news only.
 
         The direct MCP news tool must not silently fall back to the old archive because agents
-        use it for "latest news" questions. Archive news remains available only through the
-        explicit catalog skill path.
+        use it for "latest news" questions.
         """
 
         required = self._require_research_session(_ctx)
@@ -716,44 +705,14 @@ class Toolset:
         span = tr.tool_call("market.news", {"ticker": ticker, "sector": sector, "limit": limit})
         ctx = dict(_ctx or {})
         tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
-        client = IbkrEngineClient()
-        if not client.configured():
-            out = self._typed_error(
-                "BROKER_CONNECTION_REQUIRED",
-                "live news requires the Doomberg live-data engine",
-                "Configure DOOMBERG_IBKR_ENGINE_URL and rerun market_news.",
-            )
-            tr.tool_result("market.news", span, {"source": PUBLIC_DATA_SOURCE, "ok": False,
-                                                 "code": out["error"]["code"]})
-            return out
-        try:
-            ticker_arg = (ticker or "").strip().upper() or None
-            raw = client.news(ticker=ticker_arg, limit=_i(limit, 50, 1, 50), tenant_id=tenant_id)
-            items = raw.get("items") or []
-            if not items:
-                raise IbkrEngineError("live news returned no items")
-            pos = sum(1 for item in items if item.get("sentiment") == "positive")
-            neg = sum(1 for item in items if item.get("sentiment") == "negative")
-            data = {
-                "scope": raw.get("scope") or ticker_arg or sector or "Markets",
-                "items": items,
-                "count": len(items),
-                "sentimentMix": {"positive": pos, "negative": neg, "neutral": len(items) - pos - neg},
-                "asOf": raw.get("asOf") or items[0].get("publishedAt"),
-                "provider": PUBLIC_DATA_SOURCE,
-            }
-            out = _ibkr_skill_envelope(data, as_of=data.get("asOf"))
-            tr.tool_result("market.news", span, _provenance_summary(out))
-            return out
-        except IbkrEngineError as exc:
-            out = self._typed_error(
-                "PROVIDER_DEGRADED",
-                f"live news unavailable: {exc}",
-                "Check the live-data engine news route and IBKR session entitlements.",
-            )
-            tr.tool_result("market.news", span, {"source": PUBLIC_DATA_SOURCE, "ok": False,
-                                                 "code": out["error"]["code"]})
-            return out
+        out = self._ibkr_live_news(
+            ticker=(ticker or "").strip().upper() or None,
+            sector=sector,
+            limit=_i(limit, 50, 1, 50),
+            tenant_id=tenant_id,
+        )
+        tr.tool_result("market.news", span, _provenance_summary(out))
+        return out
 
     def broker_accounts(self, _ctx: dict | None = None) -> dict:
         return self._typed_error(
@@ -820,7 +779,7 @@ class Toolset:
         return {"strategy_id": strategy_id, "status": "draft", "spec": validated}
 
     def call_skill(self, tool: str, params: dict, _ctx: dict | None = None) -> dict:
-        """Run an archive-backed Skill catalog tool, traced exactly like market_get_ohlcv.
+        """Run a public Skill catalog tool, traced exactly like market_get_ohlcv.
 
         ``tool`` is the canonical SKILLS name (e.g. ``market.news``). Declarative args only — the
         skill never executes agent code. tool_call / tool_result events are emitted on the same
@@ -852,24 +811,39 @@ class Toolset:
         method = SKILLS.get(tool)
         if method is None:
             raise ValueError(f"unknown skill: {tool!r} (have {sorted(SKILLS)})")
+        if tool not in _PUBLIC_SKILL_IDS:
+            return self._typed_error(
+                "POLICY_DENIED",
+                f"{tool} is not available in the live-data-only MCP",
+                "Use Doomberg live-data market tools or pure computed tools.",
+            )
         tr = self._tracer(_ctx)
         span = tr.tool_call(tool, params)
         ctx = dict(_ctx or {})
         tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
-        if tool in {"market.news", "market.movers", "market.screener"}:
+        if tool == "market.news":
+            out = self._ibkr_live_news(
+                ticker=(params.get("ticker") or params.get("symbol") or "").strip().upper() or None,
+                sector=params.get("sector"),
+                limit=_i(params.get("limit"), 10, 1, 50),
+                tenant_id=tenant_id,
+            )
+            tr.tool_result(tool, span, _provenance_summary(out))
+            return out
+        if tool in {"market.movers", "market.screener"}:
             try:
                 out = self._ibkr_live_skill(tool, params, tenant_id=tenant_id)
                 tr.tool_result(tool, span, _provenance_summary(out))
                 return out
             except IbkrEngineError as exc:
-                if tool == "market.news" and IbkrEngineClient().configured():
-                    out = _live_news_unavailable_envelope(
-                        str(exc),
-                        scope=params.get("ticker") or params.get("symbol") or params.get("sector"),
-                    )
-                    tr.tool_result(tool, span, _provenance_summary(out))
-                    return out
-                pass
+                out = self._typed_error(
+                    "PROVIDER_DEGRADED" if IbkrEngineClient().configured() else "BROKER_CONNECTION_REQUIRED",
+                    f"live data unavailable: {exc}",
+                    "Check the Doomberg live-data engine route and session entitlements.",
+                )
+                tr.tool_result(tool, span, {"source": PUBLIC_DATA_SOURCE, "ok": False,
+                                            "code": out["error"]["code"]})
+                return out
         out = getattr(self.skills, method)(params)
         tr.tool_result(tool, span, _provenance_summary(out))
         return out
@@ -888,6 +862,75 @@ class Toolset:
         }
         return range_value or "1d", interval_map.get(str(interval or "").lower(), interval or "5min")
 
+    def _ibkr_live_news(
+        self,
+        *,
+        ticker: str | None,
+        sector: str | None,
+        limit: int,
+        tenant_id: str,
+        client: IbkrEngineClient | None = None,
+    ) -> dict:
+        client = client or IbkrEngineClient()
+        scope = ticker or (sector or "").strip() or "Markets"
+        if not client.configured():
+            return _live_news_unavailable_envelope("live data engine is not configured", scope=scope)
+
+        errors: list[str] = []
+        attempts: list[str | None] = [ticker] if ticker else [None]
+        if ticker:
+            attempts.append(None)
+
+        for news_ticker in attempts:
+            try:
+                raw = client.news(ticker=news_ticker, limit=limit, tenant_id=tenant_id)
+            except IbkrEngineError as exc:
+                errors.append(str(exc))
+                continue
+            items = raw.get("items") if isinstance(raw, dict) else []
+            if not isinstance(items, list):
+                items = []
+            if not items:
+                continue
+            pos = sum(1 for item in items if isinstance(item, dict) and item.get("sentiment") == "positive")
+            neg = sum(1 for item in items if isinstance(item, dict) and item.get("sentiment") == "negative")
+            as_of = raw.get("asOf") or next(
+                (item.get("publishedAt") for item in items if isinstance(item, dict) and item.get("publishedAt")),
+                None,
+            )
+            data = {
+                "scope": raw.get("scope") or news_ticker or scope,
+                "items": items,
+                "count": len(items),
+                "sentimentMix": {"positive": pos, "negative": neg, "neutral": len(items) - pos - neg},
+                "asOf": as_of,
+                "provider": PUBLIC_DATA_SOURCE,
+            }
+            return _ibkr_skill_envelope(data, as_of=data.get("asOf"))
+
+        try:
+            raw_scan = client.scanner(scan_type="MOST_ACTIVE", limit=limit, tenant_id=tenant_id)
+            rows = raw_scan.get("rows") if isinstance(raw_scan, dict) else []
+            if not isinstance(rows, list):
+                rows = []
+            as_of = raw_scan.get("asOf") or datetime.now(timezone.utc).isoformat()
+            items = _market_activity_news_items(rows, as_of=as_of, limit=limit)
+            if items:
+                data = {
+                    "scope": scope,
+                    "items": items,
+                    "count": len(items),
+                    "sentimentMix": {"positive": 0, "negative": 0, "neutral": len(items)},
+                    "asOf": as_of,
+                    "provider": PUBLIC_DATA_SOURCE,
+                }
+                return _ibkr_skill_envelope(data, as_of=as_of)
+        except IbkrEngineError as exc:
+            errors.append(str(exc))
+
+        detail = "; ".join(errors) if errors else "live news returned no items"
+        return _live_news_unavailable_envelope(detail, scope=scope)
+
     def _ibkr_live_skill(self, tool: str, params: dict, *, tenant_id: str) -> dict:
         client = IbkrEngineClient()
         if not client.configured():
@@ -895,21 +938,13 @@ class Toolset:
         if tool == "market.news":
             ticker = (params.get("ticker") or params.get("symbol") or "").strip().upper() or None
             limit = _i(params.get("limit"), 10, 1, 50)
-            raw = client.news(ticker=ticker, limit=limit, tenant_id=tenant_id)
-            items = raw.get("items") or []
-            if not items:
-                raise IbkrEngineError("live news returned no items")
-            pos = sum(1 for item in items if item.get("sentiment") == "positive")
-            neg = sum(1 for item in items if item.get("sentiment") == "negative")
-            data = {
-                "scope": raw.get("scope") or ticker or "Markets",
-                "items": items,
-                "count": len(items),
-                "sentimentMix": {"positive": pos, "negative": neg, "neutral": len(items) - pos - neg},
-                "asOf": raw.get("asOf") or items[0].get("publishedAt"),
-                "provider": PUBLIC_DATA_SOURCE,
-            }
-            return _ibkr_skill_envelope(data, as_of=data.get("asOf"))
+            return self._ibkr_live_news(
+                ticker=ticker,
+                sector=params.get("sector"),
+                limit=limit,
+                tenant_id=tenant_id,
+                client=client,
+            )
         if tool == "market.movers":
             limit = _i(params.get("limit"), 25, 1, 100)
             gainers = client.scanner(scan_type="TOP_PERC_GAIN", limit=max(5, limit), tenant_id=tenant_id).get("rows") or []
@@ -946,7 +981,11 @@ class Toolset:
                       intent: str | None = None) -> dict:
         """Progressive skill discovery: small catalog entries, not all tools as context."""
         q = (query or "").strip().lower()
-        entries = [self._manifest_entry(m) for m in ALL_SKILL_MANIFESTS.values()]
+        entries = [
+            self._manifest_entry(m)
+            for skill_id, m in ALL_SKILL_MANIFESTS.items()
+            if skill_id in _PUBLIC_SKILL_IDS
+        ]
         if q:
             entries = [
                 e for e in entries
@@ -1034,7 +1073,7 @@ class Toolset:
         """Return a compact manifest-like description for a skill."""
         skill_id = self._canonical_skill_id(skill_id)
         manifest = ALL_SKILL_MANIFESTS.get(skill_id)
-        if manifest is None:
+        if manifest is None or skill_id not in _PUBLIC_SKILL_IDS:
             return self._typed_error("INVALID_SYMBOL", f"unknown skill: {skill_id}",
                                      "Call search_skills and use a returned skill_id.")
         out = dict(manifest)
@@ -1046,7 +1085,11 @@ class Toolset:
     def skills_catalog_resource(self) -> dict:
         """Read-only MCP resource for progressive skill discovery."""
         entries = sorted(
-            (self._manifest_entry(m) for m in ALL_SKILL_MANIFESTS.values()),
+            (
+                self._manifest_entry(m)
+                for skill_id, m in ALL_SKILL_MANIFESTS.items()
+                if skill_id in _PUBLIC_SKILL_IDS
+            ),
             key=lambda entry: entry["skill_id"],
         )
         return {
@@ -1867,32 +1910,6 @@ class Toolset:
         )
 
 
-def _build_archive():
-    """Lazily build the real archive gateway from ``DOOMBERG_ARCHIVE_URL``.
-
-    Stream 1's ``doomberg_archive`` package may not be synced yet, so this is best-effort: if the
-    package is importable it constructs the gateway, otherwise it returns None and the archive-backed
-    skills degrade to a clear ARCHIVE_UNAVAILABLE warning. Never raises at import time.
-    """
-    import os
-
-    url = os.environ.get("DOOMBERG_ARCHIVE_URL") or os.environ.get("DOOMBERG_DB")
-    if not url:
-        return None
-    if not url.startswith(("postgres://", "postgresql://")):
-        return None
-    try:
-        # PgArchiveGateway is the CONCRETE psycopg gateway; ArchiveGateway is just the
-        # Protocol (not constructible). Construct the concrete one against the archive DSN.
-        from doomberg_archive import PgArchiveGateway as _Gateway  # type: ignore
-    except Exception:
-        return None
-    try:
-        return _Gateway(url)
-    except Exception:
-        return None
-
-
 def _platform_backed_toolset() -> Toolset:
     """A Toolset whose trace persists to the shared platform store (``DOOMBERG_DB``).
 
@@ -1908,7 +1925,6 @@ def _platform_backed_toolset() -> Toolset:
         core=Core(),
         sink=PlatformTraceSink(platform.trace),
         runs=platform.runs,
-        archive=_build_archive(),
         platform=platform,
     )
 
@@ -2204,88 +2220,23 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     def propose_strategy(spec: dict) -> dict:
         return ts.propose_strategy(spec, _ctx=_ctx())
 
-    # ---- direct live-data and archive-backed Skill catalog (declarative args only) ----
+    # ---- direct live-data and Skill catalog (declarative args only) ----
     @mcp.tool(name="market_news",
               description="Direct tool after start_research_session: live market news from the Doomberg live-data engine. Never falls back to archive news.")
     def market_news(ticker: str | None = None, sector: str | None = None, limit: int = 50) -> dict:
         return ts.market_news(ticker=ticker, sector=sector, limit=limit, _ctx=_ctx())
 
     @mcp.tool(name="market_screener",
-              description="Ranked equity screen over the tracked universe (fundamentals + 1Y return).")
+              description="Direct tool after start_research_session: live most-active screener from the Doomberg live-data engine.")
     def market_screener(sector: str | None = None, limit: int = 100) -> dict:
         return call_skill("market.screener", {"sector": sector, "limit": limit})
 
     @mcp.tool(name="market_movers",
-              description="Heatmap-style market movers with 1D moves and trailing returns.")
+              description="Direct tool after start_research_session: live gainers, losers, and active movers from the Doomberg live-data engine.")
     def market_movers(sector: str | None = None, limit: int = 100) -> dict:
         return call_skill("market.movers", {"sector": sector, "limit": limit})
 
-    @mcp.tool(name="fundamentals_get",
-              description="Single-name fundamentals metric cards from the archive.")
-    def fundamentals_get(symbol: str) -> dict:
-        return call_skill("fundamentals.get", {"symbol": symbol})
-
-    @mcp.tool(name="fundamentals_compare",
-              description="Peer comparison table across two or more symbols.")
-    def fundamentals_compare(symbols: list[str]) -> dict:
-        return call_skill("fundamentals.compare", {"symbols": symbols})
-
-    @mcp.tool(name="fundamentals_pit",
-              description="Point-in-time fundamentals: the latest report known on/before as_of (pit=true).")
-    def fundamentals_pit(symbol: str, as_of: str | None = None) -> dict:
-        return call_skill("fundamentals.pit", {"symbol": symbol, "as_of": as_of})
-
-    @mcp.tool(name="analyst_ratings",
-              description="Wall Street consensus, price-target band and recent changes for a ticker.")
-    def analyst_ratings(symbol: str) -> dict:
-        return call_skill("analyst.ratings", {"symbol": symbol})
-
-    @mcp.tool(name="congress_trades",
-              description="STOCK Act congressional trading disclosures, with notable highlights.")
-    def congress_trades(ticker: str | None = None, member: str | None = None, limit: int = 60) -> dict:
-        return call_skill("congress.trades", {"ticker": ticker, "member": member, "limit": limit})
-
-    @mcp.tool(name="insider_activity",
-              description="SEC Form 4/5 insider transactions for one ticker with a net buy/sell summary.")
-    def insider_activity(symbol: str, limit: int = 100) -> dict:
-        return call_skill("insider.activity", {"symbol": symbol, "limit": limit})
-
-    @mcp.tool(name="institutional_holdings",
-              description="Top 13F institutional holders of one ticker with QoQ change.")
-    def institutional_holdings(symbol: str) -> dict:
-        return call_skill("institutional.holdings", {"symbol": symbol})
-
-    @mcp.tool(name="institutional_flows",
-              description="QoQ institutional fund flows (biggest buyers/sellers) in one ticker.")
-    def institutional_flows(symbol: str) -> dict:
-        return call_skill("institutional.flows", {"symbol": symbol})
-
-    @mcp.tool(name="etf_holdings",
-              description="Ranked constituents of an ETF with top-N concentration.")
-    def etf_holdings(etf: str) -> dict:
-        return call_skill("etf.holdings", {"etf": etf})
-
-    @mcp.tool(name="etf_exposure",
-              description="Reverse lookup: which ETFs hold a given stock, and at what weight.")
-    def etf_exposure(symbol: str) -> dict:
-        return call_skill("etf.exposure", {"symbol": symbol})
-
-    @mcp.tool(name="sentiment_get",
-              description="Persisted sentiment snapshot for a symbol, sector or topic.")
-    def sentiment_get(scope: str, scope_type: str | None = None) -> dict:
-        return call_skill("sentiment.get", {"scope": scope, "scope_type": scope_type})
-
-    @mcp.tool(name="macro_dashboard",
-              description="Macro tiles grouped by asset class with a rule-based regime read.")
-    def macro_dashboard() -> dict:
-        return call_skill("macro.dashboard", {})
-
-    @mcp.tool(name="universe_list",
-              description="Investable-universe overview: symbols, sectors and coverage.")
-    def universe_list(sector: str | None = None, limit: int = 150) -> dict:
-        return call_skill("universe.list", {"sector": sector, "limit": limit})
-
-    # ---- COMPUTED skills (source="computed"): pure math on agent inputs / real archive series ----
+    # ---- COMPUTED skills (source="computed"): pure math on agent inputs ----
     @mcp.tool(name="options_greeks",
               description="Black-Scholes price + greeks for one European option (agent-supplied "
                           "S, K, T-years, r, sigma, type=call|put). Computed, no market data.")
@@ -2302,65 +2253,6 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
         return call_skill("options.implied_vol",
                              {"price": price, "S": S, "K": K, "T": T, "r": r, "type": type})
 
-    @mcp.tool(name="vol_realized",
-              description="Annualized realized (close-to-close log-return) volatility computed over "
-                          "real archive closes for a symbol.")
-    def vol_realized(symbol: str, lookback: int = 0) -> dict:
-        return call_skill("vol.realized", {"symbol": symbol, "lookback": lookback})
-
-    @mcp.tool(name="vol_term_structure",
-              description="Realized-vol term structure at trailing windows (default 20/60/120/252) "
-                          "computed over real archive closes.")
-    def vol_term_structure(symbol: str, windows: list[int] | None = None) -> dict:
-        return call_skill("vol.term_structure", {"symbol": symbol, "windows": windows})
-
-    @mcp.tool(name="correlation_matrix",
-              description="Pearson correlation matrix of daily returns across symbols, computed on "
-                          "real archive closes (symmetric, 1.0 diagonal).")
-    def correlation_matrix(symbols: list[str], lookback: int = 0) -> dict:
-        return call_skill("correlation.matrix", {"symbols": symbols, "lookback": lookback})
-
-    @mcp.tool(name="factor_exposures",
-              description="Standardized style-factor exposures (Market/Size/Value/Momentum/Quality) "
-                          "cross-sectionally z-scored from real archive fundamentals.")
-    def factor_exposures(symbols: list[str] | None = None, sector: str | None = None) -> dict:
-        return call_skill("factor.exposures", {"symbols": symbols, "sector": sector})
-
-    @mcp.tool(name="dcf_value",
-              description="5-year discounted-cash-flow valuation seeded from a symbol's archive "
-                          "fundamentals; agent may override DCF assumptions. Deterministic.")
-    def dcf_value(symbol: str, assumptions: dict | None = None) -> dict:
-        return call_skill("dcf.value", {"symbol": symbol, "assumptions": assumptions})
-
-    @mcp.tool(name="portfolio_optimize",
-              description="Mean-variance optimal long-only weights over real archive returns "
-                          "(mode=max_sharpe|min_variance|target_vol). Weights sum to ~1.")
-    def portfolio_optimize(symbols: list[str] | None = None, sector: str | None = None,
-                          mode: str = "max_sharpe") -> dict:
-        return call_skill("portfolio.optimize",
-                             {"symbols": symbols, "sector": sector, "mode": mode})
-
-    @mcp.tool(name="montecarlo_simulate",
-              description="GBM/bootstrap terminal-price distribution (percentile fan + summary). "
-                          "Deterministic via 'seed'. Drives from a symbol's archive history, or "
-                          "agent-supplied sigma/drift/S.")
-    def montecarlo_simulate(symbol: str | None = None, sigma: float | None = None,
-                           drift: float = 0.0, S: float | None = None, horizon: int = 252,
-                           paths: int = 1000, seed: int = 12345, method: str = "gbm") -> dict:
-        return call_skill("montecarlo.simulate",
-                             {"symbol": symbol, "sigma": sigma, "drift": drift, "S": S,
-                              "horizon": horizon, "paths": paths, "seed": seed, "method": method})
-
-    @mcp.tool(name="scenario_project",
-              description="Baseline-vs-scenario forward projection: Monte-Carlo baseline on a "
-                          "symbol's real history plus an explicit incremental annualized drift. "
-                          "Deterministic via 'seed'.")
-    def scenario_project(symbol: str, scenarioDriftPct: float = 0.0, horizon: int = 252,
-                        paths: int = 1000, seed: int = 4242) -> dict:
-        return call_skill("scenario.project",
-                             {"symbol": symbol, "scenarioDriftPct": scenarioDriftPct,
-                              "horizon": horizon, "paths": paths, "seed": seed})
-
     @mcp.tool(name="risk_stress",
               description="Estimate book P&L under agent-supplied shocks: factor shocks "
                           "(exposures x shocks) or asset shocks (weights x shocks). Computed.")
@@ -2369,133 +2261,9 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
         return call_skill("risk.stress",
                              {"shocks": shocks, "exposures": exposures, "weights": weights})
 
-    @mcp.tool(name="tearsheet",
-              description="Single-strategy backtest tearsheet (curve, drawdown, trade log, stats) "
-                          "over a symbol's real archive closes.")
-    def tearsheet(symbol: str, strategy: str = "momentum", params: dict | None = None,
-                 cost_bps: float = 5.0) -> dict:
-        return call_skill("tearsheet",
-                             {"symbol": symbol, "strategy": strategy, "params": params,
-                              "cost_bps": cost_bps})
-
-    @mcp.tool(name="walkforward_run",
-              description="Anchored walk-forward validation + overfitting diagnostics over a "
-                          "symbol's real archive closes (honest coverage block, no fabricated folds).")
-    def walkforward_run(symbol: str, strategy: str = "momentum", n_splits: int = 5) -> dict:
-        return call_skill("walkforward.run",
-                             {"symbol": symbol, "strategy": strategy, "n_splits": n_splits})
-
-    @mcp.tool(name="seasonality_monthly", description="Average monthly return + win rate for a symbol (Jan-Dec calendar seasonality).")
-    def seasonality_monthly(symbol: str, years: int = 10) -> dict:
-        return call_skill("seasonality.monthly", {"symbol": symbol, "years": years})
-
-    @mcp.tool(name="seasonality_heatmap", description="Month x year return heatmap showing historical seasonal patterns for a symbol.")
-    def seasonality_heatmap(symbol: str, years: int = 10) -> dict:
-        return call_skill("seasonality.heatmap", {"symbol": symbol, "years": years})
-
-    @mcp.tool(name="vol_iv_rank", description="IV rank and IV percentile from realized vol history for a symbol.")
-    def vol_iv_rank(symbol: str, lookback: int = 252) -> dict:
-        return call_skill("vol.iv_rank", {"symbol": symbol, "lookback": lookback})
-
-    @mcp.tool(name="vol_vrp", description="Variance risk premium (implied minus realized vol) — positive = expensive vol.")
-    def vol_vrp(symbol: str, window: int = 30) -> dict:
-        return call_skill("vol.vrp", {"symbol": symbol, "window": window})
-
-    @mcp.tool(name="vol_anomaly_score", description="Z-score of current realized vol vs trailing 1Y distribution — flags unusually high/low vol.")
-    def vol_anomaly_score(symbol: str, window: int = 252) -> dict:
-        return call_skill("vol.anomaly_score", {"symbol": symbol, "window": window})
-
-    @mcp.tool(name="vol_character", description="Hurst exponent analysis: is this symbol's vol trending, mean-reverting, or random-walk?")
-    def vol_character(symbol: str, window: int = 252) -> dict:
-        return call_skill("vol.character", {"symbol": symbol, "window": window})
-
-    @mcp.tool(name="technical_indicators", description="RSI, MACD, Bollinger Bands, and ATR computed from real archive OHLCV data.")
-    def technical_indicators(symbol: str, range: str = "6mo") -> dict:
-        return call_skill("technical.indicators", {"symbol": symbol, "range": range})
-
-    @mcp.tool(name="dividends", description="Historical dividend payments and trailing twelve-month yield for a symbol.")
-    def dividends(symbol: str, years: int = 5) -> dict:
-        return call_skill("dividends", {"symbol": symbol, "years": years})
-
-    @mcp.tool(name="short_interest", description="Current short interest, float %, days-to-cover, and squeeze score for a symbol.")
-    def short_interest(symbol: str) -> dict:
-        return call_skill("short.interest", {"symbol": symbol})
-
-    @mcp.tool(name="short_volume", description="Daily short volume and short ratio time series for a symbol.")
-    def short_volume(symbol: str, days: int = 30) -> dict:
-        return call_skill("short.volume", {"symbol": symbol, "days": days})
-
-    @mcp.tool(name="short_ftd", description="SEC failures-to-deliver (FTD) records for a symbol — a short squeeze indicator.")
-    def failures_to_deliver(symbol: str, limit: int = 20) -> dict:
-        return call_skill("short.ftd", {"symbol": symbol, "limit": limit})
-
-    @mcp.tool(name="short_screener", description="Screen for highest short interest and squeeze candidates across the universe.")
-    def short_screener(min_si_pct: float = 15.0, limit: int = 50) -> dict:
-        return call_skill("short.screener", {"min_si_pct": min_si_pct, "limit": limit})
-
-    @mcp.tool(name="economic_calendar", description="Upcoming macro events: FOMC, CPI, NFP, PCE, GDP and other high-impact releases.")
-    def economic_calendar(days_ahead: int = 30) -> dict:
-        return call_skill("economic.calendar", {"days_ahead": days_ahead})
-
-    @mcp.tool(name="fda_calendar", description="Upcoming FDA PDUFA action dates and AdCom meetings for biotech catalysts.")
-    def fda_calendar(days_ahead: int = 90) -> dict:
-        return call_skill("fda.calendar", {"days_ahead": days_ahead})
-
-    @mcp.tool(name="commodity_prices", description="Current prices and recent changes for major commodities: oil, gold, natgas, silver, copper, wheat.")
-    def commodity_prices() -> dict:
-        return call_skill("commodity.prices", {})
-
-    @mcp.tool(name="forex_rates", description="Major FX pair rates and recent changes (EUR/USD, GBP/USD, USD/JPY, AUD/USD, etc.).")
-    def forex_rates(base: str = "USD") -> dict:
-        return call_skill("forex.rates", {"base": base})
-
-    @mcp.tool(name="crypto_prices", description="Top cryptocurrencies by market cap with price, 24h change, and volume.")
-    def crypto_prices(limit: int = 20) -> dict:
-        return call_skill("crypto.prices", {"limit": limit})
-
     @mcp.tool(name="vix_term_structure", description="VIX spot and futures term structure — contango/backwardation signals market fear regime.")
     def vix_term_structure() -> dict:
         return call_skill("vix.term_structure", {})
-
-    @mcp.tool(name="market_tide", description="Market breadth: advancing vs declining stocks, volume ratio, pct above 50/200d MA.")
-    def market_tide(lookback: int = 20) -> dict:
-        return call_skill("market.tide", {"lookback": lookback})
-
-    @mcp.tool(name="financials_income", description="Quarterly income statements: revenue, gross profit, EBITDA, net income, EPS.")
-    def financials_income(symbol: str, periods: int = 8) -> dict:
-        return call_skill("financials.income", {"symbol": symbol, "periods": periods})
-
-    @mcp.tool(name="financials_balance", description="Quarterly balance sheets: assets, liabilities, equity, cash, debt, book value.")
-    def financials_balance(symbol: str, periods: int = 8) -> dict:
-        return call_skill("financials.balance", {"symbol": symbol, "periods": periods})
-
-    @mcp.tool(name="financials_cashflow", description="Quarterly cash flow statements: operating, investing, financing, and free cash flow.")
-    def financials_cashflow(symbol: str, periods: int = 8) -> dict:
-        return call_skill("financials.cashflow", {"symbol": symbol, "periods": periods})
-
-    @mcp.tool(name="earnings_transcript", description="Earnings call transcript text for a symbol and quarter (requires FMP_API_KEY).")
-    def earnings_transcript(symbol: str, year: int | None = None, quarter: int | None = None) -> dict:
-        return call_skill("earnings.transcript", {"symbol": symbol, "year": year, "quarter": quarter})
-
-    @mcp.tool(name="earnings_calendar", description="Upcoming earnings dates and EPS/revenue consensus estimates for tracked symbols.")
-    def earnings_calendar(days_ahead: int = 30) -> dict:
-        return call_skill("earnings.calendar", {"days_ahead": days_ahead})
-
-    @mcp.tool(name="stock_splits", description="Historical stock split history for a symbol.")
-    def stock_splits(symbol: str, years: int = 10) -> dict:
-        return call_skill("stock.splits", {"symbol": symbol, "years": years})
-
-    @mcp.tool(name="politician_portfolio", description="Estimated current portfolio of a US politician from STOCK Act trade disclosures.")
-    def politician_portfolio(name: str) -> dict:
-        return call_skill("politician.portfolio", {"name": name})
-
-    @mcp.tool(name="congress_late_filings", description="STOCK Act violations: trades filed more than 45 days after transaction date.")
-    def congress_late_filings(days: int = 365, limit: int = 50) -> dict:
-        return call_skill("congress.late_filings", {"days": days, "limit": limit})
-
-    @mcp.tool(name="congress_screener", description="Politicians ranked by trading activity and win rate based on STOCK Act disclosures.")
-    def congress_screener(min_trades: int = 5, limit: int = 50) -> dict:
-        return call_skill("congress.screener", {"min_trades": min_trades, "limit": limit})
 
     return mcp, ts
 

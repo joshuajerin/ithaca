@@ -1,9 +1,9 @@
 """The ``ArchiveGateway`` read seam.
 
 Defined locally (duck-typed Protocol) so the skills can be built + tested in parallel with
-Stream 1's concrete Postgres implementation. Any object that structurally satisfies these
-method signatures — including the in-memory ``FakeArchive`` in the tests, or Stream 1's
-``doomberg_archive`` gateway — can back a :class:`~doomberg_core.skills.SkillSet`.
+legacy concrete implementations. Any object that structurally satisfies these method
+signatures — including the in-memory ``FakeArchive`` in the tests — can back a
+:class:`~doomberg_core.skills.SkillSet`.
 
 Rows are plain JSON-shaped dicts whose keys match the canonical ``archive.*`` columns in
 ``docs/plans/doomberg-v2/DATA-LAYER-INTERFACES.md``. Skills NEVER issue raw SQL; they read only

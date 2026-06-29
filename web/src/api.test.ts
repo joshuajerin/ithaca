@@ -23,7 +23,7 @@ describe("agent toolkit catalog API", () => {
         name: "Market Research",
         description: "Quotes and catalysts",
         required_first_tool: "start_research_session",
-        direct_tools: ["start_research_session", "market_tide"],
+        direct_tools: ["start_research_session", "market_news"],
         tools: [{ name: "run_skill", description: "Run a catalog skill" }],
         skill_count: 12,
       }],
@@ -40,7 +40,7 @@ describe("agent toolkit catalog API", () => {
       required_first_tool: "start_research_session",
       direct_tool_count: 2,
       skill_count: 12,
-      direct_tools: ["start_research_session", "market_tide"],
+      direct_tools: ["start_research_session", "market_news"],
       tools: [{ name: "run_skill", description: "Run a catalog skill" }],
     }]);
     expect(catalog.source).toBe("live");

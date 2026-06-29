@@ -120,12 +120,12 @@ variable "paper_node_count" {
 
 # Whether Terraform OWNS (creates/manages) the Managed Postgres cluster. In this
 # deployment the dev + prod Managed Postgres already exist (created out of band
-# via doctl and seeded with the 240k-row archive.* data), so this defaults to
-# FALSE: Terraform must NOT create a duplicate DB. The workload reads the existing
-# prod DB via the DOOMBERG_PROD_URL secret instead. Flip to true only to let
+# via doctl), so this defaults to FALSE: Terraform must NOT create a duplicate
+# DB. The workload reads the existing prod DB via the DOOMBERG_PROD_URL secret
+# instead. Flip to true only to let
 # Terraform stand up a brand-new managed cluster.
 variable "manage_postgres" {
-  description = "If true, Terraform creates + manages the Managed Postgres cluster/db/user/firewall and the archive-load Job + PG-DSN outputs. Default false: the prod DB already exists and is read via the DOOMBERG_PROD_URL secret; never let TF create a duplicate."
+  description = "If true, Terraform creates + manages the Managed Postgres cluster/db/user/firewall and PG-DSN outputs. Default false: the prod DB already exists and is read via the DOOMBERG_PROD_URL secret; never let TF create a duplicate."
   type        = bool
   default     = false
 }
@@ -305,29 +305,6 @@ variable "postgres_maintenance_hour" {
   }
 }
 
-# ---------------------------------------------------------------------------
-# archive.* loader (Stream 1's loader image, run once on first deploy)
-# ---------------------------------------------------------------------------
-
-variable "archive_loader_image" {
-  description = "Image that runs scripts/import_v1_archive.py to seed archive.* on first deploy. Defaults to the same repo image (the loader script ships in it)."
-  type        = string
-  default     = "registry.digitalocean.com/doomberg/doomberg:latest"
-}
-
-variable "archive_loader_active_deadline_seconds" {
-  description = "Wall-clock deadline for the one-shot archive-load Job (bulk load of ~240k rows)."
-  type        = number
-  default     = 3600 # 1h — bulk COPY of the v1 archive
-}
-
-variable "enable_archive_load_job" {
-  description = "Render the one-shot archive-load Kubernetes Job. Seeds archive.* on first deploy; set false after the archive is loaded."
-  type        = bool
-  default     = true
-}
-
-# ---------------------------------------------------------------------------
 # Public Load Balancer (the always-on gateways' ingress)
 # ---------------------------------------------------------------------------
 

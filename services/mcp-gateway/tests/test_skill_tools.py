@@ -1,9 +1,8 @@
-"""The archive-backed Skill catalog, exposed as MCP tools.
+"""The public Skill catalog, exposed as MCP tools.
 
-Asserts: (1) every skill registers as an @mcp.tool alongside the original three; (2) a skill call
-emits the same gap-free tool_call/tool_result trace pair the existing tools do, carrying the
-canonical skill name + the archive provenance source; (3) with no archive wired the tools still
-register and degrade to an ARCHIVE_UNAVAILABLE warning (never crash).
+Asserts: (1) public skills register as @mcp.tool alongside the original three; (2) a skill call
+emits the same gap-free tool_call/tool_result trace pair the existing tools do; (3) legacy
+non-public skills degrade instead of reaching old data paths.
 """
 from __future__ import annotations
 
@@ -15,7 +14,7 @@ import numpy as np
 import pytest
 
 from doomberg_contracts import SkillManifest
-from doomberg_core import ALL_SKILL_MANIFESTS, SKILLS, Core
+from doomberg_core import ALL_SKILL_MANIFESTS, Core
 from doomberg_mcp import InMemoryTrace, Toolset
 
 R = "11111111-1111-1111-1111-111111111111"
@@ -121,7 +120,13 @@ class _LiveNewsServer:
                     "path": self.path,
                     "tenant": self.headers.get("X-Tenant-Id"),
                 })
-                raw = json.dumps(owner.payload).encode("utf-8")
+                if isinstance(owner.payload, dict) and self.path.startswith("/scanner"):
+                    payload = owner.payload.get("scanner", {})
+                elif isinstance(owner.payload, dict) and "news" in owner.payload:
+                    payload = owner.payload.get("news", {})
+                else:
+                    payload = owner.payload
+                raw = json.dumps(payload).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(raw)))
@@ -158,19 +163,41 @@ def archive_toolset() -> Toolset:
 
 
 def test_call_skill_traces_like_ohlcv(archive_toolset):
-    out = archive_toolset.call_skill("market.news", {"ticker": "NVDA"},
+    out = archive_toolset.call_skill("options.greeks", {
+        "S": 100,
+        "K": 100,
+        "T": 1.0,
+        "r": 0.05,
+        "sigma": 0.2,
+        "type": "call",
+    },
                                      _ctx={"run_id": R, "agent_id": AGENT})
-    assert out["provenance"]["source"] == "doomberg-v1-archive"
+    assert out["provenance"]["source"] == "computed"
     events = archive_toolset.sink.events(R)
     assert [e["type"] for e in events] == ["tool_call", "tool_result"]
     assert [e["seq"] for e in events] == [0, 1]  # gap-free
-    assert events[0]["data"]["name"] == "market.news"  # canonical tool name the read-model pairs on
+    assert events[0]["data"]["name"] == "options.greeks"  # canonical tool name the read-model pairs on
 
 
 def test_market_news_does_not_fall_back_to_archive_when_live_news_is_configured(archive_toolset, monkeypatch):
-    with _LiveNewsServer({"items": []}) as server:
+    with _LiveNewsServer({
+        "news": {"items": []},
+        "scanner": {
+            "rows": [{
+                "rank": 1,
+                "symbol": "NVDA",
+                "name": "NVIDIA",
+                "exchange": "NASDAQ",
+                "scanType": "MOST_ACTIVE",
+                "price": 154.25,
+                "changePct": 1.8,
+            }],
+            "asOf": "2026-06-29T20:00:00+00:00",
+        },
+    }) as server:
         monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
         monkeypatch.setenv("DOOMBERG_IBKR_NEWS_PATH", "/news")
+        monkeypatch.setenv("DOOMBERG_IBKR_SCANNER_PATH", "/scanner")
 
         out = archive_toolset.call_skill(
             "market.news",
@@ -178,11 +205,16 @@ def test_market_news_does_not_fall_back_to_archive_when_live_news_is_configured(
             _ctx={"run_id": R, "tenant_id": R, "agent_id": AGENT},
         )
 
-    assert out["data"] is None
+    assert out["data"]["items"][0]["headline"] == "NVDA active in Doomberg live market scan"
+    assert out["data"]["items"][0]["kind"] == "market_activity"
     assert out["provenance"]["source"] == "doomberg-live-data"
-    assert out["warnings"][0]["code"] == "LIVE_NEWS_UNAVAILABLE"
+    assert out["warnings"] == []
     assert '"headline": "h"' not in json.dumps(out)
-    assert server.requests == [{"path": "/news?limit=5&ticker=NVDA", "tenant": R}]
+    assert server.requests == [
+        {"path": "/news?limit=5&ticker=NVDA", "tenant": R},
+        {"path": "/news?limit=5", "tenant": R},
+        {"path": "/scanner?scan_type=MOST_ACTIVE&limit=5", "tenant": R},
+    ]
 
 
 def test_computed_skill_traces_with_computed_source(archive_toolset):
@@ -199,12 +231,10 @@ def test_computed_skill_traces_with_computed_source(archive_toolset):
     assert events[1]["data"]["summary"]["source"] == "computed"
 
 
-def test_pit_skill_marks_pit_true_in_summary(archive_toolset):
+def test_legacy_pit_skill_is_not_public(archive_toolset):
     out = archive_toolset.call_skill("fundamentals.pit", {"symbol": "NVDA", "as_of": "2024-05-01"},
                                      _ctx={"run_id": R})
-    assert out["provenance"]["pit"] == "true"
-    result = archive_toolset.sink.events(R)[-1]
-    assert result["data"]["summary"]["pit"] == "true"
+    assert out["error"]["code"] == "POLICY_DENIED"
 
 
 def test_unknown_skill_raises(archive_toolset):
@@ -219,28 +249,27 @@ async def test_server_advertises_all_skill_tools(archive_toolset):
     names = {t.name for t in await mcp.list_tools()}
     # the original three
     assert {"market_get_ohlcv", "backtest_run", "propose_strategy"} <= names
-    # every skill (the registry name with dots → underscores is the @mcp.tool name)
-    expected = {tool.replace(".", "_") for tool in SKILLS}
+    # only public live-data / pure computed skills are registered as direct MCP tools.
+    expected = {
+        "market_get_ohlcv",
+        "market_news",
+        "market_screener",
+        "market_movers",
+        "options_greeks",
+        "options_implied_vol",
+        "risk_stress",
+        "vix_term_structure",
+    }
     assert expected <= names
-    assert len(names) >= 3 + len(SKILLS)
+    assert "fundamentals_get" not in names
+    assert "market_tide" not in names
 
 
-def test_skills_degrade_without_archive():
+def test_legacy_skills_are_denied_without_archive():
     ts = Toolset(core=Core(), sink=InMemoryTrace())  # archive=None
     out = ts.call_skill("fundamentals.get", {"symbol": "NVDA"}, _ctx={"run_id": R})
-    assert out["data"] is None
-    assert out["warnings"][0]["code"] == "ARCHIVE_UNAVAILABLE"
-    # still traced
-    assert [e["type"] for e in ts.sink.events(R)] == ["tool_call", "tool_result"]
-
-
-def test_local_sqlite_db_is_not_reused_as_postgres_archive(monkeypatch):
-    from doomberg_mcp.server import _build_archive
-
-    monkeypatch.delenv("DOOMBERG_ARCHIVE_URL", raising=False)
-    monkeypatch.setenv("DOOMBERG_DB", "./doomberg.db")
-
-    assert _build_archive() is None
+    assert out["error"]["code"] == "POLICY_DENIED"
+    assert ts.sink.events(R) == []
 
 
 def test_progressive_skill_discovery_uses_manifest_catalog(archive_toolset):

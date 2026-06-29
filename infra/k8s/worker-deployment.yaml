@@ -80,28 +80,6 @@ spec:
             capabilities: { drop: ["ALL"] }
           volumeMounts:
             - { name: tmp, mountPath: /tmp }
-        - name: archive-migrate
-          image: ${WORKER_IMAGE}
-          imagePullPolicy: IfNotPresent
-          args: ["archive-migrate"]
-          env:
-            - name: DOOMBERG_ENV
-              value: "${DOOMBERG_ENV}"
-            - name: DOOMBERG_ARCHIVE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: doomberg-db
-                  key: archive_url
-          resources:
-            requests: { cpu: "100m", memory: 128Mi }
-            limits: { cpu: "500m", memory: 256Mi }
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            capabilities: { drop: ["ALL"] }
-          volumeMounts:
-            - { name: tmp, mountPath: /tmp }
       volumes:
         - name: tmp
           emptyDir: {}
@@ -119,11 +97,6 @@ spec:
                 secretKeyRef:
                   name: doomberg-db
                   key: platform_url
-            - name: DOOMBERG_ARCHIVE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: doomberg-db
-                  key: archive_url
             - name: DOOMBERG_BACKTEST_INTERVAL_S
               value: "2"
             - name: DOOMBERG_TRIGGER_JOB_INTERVAL_S

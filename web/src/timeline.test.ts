@@ -95,7 +95,7 @@ describe("timeline reducer", () => {
     const events: TraceEvent[] = [
       ev({ seq: 0, type: "session_open", data: { prompt: "what does nvda look like", title: "NVDA" } }),
       ev({ seq: 1, type: "tool_call", span_id: "root", data: { name: "market.news", args: { ticker: "NVDA" } } }),
-      ev({ seq: 2, type: "tool_result", span_id: "root", data: { name: "market.news", source: "archive" } }),
+      ev({ seq: 2, type: "tool_result", span_id: "root", data: { name: "market.news", source: "doomberg-live-data" } }),
       ev({
         seq: 3,
         type: "tool_call",
@@ -108,6 +108,6 @@ describe("timeline reducer", () => {
     expect(promptMeta(events).prompt).toBe("what does nvda look like");
     expect(workflow.map((item) => item.name)).toEqual(["user", "market.news", "fundamentals.get"]);
     expect(workflow.map((item) => item.depth)).toEqual([0, 1, 2]);
-    expect(workflow[1].summary).toContain("source archive");
+    expect(workflow[1].summary).toContain("source doomberg-live-data");
   });
 });

@@ -37,6 +37,14 @@ class _QuoteServer:
                     payload = {"positions": [{"symbol": "AAPL", "quantity": 3, "secret": "x"}]}
                 elif self.path.startswith("/orders"):
                     payload = {"orders": [{"order_id": "100", "symbol": "AAPL", "status": "Submitted"}]}
+                elif self.path.startswith("/history"):
+                    payload = {
+                        "symbol": "AAA",
+                        "period": "1y",
+                        "bar": "1d",
+                        "points": [{"t": now, "c": 1.25, "v": 1000}],
+                        "quote": {"asOf": now},
+                    }
                 elif self.path.startswith("/news"):
                     payload = {
                         "scope": "AAPL",
@@ -91,9 +99,70 @@ class _QuoteServer:
             self._thread.join(timeout=2)
 
 
-def test_market_get_ohlcv_returns_envelope_and_traces(toolset):
-    out = toolset.market_get_ohlcv("AAA", range="1y", _ctx={"run_id": R1, "agent_id": AGENT})
-    assert out["provenance"]["source"] == "yahoo-chart"
+class _LiveDataFallbackServer:
+    def __init__(self) -> None:
+        self.requests: list[dict[str, Any]] = []
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                owner.requests.append({"path": self.path, "tenant": self.headers.get("X-Tenant-Id")})
+                now = datetime.now(timezone.utc).isoformat()
+                if self.path.startswith("/news"):
+                    payload = {"scope": "Markets", "items": [], "asOf": now}
+                elif self.path.startswith("/scanner"):
+                    payload = {
+                        "rows": [{
+                            "rank": 1,
+                            "symbol": "NVDA",
+                            "name": "NVIDIA",
+                            "exchange": "NASDAQ",
+                            "scanType": "MOST_ACTIVE",
+                            "price": 154.25,
+                            "changePct": 1.8,
+                        }],
+                        "asOf": now,
+                    }
+                else:
+                    payload = {}
+                raw = json.dumps(payload).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def log_message(self, *_args: Any) -> None:
+                return
+
+        self._handler = Handler
+        self._server: ThreadingHTTPServer | None = None
+        self._thread: threading.Thread | None = None
+        self.url = ""
+
+    def __enter__(self) -> "_LiveDataFallbackServer":
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler)
+        host, port = self._server.server_address
+        self.url = f"http://{host}:{port}"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+
+
+def test_market_get_ohlcv_returns_envelope_and_traces(toolset, monkeypatch):
+    with _QuoteServer() as server:
+        monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
+        monkeypatch.setenv("DOOMBERG_IBKR_HISTORY_PATH", "/history?symbol={symbol}")
+        out = toolset.market_get_ohlcv("AAA", range="1y", _ctx={"run_id": R1, "tenant_id": R1, "agent_id": AGENT})
+    assert out["provenance"]["source"] == "doomberg-live-data"
+    assert server.requests == [{"path": "/history?symbol=AAA&period=1y&bar=1d", "tenant": R1}]
     events = toolset.sink.events(R1)
     assert [e["type"] for e in events] == ["tool_call", "tool_result"]
     # gap-free seq within the run
@@ -218,7 +287,7 @@ async def test_skill_resources_return_catalog_and_manifest(toolset):
     catalog_contents = await mcp.read_resource("doomberg://skills/catalog")
     catalog = json.loads(catalog_contents[0].content)
     assert catalog["kind"] == "skills.catalog"
-    assert catalog["count"] >= 50
+    assert catalog["count"] == 10
     assert any(skill["skill_id"] == "market.get_ohlcv" for skill in catalog["skills"])
 
     manifest_contents = await mcp.read_resource("doomberg://skills/market.get_ohlcv/0.1.0")
@@ -247,11 +316,12 @@ async def test_toolkit_resources_return_grouped_direct_tools(toolset):
     catalog_contents = await mcp.read_resource("doomberg://toolkits/catalog")
     catalog = json.loads(catalog_contents[0].content)
     assert catalog["kind"] == "toolkits.catalog"
-    assert any(t["toolkit_id"] == "portfolio-risk" for t in catalog["toolkits"])
+    assert any(t["toolkit_id"] == "computed-risk" for t in catalog["toolkits"])
 
     toolkit_contents = await mcp.read_resource("doomberg://toolkits/market-research")
     manifest = json.loads(toolkit_contents[0].content)
-    assert "market_tide" in manifest["direct_tools"]
+    assert "market_news" in manifest["direct_tools"]
+    assert "market_tide" not in manifest["direct_tools"]
 
 
 async def test_platform_resources_return_tenant_scoped_views_without_secrets(toolset_core):
@@ -426,19 +496,23 @@ def test_direct_market_quote_passes_extended_hours_to_live_engine(toolset, monke
 
 
 def test_direct_market_news_is_live_only_when_engine_configured(toolset, monkeypatch):
-    class _EmptyNewsServer(_QuoteServer):
-        def __init__(self) -> None:
-            super().__init__()
-
-    with _EmptyNewsServer() as server:
+    with _LiveDataFallbackServer() as server:
         monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
-        monkeypatch.setenv("DOOMBERG_IBKR_NEWS_PATH", "/empty-news")
+        monkeypatch.setenv("DOOMBERG_IBKR_NEWS_PATH", "/news")
+        monkeypatch.setenv("DOOMBERG_IBKR_SCANNER_PATH", "/scanner")
 
         out = toolset.market_news("aapl", _ctx={"run_id": R6, "tenant_id": R6, "agent_id": AGENT})
 
-    assert out["error"]["code"] == "PROVIDER_DEGRADED"
-    assert "live news unavailable" in out["error"]["message"]
-    assert server.requests == [{"path": "/empty-news?limit=50&ticker=AAPL", "tenant": R6}]
+    assert out["data"]["items"][0]["headline"] == "NVDA active in Doomberg live market scan"
+    assert out["data"]["items"][0]["kind"] == "market_activity"
+    assert out["provenance"]["source"] == "doomberg-live-data"
+    assert out["warnings"] == []
+    assert '"headline": "h"' not in json.dumps(out)
+    assert server.requests == [
+        {"path": "/news?limit=50&ticker=AAPL", "tenant": R6},
+        {"path": "/news?limit=50", "tenant": R6},
+        {"path": "/scanner?scan_type=MOST_ACTIVE&limit=50", "tenant": R6},
+    ]
 
 
 def test_run_skill_queues_durable_backtest(toolset_core, sample_spec):
@@ -477,7 +551,7 @@ def test_run_skill_queues_durable_backtest(toolset_core, sample_spec):
     assert again["idempotent"] is True
 
 
-def test_run_skill_interactive_persists_result_and_trace(toolset_core):
+def test_run_skill_interactive_persists_result_and_trace(toolset_core, monkeypatch):
     platform = Platform(":memory:")
     tenant = platform.auth.create_tenant("mcp")
     ts = Toolset(
@@ -489,15 +563,18 @@ def test_run_skill_interactive_persists_result_and_trace(toolset_core):
     ctx = {"tenant_id": tenant, "agent_id": "agent"}
     ts.start_research_session("run interactive ohlcv", _ctx=ctx)
 
-    out = ts.run_skill(
-        "market.get_ohlcv",
-        input={"symbol": "AAA", "range": "1y"},
-        _ctx=ctx,
-    )
+    with _QuoteServer() as server:
+        monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
+        monkeypatch.setenv("DOOMBERG_IBKR_HISTORY_PATH", "/history?symbol={symbol}")
+        out = ts.run_skill(
+            "market.get_ohlcv",
+            input={"symbol": "AAA", "range": "1y"},
+            _ctx=ctx,
+        )
 
     assert out["status"] == "succeeded"
     got = ts.get_run(out["run_id"], _ctx=ctx)
-    assert got["run"]["result"]["provenance"]["source"] == "yahoo-chart"
+    assert got["run"]["result"]["provenance"]["source"] == "doomberg-live-data"
     assert any(e["type"] == "tool_result" for e in got["events"])
 
 

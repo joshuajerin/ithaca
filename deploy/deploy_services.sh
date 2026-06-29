@@ -42,9 +42,7 @@ case "${DEPLOY_ENV}" in
     WORKER_NODE_WORKLOAD="${WORKER_NODE_WORKLOAD:-paper}"
     APP_REPLICAS="${APP_REPLICAS:-}"
     WORKER_REPLICAS="${WORKER_REPLICAS:-}"
-    SHORT_LOADER_SUSPEND="${SHORT_LOADER_SUSPEND:-false}"
-    DOOMBERG_PLATFORM_DB_URL="${DOOMBERG_PLATFORM_DB_URL:-${DOOMBERG_PROD_URL:-${DOOMBERG_ARCHIVE_URL:-}}}"
-    DOOMBERG_ARCHIVE_URL="${DOOMBERG_ARCHIVE_URL:-${DOOMBERG_PLATFORM_DB_URL:-}}"
+    DOOMBERG_PLATFORM_DB_URL="${DOOMBERG_PLATFORM_DB_URL:-${DOOMBERG_PROD_URL:-}}"
     IBKR_ENGINE_ENABLED="${IBKR_ENGINE_ENABLED:-1}"
     ;;
   dev)
@@ -58,9 +56,7 @@ case "${DEPLOY_ENV}" in
     WORKER_NODE_WORKLOAD="${WORKER_NODE_WORKLOAD:-backtest}"
     APP_REPLICAS="${APP_REPLICAS:-1}"
     WORKER_REPLICAS="${WORKER_REPLICAS:-1}"
-    SHORT_LOADER_SUSPEND="${SHORT_LOADER_SUSPEND:-true}"
-    DOOMBERG_PLATFORM_DB_URL="${DOOMBERG_PLATFORM_DB_URL:-${DOOMBERG_DEV_URL:-${DOOMBERG_ARCHIVE_URL:-}}}"
-    DOOMBERG_ARCHIVE_URL="${DOOMBERG_ARCHIVE_URL:-${DOOMBERG_PLATFORM_DB_URL:-}}"
+    DOOMBERG_PLATFORM_DB_URL="${DOOMBERG_PLATFORM_DB_URL:-${DOOMBERG_DEV_URL:-}}"
     # Dev shares the single customer-authenticated IBKR engine by default.
     # Set IBKR_ENGINE_ENABLED=1 explicitly only when intentionally testing an
     # isolated Client Portal/engine stack.
@@ -202,7 +198,6 @@ elif [[ "${DEPLOY_ENV}" == "dev" ]]; then
 fi
 
 : "${DOOMBERG_PLATFORM_DB_URL:?DOOMBERG_PLATFORM_DB_URL must be set for ${DEPLOY_ENV}}"
-: "${DOOMBERG_ARCHIVE_URL:?DOOMBERG_ARCHIVE_URL must be set for ${DEPLOY_ENV}}"
 : "${DOOMBERG_SESSION_SECRET:?DOOMBERG_SESSION_SECRET must be set for ${DEPLOY_ENV}}"
 : "${CLERK_ALLOWED_ORIGINS:?CLERK_ALLOWED_ORIGINS must be set for ${DEPLOY_ENV}}"
 : "${CLERK_ISSUER:?CLERK_ISSUER must be set for ${DEPLOY_ENV}}"
@@ -241,7 +236,6 @@ render_manifest() {
     -e "s|\${APP_MAX_UNAVAILABLE}|${APP_MAX_UNAVAILABLE}|g" \
     -e "s|\${WORKER_MAX_SURGE}|${WORKER_MAX_SURGE}|g" \
     -e "s|\${WORKER_MAX_UNAVAILABLE}|${WORKER_MAX_UNAVAILABLE}|g" \
-    -e "s|\${SHORT_LOADER_SUSPEND}|${SHORT_LOADER_SUSPEND}|g" \
     -e "s|\${MCP_ALLOWED_HOSTS}|${MCP_ALLOWED_HOSTS}|g" \
     "${file}"
 }
@@ -258,7 +252,6 @@ create_doomberg_secret() {
   kubectl -n "${namespace}" create secret generic doomberg-db \
     --from-literal=db_url="${DOOMBERG_PLATFORM_DB_URL}" \
     --from-literal=platform_url="${DOOMBERG_PLATFORM_DB_URL}" \
-    --from-literal=archive_url="${DOOMBERG_ARCHIVE_URL}" \
     --from-literal=session_secret="${DOOMBERG_SESSION_SECRET}" \
     --from-literal=clerk_pem_public_key="${CLERK_PEM_PUBLIC_KEY:-}" \
     --from-literal=clerk_jwks_url="${CLERK_JWKS_URL:-}" \
@@ -326,7 +319,7 @@ if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
 fi
 
 echo "==> app manifests"
-for file in infra/k8s/app-deployment.yaml infra/k8s/app-service.yaml infra/k8s/worker-deployment.yaml infra/k8s/short-loader.yaml; do
+for file in infra/k8s/app-deployment.yaml infra/k8s/app-service.yaml infra/k8s/worker-deployment.yaml; do
   render_manifest "${file}" | kubectl apply -f -
 done
 

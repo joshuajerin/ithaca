@@ -20,15 +20,14 @@ infra/
     ├── registry.tf            # Container Registry (DOCR) — the single multi-service image
     ├── loadbalancer.tf        # public HA Load Balancer → always-on gateway pool
     ├── network_policy.tf      # default-deny egress + single allow to the Data Gateway
-    ├── jobs.tf                # backtest Job + paper CronJob + one-shot archive-load Job SHAPES
-    ├── outputs.tf             # kubeconfig, db DSN, archive DSN (sensitive), registry endpoint, LB IP...
+    ├── jobs.tf                # backtest Job + paper CronJob SHAPES
+    ├── outputs.tf             # kubeconfig, db DSN, registry endpoint, LB IP...
     ├── terraform.tfvars.example
     ├── .env.example           # DIGITALOCEAN_TOKEN + SPACES_* (gitignored .env)
     ├── .gitignore             # never commit *.tfstate / *.auto.tfvars / .terraform
     └── manifests/
         ├── backtest-job.yaml             # per-run Job template (control plane renders it)
         ├── paper-tick-cronjob.yaml       # per-deployment CronJob template
-        ├── archive-load-job.yaml         # one-shot loader: seeds archive.* on first deploy
         └── networkpolicy-egress-deny.yaml # standalone copy of the egress invariant
 ```
 
@@ -54,7 +53,7 @@ Build/deploy tooling lives in [`deploy/`](../deploy/): `build_and_push.sh`
   │   namespace doomberg-workers:                               │
   │     NetworkPolicy default-deny (ingress+egress)             │
   │     + single allow → Data Gateway (doomberg-gateway ns)     │
-  │   namespace doomberg-gateway: gateways + one-shot archive-load│
+  │   namespace doomberg-gateway: gateways                         │
   │                                                             │
   │  Managed Postgres 16  (primary + standby HA, private host,  │
   │                        daily backups + WAL/PITR)            │
@@ -90,9 +89,9 @@ Build/deploy tooling lives in [`deploy/`](../deploy/): `build_and_push.sh`
   service runs from (role chosen by `entrypoint.sh`).
 - **Load Balancer** — HA (`size_unit = 2`), public ingress to the always-on
   gateway pool with a `/healthz` healthcheck for fast unhealthy-node eviction.
-- **Spaces** — private, versioned bucket for backtest artifacts / logs / blobs +
-  the one-time `v1_archive.json` seed. A lifecycle rule expires `logs/` after 90
-  days. Globally-unique name via a random suffix.
+- **Spaces** — private, versioned bucket for backtest artifacts / logs / blobs.
+  A lifecycle rule expires `logs/` after 90 days. Globally-unique name via a
+  random suffix.
 
 ## CPU-ONLY GUARDRAIL
 
@@ -194,12 +193,6 @@ terraform validate                # type + schema validation, no network/credent
 - The worker container entrypoints (`python -m doomberg_runtime.backtest_runner`
   / `live_runner`) match the `doomberg_runtime` interface in INTERFACES.md, and
   are also reachable as roles of the single image via `deploy/entrypoint.sh`.
-- **Archive seed:** the one-shot `archive-load` Job (`jobs.tf` /
-  `manifests/archive-load-job.yaml`, gated by `enable_archive_load_job`) runs
-  Stream 1's loader `python scripts/import_v1_archive.py` against the Managed PG
-  to create + populate `archive.*` on first deploy. It reads `DOOMBERG_ARCHIVE_URL`
-  from the `doomberg-db` Secret and the `v1_archive.json` export from Spaces. Set
-  `enable_archive_load_job = false` after a successful load.
 - **Gateways:** deploy mcp-gateway / rest-gateway / control-plane to
   `doomberg-gateway` with **2+ replicas each** on the `paper` pool; publish
   NodePorts `30080` (rest) + `30808` (mcp) for the `loadbalancer.tf` forwarding

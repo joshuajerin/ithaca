@@ -40,7 +40,7 @@ _GROUP_DESCRIPTIONS = {
     "insider": "SEC insider transaction summaries from Form 4/5 style data.",
     "institutional": "13F institutional holdings and flow analytics from archive data.",
     "macro": "Community macro dashboard and regime summary data.",
-    "market": "Market data and market-structure archive analytics with provenance.",
+    "market": "Doomberg live-data market quotes, history, news, movers, and screeners with provenance.",
     "montecarlo": "Seeded Monte Carlo scenario simulation.",
     "options": "Computed options valuation primitives from declared inputs.",
     "ops": "Internal platform operations diagnostics.",
@@ -98,10 +98,12 @@ def _source_classes(skill_id: str) -> list[str]:
     group = _group(skill_id)
     if skill_id in {
         "market.quote",
+        "market.get_ohlcv",
+        "market.news",
+        "market.screener",
+        "market.movers",
     }:
         return ["connected_account"]
-    if skill_id == "market.get_ohlcv":
-        return ["community"]
     if group in _COMPUTED_GROUPS:
         return ["computed"]
     if skill_id in {"tearsheet", "walkforward.run", "technical.indicators"}:
@@ -113,10 +115,12 @@ def _datasets(skill_id: str) -> list[str]:
     group = _group(skill_id)
     if skill_id in {
         "market.quote",
+        "market.get_ohlcv",
+        "market.news",
+        "market.screener",
+        "market.movers",
     }:
         return []
-    if skill_id == "market.get_ohlcv":
-        return ["prices"]
     if group in _COMPUTED_GROUPS and group != "portfolio":
         return []
     if skill_id in {"portfolio.optimize", "tearsheet", "walkforward.run", "technical.indicators"}:
@@ -201,7 +205,7 @@ def _manifest(skill_id: str) -> dict[str, Any]:
     description = _GROUP_DESCRIPTIONS.get(group, f"Runnable Doomberg skill: {_title(skill_id)}.")
     broker_permissions: list[str] = []
     network_permissions: list[str] = [] if "computed" in _source_classes(skill_id) else ["archive"]
-    if skill_id == "market.quote":
+    if skill_id in {"market.quote", "market.get_ohlcv", "market.news", "market.screener", "market.movers"}:
         network_permissions = ["doomberg-live-data"]
     return {
         "skill_id": skill_id,

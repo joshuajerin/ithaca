@@ -642,13 +642,6 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
             else "Local SQLite system-of-record",
         },
         {
-            "name": "Archive DSN",
-            "state": "succeeded" if os.environ.get("DOOMBERG_ARCHIVE_URL") else "warn",
-            "detail": "Archive reads configured"
-            if os.environ.get("DOOMBERG_ARCHIVE_URL")
-            else "DOOMBERG_ARCHIVE_URL is unset",
-        },
-        {
             "name": "Live market data",
             "state": "succeeded" if live_data_configured else "warn",
             "detail": "Configured" if live_data_configured else "Live market-data engine is unset",
@@ -680,7 +673,6 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
     return {
         "platform": {
             "database": "postgres" if getattr(stores.db, "is_postgres", False) else "sqlite",
-            "archive_configured": bool(os.environ.get("DOOMBERG_ARCHIVE_URL")),
             "mcp_allowed_hosts": os.environ.get("DOOMBERG_MCP_ALLOWED_HOSTS") or "",
         },
         "live_data": {
