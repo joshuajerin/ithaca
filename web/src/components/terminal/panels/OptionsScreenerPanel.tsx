@@ -289,7 +289,7 @@ export function OptionsScreenerPanel({ data, onRefine, pending }: OptionsScreene
         <span className="font-mono">
           {rows.length > 0 ? `${start + 1}–${Math.min(start + PAGE_SIZE, rows.length)} of ${rows.length}` : "—"}
           {" · "}
-          <span className={live ? "text-white/70" : ""}>{live ? "live" : data.source || "mock"}</span>
+          <span className={live ? "text-white/70" : ""}>{live ? "live" : "reference"}</span>
           {data.asOf ? ` · ${data.asOf}` : ""}
         </span>
         <button

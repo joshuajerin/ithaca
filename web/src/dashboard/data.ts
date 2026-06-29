@@ -1,7 +1,7 @@
 // web/src/dashboard/data.ts
 // Data adapters for the v2 Dashboard panels.
 // Real data: derived from API results when passed in.
-// Sample data: deterministic, plausible-looking fallbacks with // TODO: wire to <endpoint> comments.
+// Reference data: deterministic fallback values with // TODO: wire to <endpoint> comments.
 
 import type { RunRow } from "../types";
 import type { PerformancePnlData } from "./panels/PerformancePnlPanel";
@@ -46,7 +46,7 @@ function makeSeries(days: number) {
 
 // ── Public adapters ───────────────────────────────────────────────────────────
 
-/** Personal Overview P&L. Derives from the latest backtest run with an equityCurve; falls back to sample. */
+/** Personal Overview P&L. Derives from the latest backtest run with an equityCurve; falls back to reference data. */
 export function getPerformance(runs?: RunRow[]): PerformancePnlData {
   if (runs && runs.length > 0) {
     const sorted = [...runs].sort((a, b) => {
@@ -84,10 +84,10 @@ export function getPerformance(runs?: RunRow[]): PerformancePnlData {
       }
     }
   }
-  // Sample fallback
+  // Reference fallback
   const series = makeSeries(180);
   return {
-    portfolioName: "Jarvis Alpha",
+    portfolioName: "Doomberg Alpha",
     benchmarkName: "SPY",
     benchmarkSource: "CRSP",
     rangeLabel: "6M",
@@ -182,7 +182,7 @@ export function getCongressTrades(): Record<string, unknown> {
     stats: { total: trades.length, buys: 3, sells: 2, exchanges: 0, avgLagDays: 11.6, maxLagDays: 15, uniqueMembers: 5 },
     lagNote: "Congress members have 45 days to disclose trades under the STOCK Act. Recent trades may not yet appear.",
     disclaimer: "Source: Quiver Quantitative / House Clerk. Disclosure lags mean recent trades may not yet appear.",
-    asOf: dateStr(0), source: "mock",
+    asOf: dateStr(0), source: "reference",
   };
 }
 

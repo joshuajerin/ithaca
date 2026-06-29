@@ -331,7 +331,7 @@ export function WalkForwardPanel({ data, onRefine }: Props) {
 
       <div className="shrink-0 text-[8px] text-muted-foreground/70 flex items-center justify-between">
         <span>
-          {data.barCount} bars · {data.source === "live" ? "live" : "mock"} data
+          {data.barCount} bars · {data.source === "live" ? "live" : "reference"} data
           {data.asOf ? ` · as of ${data.asOf}` : ""}
         </span>
         <span>Anchored walk-forward · DSR &amp; PBO per Bailey–López de Prado</span>
