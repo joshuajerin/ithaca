@@ -7,13 +7,13 @@
 # Config (env or /etc/runner-autoscaler.env):
 #   DO_TOKEN            — DigitalOcean API token
 #   GH_PAT              — GitHub personal access token (repo scope)
-#   REPOS               — space-separated list of repos (e.g. "joshuajerin/doomberg joshuajerin/ithaca-docs")
+#   REPOS               — space-separated list of repos
 #   SSH_KEY_ID          — DO SSH key ID to inject into ephemeral droplets
 #   DROPLET_SIZE        — DO droplet slug (default: s-4vcpu-8gb)
 #   DROPLET_REGION      — DO region (default: nyc1)
 #   MAX_RUNNERS         — max concurrent ephemeral runners (default: 6)
-#   SNAPSHOT_ID         — DO snapshot ID with pre-installed tools (default: 234895636)
-#   BASE_RUNNER droplet — name of the persistent base runner (excluded from cleanup)
+#   SNAPSHOT_ID         — DO snapshot ID with pre-installed tools
+#   BASE_RUNNER         — name of the persistent base runner (excluded from cleanup)
 
 set -eo pipefail
 
@@ -46,34 +46,41 @@ count_ephemeral() {
 # Get queued jobs count for a repo
 get_queued_count() {
   local repo="$1"
-  curl -sf -H "Authorization: token $GH_PAT" \
+  curl -sf --max-time 10 -H "Authorization: token $GH_PAT" \
     "https://api.github.com/repos/$repo/actions/runs?status=queued&per_page=100" | \
-    jq '.workflow_runs | length'
+    jq '.workflow_runs | length' 2>/dev/null || echo 0
 }
 
 # Get a registration token for a repo
 get_reg_token() {
   local repo="$1"
-  curl -sf -X POST -H "Authorization: token $GH_PAT" \
+  curl -sf --max-time 10 -X POST -H "Authorization: token $GH_PAT" \
     "https://api.github.com/repos/$repo/actions/runners/registration-token" | \
-    jq -r '.token'
+    jq -r '.token' 2>/dev/null
 }
 
-# Create an ephemeral droplet
+# Create an ephemeral droplet (non-blocking — no --wait)
 create_runner() {
   local repo="$1"
   local name="ephemeral-$(date +%s)-$((RANDOM % 1000))"
   local token
   token=$(get_reg_token "$repo")
 
+  if [ -z "$token" ]; then
+    log "ERROR: could not get registration token for $repo"
+    return 1
+  fi
+
   log "Creating ephemeral runner $name for $repo"
 
-  # Write user-data to a temp file (doctl needs a file path)
+  # Write user-data to a temp file
   local tmp_script
   tmp_script=$(mktemp)
   sed "s|__REPO__|$repo|g; s|__TOKEN__|$token|g; s|__NAME__|$name|g" \
     < "$USER_DATA_SCRIPT" > "$tmp_script"
 
+  # Non-blocking create — don't wait for the droplet to become active.
+  # The droplet boots from snapshot (~60s) and self-registers via user-data.
   doctl compute droplet create "$name" \
     --size "$DROPLET_SIZE" \
     --image "$SNAPSHOT_ID" \
@@ -81,43 +88,40 @@ create_runner() {
     --ssh-keys "$SSH_KEY_ID" \
     --tag-names "ephemeral-runner,$repo" \
     --enable-private-networking \
-    --user-data-file "$tmp_script" \
-    --wait 2>&1 | tail -1
+    --user-data-file "$tmp_script" 2>&1 | tail -1
 
   rm -f "$tmp_script"
-
-  log "Created $name"
+  log "Requested $name"
 }
 
-# Clean up powered-off ephemeral droplets
+# Clean up powered-off and stale ephemeral droplets
 cleanup() {
-  local stale
-  stale=$(doctl compute droplet list --format ID,Name,Status --no-header 2>/dev/null | \
-    grep "ephemeral-" | awk '$3 == "off" { print $1 }')
-
-  if [ -n "$stale" ]; then
-    for id in $stale; do
+  # Delete powered-off droplets (job completed, self-shutdown)
+  doctl compute droplet list --format ID,Name,Status --no-header 2>/dev/null | \
+    grep "ephemeral-" | awk '$3 == "off" { print $1 }' | while read -r id; do
       log "Cleaning up powered-off droplet $id"
       doctl compute droplet delete "$id" --force 2>/dev/null || true
     done
-  fi
 
-  # Also clean up droplets that have been running > 30 min (stuck)
+  # Force-delete stuck droplets via API (running > 45 min with no job completion)
+  # doctl doesn't expose created_at, so we use the DO API directly.
   local now
   now=$(date +%s)
-  doctl compute droplet list --format ID,Name,Status,Created --no-header 2>/dev/null | \
-    grep "ephemeral-" | grep -v "off" | while IFS=$'\t' read -r id name status created; do
+  curl -sf --max-time 10 -H "Authorization: Bearer $DO_TOKEN" \
+    "https://api.digitalocean.com/v2/droplets?tag_name=ephemeral-runner" | \
+    jq -r '.droplets[] | select(.status=="active") | "\(.id) \(.name) \(.created_at)"' 2>/dev/null | \
+    while read -r id name created; do
       local created_ts
       created_ts=$(date -d "$created" +%s 2>/dev/null || echo 0)
       local age=$((now - created_ts))
-      if [ "$age" -gt 1800 ]; then
+      if [ "$age" -gt 2700 ]; then
         log "Force-cleaning stale droplet $name (age ${age}s)"
         doctl compute droplet delete "$id" --force 2>/dev/null || true
       fi
     done
 }
 
-# Main loop
+# Main
 main() {
   cleanup
 
@@ -127,7 +131,7 @@ main() {
 
   if [ "$current" -ge "$MAX_RUNNERS" ]; then
     log "At max capacity, skipping"
-    return
+    return 0
   fi
 
   local total_queued=0
@@ -149,7 +153,7 @@ main() {
 
   if [ "$total_queued" -eq 0 ]; then
     log "No queued jobs, skipping"
-    return
+    return 0
   fi
 
   # Spin up runners for the most backlogged repo
@@ -159,11 +163,10 @@ main() {
   fi
 
   for i in $(seq 1 "$to_create"); do
-    create_runner "$repo_with_most_queued"
-    sleep 5  # stagger creation
+    create_runner "$repo_with_most_queued" || true
   done
 
-  log "Created $to_create new runners"
+  log "Requested $to_create new runners"
 }
 
 main
