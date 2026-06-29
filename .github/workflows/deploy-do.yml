@@ -1,7 +1,11 @@
 name: deploy-do
 
+# Deploy only after ci AND deploy-checks pass on main.
+# Uses workflow_run to gate on CI success — no deploy if tests fail.
 on:
-  push:
+  workflow_run:
+    workflows: ["ci", "deploy-checks"]
+    types: [completed]
     branches: ["main"]
   workflow_dispatch:
 
@@ -13,9 +17,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  classify:
-    name: classify deploy target
+  gate:
+    name: 0/6 • gate (ci + deploy-checks must pass)
     runs-on: self-hosted
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Verify upstream CI passed
+        shell: bash
+        run: |
+          echo "Triggered by: ${{ github.event_name }}"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "Manual dispatch — skipping gate check"
+          else
+            echo "Upstream workflow: ${{ github.event.workflow_run.name }}"
+            echo "Conclusion: ${{ github.event.workflow_run.conclusion }}"
+            if [[ "${{ github.event.workflow_run.conclusion }}" != "success" ]]; then
+              echo "ERROR: upstream workflow did not succeed. Aborting deploy."
+              exit 1
+            fi
+          fi
+          echo "Gate passed."
+
+  classify:
+    name: 1/6 • classify deploy target
+    runs-on: self-hosted
+    needs: gate
     outputs:
       deploy_env: ${{ steps.classify.outputs.deploy_env }}
       image_tag: ${{ steps.classify.outputs.image_tag }}
@@ -26,18 +52,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ref="${GITHUB_REF#refs/heads/}"
-          short="${GITHUB_SHA::7}"
-          safe_ref="$(printf '%s' "${ref}" | tr '[:upper:]/' '[:lower:]-' | tr -cd 'a-z0-9._-' | cut -c1-40)"
-          if [[ "${ref}" == "main" ]]; then
-            deploy_env="prod"
-            image_tag="${short}"
-            push_latest="true"
+          # When triggered by workflow_run, the SHA comes from the workflow_run event
+          # When triggered by workflow_dispatch, use GITHUB_SHA
+          if [[ -n "${{ github.event.workflow_run.head_sha }}" ]]; then
+            short="${{ github.event.workflow_run.head_sha }}"
+            short="${short:0:7}"
           else
-            deploy_env="dev"
-            image_tag="dev-${safe_ref}-${short}"
-            push_latest="false"
+            short="${GITHUB_SHA::7}"
           fi
+          ref="main"
+          deploy_env="prod"
+          image_tag="${short}"
+          push_latest="true"
           {
             echo "deploy_env=${deploy_env}"
             echo "image_tag=${image_tag}"
@@ -46,11 +72,13 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
 
   checks:
-    name: deploy gates
+    name: 3/6 • deploy gates
     runs-on: self-hosted
     needs: [classify, deploy-config-preflight]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: astral-sh/setup-uv@v5
 
@@ -142,7 +170,7 @@ jobs:
           echo "$out" | grep -qi "CPU-ONLY GUARDRAIL"
 
   deploy-config-preflight:
-    name: deploy config preflight
+    name: 2/6 • deploy config preflight
     runs-on: self-hosted
     needs: classify
     environment: ${{ needs.classify.outputs.deploy_env }}
@@ -206,12 +234,14 @@ jobs:
           echo "Deploy config preflight passed for ${DEPLOY_ENV}."
 
   build-push:
-    name: build and push image
+    name: 4/6 • build and push image
     runs-on: self-hosted
     needs: [classify, checks]
     environment: ${{ needs.classify.outputs.deploy_env }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: docker/setup-buildx-action@v3
 
@@ -255,7 +285,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   deploy:
-    name: deploy to ${{ needs.classify.outputs.deploy_env }}
+    name: 5/6 • deploy to ${{ needs.classify.outputs.deploy_env }}
     runs-on: self-hosted
     needs: [classify, build-push]
     environment: ${{ needs.classify.outputs.deploy_env }}
@@ -264,6 +294,8 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
         with:
           fetch-depth: 0
 
@@ -388,7 +420,7 @@ jobs:
                 --json
 
   mark-latest:
-    name: mark prod latest
+    name: 6/6 • mark prod latest
     runs-on: self-hosted
     needs: [classify, deploy]
     if: needs.classify.outputs.push_latest == 'true'
