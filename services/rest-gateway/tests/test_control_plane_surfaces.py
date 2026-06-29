@@ -72,7 +72,7 @@ def test_dev_tenant_header_must_be_uuid(client):
     assert response.json()["detail"] == "tenant_id must be a UUID"
 
 
-def test_ops_status_reports_live_data_and_disabled_execution(client, stores, tenant_a, monkeypatch):
+def test_ops_status_reports_live_data_and_paper_execution(client, stores, tenant_a, monkeypatch):
     monkeypatch.setenv("DOOMBERG_ARCHIVE_URL", "postgresql://archive.example/db")
     monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", "https://ibkr.example")
     monkeypatch.setenv("DOOMBERG_IBKR_QUOTE_PATH", "/v1/quote/{symbol}")
@@ -96,12 +96,12 @@ def test_ops_status_reports_live_data_and_disabled_execution(client, stores, ten
     assert "ibkr" not in body
     assert body["live_data"]["engine_configured"] is True
     assert body["live_data"]["connected_quote_provider"] is True
-    assert body["execution"]["live_enabled"] is False
-    assert body["execution"]["paper_enabled"] is False
-    assert body["execution"]["disabled"] is True
+    assert body["execution"]["live_enabled"] is True
+    assert body["execution"]["paper_enabled"] is True
+    assert body["execution"]["disabled"] is False
     assert body["jobs"]["queued"] == 1
     assert body["leases"][0]["lease_name"] == "trigger-engine"
-    assert any(row["name"] == "Trading" and row["state"] == "paused"
+    assert any(row["name"] == "Trading" and row["state"] == "succeeded"
                for row in body["readiness"])
 
 
@@ -277,7 +277,9 @@ def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tena
     assert stored_provider["credential_ref"] == "env:DOOMBERG_IBKR_ENGINE_TOKEN"
     assert client.get("/api/dataset-snapshots", headers=_h(tenant_a)).json()["snapshots"][0]["dataset"] == "prices"
 
-    assert client.get("/api/order-intents", headers=_h(tenant_a)).status_code == 403
+    listed_intents = client.get("/api/order-intents", headers=_h(tenant_a))
+    assert listed_intents.status_code == 200, listed_intents.text
+    assert listed_intents.json()["order_intents"][0]["intent_id"] == intent["intent_id"]
     created_intent = client.post(
         "/api/order-intents",
         json={
@@ -294,10 +296,18 @@ def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tena
         },
         headers=_h(tenant_a),
     )
-    assert created_intent.status_code == 403, created_intent.text
-    assert client.get(f"/api/order-intents/{intent['intent_id']}", headers=_h(tenant_a)).status_code == 403
-    assert client.post(f"/api/order-intents/{intent['intent_id']}/preview", headers=_h(tenant_a)).status_code == 403
-    assert client.post(f"/api/order-intents/{intent['intent_id']}/submit", headers=_h(tenant_a)).status_code == 403
+    assert created_intent.status_code == 201, created_intent.text
+    created_intent_body = created_intent.json()
+    assert created_intent_body["state"] == "proposed"
+    assert client.get(f"/api/order-intents/{intent['intent_id']}", headers=_h(tenant_a)).status_code == 200
+    previewed = client.post(f"/api/order-intents/{intent['intent_id']}/preview", headers=_h(tenant_a))
+    assert previewed.status_code == 200, previewed.text
+    assert previewed.json()["state"] == "approved"
+    submitted = client.post(f"/api/order-intents/{created_intent_body['intent_id']}/submit", headers=_h(tenant_a))
+    assert submitted.status_code == 200, submitted.text
+    submitted_body = submitted.json()
+    assert submitted_body["orders"][0]["broker"] == "paper"
+    assert submitted_body["fills"][0]["payload"]["symbol"] == "MSFT"
 
     triggers = client.get("/api/triggers", headers=_h(tenant_a)).json()["triggers"]
     assert triggers[0]["trigger_id"] == trigger["trigger_id"]

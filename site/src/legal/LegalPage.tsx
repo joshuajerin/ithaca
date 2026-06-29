@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import Nav from "../components/Nav";
 import Footer from "../components/Footer";
 import { EFFECTIVE_DATE, LAST_UPDATED, LEGAL_DOCS, getLegalDoc } from "./registry";
+import type { AuthMode } from "../App";
 
 // Markdown element → Tailwind class map. Keeps the legal prose on the site's
 // warm ink/olive/cream palette without pulling in the typography plugin.
@@ -55,7 +56,7 @@ const mdComponents = {
   hr: () => <hr className="my-10 border-line" />,
 };
 
-export default function LegalPage({ slug }: { slug: string }) {
+export default function LegalPage({ slug, authMode }: { slug: string; authMode: AuthMode }) {
   const doc = getLegalDoc(slug);
 
   // Reset scroll when navigating between legal docs.
@@ -73,7 +74,7 @@ export default function LegalPage({ slug }: { slug: string }) {
 
   return (
     <div className="relative min-h-screen bg-paper">
-      <Nav />
+      <Nav authMode={authMode} />
       <main className="mx-auto max-w-[820px] px-5 pb-24 pt-32">
         {/* breadcrumb — reliable home/legal navigation regardless of Nav anchors */}
         <nav className="mb-8 font-mono text-[0.72rem] uppercase tracking-[0.14em] text-faint">

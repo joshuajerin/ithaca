@@ -8,8 +8,65 @@ const SCOPES: { id: string; label: string }[] = [
   { id: "runs:write", label: "Create runs" },
   { id: "runs:cancel", label: "Cancel runs" },
   { id: "approvals:read", label: "Read approvals" },
+  { id: "approvals:decide", label: "Decide approvals" },
   { id: "artifacts:read", label: "Read artifacts" },
   { id: "deploy:backtest", label: "Run backtests" },
+  { id: "deploy:paper", label: "Request paper" },
+  { id: "triggers:write", label: "Manage triggers" },
+  { id: "providers:write", label: "Manage providers" },
+];
+
+const PRESETS: { id: string; label: string; description: string; scopes: string[] }[] = [
+  {
+    id: "research",
+    label: "Research",
+    description: "Read tools, sessions, and artifacts.",
+    scopes: ["data:read", "artifacts:read"],
+  },
+  {
+    id: "backtest",
+    label: "Backtest agent",
+    description: "Research, author strategy specs, queue backtests, and cancel runs.",
+    scopes: ["data:read", "strategy:author", "runs:write", "runs:cancel", "artifacts:read", "deploy:backtest"],
+  },
+  {
+    id: "paper",
+    label: "Paper requester",
+    description: "Backtest plus request paper deployments and order-intent previews.",
+    scopes: [
+      "data:read",
+      "strategy:author",
+      "runs:write",
+      "runs:cancel",
+      "approvals:read",
+      "artifacts:read",
+      "deploy:backtest",
+      "deploy:paper",
+    ],
+  },
+  {
+    id: "automation",
+    label: "Automation",
+    description: "Paper requester plus trigger and provider setup.",
+    scopes: [
+      "data:read",
+      "strategy:author",
+      "runs:write",
+      "runs:cancel",
+      "approvals:read",
+      "artifacts:read",
+      "deploy:backtest",
+      "deploy:paper",
+      "triggers:write",
+      "providers:write",
+    ],
+  },
+  {
+    id: "operator",
+    label: "Operator",
+    description: "Full valid scope set. Approval decisions are still human-session gated.",
+    scopes: SCOPES.map((s) => s.id),
+  },
 ];
 
 type KeyRow = { key_id: string; scopes: string[]; created_at: string; revoked: boolean };
@@ -25,7 +82,7 @@ export function Settings() {
   const [keys, setKeys] = useState<KeyRow[]>([]);
   const [loadingKeys, setLoadingKeys] = useState(true);
   const [keysError, setKeysError] = useState<string | null>(null);
-  const [selectedScopes, setSelectedScopes] = useState<string[]>(() => SCOPES.map((s) => s.id));
+  const [selectedScopes, setSelectedScopes] = useState<string[]>(() => PRESETS[2].scopes);
   const [minting, setMinting] = useState(false);
   const [freshKey, setFreshKey] = useState<{ api_key: string; key_id: string } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -54,6 +111,10 @@ export function Settings() {
     setSelectedScopes((cur) =>
       cur.includes(id) ? cur.filter((s) => s !== id) : [...cur, id],
     );
+  }
+
+  function applyPreset(scopes: string[]) {
+    setSelectedScopes(scopes);
   }
 
   async function generateKey() {
@@ -122,6 +183,23 @@ export function Settings() {
         <div className="set-h">Agent access</div>
         <div className="set-card">
           <div className="set-field">
+            <label>Preset</label>
+            <div className="preset-grid">
+              {PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  className={`preset-btn ${sameScopes(selectedScopes, preset.scopes) ? "active" : ""}`}
+                  onClick={() => applyPreset(preset.scopes)}
+                  type="button"
+                >
+                  <span>{preset.label}</span>
+                  <small>{preset.description}</small>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="set-field">
             <label>Scopes</label>
             <div className="scope-grid">
               {SCOPES.map((s) => (
@@ -158,6 +236,11 @@ export function Settings() {
               </div>
             </div>
           )}
+
+          <div className="set-hint">
+            Agent keys can request paper work and create order intents, but approval decisions
+            and paper lifecycle promotion still require a signed-in human session.
+          </div>
 
           {keysError && <div className="set-hint err">{keysError}</div>}
 
@@ -196,6 +279,10 @@ export function Settings() {
       </section>
     </div>
   );
+}
+
+function sameScopes(a: string[], b: string[]) {
+  return a.length === b.length && a.every((scope) => b.includes(scope));
 }
 
 function settingsError(error: unknown) {

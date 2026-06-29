@@ -55,7 +55,6 @@ export default function Footer() {
     <footer className="border-t border-line bg-cream/50">
       <div className="mx-auto max-w-[1200px] px-5 py-16">
         <div className="grid grid-cols-2 gap-10 sm:grid-cols-3 lg:grid-cols-6">
-          {/* brand block */}
           <div className="col-span-2">
             <div className="flex items-center gap-2.5">
               <span className="relative grid h-7 w-7 place-items-center">
@@ -109,7 +108,7 @@ export default function Footer() {
 
         <div className="mt-14 flex flex-col items-start justify-between gap-4 border-t border-line pt-7 sm:flex-row sm:items-center">
           <p className="text-[0.82rem] text-faint">
-            © {new Date().getFullYear()} Doomberg. Research & paper-trading platform — not investment advice.
+            © {new Date().getFullYear()} Doomberg. Research & paper-trading platform, not investment advice.
           </p>
           <p className="font-mono text-[0.72rem] uppercase tracking-[0.14em] text-faint">
             Never runs your agent · Never executes agent code
