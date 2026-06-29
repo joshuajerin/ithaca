@@ -28,6 +28,14 @@ describe("customer-facing UI cleanup guards", () => {
     expect(read("index.css")).toContain(".step-detail");
   });
 
+  it("does not render the old operational left rail buttons", () => {
+    const app = read("App.tsx");
+
+    expect(app).not.toContain('className="rail"');
+    expect(app).not.toContain("rail-nav");
+    expect(app).not.toMatch(/\b(Runs|Orders|Approvals|Triggers|Artifacts|Providers|Trades)\b/);
+  });
+
   it("shows reference labels instead of sample or mock badges on customer panels", () => {
     const text = [
       read("dashboard/panels/CongressTradesPanel.tsx"),

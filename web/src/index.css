@@ -94,6 +94,7 @@ input, select, textarea { font-family: inherit; }
 .font-serif { font-family: var(--font-display) !important; }
 
 .app { display: grid; grid-template-columns: 224px 1fr; height: 100vh; }
+.app-no-rail { grid-template-columns: 1fr; }
 
 /* Left rail */
 .rail {
