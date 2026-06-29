@@ -42,6 +42,11 @@ from doomberg_control.deps import Platform, get_core, get_platform  # noqa: E402
 from doomberg_core import Core  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _local_env(monkeypatch):
+    monkeypatch.setenv("DOOMBERG_ENV", "test")
+
+
 @pytest.fixture()
 def platform():
     return Platform(":memory:")

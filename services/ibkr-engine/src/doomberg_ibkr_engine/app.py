@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import os
 from typing import Any
 
@@ -17,15 +18,22 @@ def _gateway() -> ClientPortalGateway:
     return ClientPortalGateway()
 
 
+def _allow_unauthenticated_local_engine() -> bool:
+    env = (os.environ.get("DOOMBERG_ENV") or "").strip().lower()
+    return env in {"test", "local", "dev", "development"}
+
+
 def _require_engine_token(authorization: str | None = Header(default=None)) -> None:
-    expected = os.environ.get("DOOMBERG_IBKR_ENGINE_TOKEN")
+    expected = (os.environ.get("DOOMBERG_IBKR_ENGINE_TOKEN") or "").strip()
     if not expected:
-        return
+        if _allow_unauthenticated_local_engine():
+            return
+        raise HTTPException(status_code=503, detail="IBKR engine token is not configured")
     prefix = "Bearer "
     if not authorization or not authorization.startswith(prefix):
         raise HTTPException(status_code=401, detail="missing bearer token")
     token = authorization[len(prefix):]
-    if token != expected:
+    if not hmac.compare_digest(token, expected):
         raise HTTPException(status_code=403, detail="invalid bearer token")
 
 

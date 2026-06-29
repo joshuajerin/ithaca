@@ -69,6 +69,7 @@ pnpm --filter @doomberg/web run test && pnpm --filter @doomberg/web run build
 
 ```bash
 export DOOMBERG_DB=./doomberg.db              # local SQLite system-of-record (default :memory:)
+export DOOMBERG_ENV=local                     # enables local X-Tenant-Id dev auth fallback
 # Production uses managed Postgres instead:
 # export DOOMBERG_DB=postgresql://user:pass@host:5432/dbname?sslmode=require
 

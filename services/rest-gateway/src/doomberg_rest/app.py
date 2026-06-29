@@ -370,7 +370,13 @@ def _allow_dev_tenant_header() -> bool:
     if override is not None:
         return override.strip().lower() in {"1", "true", "yes", "on"}
     env = (os.environ.get("DOOMBERG_ENV") or "").strip().lower()
-    return env in {"", "test", "local"}
+    return env in {"test", "local", "dev", "development"}
+
+
+def _cors_allowed_origins() -> list[str]:
+    if _allow_dev_tenant_header():
+        return ["*"]
+    return _csv_env("CLERK_ALLOWED_ORIGINS")
 
 
 def _env_flag(name: str) -> bool:
@@ -859,10 +865,10 @@ def create_app(db: Any | None = None) -> FastAPI:
     app = FastAPI(title="doomberg-rest-gateway", version="0.0.0")
     app.state.stores = stores
 
-    # Permissive CORS for local dev only. PIN allowed origins in prod.
+    # Permissive CORS for local/dev only. Deployed environments use Clerk/app origins.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=_cors_allowed_origins(),
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],

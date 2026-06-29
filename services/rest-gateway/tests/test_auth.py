@@ -11,8 +11,11 @@ import time
 import uuid
 
 import jwt
+from fastapi.testclient import TestClient
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from doomberg_platform import open_db
+from doomberg_rest import create_app
 
 
 def _spec(name="UI Auth Momentum"):
@@ -30,6 +33,12 @@ def _spec(name="UI Auth Momentum"):
 
 def _bearer(key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {key}"}
+
+
+def _fresh_client_for_env():
+    db = open_db(":memory:")
+    app = create_app(db)
+    return db, TestClient(app)
 
 
 def _clerk_keypair() -> tuple[str, str]:
@@ -110,6 +119,14 @@ def test_x_tenant_id_fallback_disabled_in_prod(client, monkeypatch):
     assert resp.json()["detail"] == "authentication required"
 
 
+def test_x_tenant_id_fallback_disabled_when_env_missing(client, monkeypatch):
+    monkeypatch.delenv("DOOMBERG_ENV", raising=False)
+    tid = str(uuid.uuid4())
+    resp = client.get("/api/runs", headers={"X-Tenant-Id": tid})
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "authentication required"
+
+
 def test_query_access_token_is_not_a_rest_auth_path(client, stores, monkeypatch):
     monkeypatch.setenv("DOOMBERG_ENV", "prod")
     tid = stores.auth.create_tenant("Acme")
@@ -161,3 +178,39 @@ def test_clerk_session_rejects_unapproved_origin(client, monkeypatch):
 
     assert resp.status_code == 401
     assert resp.json()["detail"] == "invalid Clerk authorized party"
+
+
+def test_prod_cors_uses_configured_origins(monkeypatch):
+    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "https://app.doomberg.me")
+    db, prod_client = _fresh_client_for_env()
+
+    resp = prod_client.options(
+        "/api/runs",
+        headers={
+            "Origin": "https://app.doomberg.me",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert resp.headers["access-control-allow-origin"] == "https://app.doomberg.me"
+    prod_client.close()
+    db.close()
+
+
+def test_prod_cors_rejects_unconfigured_origin(monkeypatch):
+    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "https://app.doomberg.me")
+    db, prod_client = _fresh_client_for_env()
+
+    resp = prod_client.options(
+        "/api/runs",
+        headers={
+            "Origin": "https://evil.example",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert "access-control-allow-origin" not in resp.headers
+    prod_client.close()
+    db.close()

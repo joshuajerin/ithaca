@@ -43,6 +43,11 @@ from doomberg_platform import open_db  # noqa: E402
 from doomberg_rest import create_app  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _local_env(monkeypatch):
+    monkeypatch.setenv("DOOMBERG_ENV", "test")
+
+
 @pytest.fixture()
 def db():
     handle = open_db(":memory:")

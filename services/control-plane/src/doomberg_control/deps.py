@@ -74,7 +74,7 @@ def _allow_dev_tenant_header() -> bool:
     if override is not None:
         return override.strip().lower() in {"1", "true", "yes", "on"}
     env = (os.environ.get("DOOMBERG_ENV") or "").strip().lower()
-    return env in {"", "test", "local"}
+    return env in {"test", "local", "dev", "development"}
 
 
 @dataclass(frozen=True)

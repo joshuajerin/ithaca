@@ -1,5 +1,3 @@
-const HERMES_DEFAULT_ENDPOINT = "https://urban-baseball-nerve-offices.trycloudflare.com/portfolio-website";
-
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
   "cache-control": "no-store",
@@ -18,11 +16,9 @@ function hermesForTenant(id) {
   if (base && perTenant && process.env[perTenant.keyEnv]) {
     return { endpoint: `${base}${perTenant.path}`, key: process.env[perTenant.keyEnv] };
   }
-  // Legacy fallback: single shared endpoint + key.
-  return {
-    endpoint: (process.env.HERMES_AI_ENDPOINT || HERMES_DEFAULT_ENDPOINT).replace(/\/+$/, ""),
-    key: process.env.HERMES_AI_API_KEY,
-  };
+  // Legacy fallback only when explicitly configured. Never leak prompts to a baked-in tunnel.
+  const endpoint = (process.env.HERMES_AI_ENDPOINT || "").replace(/\/+$/, "");
+  return { endpoint, key: endpoint ? process.env.HERMES_AI_API_KEY : undefined };
 }
 
 function tenantFromHost(req) {
@@ -99,16 +95,15 @@ async function supabaseInsert(table, row) {
   return { ok: true };
 }
 
-async function callHermes({ query, messages, instructions, tenant, sessionId }) {
+async function callHermes({ query, messages, tenant, sessionId }) {
   const { endpoint, key } = hermesForTenant(tenant.id);
-  if (!key) {
-    throw new Error("Hermes key is not configured (set DOOMBERG_HERMES_KEY / KURAL_HERMES_KEY or HERMES_AI_API_KEY)");
+  if (!endpoint || !key) {
+    throw new Error("Hermes endpoint/key is not configured (set HERMES_BASE_URL with tenant keys, or explicit HERMES_AI_ENDPOINT and HERMES_AI_API_KEY)");
   }
   const system = [
     `You are the AI backend for ${tenant.name} at ${tenant.host}.`,
     "Answer directly and concisely. If the user asks for financial analysis, be useful but avoid pretending to place trades or access private brokerage data.",
     "Keep Doomberg and Kural logically separate by host, but use the shared backend memory/database safely.",
-    instructions || "",
   ].filter(Boolean).join("\n");
 
   const payload = messages
@@ -159,7 +154,7 @@ async function handleOrchestrate(req, res, tenant, stream = false) {
   const started = Date.now();
   let result;
   try {
-    const hermes = await callHermes({ query, tenant, sessionId: body.sessionId, instructions: body.instructions });
+    const hermes = await callHermes({ query, tenant, sessionId: body.sessionId });
     result = dashboardResult({ tenant, query, answer: hermes.content, sessionId: body.sessionId });
     await supabaseInsert("ai_interactions", {
       tenant_id: tenant.id,
@@ -215,7 +210,7 @@ async function handleAiProxy(req, res, tenant) {
   const query = String(body.query || body.message || body.prompt || body.input || "").trim();
   const messages = Array.isArray(body.messages) ? body.messages : undefined;
   try {
-    const hermes = await callHermes({ query, messages, tenant, instructions: body.system || body.instructions, sessionId: body.sessionId });
+    const hermes = await callHermes({ query, messages, tenant, sessionId: body.sessionId });
     await supabaseInsert("ai_interactions", {
       tenant_id: tenant.id,
       host: tenant.host,
