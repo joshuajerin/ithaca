@@ -5,6 +5,11 @@ rest-gateway REST/SSE only (never MCP directly).
 
 ## Screens (left rail)
 
+- **Sessions** — two-column layout: rounded white session cards (left) + live step pipeline
+  (right). Status badges are colour-coded (green = done, red = error, outline = running/pending).
+  Clicking a session loads its trace into the right panel; each step card shows a brief inline
+  args preview. Clicking any step card opens a focused popup modal with full args + result.
+  Search filters by title, agent, or session ID. Implemented in `src/pages/SessionsList.tsx`.
 - **Runs** — the centerpiece. Three columns: reasoning rail (collapsible, often empty for BYO
   agents) | tool-call timeline (the spine, built from the SSE `TraceEvent` stream via a pure
   reducer) | evidence panels (keyed by a static `panelType` registry). Subscribes to

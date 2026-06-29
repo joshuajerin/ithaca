@@ -26,6 +26,7 @@ export function fmtClock(ts: string | null | undefined): string {
 export function stateClass(state: string | undefined): string {
   switch (state) {
     case "succeeded":
+    case "done":
     case "live":
     case "promoted":
     case "approved":
@@ -34,6 +35,7 @@ export function stateClass(state: string | undefined): string {
     case "filled":
       return "ok";
     case "failed":
+    case "error":
     case "timeout":
     case "retired":
     case "denied":
