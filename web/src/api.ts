@@ -5,6 +5,7 @@ import type {
   DatasetSnapshotRow,
   JobRow,
   LiveDataSmokeStatus,
+  OrderIntentRow,
   OpsStatus,
   ProviderConnectionRow,
   RunRow,
@@ -156,6 +157,33 @@ export const api = {
     );
   },
 
+  async listOrderIntents(signal?: AbortSignal): Promise<OrderIntentRow[]> {
+    const raw = await getJson<unknown>(`/order-intents`, signal);
+    return unwrapList<OrderIntentRow>(raw, "order_intents");
+  },
+
+  async getOrderIntent(id: string, signal?: AbortSignal): Promise<OrderIntentRow> {
+    return getJson<OrderIntentRow>(`/order-intents/${encodeURIComponent(id)}`, signal);
+  },
+
+  async createOrderIntent(body: {
+    run_id: string;
+    payload: Record<string, unknown>;
+    strategy_id?: string | null;
+    account_ref?: string | null;
+    idempotency_key?: string | null;
+  }, signal?: AbortSignal): Promise<OrderIntentRow> {
+    return postJson<OrderIntentRow>(`/order-intents`, body, signal);
+  },
+
+  async previewOrderIntent(id: string, signal?: AbortSignal): Promise<OrderIntentRow> {
+    return postJson<OrderIntentRow>(`/order-intents/${encodeURIComponent(id)}/preview`, {}, signal);
+  },
+
+  async submitOrderIntent(id: string, signal?: AbortSignal): Promise<OrderIntentRow> {
+    return postJson<OrderIntentRow>(`/order-intents/${encodeURIComponent(id)}/submit`, {}, signal);
+  },
+
   async listProviders(signal?: AbortSignal): Promise<{
     connections: ProviderConnectionRow[];
     snapshots: DatasetSnapshotRow[];
@@ -224,8 +252,17 @@ export const api = {
     return postJson<RunRow>(`/strategies`, { spec }, signal);
   },
 
-  async createRun(strategy_id: string, kind: "backtest", range = "1y", signal?: AbortSignal): Promise<RunRow> {
+  async createRun(strategy_id: string, kind: "backtest" | "paper", range = "1y", signal?: AbortSignal): Promise<RunRow> {
     return postJson<RunRow>(`/runs`, { strategy_id, kind, range }, signal);
+  },
+
+  async runAction(
+    id: string,
+    action: "cancel" | "promote" | "activate" | "pause" | "resume" | "retire",
+    body: Record<string, unknown> = {},
+    signal?: AbortSignal,
+  ): Promise<RunRow> {
+    return postJson<RunRow>(`/runs/${encodeURIComponent(id)}/${action}`, body, signal);
   },
 
   // ---- auth ------------------------------------------------------------------

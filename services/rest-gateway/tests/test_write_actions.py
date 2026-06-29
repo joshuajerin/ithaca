@@ -29,34 +29,47 @@ def _h(tenant):
     return {"X-Tenant-Id": tenant}
 
 
-def test_propose_then_backtest_create_succeeds_but_trading_lifecycle_is_disabled(client, tenant):
+def test_propose_then_backtest_and_paper_lifecycle_succeed_for_human(client, tenant):
     r = client.post("/api/strategies", json={"spec": _spec()}, headers=_h(tenant))
     assert r.status_code == 201
     sid = r.json()["id"]
 
     r = client.post("/api/runs", json={"strategy_id": sid, "kind": "paper"}, headers=_h(tenant))
-    assert r.status_code == 403
-    assert "trading is disabled" in r.json()["detail"]
+    assert r.status_code == 201, r.text
+    paper_id = r.json()["run_id"]
+    assert r.json()["kind"] == "paper"
 
     r = client.post("/api/runs", json={"strategy_id": sid, "kind": "backtest"}, headers=_h(tenant))
     assert r.status_code == 201
     run_id = r.json()["run_id"]
     assert r.json()["kind"] == "backtest"
 
-    for action in ("promote", "activate", "pause", "resume", "retire"):
-        blocked = client.post(f"/api/runs/{run_id}/{action}", headers=_h(tenant))
-        assert blocked.status_code == 403
-        assert "trading lifecycle actions are disabled" in blocked.json()["detail"]
+    assert client.post(f"/api/runs/{paper_id}/promote", headers=_h(tenant)).json()["state"] == "promoted"
+    assert client.post(f"/api/runs/{paper_id}/activate", headers=_h(tenant)).json()["state"] == "live"
+    assert client.post(f"/api/runs/{paper_id}/pause", headers=_h(tenant)).json()["state"] == "paused"
+    assert client.post(f"/api/runs/{paper_id}/resume", headers=_h(tenant)).json()["state"] == "live"
+    assert client.post(f"/api/runs/{paper_id}/retire", headers=_h(tenant)).json()["state"] == "retired"
+
+    blocked = client.post(f"/api/runs/{run_id}/promote", headers=_h(tenant))
+    assert blocked.status_code == 409
+    assert "only paper runs" in blocked.json()["detail"]
 
 
-def test_agent_actor_cannot_create_trading_run(client, tenant):
+def test_agent_actor_can_request_paper_but_cannot_promote(client, tenant):
     sid = client.post("/api/strategies", json={"spec": _spec()}, headers=_h(tenant)).json()["id"]
     resp = client.post(
         "/api/runs",
         json={"strategy_id": sid, "kind": "paper"},
         headers={"X-Tenant-Id": tenant, "X-Actor-Kind": "agent"},
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 201, resp.text
+    run_id = resp.json()["run_id"]
+    promoted = client.post(
+        f"/api/runs/{run_id}/promote",
+        headers={"X-Tenant-Id": tenant, "X-Actor-Kind": "agent"},
+    )
+    assert promoted.status_code == 403
+    assert "requires a human actor" in promoted.json()["detail"]
 
 
 def test_propose_invalid_spec_422(client, tenant):

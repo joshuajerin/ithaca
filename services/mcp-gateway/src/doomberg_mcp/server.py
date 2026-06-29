@@ -44,6 +44,147 @@ _TYPED_ERROR_CODES = [
     "DUPLICATE_IDEMPOTENCY_KEY",
 ]
 
+_TOOLKITS: dict[str, dict] = {
+    "session": {
+        "name": "Research Session",
+        "description": "Start a visible Doomberg session, follow durable runs, cancel work, and fetch artifacts.",
+        "direct_tools": [
+            "start_research_session",
+            "get_run",
+            "subscribe_run",
+            "cancel_run",
+            "get_artifact",
+        ],
+        "skill_ids": [],
+        "required_first_tool": "start_research_session",
+    },
+    "market-research": {
+        "name": "Market Research",
+        "description": "Live/archive prices, news, movers, sentiment, breadth, macro, and volatility context.",
+        "direct_tools": [
+            "market_get_ohlcv",
+            "market_news",
+            "market_screener",
+            "market_movers",
+            "market_tide",
+            "sentiment_get",
+            "macro_dashboard",
+            "vix_term_structure",
+        ],
+        "skill_ids": [
+            "market.news",
+            "market.screener",
+            "market.movers",
+            "market.tide",
+            "sentiment.get",
+            "macro.dashboard",
+            "vix.term_structure",
+        ],
+        "required_first_tool": "start_research_session",
+    },
+    "fundamentals": {
+        "name": "Fundamentals",
+        "description": "Single-name, peer, PIT, financial statement, earnings, analyst, and ownership research.",
+        "direct_tools": [
+            "fundamentals_get",
+            "fundamentals_compare",
+            "fundamentals_pit",
+            "financials_income",
+            "financials_balance",
+            "financials_cashflow",
+            "analyst_ratings",
+            "institutional_holdings",
+            "institutional_flows",
+        ],
+        "skill_ids": [
+            "fundamentals.get",
+            "fundamentals.compare",
+            "fundamentals.pit",
+            "financials.income",
+            "financials.balance",
+            "financials.cashflow",
+            "analyst.ratings",
+            "institutional.holdings",
+            "institutional.flows",
+        ],
+        "required_first_tool": "start_research_session",
+    },
+    "portfolio-risk": {
+        "name": "Portfolio And Risk",
+        "description": "Portfolio optimization, stress, factors, correlation, scenarios, and Monte Carlo analysis.",
+        "direct_tools": [
+            "portfolio_optimize",
+            "risk_stress",
+            "factor_exposures",
+            "correlation_matrix",
+            "scenario_project",
+            "montecarlo_simulate",
+        ],
+        "skill_ids": [
+            "portfolio.optimize",
+            "risk.stress",
+            "factor.exposures",
+            "correlation.matrix",
+            "scenario.project",
+            "montecarlo.simulate",
+        ],
+        "required_first_tool": "start_research_session",
+    },
+    "backtest-paper": {
+        "name": "Backtest And Paper Handoff",
+        "description": "Validate strategy specs, run backtests, queue durable skill runs, and inspect paper approvals.",
+        "direct_tools": [
+            "propose_strategy",
+            "backtest_run",
+            "run_skill",
+            "get_run",
+            "subscribe_run",
+            "list_approvals",
+            "decide_approval",
+            "get_artifact",
+        ],
+        "skill_ids": ["tearsheet", "walkforward.run"],
+        "required_first_tool": "start_research_session",
+    },
+    "events-and-positioning": {
+        "name": "Events And Positioning",
+        "description": "Congress, insider, shorting, ETF, economic, FDA, earnings, and catalyst tools.",
+        "direct_tools": [
+            "congress_trades",
+            "politician_portfolio",
+            "congress_screener",
+            "congress_late_filings",
+            "insider_activity",
+            "short_interest",
+            "short_volume",
+            "short_ftd",
+            "short_screener",
+            "etf_holdings",
+            "etf_exposure",
+            "economic_calendar",
+            "fda_calendar",
+            "earnings_calendar",
+        ],
+        "skill_ids": [
+            "congress.trades",
+            "politician.portfolio",
+            "congress.screener",
+            "congress.late_filings",
+            "insider.activity",
+            "short.interest",
+            "short.volume",
+            "short.ftd",
+            "short.screener",
+            "etf.holdings",
+            "etf.exposure",
+            "economic.calendar",
+            "fda.calendar",
+            "earnings.calendar",
+        ],
+        "required_first_tool": "start_research_session",
+    },
+}
+
 
 def _json_resource(payload: dict) -> str:
     return json.dumps(payload, indent=2, sort_keys=True)
@@ -650,6 +791,56 @@ class Toolset:
             ]
         return {"skills": entries[:50], "count": len(entries), "truncated": len(entries) > 50}
 
+    def list_toolkits(self, query: str = "") -> dict:
+        """Task-oriented groups for agents that prefer direct tools over catalog search."""
+        q = (query or "").strip().lower()
+        entries = []
+        for toolkit_id, toolkit in sorted(_TOOLKITS.items()):
+            entry = {
+                "toolkit_id": toolkit_id,
+                "name": toolkit["name"],
+                "description": toolkit["description"],
+                "required_first_tool": toolkit["required_first_tool"],
+                "direct_tool_count": len(toolkit["direct_tools"]),
+                "skill_count": len(toolkit["skill_ids"]),
+            }
+            if q and not (
+                q in toolkit_id.lower()
+                or q in entry["name"].lower()
+                or q in entry["description"].lower()
+            ):
+                continue
+            entries.append(entry)
+        return {"toolkits": entries, "count": len(entries)}
+
+    def describe_toolkit(self, toolkit_id: str) -> dict:
+        toolkit_id = str(toolkit_id or "").strip().lower()
+        toolkit = _TOOLKITS.get(toolkit_id)
+        if toolkit is None:
+            return self._typed_error(
+                "INVALID_SYMBOL",
+                f"unknown toolkit: {toolkit_id}",
+                "Call list_toolkits and use a returned toolkit_id.",
+            )
+        skills = [
+            self._manifest_entry(manifest)
+            for skill_id in toolkit["skill_ids"]
+            if (manifest := ALL_SKILL_MANIFESTS.get(skill_id)) is not None
+        ]
+        return {
+            "toolkit_id": toolkit_id,
+            "name": toolkit["name"],
+            "description": toolkit["description"],
+            "required_first_tool": toolkit["required_first_tool"],
+            "direct_tools": toolkit["direct_tools"],
+            "skills": skills,
+            "workflow": [
+                f"Call {toolkit['required_first_tool']} with the user's prompt.",
+                "Call direct tools from this toolkit as needed.",
+                "Use get_run/subscribe_run for durable work and inspect the visible session trace.",
+            ],
+        }
+
     def describe_skill(self, skill_id: str, version: str | None = None) -> dict:
         """Return a compact manifest-like description for a skill."""
         skill_id = self._canonical_skill_id(skill_id)
@@ -676,6 +867,12 @@ class Toolset:
             "skills": entries,
         }
 
+    def toolkits_catalog_resource(self) -> dict:
+        return {"kind": "toolkits.catalog", **self.list_toolkits()}
+
+    def toolkit_resource(self, toolkit_id: str) -> dict:
+        return self.describe_toolkit(toolkit_id)
+
     def skill_resource(self, skill_id: str, version: str) -> dict:
         """Read-only MCP resource for one skill manifest version."""
         return self.describe_skill(skill_id, version=version)
@@ -690,11 +887,11 @@ class Toolset:
         return {
             "kind": "policies.current",
             "tenant_id": (_ctx or {}).get("tenant_id") or _DEFAULT_TENANT,
-            "trading": {"enabled": False, "detail": "data and backtest only"},
-            "paper_trading_default": False,
+            "trading": {"enabled": False, "detail": "live trading is disabled; paper handoff is enabled"},
+            "paper_trading_default": True,
             "live_execution": {
-                "enabled": False,
-                "requires_connected_provider": False,
+                "enabled": policy.live_enabled,
+                "requires_connected_provider": policy.require_connected_provider_for_live,
             },
             "execution": {
                 "max_notional_usd": policy.max_notional_usd,
@@ -1486,6 +1683,24 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
         return _json_resource(ts.skills_catalog_resource())
 
     @mcp.resource(
+        "doomberg://toolkits/catalog",
+        name="toolkits_catalog",
+        description="Task-oriented Doomberg toolkits for direct MCP tool calls.",
+        mime_type="application/json",
+    )
+    def toolkits_catalog_resource() -> str:
+        return _json_resource(ts.toolkits_catalog_resource())
+
+    @mcp.resource(
+        "doomberg://toolkits/{toolkit_id}",
+        name="toolkit_manifest",
+        description="One task-oriented Doomberg toolkit with direct tools and related skills.",
+        mime_type="application/json",
+    )
+    def toolkit_resource(toolkit_id: str) -> str:
+        return _json_resource(ts.toolkit_resource(toolkit_id))
+
+    @mcp.resource(
         "doomberg://skills/{skill_id}/{version}",
         name="skill_manifest",
         description="One versioned Doomberg skill manifest.",
@@ -1579,6 +1794,14 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     def search_skills(query: str = "", asset_class: str | None = None,
                       intent: str | None = None) -> dict:
         return ts.search_skills(query=query, asset_class=asset_class, intent=intent)
+
+    @mcp.tool(description="List task-oriented Doomberg toolkits for direct calls after start_research_session.")
+    def list_toolkits(query: str = "") -> dict:
+        return ts.list_toolkits(query=query)
+
+    @mcp.tool(description="Describe one Doomberg toolkit: direct tools, related skills, and required workflow.")
+    def describe_toolkit(toolkit_id: str) -> dict:
+        return ts.describe_toolkit(toolkit_id=toolkit_id)
 
     @mcp.tool(description="Optional helper only: inspect one skill schema when a direct tool's inputs are unclear.")
     def describe_skill(skill_id: str, version: str | None = None) -> dict:

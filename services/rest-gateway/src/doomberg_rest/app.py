@@ -44,6 +44,7 @@ from pydantic import BaseModel
 from doomberg_control import actions
 from doomberg_control.actions import ActionError
 from doomberg_control.deps import HUMAN_ACTOR_KINDS, Ctx
+from doomberg_control.execution_gateway import ExecutionGateway
 from doomberg_core import Core
 from doomberg_core.providers import PUBLIC_DATA_SOURCE, PUBLIC_ENTITLEMENT_CLASS, IbkrEngineClient
 from doomberg_platform import (
@@ -312,6 +313,7 @@ def _human_scopes() -> list[str]:
         "alerts:ack",
         "artifacts:read",
         "deploy:backtest",
+        "deploy:paper",
     ]
 
 
@@ -636,8 +638,8 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
         },
         {
             "name": "Trading",
-            "state": "paused",
-            "detail": "Disabled; this deployment is data and backtest only",
+            "state": "succeeded",
+            "detail": "Paper handoff enabled; live execution disabled unless explicitly configured",
         },
         {
             "name": "Worker backlog",
@@ -663,9 +665,9 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
             "connected_quote_provider": live_quote_provider,
         },
         "execution": {
-            "paper_enabled": False,
-            "live_enabled": False,
-            "disabled": True,
+            "paper_enabled": True,
+            "live_enabled": _env_flag("DOOMBERG_ENABLE_LIVE_EXECUTION"),
+            "disabled": False,
             "max_notional_usd": os.environ.get("DOOMBERG_EXECUTION_MAX_NOTIONAL_USD") or "10000",
             "max_quantity": os.environ.get("DOOMBERG_EXECUTION_MAX_QUANTITY") or "10000",
             "max_freshness_ms": os.environ.get("DOOMBERG_EXECUTION_MAX_FRESHNESS_MS") or "10000",
@@ -752,9 +754,9 @@ def _ctx(
     )
 
 
-def _do(fn, *args) -> dict[str, Any]:
+def _do(fn, *args, **kwargs) -> dict[str, Any]:
     try:
-        return fn(*args)
+        return fn(*args, **kwargs)
     except ActionError as err:
         raise HTTPException(status_code=err.status, detail=err.detail) from err
 
@@ -926,6 +928,7 @@ def create_app(db: Any | None = None) -> FastAPI:
         "alerts:ack",
         "artifacts:read",
         "deploy:backtest",
+        "deploy:paper",
     ]
 
     @app.post("/api/auth/keys", status_code=201)
@@ -1279,10 +1282,22 @@ def create_app(db: Any | None = None) -> FastAPI:
         run_id: str | None = None,
         state: str | None = None,
         limit: int = 100,
-        tenant_id: str = Depends(require_tenant),
+        ctx: Ctx = Depends(_ctx),
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
-        raise HTTPException(status_code=403, detail="order intents are disabled; this deployment is data-only")
+        _require_scope(ctx, "data:read")
+        intents = stores.execution.list_intents(
+            ctx.tenant_id,
+            run_id=run_id,
+            state=state,
+            limit=limit,
+        )
+        records = [
+            record
+            for intent in intents
+            if (record := stores.execution.get_record(ctx.tenant_id, intent["intent_id"])) is not None
+        ]
+        return {"order_intents": records}
 
     @app.post("/api/order-intents", status_code=201)
     def create_order_intent(
@@ -1290,15 +1305,27 @@ def create_app(db: Any | None = None) -> FastAPI:
         ctx: Ctx = Depends(_ctx),
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
-        raise HTTPException(status_code=403, detail="order intents are disabled; this deployment is data-only")
+        return _do(
+            ExecutionGateway(stores).create_intent,
+            ctx,
+            run_id=body.run_id,
+            payload=body.payload,
+            strategy_id=body.strategy_id,
+            account_ref=body.account_ref,
+            idempotency_key=body.idempotency_key,
+        )
 
     @app.get("/api/order-intents/{intent_id}")
     def get_order_intent(
         intent_id: str,
-        tenant_id: str = Depends(require_tenant),
+        ctx: Ctx = Depends(_ctx),
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
-        raise HTTPException(status_code=403, detail="order intents are disabled; this deployment is data-only")
+        _require_scope(ctx, "data:read")
+        record = stores.execution.get_record(ctx.tenant_id, intent_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="order intent not found")
+        return record
 
     @app.post("/api/order-intents/{intent_id}/preview")
     def preview_order_intent(
@@ -1306,7 +1333,7 @@ def create_app(db: Any | None = None) -> FastAPI:
         ctx: Ctx = Depends(_ctx),
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
-        raise HTTPException(status_code=403, detail="order intents are disabled; this deployment is data-only")
+        return _do(ExecutionGateway(stores).preview, ctx, intent_id)
 
     @app.post("/api/order-intents/{intent_id}/submit")
     def submit_order_intent(
@@ -1314,7 +1341,7 @@ def create_app(db: Any | None = None) -> FastAPI:
         ctx: Ctx = Depends(_ctx),
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
-        raise HTTPException(status_code=403, detail="order intents are disabled; this deployment is data-only")
+        return _do(ExecutionGateway(stores).submit, ctx, intent_id)
 
     @app.get("/api/triggers")
     def list_triggers(
@@ -1500,8 +1527,8 @@ def create_app(db: Any | None = None) -> FastAPI:
         ctx: Ctx = Depends(_ctx),
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
-        if body.kind != "backtest":
-            raise HTTPException(status_code=403, detail="only backtest runs are enabled; trading is disabled")
+        if body.kind not in {"backtest", "paper"}:
+            raise HTTPException(status_code=422, detail="kind must be backtest or paper")
         try:
             return actions.create_run(stores, ctx, strategy_id=body.strategy_id,
                                       kind=body.kind, range_=body.range,
@@ -1524,7 +1551,7 @@ def create_app(db: Any | None = None) -> FastAPI:
     def _action_route(fn):
         def route(run_id: str, ctx: Ctx = Depends(_ctx),
                   stores: Stores = Depends(get_stores)) -> dict[str, Any]:
-            raise HTTPException(status_code=403, detail="trading lifecycle actions are disabled")
+            return _do(fn, stores, ctx, run_id)
         return route
 
     for _name, _fn in (
