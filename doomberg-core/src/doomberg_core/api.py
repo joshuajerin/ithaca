@@ -59,6 +59,10 @@ class Core:
                 ],
             }
         result = run_backtest(spec, panel.dates, panel.closes, panel.symbols)
+        result["dataQuality"] = {
+            "ohlcv": panel.quality,
+            "pointInTime": prov["provenance"].get("pit") == "true",
+        }
         return {
             "data": result,
             "provenance": prov["provenance"],

@@ -6,6 +6,11 @@ import { RunsList } from "./pages/RunsList";
 import { RunDetail } from "./pages/RunDetail";
 import { Deploys } from "./pages/Deploys";
 import { Trades } from "./pages/Trades";
+import { Approvals } from "./pages/Approvals";
+import { Artifacts } from "./pages/Artifacts";
+import { Triggers } from "./pages/Triggers";
+import { Providers } from "./pages/Providers";
+import { Orders } from "./pages/Orders";
 import { Settings } from "./pages/Settings";
 import { AuthPage } from "./pages/AuthPage";
 import { AgentLink } from "./pages/AgentLink";
@@ -17,6 +22,11 @@ const NAV: { to: string; label: string; cta?: boolean }[] = [
   { to: "/sessions", label: "Sessions" },
   { to: "/runs", label: "Runs" },
   { to: "/deploys", label: "Deploys" },
+  { to: "/orders", label: "Orders" },
+  { to: "/approvals", label: "Approvals" },
+  { to: "/triggers", label: "Triggers" },
+  { to: "/artifacts", label: "Artifacts" },
+  { to: "/providers", label: "Providers" },
   { to: "/trades", label: "Trades" },
 ];
 
@@ -92,6 +102,11 @@ export function App() {
           <Route path="/runs" element={<RunsList />} />
           <Route path="/runs/:id" element={<RunDetail />} />
           <Route path="/deploys" element={<Deploys />} />
+          <Route path="/orders" element={<Orders />} />
+          <Route path="/approvals" element={<Approvals />} />
+          <Route path="/triggers" element={<Triggers />} />
+          <Route path="/artifacts" element={<Artifacts />} />
+          <Route path="/providers" element={<Providers />} />
           <Route path="/trades" element={<Trades />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/agent-link" element={<AgentLink />} />

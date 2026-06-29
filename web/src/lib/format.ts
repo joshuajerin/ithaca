@@ -28,15 +28,29 @@ export function stateClass(state: string | undefined): string {
     case "succeeded":
     case "live":
     case "promoted":
+    case "approved":
+    case "active":
+    case "connected":
+    case "filled":
       return "ok";
     case "failed":
     case "timeout":
     case "retired":
+    case "denied":
+    case "policy_denied":
+    case "rejected":
       return "bad";
     case "running":
     case "queued":
+    case "submitted":
+    case "partially_filled":
       return "run";
     case "paused":
+    case "pending":
+    case "proposed":
+    case "draft":
+    case "approval_required":
+    case "cancelled":
       return "warn";
     default:
       return "";

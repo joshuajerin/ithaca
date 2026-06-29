@@ -101,6 +101,45 @@ export interface ApprovalRow {
   updated_at?: string | null;
 }
 
+export interface OrderRow {
+  tenant_id: string;
+  order_id: string;
+  intent_id: string;
+  broker: string;
+  broker_order_id?: string | null;
+  client_order_id: string;
+  state: string;
+  payload: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface FillRow {
+  tenant_id: string;
+  fill_id: string;
+  order_id: string;
+  broker_fill_id?: string | null;
+  payload: Record<string, unknown>;
+  event_time?: string | null;
+  created_at?: string | null;
+}
+
+export interface OrderIntentRow {
+  tenant_id: string;
+  intent_id: string;
+  run_id: string;
+  strategy_id?: string | null;
+  account_ref?: string | null;
+  state: string;
+  payload: Record<string, unknown>;
+  risk_decision?: Record<string, unknown> | null;
+  idempotency_key?: string | null;
+  orders?: OrderRow[];
+  fills?: FillRow[];
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 export interface ProviderConnectionRow {
   tenant_id: string;
   connection_id: string;
@@ -244,7 +283,46 @@ export interface LiveDataSmokeStatus {
 // Backtest result `data` shape (from INTERFACES.md / doomberg_core).
 export interface BacktestResult {
   equityCurve: { d: string; v: number }[];
+  comparisonCurve?: { d: string; strategy: number; benchmark: number }[];
   stats: Record<string, number>;
+  benchmark?: {
+    name: string;
+    label?: string;
+    equityCurve: { d: string; v: number }[];
+    stats: Record<string, number>;
+  };
+  comparison?: {
+    benchmark: string;
+    activeTotalReturnPct: number;
+    trackingErrorPct: number;
+    informationRatio: number;
+    outperformed: boolean;
+  };
+  execution?: {
+    cost_bps: number;
+    slippage_bps: number;
+    all_in_cost_bps: number;
+    avg_daily_turnover: number;
+    total_cost_pct: number;
+  };
+  integrity?: {
+    noLookahead: boolean;
+    decisionLagBars: number;
+    signalUses: string;
+    returnApplied: string;
+    benchmark: string;
+  };
+  dataQuality?: {
+    pointInTime: boolean;
+    ohlcv: Record<string, {
+      raw: number;
+      clean: number;
+      dropped: number;
+      deduped: number;
+      sorted: boolean;
+      input_sorted: boolean;
+    }>;
+  };
   finalWeights: Record<string, number>;
   risk: {
     ok: boolean;
