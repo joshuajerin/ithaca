@@ -159,6 +159,7 @@ def test_ibkr_quote_client_normalizes_smoke_and_submit_order() -> None:
         )
 
         quote = client.quote("aapl", tenant_id="tenant-1")
+        extended_quote = client.quote("aapl", tenant_id="tenant-1", include_extended_hours=True)
         diagnosis = client.diagnose_quote("AAPL", tenant_id="tenant-1", max_freshness_ms=10_000)
         order = client.submit_order(
             tenant_id="tenant-1",
@@ -169,17 +170,33 @@ def test_ibkr_quote_client_normalizes_smoke_and_submit_order() -> None:
 
     assert quote["symbol"] == "AAPL"
     assert quote["price"] == 212.45
+    assert extended_quote["symbol"] == "AAPL"
     assert diagnosis["ok"] is True
     assert diagnosis["quote"]["source"] == "doomberg-live-data"
     assert diagnosis["quote"]["entitlement_class"] == "doomberg_live"
     assert "source_account" not in diagnosis["quote"]
     assert "raw" not in diagnosis["quote"]
     assert order["order_id"] == "ibkr-1"
-    assert [request["method"] for request in server.requests] == ["GET", "GET", "POST"]
+    assert [request["method"] for request in server.requests] == ["GET", "GET", "GET", "POST"]
     assert server.requests[0]["path"] == "/v1/quote/AAPL"
+    assert server.requests[1]["path"] == "/v1/quote/AAPL?extended_hours=true"
     assert server.requests[0]["tenant"] == "tenant-1"
     assert server.requests[0]["authorization"] == "Bearer secret-token"
     assert server.requests[-1]["body"]["client_order_id"] == "client-1"
+
+
+def test_ibkr_quote_client_can_request_extended_hours_quote() -> None:
+    now = datetime.now(timezone.utc)
+    with _Server(_quote_payload(now)) as server:
+        client = IbkrEngineClient(
+            base_url=server.url,
+            quote_path="/v1/quote/{symbol}",
+        )
+
+        quote = client.quote("aapl", extended_hours=True)
+
+    assert quote["price"] == 212.45
+    assert server.requests[0]["path"] == "/v1/quote/AAPL?extended_hours=true"
 
 
 def test_ibkr_read_models_are_redacted_and_account_scoped() -> None:

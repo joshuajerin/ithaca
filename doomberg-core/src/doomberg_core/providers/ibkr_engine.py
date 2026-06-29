@@ -99,6 +99,13 @@ def _env_int(name: str) -> int | None:
     return max(0, value)
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def normalize_quote(raw: dict[str, Any], *, symbol: str, source: str = PUBLIC_DATA_SOURCE) -> dict[str, Any]:
     """Normalize common live quote shapes into the canonical trigger quote contract."""
 
@@ -158,6 +165,7 @@ def normalize_quote(raw: dict[str, Any], *, symbol: str, source: str = PUBLIC_DA
         "received_time": received_time.isoformat(),
         "freshness_ms": freshness_ms,
         "quality_flags": quality_flags,
+        "extended_hours_requested": bool(payload.get("extended_hours_requested")),
         "raw": raw,
     }
 
@@ -293,10 +301,26 @@ class IbkrEngineClient:
             return resolved
         return f"{self.base_url}{resolved if resolved.startswith('/') else '/' + resolved}"
 
-    def quote(self, symbol: str, *, tenant_id: str | None = None) -> dict[str, Any]:
+    def quote(
+        self,
+        symbol: str,
+        *,
+        tenant_id: str | None = None,
+        extended_hours: bool | None = None,
+        include_extended_hours: bool = False,
+    ) -> dict[str, Any]:
+        url = self.url_for_path(self.quote_path, symbol=symbol)
+        request_extended_hours = (
+            include_extended_hours
+            or bool(extended_hours)
+            or (extended_hours is None and _env_bool("DOOMBERG_IBKR_EXTENDED_HOURS"))
+        )
+        if request_extended_hours:
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}extended_hours=true"
         raw = self._request_json(
             "GET",
-            self.url_for_path(self.quote_path, symbol=symbol),
+            url,
             tenant_id=tenant_id,
             user_agent="doomberg-live-data-quote",
         )
@@ -455,6 +479,7 @@ class IbkrEngineClient:
         *,
         tenant_id: str | None = None,
         max_freshness_ms: int | None = None,
+        include_extended_hours: bool = False,
     ) -> dict[str, Any]:
         """Run a read-only quote smoke and validate the minimum live-data invariants."""
 
@@ -469,6 +494,7 @@ class IbkrEngineClient:
             "host": self.host,
             "quote_path": self.quote_path,
             "symbol": symbol,
+            "include_extended_hours": include_extended_hours,
             "latency_ms": None,
             "quote": None,
             "invariants": [],
@@ -485,7 +511,7 @@ class IbkrEngineClient:
 
         started = time.perf_counter()
         try:
-            quote = self.quote(symbol, tenant_id=tenant_id)
+            quote = self.quote(symbol, tenant_id=tenant_id, include_extended_hours=include_extended_hours)
         except IbkrQuoteInvariantError as exc:
             return {
                 **base,

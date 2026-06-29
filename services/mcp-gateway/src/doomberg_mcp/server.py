@@ -62,6 +62,7 @@ _TOOLKITS: dict[str, dict] = {
         "name": "Market Research",
         "description": "Live/archive prices, news, movers, sentiment, breadth, macro, and volatility context.",
         "direct_tools": [
+            "market_quote",
             "market_get_ohlcv",
             "market_news",
             "market_screener",
@@ -263,6 +264,29 @@ def _ibkr_skill_envelope(data: dict, *, as_of: str | None = None) -> dict:
         },
         "partial": False,
         "warnings": [],
+    }
+
+
+def _live_news_unavailable_envelope(reason: str, *, scope: str | None = None) -> dict:
+    scope = (scope or "Markets").strip().upper() or "Markets"
+    return {
+        "data": None,
+        "provenance": {
+            "source": PUBLIC_DATA_SOURCE,
+            "as_of": datetime.now(timezone.utc).isoformat(),
+            "freshness": "unavailable",
+            "stale_age_sec": None,
+            "pit": "false",
+            "coverage": {"requested": 1, "resolved": 0, "missing": [scope]},
+            "cost": {"class": PUBLIC_ENTITLEMENT_CLASS, "credits": 0},
+            "cache_hit": False,
+        },
+        "partial": True,
+        "warnings": [{
+            "code": "LIVE_NEWS_UNAVAILABLE",
+            "scope": scope,
+            "detail": reason or "live news is unavailable from the configured live data engine",
+        }],
     }
 
 
@@ -535,6 +559,10 @@ class Toolset:
                     "when": "Create a durable run for backtests or longer research jobs.",
                 },
                 {
+                    "tool": "market_quote",
+                    "when": "Fetch the current live quote for one symbol, including extended-hours data when requested.",
+                },
+                {
                     "tool": "market_get_ohlcv",
                     "when": "Fetch quick OHLCV history for one symbol.",
                 },
@@ -591,6 +619,7 @@ class Toolset:
         symbol: str,
         *,
         max_freshness_ms: int | None = None,
+        include_extended_hours: bool = False,
         _ctx: dict | None = None,
     ) -> dict:
         """Entitlement-aware realtime quote via the private live-data engine."""
@@ -602,12 +631,20 @@ class Toolset:
         ctx = dict(_ctx or {})
         tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
         tr = self._tracer(_ctx)
-        span = tr.tool_call("market.quote", {"symbol": symbol, "max_freshness_ms": max_freshness_ms})
+        span = tr.tool_call(
+            "market.quote",
+            {
+                "symbol": symbol,
+                "max_freshness_ms": max_freshness_ms,
+                "include_extended_hours": include_extended_hours,
+            },
+        )
         client = IbkrEngineClient()
         diagnosis = client.diagnose_quote(
             symbol=symbol,
             tenant_id=tenant_id,
             max_freshness_ms=max_freshness_ms,
+            include_extended_hours=include_extended_hours,
         )
         if not diagnosis.get("ok"):
             out = self._typed_error(
@@ -633,6 +670,62 @@ class Toolset:
         )
         tr.tool_result("market.quote", span, _provenance_summary(out))
         return out
+
+    def market_news(self, ticker: str | None = None, sector: str | None = None,
+                    limit: int = 50, _ctx: dict | None = None) -> dict:
+        """Live market news only.
+
+        The direct MCP news tool must not silently fall back to the old archive because agents
+        use it for "latest news" questions. Archive news remains available only through the
+        explicit catalog skill path.
+        """
+
+        required = self._require_research_session(_ctx)
+        if required is not None:
+            return required
+        _ctx = self._with_active_session(_ctx)
+        tr = self._tracer(_ctx)
+        span = tr.tool_call("market.news", {"ticker": ticker, "sector": sector, "limit": limit})
+        ctx = dict(_ctx or {})
+        tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
+        client = IbkrEngineClient()
+        if not client.configured():
+            out = self._typed_error(
+                "BROKER_CONNECTION_REQUIRED",
+                "live news requires the Doomberg live-data engine",
+                "Configure DOOMBERG_IBKR_ENGINE_URL and rerun market_news.",
+            )
+            tr.tool_result("market.news", span, {"source": PUBLIC_DATA_SOURCE, "ok": False,
+                                                 "code": out["error"]["code"]})
+            return out
+        try:
+            ticker_arg = (ticker or "").strip().upper() or None
+            raw = client.news(ticker=ticker_arg, limit=_i(limit, 50, 1, 50), tenant_id=tenant_id)
+            items = raw.get("items") or []
+            if not items:
+                raise IbkrEngineError("live news returned no items")
+            pos = sum(1 for item in items if item.get("sentiment") == "positive")
+            neg = sum(1 for item in items if item.get("sentiment") == "negative")
+            data = {
+                "scope": raw.get("scope") or ticker_arg or sector or "Markets",
+                "items": items,
+                "count": len(items),
+                "sentimentMix": {"positive": pos, "negative": neg, "neutral": len(items) - pos - neg},
+                "asOf": raw.get("asOf") or items[0].get("publishedAt"),
+                "provider": PUBLIC_DATA_SOURCE,
+            }
+            out = _ibkr_skill_envelope(data, as_of=data.get("asOf"))
+            tr.tool_result("market.news", span, _provenance_summary(out))
+            return out
+        except IbkrEngineError as exc:
+            out = self._typed_error(
+                "PROVIDER_DEGRADED",
+                f"live news unavailable: {exc}",
+                "Check the live-data engine news route and IBKR session entitlements.",
+            )
+            tr.tool_result("market.news", span, {"source": PUBLIC_DATA_SOURCE, "ok": False,
+                                                 "code": out["error"]["code"]})
+            return out
 
     def broker_accounts(self, _ctx: dict | None = None) -> dict:
         return self._typed_error(
@@ -740,7 +833,14 @@ class Toolset:
                 out = self._ibkr_live_skill(tool, params, tenant_id=tenant_id)
                 tr.tool_result(tool, span, _provenance_summary(out))
                 return out
-            except IbkrEngineError:
+            except IbkrEngineError as exc:
+                if tool == "market.news" and IbkrEngineClient().configured():
+                    out = _live_news_unavailable_envelope(
+                        str(exc),
+                        scope=params.get("ticker") or params.get("symbol") or params.get("sector"),
+                    )
+                    tr.tool_result(tool, span, _provenance_summary(out))
+                    return out
                 pass
         out = getattr(self.skills, method)(params)
         tr.tool_result(tool, span, _provenance_summary(out))
@@ -1041,6 +1141,7 @@ class Toolset:
                 return traced(self.market_quote(
                     params["symbol"],
                     max_freshness_ms=params.get("max_freshness_ms"),
+                    include_extended_hours=bool(params.get("include_extended_hours")),
                     _ctx=_ctx,
                 ))
             if skill_id in {"broker.accounts", "broker.positions", "broker.orders", "ops.provider_status"}:
@@ -1110,6 +1211,7 @@ class Toolset:
                 out = self.market_quote(
                     params["symbol"],
                     max_freshness_ms=params.get("max_freshness_ms"),
+                    include_extended_hours=bool(params.get("include_extended_hours")),
                     _ctx=run_ctx,
                 )
             elif skill_id in {"broker.accounts", "broker.positions", "broker.orders", "ops.provider_status"}:
@@ -1932,6 +2034,16 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     def market_get_ohlcv(symbol: str, range: str = "6mo", interval: str = "1d") -> dict:
         return ts.market_get_ohlcv(symbol, range, interval, _ctx=_ctx())
 
+    @mcp.tool(description="Direct tool after start_research_session: fetch the current live quote for one symbol. Set include_extended_hours=true for pre/post-market capable routes.")
+    def market_quote(symbol: str, max_freshness_ms: int | None = None,
+                     include_extended_hours: bool = False) -> dict:
+        return ts.market_quote(
+            symbol,
+            max_freshness_ms=max_freshness_ms,
+            include_extended_hours=include_extended_hours,
+            _ctx=_ctx(),
+        )
+
     @mcp.tool(description="Direct tool after start_research_session: run a price/technical backtest from a declarative StrategySpec.")
     def backtest_run(spec: dict, range: str = "1y") -> dict:
         return ts.backtest_run(spec, range, _ctx=_ctx())
@@ -1940,11 +2052,11 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     def propose_strategy(spec: dict) -> dict:
         return ts.propose_strategy(spec, _ctx=_ctx())
 
-    # ---- archive-backed Skill catalog (declarative args only, traced like market.get_ohlcv) ----
+    # ---- direct live-data and archive-backed Skill catalog (declarative args only) ----
     @mcp.tool(name="market_news",
-              description="Recent news headlines for a ticker or sector, from the v1 archive.")
+              description="Direct tool after start_research_session: live market news from the Doomberg live-data engine. Never falls back to archive news.")
     def market_news(ticker: str | None = None, sector: str | None = None, limit: int = 50) -> dict:
-        return call_skill("market.news", {"ticker": ticker, "sector": sector, "limit": limit})
+        return ts.market_news(ticker=ticker, sector=sector, limit=limit, _ctx=_ctx())
 
     @mcp.tool(name="market_screener",
               description="Ranked equity screen over the tracked universe (fundamentals + 1Y return).")

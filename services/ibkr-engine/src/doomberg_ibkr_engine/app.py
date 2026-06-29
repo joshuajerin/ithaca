@@ -47,9 +47,16 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @service.get("/quote", dependencies=[Depends(_require_engine_token)])
-    def quote(symbol: str = Query(..., min_length=1)) -> dict[str, Any]:
+    def quote(
+        symbol: str = Query(..., min_length=1),
+        extended_hours: bool = Query(default=False),
+        include_extended_hours: bool = Query(default=False),
+    ) -> dict[str, Any]:
         try:
-            raw = _gateway().quote(symbol)
+            raw = _gateway().quote(
+                symbol,
+                include_extended_hours=extended_hours or include_extended_hours,
+            )
             normalized = normalize_quote(raw, symbol=symbol, source=PUBLIC_DATA_SOURCE)
         except IbkrQuoteInvariantError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc

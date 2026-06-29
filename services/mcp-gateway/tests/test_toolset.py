@@ -37,6 +37,16 @@ class _QuoteServer:
                     payload = {"positions": [{"symbol": "AAPL", "quantity": 3, "secret": "x"}]}
                 elif self.path.startswith("/orders"):
                     payload = {"orders": [{"order_id": "100", "symbol": "AAPL", "status": "Submitted"}]}
+                elif self.path.startswith("/news"):
+                    payload = {
+                        "scope": "AAPL",
+                        "items": [{
+                            "headline": "Apple moves higher after hours",
+                            "source": "Doomberg",
+                            "publishedAt": now,
+                        }],
+                        "asOf": now,
+                    }
                 else:
                     payload = {
                         "data": {
@@ -126,7 +136,7 @@ async def test_server_registers_three_tools(toolset):
     mcp, _ = create_server(toolset)
     tools = await mcp.list_tools()
     names = {t.name for t in tools}
-    assert {"market_get_ohlcv", "backtest_run", "propose_strategy"} <= names
+    assert {"market_get_ohlcv", "market_quote", "backtest_run", "propose_strategy"} <= names
     assert {
         "doomberg_init",
         "start_research_session",
@@ -386,6 +396,39 @@ def test_run_skill_exposes_live_quote_and_blocks_broker_read_skills(toolset_core
         event["type"] == "error" and event.get("data", {}).get("error") == "POLICY_DENIED"
         for event in got["events"]
     )
+
+
+def test_direct_market_quote_passes_extended_hours_to_live_engine(toolset, monkeypatch):
+    with _QuoteServer() as server:
+        monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
+        monkeypatch.setenv("DOOMBERG_IBKR_QUOTE_PATH", "/quote/{symbol}")
+
+        out = toolset.market_quote(
+            "aapl",
+            max_freshness_ms=10_000,
+            include_extended_hours=True,
+            _ctx={"run_id": R6, "tenant_id": R6, "agent_id": AGENT},
+        )
+
+    assert out["data"]["symbol"] == "AAPL"
+    assert out["provenance"]["source"] == "doomberg-live-data"
+    assert server.requests == [{"path": "/quote/AAPL?extended_hours=true", "tenant": R6}]
+
+
+def test_direct_market_news_is_live_only_when_engine_configured(toolset, monkeypatch):
+    class _EmptyNewsServer(_QuoteServer):
+        def __init__(self) -> None:
+            super().__init__()
+
+    with _EmptyNewsServer() as server:
+        monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
+        monkeypatch.setenv("DOOMBERG_IBKR_NEWS_PATH", "/empty-news")
+
+        out = toolset.market_news("aapl", _ctx={"run_id": R6, "tenant_id": R6, "agent_id": AGENT})
+
+    assert out["error"]["code"] == "PROVIDER_DEGRADED"
+    assert "live news unavailable" in out["error"]["message"]
+    assert server.requests == [{"path": "/empty-news?limit=50&ticker=AAPL", "tenant": R6}]
 
 
 def test_run_skill_queues_durable_backtest(toolset_core, sample_spec):

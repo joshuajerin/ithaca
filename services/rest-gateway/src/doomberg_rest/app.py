@@ -47,6 +47,7 @@ from doomberg_control.deps import HUMAN_ACTOR_KINDS, Ctx
 from doomberg_control.execution_gateway import ExecutionGateway
 from doomberg_core import Core
 from doomberg_core.providers import PUBLIC_DATA_SOURCE, PUBLIC_ENTITLEMENT_CLASS, IbkrEngineClient
+from doomberg_mcp import Toolset
 from doomberg_platform import (
     AuthStore,
     ApprovalStore,
@@ -969,6 +970,29 @@ def create_app(db: Any | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="key not found")
         stores.auth.revoke_key(key_id)
         return {"key_id": key_id, "revoked": True}
+
+    @app.get("/api/agent/toolkits")
+    def agent_toolkits(ctx: Ctx = Depends(_ctx)) -> dict[str, Any]:
+        """Return the canonical direct-tool toolkit catalog for the Agent/Codex UI."""
+        _require_scope(ctx, "data:read")
+        toolset = Toolset()
+        catalog = toolset.list_toolkits()
+        toolkits = []
+        for toolkit in catalog.get("toolkits", []):
+            detail = toolset.describe_toolkit(str(toolkit["toolkit_id"]))
+            direct_tools = detail.get("direct_tools") or []
+            toolkits.append({
+                **detail,
+                "direct_tool_count": len(direct_tools),
+                "skill_count": len(detail.get("skill_ids") or []),
+                "tools": [{"name": tool} for tool in direct_tools],
+            })
+        return {
+            "kind": "toolkits.catalog",
+            "source": "live",
+            "toolkits": toolkits,
+            "count": catalog.get("count", 0),
+        }
 
     @app.post("/api/runs/{run_id}/events-ticket", status_code=201)
     def mint_run_events_ticket(
