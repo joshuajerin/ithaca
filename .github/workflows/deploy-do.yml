@@ -212,7 +212,6 @@ jobs:
           require_env DOOMBERG_SESSION_SECRET
           require_env CLERK_PUBLISHABLE_KEY
           require_env CLERK_ALLOWED_ORIGINS
-          require_env CLERK_ISSUER
           require_env DO_CLUSTER_NAME
           require_env K8S_GATEWAY_NAMESPACE
           require_env K8S_WORKER_NAMESPACE
