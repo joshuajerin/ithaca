@@ -31,7 +31,7 @@ export function AuthPage() {
         <div className="auth-brand">
           <DoombergMark size={30} />
           <div>
-            Doomberg
+            Ithaca
           </div>
         </div>
 
