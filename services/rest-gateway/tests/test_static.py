@@ -25,12 +25,20 @@ def test_spa_served_and_api_precedence(tmp_path, db, monkeypatch):
         root = c.get("/")
         assert root.status_code == 200
         assert "doomberg" in root.text
+        # BrowserRouter deep links fall back to the SPA shell.
+        sessions = c.get("/sessions")
+        assert sessions.status_code == 200
+        assert "doomberg" in sessions.text
         # A built asset is served.
         assert c.get("/assets/app.js").status_code == 200
         # /healthz still wins over the SPA mount.
         assert c.get("/healthz").json() == {"status": "ok"}
         # /api/* still wins (tenant required => 400, NOT the SPA's index.html).
         assert c.get("/api/runs").status_code == 400
+        # Unknown API paths must not be swallowed by the SPA fallback.
+        api_missing = c.get("/api/not-a-route")
+        assert api_missing.status_code == 404
+        assert api_missing.headers["content-type"].startswith("application/json")
 
 
 def test_no_build_dir_means_no_mount(tmp_path, db, monkeypatch):

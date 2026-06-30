@@ -38,7 +38,6 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from jwt import InvalidTokenError, PyJWKClient
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from doomberg_control import actions
@@ -865,6 +864,20 @@ def _web_dist_dir() -> Path | None:
     # services/rest-gateway/src/doomberg_rest/app.py -> repo root is 4 parents up.
     candidate = Path(__file__).resolve().parents[4] / "web" / "dist"
     return candidate if candidate.is_dir() else None
+
+
+def _spa_file_response(dist: Path, full_path: str) -> FileResponse:
+    """Serve built files when present, otherwise fall back to the SPA index."""
+    if full_path == "":
+        return FileResponse(dist / "index.html")
+    if full_path == "api" or full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    root = dist.resolve()
+    target = (root / full_path).resolve()
+    if target.is_file() and target.is_relative_to(root):
+        return FileResponse(target)
+    return FileResponse(root / "index.html")
 
 
 def _repo_root() -> Path:
@@ -1708,13 +1721,19 @@ def create_app(db: Any | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="installer not found")
         return FileResponse(script, media_type="text/x-python")
 
-    # Mounted LAST, so the explicit ``/api/*`` + ``/healthz`` routes above always win; the
-    # SPA mount only catches everything else. ``html=True`` serves index.html for unknown
-    # client-side routes. Skipped entirely when there is no build (tests / dev), so the
-    # gateway still starts without a compiled UI.
+    # Registered LAST, so the explicit ``/api/*`` + ``/healthz`` routes above always win.
+    # Starlette's ``StaticFiles(html=True)`` does not implement a true BrowserRouter
+    # fallback for arbitrary paths like ``/sessions``; serve files explicitly and return
+    # ``index.html`` for non-API client-side routes.
     dist = _web_dist_dir()
     if dist is not None:
-        app.mount("/", StaticFiles(directory=str(dist), html=True), name="web")
+        @app.get("/", include_in_schema=False)
+        def web_index() -> FileResponse:
+            return _spa_file_response(dist, "")
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        def web_fallback(full_path: str) -> FileResponse:
+            return _spa_file_response(dist, full_path)
 
     return app
 
