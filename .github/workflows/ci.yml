@@ -21,7 +21,8 @@ jobs:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - name: Set up uv
+        run: bash .github/scripts/setup_uv.sh
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
         with:
           dest: ${{ runner.temp }}/setup-pnpm
@@ -29,7 +30,9 @@ jobs:
         with:
           node-version: 24
       - name: Regenerate from schema and fail on drift
-        run: bash packages/contracts/scripts/check_drift.sh
+        run: |
+          export PATH="${HOME}/.local/bin:${PATH}"
+          bash packages/contracts/scripts/check_drift.sh
 
   python-tests:
     name: 2/5 • pytest workspace
@@ -37,10 +40,12 @@ jobs:
     needs: contracts-drift
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - name: Set up uv
+        run: bash .github/scripts/setup_uv.sh
       - name: pytest
         run: |
           set -euo pipefail
+          export PATH="${HOME}/.local/bin:${PATH}"
           for pkg in \
             packages/contracts/py \
             doomberg-core \
@@ -60,12 +65,19 @@ jobs:
     needs: python-tests
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - run: uv sync --all-packages --extra dev
+      - name: Set up uv
+        run: bash .github/scripts/setup_uv.sh
+      - run: |
+          export PATH="${HOME}/.local/bin:${PATH}"
+          uv sync --all-packages --extra dev
       # research → propose → backtest → observe
-      - run: uv run python scripts/demo_e2e.py
+      - run: |
+          export PATH="${HOME}/.local/bin:${PATH}"
+          uv run python scripts/demo_e2e.py
       # control plane enqueues → worker pulls the queue → paper money path applied
-      - run: uv run python scripts/demo_deploy.py
+      - run: |
+          export PATH="${HOME}/.local/bin:${PATH}"
+          uv run python scripts/demo_deploy.py
 
   contracts-test-ts:
     name: 4/5 • contracts zod round-trip
