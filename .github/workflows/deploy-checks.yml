@@ -1,11 +1,11 @@
 name: deploy-checks
 
-# Gates for the deploy layer (Stream 2): the container image builds, and the
-# Terraform is fmt-clean + valid. No push, no apply, no cloud credentials —
-# these run on every PR to keep the deploy path from rotting.
+# Gates for the deploy layer (Stream 2): the production images build, service
+# roles smoke-test, and Terraform is fmt-clean + valid. No push, no apply, no
+# cloud credentials — these run on every PR to keep the deploy path from rotting.
 on:
   push:
-    branches: ["**"]
+    branches: ["main"]
   pull_request:
 
 permissions:
@@ -33,6 +33,17 @@ jobs:
           tags: doomberg:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Build the IBKR engine image (CPU-only, no push)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: ./Dockerfile.ibkr-engine
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: doomberg-ibkr-engine:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - name: Smoke-test the service roles boot
         run: |
           set -euo pipefail
@@ -49,6 +60,8 @@ jobs:
           sleep 5
           docker logs "$cid" | grep -q "doomberg trigger engine up" && echo "trigger-engine role OK"
           docker rm -f "$cid"
+          docker run --rm doomberg-ibkr-engine:ci python -c \
+            'import doomberg_ibkr_engine; print("ibkr engine imports OK")'
 
   terraform-check:
     name: 2/2 • terraform fmt + validate

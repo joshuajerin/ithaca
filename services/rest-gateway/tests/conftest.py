@@ -28,6 +28,7 @@ def _ensure_importable() -> None:
         _REPO_ROOT / "doomberg-core" / "src",
         _REPO_ROOT / "services" / "platform" / "src",
         _REPO_ROOT / "services" / "control-plane" / "src",
+        _REPO_ROOT / "services" / "runtime" / "src",
         _REPO_ROOT / "services" / "rest-gateway" / "src",
     ]
     for path in candidates:

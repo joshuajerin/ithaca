@@ -1,15 +1,15 @@
 name: deploy-do
 
-# Deploy only after ci AND deploy-checks pass on main.
-# Uses workflow_run to gate on CI success — no deploy if tests fail.
+# Deploy only after ci, deploy-checks, and prod-parity pass for the same main SHA.
 on:
   workflow_run:
-    workflows: ["ci", "deploy-checks"]
+    workflows: ["ci", "deploy-checks", "prod-parity"]
     types: [completed]
     branches: ["main"]
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -18,23 +18,35 @@ concurrency:
 
 jobs:
   gate:
-    name: 0/6 • gate (ci + deploy-checks must pass)
+    name: 0/6 • gate (ci + deploy-checks + prod-parity must pass)
     runs-on: self-hosted
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
-      - name: Verify upstream CI passed
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Verify all upstream gates passed for this SHA
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          EVENT_WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          EVENT_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           echo "Triggered by: ${{ github.event_name }}"
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
             echo "Manual dispatch — skipping gate check"
           else
-            echo "Upstream workflow: ${{ github.event.workflow_run.name }}"
-            echo "Conclusion: ${{ github.event.workflow_run.conclusion }}"
-            if [[ "${{ github.event.workflow_run.conclusion }}" != "success" ]]; then
+            echo "Upstream workflow: ${EVENT_WORKFLOW_NAME}"
+            echo "Conclusion: ${EVENT_WORKFLOW_CONCLUSION}"
+            if [[ "${EVENT_WORKFLOW_CONCLUSION}" != "success" ]]; then
               echo "ERROR: upstream workflow did not succeed. Aborting deploy."
               exit 1
             fi
+            python .github/scripts/verify_required_workflows.py
           fi
           echo "Gate passed."
 
@@ -83,31 +95,16 @@ jobs:
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
           cache: pnpm
 
-      - name: Python workspace sync
-        run: uv sync --all-packages --extra dev
-
-      - name: Contract drift
-        run: bash packages/contracts/scripts/check_drift.sh
-
-      - name: Demo pipelines
-        run: |
-          set -euo pipefail
-          uv run python scripts/demo_e2e.py
-          uv run python scripts/demo_deploy.py
-
-      - name: Web and contracts
-        run: |
-          set -euo pipefail
-          pnpm install --frozen-lockfile
-          pnpm --filter @doomberg/contracts run test
-          pnpm --filter @doomberg/web run test
-          pnpm --filter @doomberg/web run build
+      - name: Workspace, contract, test, demo, and web gates
+        run: bash .github/scripts/prod_parity_checks.sh
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
@@ -253,6 +250,11 @@ jobs:
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@c0c8b32d33a5244f1e5947304550403b63930415
+        with:
+          version: "v1.33.0"
+
       - name: Resolve registry
         shell: bash
         env:
@@ -306,6 +308,11 @@ jobs:
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@c0c8b32d33a5244f1e5947304550403b63930415
+        with:
+          version: "v1.33.0"
+
       - name: Resolve deploy environment
         shell: bash
         env:
@@ -344,6 +351,11 @@ jobs:
       - name: Save kubeconfig
         run: doctl kubernetes cluster kubeconfig save "${DO_CLUSTER_NAME}"
 
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl
+
       - name: Deploy services
         env:
           LOAD_LOCAL_ENV: "0"
@@ -360,6 +372,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           DOOMBERG_ADMIN_TOKEN: ${{ secrets.DOOMBERG_ADMIN_TOKEN }}
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          DATABENTO_API_KEY: ${{ secrets.DATABENTO_API_KEY }}
           IBKR_ENGINE_ENABLED: ${{ vars.IBKR_ENGINE_ENABLED }}
           SHARED_IBKR_NAMESPACE: ${{ vars.SHARED_IBKR_NAMESPACE }}
           DOOMBERG_IBKR_ENGINE_URL: ${{ vars.DOOMBERG_IBKR_ENGINE_URL }}

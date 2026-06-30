@@ -230,6 +230,7 @@ export function SessionsList() {
 
   function selectSession(id: string) {
     setSelectedSessionId(id);
+    setPopupStep(null);
     navigate(`/sessions/${id}`, { replace: true });
   }
 

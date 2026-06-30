@@ -259,6 +259,9 @@ create_doomberg_secret() {
     --from-literal=clerk_issuer="${CLERK_ISSUER:-}" \
     --from-literal=admin_token="${DOOMBERG_ADMIN_TOKEN:-}" \
     --from-literal=fmp_api_key="${FMP_API_KEY:-}" \
+    --from-literal=databento_api_key="${DATABENTO_API_KEY:-}" \
+    --from-literal=databento_dataset="${DATABENTO_DATASET:-XNAS.ITCH}" \
+    --from-literal=data_source="${DOOMBERG_DATA_SOURCE:-auto}" \
     --from-literal=ibkr_engine_url="${DOOMBERG_IBKR_ENGINE_URL:-}" \
     --from-literal=ibkr_engine_token="${DOOMBERG_IBKR_ENGINE_TOKEN:-}" \
     --from-literal=ibkr_quote_path="${DOOMBERG_IBKR_QUOTE_PATH:-}" \
