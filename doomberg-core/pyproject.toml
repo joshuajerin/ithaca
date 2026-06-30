@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+databento = ["databento>=0.6"]
 
 [build-system]
 requires = ["hatchling"]
