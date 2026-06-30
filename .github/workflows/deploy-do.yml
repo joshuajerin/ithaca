@@ -306,6 +306,11 @@ jobs:
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@c0c8b32d33a5244f1e5947304550403b63930415
+        with:
+          version: "v1.33.0"
+
       - name: Resolve deploy environment
         shell: bash
         env:
