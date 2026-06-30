@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Ephemeral GitHub Actions runner — boots from pre-baked snapshot with all tools.
-# Only registers the runner, runs ONE job, then self-destructs.
+# Runs ONE job, then self-destructs. Uses pre-downloaded runner agent.
 # Placeholders __REPO__, __TOKEN__, __NAME__ are replaced by the autoscaler.
 set -euo pipefail
 
@@ -11,20 +11,26 @@ RUNNER_NAME="__NAME__"
 echo "[runner] Starting ephemeral runner for $REPO as $RUNNER_NAME (snapshot-based)"
 
 # Tools already installed in the snapshot:
-#   Node 24, pnpm, uv, Docker, Terraform, unzip, jq
-# Just need to register the runner.
+#   Node 24, pnpm, uv, Docker, Terraform, unzip, jq, databento
+# Runner agent pre-downloaded at /opt/runner-agent/runner.tar.gz
 
 # Create runner user (may already exist from snapshot)
 useradd -m -s /bin/bash runner 2>/dev/null || true
 usermod -aG docker runner
 
-# Download and configure the runner
-su - runner -c "cd /home/runner && \
-  curl -sL https://github.com/actions/runner/releases/download/v2.319.0/actions-runner-linux-x64-2.319.0.tar.gz | tar xz && \
+# Extract pre-downloaded runner agent to a fresh dir (avoid stale config from snapshot)
+RUNNER_DIR="/home/runner/actions-runner-$RUNNER_NAME"
+mkdir -p "$RUNNER_DIR"
+chown runner:runner "$RUNNER_DIR"
+tar xzf /opt/runner-agent/runner.tar.gz -C "$RUNNER_DIR"
+chown -R runner:runner "$RUNNER_DIR"
+
+# Configure the runner (ephemeral: exits after one job)
+su - runner -c "cd $RUNNER_DIR && \
   ./config.sh --url https://github.com/$REPO --token $TOKEN --name $RUNNER_NAME --labels 'self-hosted,linux,ephemeral' --unattended --ephemeral"
 
 # Install and start as service
-cd /home/runner
+cd "$RUNNER_DIR"
 ./svc.sh install runner
 ./svc.sh start
 
@@ -32,7 +38,7 @@ echo "[runner] Runner started, waiting for job completion..."
 
 # Wait for the runner service to stop (ephemeral runners exit after one job)
 while systemctl is-active --quiet actions.runner.*.service 2>/dev/null; do
-  sleep 10
+  sleep 5
 done
 
 echo "[runner] Job complete. Self-destroying droplet."

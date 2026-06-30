@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # GitHub Actions self-hosted runner autoscaler for DigitalOcean.
 #
-# Runs as a systemd timer on the controller droplet. Polls GitHub for queued
-# jobs and spins up ephemeral DO droplets on demand. Cleans up finished ones.
+# Runs as a systemd timer on the controller droplet. Maintains:
+#   1. A WARM POOL of always-on, idle runners (instant job pickup, like GitHub-hosted)
+#   2. EPHEMERAL runners that scale up on demand and self-destruct after one job
 #
 # Config (env or /etc/runner-autoscaler.env):
 #   DO_TOKEN            — DigitalOcean API token
@@ -11,7 +12,8 @@
 #   SSH_KEY_ID          — DO SSH key ID to inject into ephemeral droplets
 #   DROPLET_SIZE        — DO droplet slug (default: s-4vcpu-8gb)
 #   DROPLET_REGION      — DO region (default: nyc1)
-#   MAX_RUNNERS         — max concurrent ephemeral runners (default: 6)
+#   MAX_RUNNERS         — total cap including warm pool (default: 12)
+#   WARM_POOL           — always-on idle runners to maintain (default: 3)
 #   SNAPSHOT_ID         — DO snapshot ID with pre-installed tools
 #   BASE_RUNNER         — name of the persistent base runner (excluded from cleanup)
 
@@ -29,18 +31,33 @@ REPOS="${REPOS:?REPOS not set}"
 SSH_KEY_ID="${SSH_KEY_ID:?SSH_KEY_ID not set}"
 DROPLET_SIZE="${DROPLET_SIZE:-s-4vcpu-8gb}"
 DROPLET_REGION="${DROPLET_REGION:-nyc1}"
-MAX_RUNNERS="${MAX_RUNNERS:-6}"
+MAX_RUNNERS="${MAX_RUNNERS:-12}"
+WARM_POOL="${WARM_POOL:-6}"
 SNAPSHOT_ID="${SNAPSHOT_ID:-234895636}"
 BASE_RUNNER="${BASE_RUNNER:-runner}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-USER_DATA_SCRIPT="$SCRIPT_DIR/runner-ephemeral.sh"
+EPHEMERAL_SCRIPT="$SCRIPT_DIR/runner-ephemeral.sh"
+WARM_SCRIPT="$SCRIPT_DIR/runner-warm.sh"
 
 log() { echo "[autoscaler] $(date -u +%H:%M:%S) $*"; }
 
-# Count currently active ephemeral droplets (only active/new, not off)
+# Count active ephemeral droplets (not off, not warm-pool)
 count_ephemeral() {
   doctl compute droplet list --format Name,Status --no-header 2>/dev/null | \
     grep "ephemeral-" | grep -v "off" | wc -l
+}
+
+# Count active warm-pool droplets (not off)
+count_warm() {
+  doctl compute droplet list --format Name,Status --no-header 2>/dev/null | \
+    grep "warm-" | grep -v "off" | wc -l
+}
+
+# Count idle runners via GitHub API (online + not busy)
+count_idle_runners() {
+  curl -sf --max-time 10 -H "Authorization: token $GH_PAT" \
+    "https://api.github.com/repos/$1/actions/runners" | \
+    jq '[.runners[] | select(.status=="online" and .busy==false)] | length' 2>/dev/null || echo 0
 }
 
 # Get queued jobs count for a repo
@@ -59,28 +76,21 @@ get_reg_token() {
     jq -r '.token' 2>/dev/null
 }
 
-# Create an ephemeral droplet (non-blocking — no --wait)
-create_runner() {
-  local repo="$1"
-  local name="ephemeral-$(date +%s)-$((RANDOM % 1000))"
+# Create a droplet (non-blocking — no --wait)
+create_droplet() {
+  local name="$1" repo="$2" script_file="$3"
   local token
   token=$(get_reg_token "$repo")
-
   if [ -z "$token" ]; then
     log "ERROR: could not get registration token for $repo"
     return 1
   fi
 
-  log "Creating ephemeral runner $name for $repo"
-
-  # Write user-data to a temp file
   local tmp_script
   tmp_script=$(mktemp)
   sed "s|__REPO__|$repo|g; s|__TOKEN__|$token|g; s|__NAME__|$name|g" \
-    < "$USER_DATA_SCRIPT" > "$tmp_script"
+    < "$script_file" > "$tmp_script"
 
-  # Non-blocking create — don't wait for the droplet to become active.
-  # The droplet boots from snapshot (~60s) and self-registers via user-data.
   doctl compute droplet create "$name" \
     --size "$DROPLET_SIZE" \
     --image "$SNAPSHOT_ID" \
@@ -91,20 +101,18 @@ create_runner() {
     --user-data-file "$tmp_script" 2>&1 | tail -1
 
   rm -f "$tmp_script"
-  log "Requested $name"
 }
 
-# Clean up powered-off and stale ephemeral droplets
+# Clean up powered-off and stale droplets
 cleanup() {
   # Delete powered-off droplets (job completed, self-shutdown)
   doctl compute droplet list --format ID,Name,Status --no-header 2>/dev/null | \
-    grep "ephemeral-" | awk '$3 == "off" { print $1 }' | while read -r id; do
+    grep -E "ephemeral-|warm-" | awk '$3 == "off" { print $1 }' | while read -r id; do
       log "Cleaning up powered-off droplet $id"
       doctl compute droplet delete "$id" --force 2>/dev/null || true
     done
 
   # Force-delete stuck droplets via API (running > 45 min with no job completion)
-  # doctl doesn't expose created_at, so we use the DO API directly.
   local now
   now=$(date +%s)
   curl -sf --max-time 10 -H "Authorization: Bearer $DO_TOKEN" \
@@ -121,16 +129,60 @@ cleanup() {
     done
 }
 
-# Main
-main() {
-  cleanup
+# Maintain the warm pool — ensure WARM_POOL runners are always on
+maintain_warm_pool() {
+  local current_warm
+  current_warm=$(count_warm)
+  local needed=$((WARM_POOL - current_warm))
 
-  local current
-  current=$(count_ephemeral)
-  log "Current ephemeral runners: $current / $MAX_RUNNERS"
+  if [ "$needed" -le 0 ]; then
+    return 0
+  fi
 
-  if [ "$current" -ge "$MAX_RUNNERS" ]; then
-    log "At max capacity, skipping"
+  # Don't exceed MAX_RUNNERS total
+  local current_eph
+  current_eph=$(count_ephemeral)
+  local total=$((current_warm + current_eph))
+  local room=$((MAX_RUNNERS - total))
+  if [ "$room" -le 0 ]; then
+    return 0
+  fi
+  if [ "$needed" -gt "$room" ]; then
+    needed=$room
+  fi
+
+  # Pick the repo with most queued jobs (or first repo as default)
+  local target_repo=""
+  local most_queued=0
+  for repo in $REPOS; do
+    local queued
+    queued=$(get_queued_count "$repo")
+    if [ "$queued" -gt "$most_queued" ]; then
+      most_queued="$queued"
+      target_repo="$repo"
+    fi
+  done
+  # Default to first repo if no queued jobs
+  [ -z "$target_repo" ] && target_repo=$(echo "$REPOS" | awk '{print $1}')
+
+  for i in $(seq 1 "$needed"); do
+    local name="warm-$(date +%s)-$((RANDOM % 1000))"
+    log "Creating warm-pool runner $name for $target_repo"
+    create_droplet "$name" "$target_repo" "$WARM_SCRIPT" || true
+  done
+  log "Warm pool: created $needed warm runners (have $current_warm, want $WARM_POOL)"
+}
+
+# Scale up ephemeral runners for queued jobs
+scale_ephemeral() {
+  local current_eph
+  current_eph=$(count_ephemeral)
+  local current_warm
+  current_warm=$(count_warm)
+  local total=$((current_eph + current_warm))
+
+  if [ "$total" -ge "$MAX_RUNNERS" ]; then
+    log "At max capacity ($total/$MAX_RUNNERS), skipping ephemeral scale-up"
     return 0
   fi
 
@@ -149,24 +201,51 @@ main() {
     log "  $repo: $queued queued"
   done
 
-  log "Total queued jobs: $total_queued"
-
   if [ "$total_queued" -eq 0 ]; then
-    log "No queued jobs, skipping"
+    log "No queued jobs, skipping ephemeral scale-up"
     return 0
   fi
 
-  # Spin up runners for the most backlogged repo
-  local to_create=$((MAX_RUNNERS - current))
-  if [ "$to_create" -gt "$most_queued" ]; then
-    to_create="$most_queued"
+  # Count idle runners across all repos — if we have enough idle, don't scale
+  local total_idle=0
+  for repo in $REPOS; do
+    local idle
+    idle=$(count_idle_runners "$repo")
+    total_idle=$((total_idle + idle))
+  done
+  if [ "$total_idle" -ge "$total_queued" ]; then
+    log "Enough idle runners ($total_idle) for queued jobs ($total_queued), skipping"
+    return 0
+  fi
+
+  local to_create=$((MAX_RUNNERS - total))
+  local needed=$((total_queued - total_idle))
+  if [ "$to_create" -gt "$needed" ]; then
+    to_create=$needed
+  fi
+  if [ "$to_create" -le 0 ]; then
+    return 0
   fi
 
   for i in $(seq 1 "$to_create"); do
-    create_runner "$repo_with_most_queued" || true
+    local name="ephemeral-$(date +%s)-$((RANDOM % 1000))"
+    log "Creating ephemeral runner $name for $repo_with_most_queued"
+    create_droplet "$name" "$repo_with_most_queued" "$EPHEMERAL_SCRIPT" || true
   done
+  log "Scale-up: created $to_create ephemeral runners"
+}
 
-  log "Requested $to_create new runners"
+# Main
+main() {
+  cleanup
+  maintain_warm_pool
+  scale_ephemeral
+
+  local eph warm total
+  eph=$(count_ephemeral)
+  warm=$(count_warm)
+  total=$((eph + warm))
+  log "Status: $warm warm + $eph ephemeral = $total total (max $MAX_RUNNERS, warm pool $WARM_POOL)"
 }
 
 main

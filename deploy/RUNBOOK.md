@@ -28,7 +28,8 @@ Each GitHub environment owns its own secrets and variables. Required secrets are
 `CLERK_PUBLISHABLE_KEY`, and either `CLERK_PEM_PUBLIC_KEY` or the
 `CLERK_JWKS_URL` variable. Required variables include `CLERK_ALLOWED_ORIGINS`.
 Production also requires `DOOMBERG_ADMIN_TOKEN`, `DOOMBERG_SMOKE_API_KEY`, and
-`DOOMBERG_SMOKE_NO_SCOPE_API_KEY`. Optional secrets include `FMP_API_KEY`.
+`DOOMBERG_SMOKE_NO_SCOPE_API_KEY`. Optional secrets include `FMP_API_KEY` and
+`DATABENTO_API_KEY`.
 
 Local scripts in this directory remain available as break-glass tooling. They now
 accept `DEPLOY_ENV=prod|dev` and render environment-specific Kubernetes

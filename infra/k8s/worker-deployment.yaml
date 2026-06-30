@@ -110,6 +110,15 @@ spec:
             - name: FMP_API_KEY
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: fmp_api_key, optional: true }
+            - name: DATABENTO_API_KEY
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: databento_api_key, optional: true }
+            - name: DATABENTO_DATASET
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: databento_dataset, optional: true }
+            - name: DOOMBERG_DATA_SOURCE
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: data_source, optional: true }
           resources:
             requests: { cpu: "200m", memory: 320Mi }
             limits: { cpu: "2", memory: 2Gi }
