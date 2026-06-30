@@ -279,6 +279,51 @@ export interface LiveDataSmokeStatus {
   invariants: LiveDataSmokeInvariant[];
 }
 
+export type AdaptiveDashboardWidgetId =
+  | "performance_pnl"
+  | "portfolio_risk"
+  | "trade_flow"
+  | "order_book"
+  | "congress_trades"
+  | "yield_curve"
+  | "sentiment"
+  | "recent_sessions"
+  | "tool_usage"
+  | "warning_watch"
+  | "live_data_status";
+
+export interface AdaptiveDashboardWidget {
+  id: AdaptiveDashboardWidgetId | string;
+  title: string;
+  priority: number;
+  layout: { x: number; y: number; w: number; h: number };
+  reason: string;
+}
+
+export interface AdaptiveDashboardSpec {
+  summary: string;
+  widgets: AdaptiveDashboardWidget[];
+}
+
+export type AdaptiveDashboardResponse =
+  | { status: "empty" }
+  | {
+      status: "pending";
+      spec: AdaptiveDashboardSpec;
+      source_session_count: number;
+      source_event_count: number;
+    }
+  | {
+      status: "ready";
+      spec: AdaptiveDashboardSpec;
+      model: string;
+      source_session_count: number;
+      source_event_count: number;
+      generated_for_date: string;
+      created_at: string;
+      updated_at: string;
+    };
+
 // Backtest result `data` shape (from INTERFACES.md / doomberg_core).
 export interface BacktestResult {
   equityCurve: { d: string; v: number }[];

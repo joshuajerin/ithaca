@@ -7,6 +7,7 @@ with a ``.traces`` alias (the name the control plane used) so neither has to cha
 from __future__ import annotations
 
 from .auth_store import AuthStore
+from .adaptive_dashboard_store import AdaptiveDashboardProfileStore
 from .book_store import BookStore
 from .control_store import (
     ApprovalStore,
@@ -37,6 +38,7 @@ class Platform:
         self.trace = TraceStore(self.db)
         self.books = BookStore(self.db)
         self.auth = AuthStore(self.db)
+        self.adaptive_dashboards = AdaptiveDashboardProfileStore(self.db)
         self.users = UserStore(self.db)
         self.jobs = JobStore(self.db)
         self.leases = LeaseStore(self.db)

@@ -222,6 +222,7 @@ _TENANT_TABLES = (
     "users",
     "sse_tickets",
     "jobs",
+    "adaptive_dashboard_profiles",
     "artifacts",
     "approvals",
     "provider_connections",

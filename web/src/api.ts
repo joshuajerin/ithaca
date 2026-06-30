@@ -13,6 +13,7 @@ import type {
   StrategyRow,
   TriggerDryRunResult,
   TriggerRow,
+  AdaptiveDashboardResponse,
 } from "./types";
 
 export interface ProviderConnectionInput {
@@ -266,6 +267,10 @@ export const api = {
 
   async getOpsStatus(signal?: AbortSignal): Promise<OpsStatus> {
     return getJson<OpsStatus>(`/ops/status`, signal);
+  },
+
+  async getAdaptiveDashboard(signal?: AbortSignal): Promise<AdaptiveDashboardResponse> {
+    return getJson<AdaptiveDashboardResponse>(`/dashboard/adaptive`, signal);
   },
 
   async liveDataSmoke(symbol = "AAPL", signal?: AbortSignal): Promise<LiveDataSmokeStatus> {
