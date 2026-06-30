@@ -1,0 +1,96 @@
+name: prod-parity
+
+# Production-shaped, non-mutating gate. This is the PR/main rule that mirrors
+# the deploy workflow before any image push or Kubernetes apply can happen.
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prod-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prod-parity-gate:
+    name: prod parity gate
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Workspace, contract, test, demo, and web gates
+        run: bash .github/scripts/prod_parity_checks.sh
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Docker image build smoke
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: doomberg:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: IBKR engine image build smoke
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: ./Dockerfile.ibkr-engine
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: doomberg-ibkr-engine:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Service role smoke
+        run: |
+          set -euo pipefail
+          docker run --rm doomberg:ci shell -c \
+            'python -c "import doomberg_core, doomberg_platform, doomberg_runtime, doomberg_rest, doomberg_control, doomberg_mcp; print(\"imports OK\")"'
+          cid="$(docker run -d -e DOOMBERG_DB=:memory: doomberg:ci conductor)"
+          sleep 5
+          docker logs "$cid" | grep -q "doomberg conductor up"
+          docker rm -f "$cid"
+          cid="$(docker run -d -e DOOMBERG_DB=:memory: doomberg:ci trigger-engine)"
+          sleep 5
+          docker logs "$cid" | grep -q "doomberg trigger engine up"
+          docker rm -f "$cid"
+          docker run --rm doomberg-ibkr-engine:ci python -c \
+            'import doomberg_ibkr_engine; print("ibkr engine imports OK")'
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+        with:
+          terraform_version: "1.15.6"
+
+      - name: Terraform deploy-layer checks
+        working-directory: infra/terraform
+        run: |
+          set -euo pipefail
+          terraform fmt -check -recursive
+          terraform init -backend=false -input=false
+          terraform validate -no-color
+          if out="$(terraform plan -input=false -var='backtest_node_size=gpu-h100x1-80gb' 2>&1)"; then
+            echo "FAIL: plan accepted a GPU node slug"
+            echo "$out"
+            exit 1
+          fi
+          echo "$out" | grep -qi "CPU-ONLY GUARDRAIL"
