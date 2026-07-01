@@ -137,8 +137,7 @@ config files without overwriting existing servers. To target one client, pass
 `--client cursor`, `--client claude-code`, `--client codex`, `--client openclaw`,
 or `--client hermes`.
 
-See [Agent Client Setup](docs/AGENT_CLIENT_SETUP.md) for per-client behavior and
-[Greptile Automation](docs/GREPTILE_AUTOMATION.md) for automated PR review setup.
+See [Agent Client Setup](docs/AGENT_CLIENT_SETUP.md) for per-client behavior.
 
 For agent-driven setup, ask the agent to run:
 
