@@ -116,6 +116,10 @@ dump_rollout_debug() {
   if [[ "${status}" -eq 0 ]]; then
     return 0
   fi
+  if [[ "${DEPLOY_DRY_RUN_MODE:-off}" != "off" ]]; then
+    echo "ERROR: deploy dry-run failed before any manifests were applied" >&2
+    exit "${status}"
+  fi
   echo "ERROR: deploy failed; dumping Kubernetes rollout diagnostics" >&2
   for ns in "${K8S_GATEWAY_NAMESPACE}" "${K8S_WORKER_NAMESPACE}"; do
     echo "==> namespace ${ns}: deployments" >&2

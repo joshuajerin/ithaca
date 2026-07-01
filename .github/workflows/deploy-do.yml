@@ -238,6 +238,8 @@ jobs:
 
           if [[ "${DEPLOY_MODE}" == "dry-run" ]]; then
             echo "Deploy config preflight is in dry-run mode; live deploy credentials are not required."
+            require_env DIGITALOCEAN_ACCESS_TOKEN
+            require_env DO_CLUSTER_NAME
           else
             require_env DIGITALOCEAN_ACCESS_TOKEN
             require_env DOOMBERG_PLATFORM_DB_URL
@@ -337,10 +339,19 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
+      - uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
       - name: Set up kubectl
         uses: azure/setup-kubectl@c0c8b32d33a5244f1e5947304550403b63930415
         with:
           version: "v1.33.0"
+
+      - name: Save kubeconfig
+        env:
+          DO_CLUSTER_NAME: ${{ vars.DO_CLUSTER_NAME }}
+        run: doctl kubernetes cluster kubeconfig save "${DO_CLUSTER_NAME}"
 
       - name: Resolve dry-run environment
         shell: bash
@@ -348,6 +359,7 @@ jobs:
           DEPLOY_ENV: ${{ needs.classify.outputs.deploy_env }}
           IMAGE_TAG: ${{ needs.classify.outputs.image_tag }}
           REGISTRY_NAME: ${{ vars.REGISTRY_NAME }}
+          DO_CLUSTER_NAME: ${{ vars.DO_CLUSTER_NAME }}
           K8S_GATEWAY_NAMESPACE: ${{ vars.K8S_GATEWAY_NAMESPACE }}
           K8S_WORKER_NAMESPACE: ${{ vars.K8S_WORKER_NAMESPACE }}
           APP_HOST: ${{ vars.APP_HOST }}
@@ -358,6 +370,7 @@ jobs:
             echo "DEPLOY_ENV=${DEPLOY_ENV}"
             echo "IMAGE_TAG=${IMAGE_TAG}"
             echo "REGISTRY_NAME=${REGISTRY_NAME:-doomberg}"
+            echo "DO_CLUSTER_NAME=${DO_CLUSTER_NAME}"
             echo "K8S_GATEWAY_NAMESPACE=${K8S_GATEWAY_NAMESPACE}"
             echo "K8S_WORKER_NAMESPACE=${K8S_WORKER_NAMESPACE}"
             echo "APP_HOST=${APP_HOST}"
