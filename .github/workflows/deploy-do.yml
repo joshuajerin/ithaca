@@ -1,4 +1,5 @@
 name: deploy-do
+run-name: deploy-do ${{ github.event.inputs.deploy_env || 'prod' }} ${{ github.event.inputs.mode || 'auto' }} @ ${{ github.event.workflow_run.head_sha || github.sha }}
 
 # Deploy only after ci, deploy-checks, and prod-parity pass for the same main SHA.
 on:
@@ -7,13 +8,30 @@ on:
     types: [completed]
     branches: ["main"]
   workflow_dispatch:
+    inputs:
+      deploy_env:
+        description: Environment to validate or deploy.
+        type: choice
+        required: true
+        default: dev
+        options:
+          - dev
+          - prod
+      mode:
+        description: Use dry-run for a no-mutation deploy preflight; deploy mutates the selected environment.
+        type: choice
+        required: true
+        default: dry-run
+        options:
+          - dry-run
+          - deploy
 
 permissions:
   actions: read
   contents: read
 
 concurrency:
-  group: deploy-do-${{ github.ref }}
+  group: deploy-do-${{ github.event_name }}-${{ github.event.inputs.deploy_env || 'prod' }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -46,7 +64,7 @@ jobs:
               echo "ERROR: upstream workflow did not succeed. Aborting deploy."
               exit 1
             fi
-            python .github/scripts/verify_required_workflows.py
+            python3 .github/scripts/verify_required_workflows.py
           fi
           echo "Gate passed."
 
@@ -59,25 +77,36 @@ jobs:
       image_tag: ${{ steps.classify.outputs.image_tag }}
       short_sha: ${{ steps.classify.outputs.short_sha }}
       push_latest: ${{ steps.classify.outputs.push_latest }}
+      deploy_mode: ${{ steps.classify.outputs.deploy_mode }}
     steps:
       - id: classify
         shell: bash
+        env:
+          EVENT_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          DISPATCH_DEPLOY_ENV: ${{ github.event.inputs.deploy_env }}
+          DISPATCH_MODE: ${{ github.event.inputs.mode }}
         run: |
           set -euo pipefail
           # When triggered by workflow_run, the SHA comes from the workflow_run event
           # When triggered by workflow_dispatch, use GITHUB_SHA
-          if [[ -n "${{ github.event.workflow_run.head_sha }}" ]]; then
-            short="${{ github.event.workflow_run.head_sha }}"
+          if [[ -n "${EVENT_HEAD_SHA}" ]]; then
+            short="${EVENT_HEAD_SHA}"
             short="${short:0:7}"
+            deploy_env="prod"
+            deploy_mode="deploy"
           else
             short="${GITHUB_SHA::7}"
+            deploy_env="${DISPATCH_DEPLOY_ENV:-dev}"
+            deploy_mode="${DISPATCH_MODE:-dry-run}"
           fi
-          ref="main"
-          deploy_env="prod"
           image_tag="${short}"
-          push_latest="true"
+          push_latest="false"
+          if [[ "${deploy_env}" == "prod" && "${deploy_mode}" == "deploy" ]]; then
+            push_latest="true"
+          fi
           {
             echo "deploy_env=${deploy_env}"
+            echo "deploy_mode=${deploy_mode}"
             echo "image_tag=${image_tag}"
             echo "short_sha=${short}"
             echo "push_latest=${push_latest}"
@@ -194,6 +223,7 @@ jobs:
           K8S_WORKER_NAMESPACE: ${{ vars.K8S_WORKER_NAMESPACE }}
           APP_HOST: ${{ vars.APP_HOST }}
           MCP_HOST: ${{ vars.MCP_HOST }}
+          DEPLOY_MODE: ${{ needs.classify.outputs.deploy_mode }}
         run: |
           set -euo pipefail
 
@@ -206,24 +236,28 @@ jobs:
             fi
           }
 
-          require_env DIGITALOCEAN_ACCESS_TOKEN
-          require_env DOOMBERG_PLATFORM_DB_URL
-          require_env DOOMBERG_SESSION_SECRET
-          require_env CLERK_PUBLISHABLE_KEY
-          require_env CLERK_ALLOWED_ORIGINS
-          require_env CLERK_ISSUER
-          require_env DO_CLUSTER_NAME
-          require_env K8S_GATEWAY_NAMESPACE
-          require_env K8S_WORKER_NAMESPACE
-          require_env APP_HOST
-          require_env MCP_HOST
-          require_env ANTHROPIC_API_KEY
-          if [[ -z "${CLERK_PEM_PUBLIC_KEY:-}" && -z "${CLERK_JWKS_URL:-}" ]]; then
-            echo "ERROR: required ${DEPLOY_ENV} deploy config is missing: CLERK_PEM_PUBLIC_KEY or CLERK_JWKS_URL" >&2
-            missing=1
+          if [[ "${DEPLOY_MODE}" == "dry-run" ]]; then
+            echo "Deploy config preflight is in dry-run mode; live deploy credentials are not required."
+          else
+            require_env DIGITALOCEAN_ACCESS_TOKEN
+            require_env DOOMBERG_PLATFORM_DB_URL
+            require_env DOOMBERG_SESSION_SECRET
+            require_env CLERK_PUBLISHABLE_KEY
+            require_env CLERK_ALLOWED_ORIGINS
+            require_env CLERK_ISSUER
+            require_env DO_CLUSTER_NAME
+            require_env K8S_GATEWAY_NAMESPACE
+            require_env K8S_WORKER_NAMESPACE
+            require_env APP_HOST
+            require_env MCP_HOST
+            require_env ANTHROPIC_API_KEY
+            if [[ -z "${CLERK_PEM_PUBLIC_KEY:-}" && -z "${CLERK_JWKS_URL:-}" ]]; then
+              echo "ERROR: required ${DEPLOY_ENV} deploy config is missing: CLERK_PEM_PUBLIC_KEY or CLERK_JWKS_URL" >&2
+              missing=1
+            fi
           fi
 
-          if [[ "${DEPLOY_ENV}" == "prod" ]]; then
+          if [[ "${DEPLOY_ENV}" == "prod" && "${DEPLOY_MODE}" != "dry-run" ]]; then
             require_env DOOMBERG_ADMIN_TOKEN
             require_env DOOMBERG_SMOKE_API_KEY
             require_env DOOMBERG_SMOKE_NO_SCOPE_API_KEY
@@ -239,6 +273,7 @@ jobs:
     name: 4/6 • build and push image
     runs-on: self-hosted
     needs: [classify, checks]
+    if: needs.classify.outputs.deploy_mode == 'deploy'
     environment: ${{ needs.classify.outputs.deploy_env }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -291,10 +326,89 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  deploy-dry-run:
+    name: 4/6 • deploy dry-run to ${{ needs.classify.outputs.deploy_env }}
+    runs-on: self-hosted
+    needs: [classify, checks]
+    if: needs.classify.outputs.deploy_mode == 'dry-run'
+    environment: ${{ needs.classify.outputs.deploy_env }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@c0c8b32d33a5244f1e5947304550403b63930415
+        with:
+          version: "v1.33.0"
+
+      - name: Resolve dry-run environment
+        shell: bash
+        env:
+          DEPLOY_ENV: ${{ needs.classify.outputs.deploy_env }}
+          IMAGE_TAG: ${{ needs.classify.outputs.image_tag }}
+          REGISTRY_NAME: ${{ vars.REGISTRY_NAME }}
+          K8S_GATEWAY_NAMESPACE: ${{ vars.K8S_GATEWAY_NAMESPACE }}
+          K8S_WORKER_NAMESPACE: ${{ vars.K8S_WORKER_NAMESPACE }}
+          APP_HOST: ${{ vars.APP_HOST }}
+          MCP_HOST: ${{ vars.MCP_HOST }}
+        run: |
+          set -euo pipefail
+          {
+            echo "DEPLOY_ENV=${DEPLOY_ENV}"
+            echo "IMAGE_TAG=${IMAGE_TAG}"
+            echo "REGISTRY_NAME=${REGISTRY_NAME:-doomberg}"
+            echo "K8S_GATEWAY_NAMESPACE=${K8S_GATEWAY_NAMESPACE}"
+            echo "K8S_WORKER_NAMESPACE=${K8S_WORKER_NAMESPACE}"
+            echo "APP_HOST=${APP_HOST}"
+            echo "MCP_HOST=${MCP_HOST}"
+            echo "WORKER_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-doomberg}/doomberg:${IMAGE_TAG}"
+            echo "IBKR_ENGINE_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-doomberg}/doomberg-ibkr-engine:${IMAGE_TAG}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Render and validate deploy manifests without applying
+        env:
+          LOAD_LOCAL_ENV: "0"
+          DEPLOY_DRY_RUN: "client"
+          APP_NODE_WORKLOAD: ${{ vars.APP_NODE_WORKLOAD }}
+          WORKER_NODE_WORKLOAD: ${{ vars.WORKER_NODE_WORKLOAD }}
+          APP_REPLICAS: ${{ vars.APP_REPLICAS }}
+          WORKER_REPLICAS: ${{ vars.WORKER_REPLICAS }}
+          DOOMBERG_PLATFORM_DB_URL: ${{ secrets.DOOMBERG_PLATFORM_DB_URL || 'postgresql://dry-run.invalid/doomberg' }}
+          DOOMBERG_SESSION_SECRET: ${{ secrets.DOOMBERG_SESSION_SECRET || 'dry-run-session-secret' }}
+          CLERK_PEM_PUBLIC_KEY: ${{ secrets.CLERK_PEM_PUBLIC_KEY }}
+          CLERK_JWKS_URL: ${{ vars.CLERK_JWKS_URL || 'https://clerk.example.invalid/.well-known/jwks.json' }}
+          CLERK_ALLOWED_ORIGINS: ${{ vars.CLERK_ALLOWED_ORIGINS || 'https://dev-app.doomberg.me' }}
+          CLERK_ISSUER: ${{ vars.CLERK_ISSUER || 'https://clerk.example.invalid' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY || 'dry-run-anthropic-key' }}
+          DOOMBERG_ADMIN_TOKEN: ${{ secrets.DOOMBERG_ADMIN_TOKEN }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          DATABENTO_API_KEY: ${{ secrets.DATABENTO_API_KEY }}
+          IBKR_ENGINE_ENABLED: ${{ vars.IBKR_ENGINE_ENABLED }}
+          SHARED_IBKR_NAMESPACE: ${{ vars.SHARED_IBKR_NAMESPACE }}
+          DOOMBERG_IBKR_ENGINE_URL: ${{ vars.DOOMBERG_IBKR_ENGINE_URL }}
+          DOOMBERG_IBKR_ENGINE_TOKEN: ${{ secrets.DOOMBERG_IBKR_ENGINE_TOKEN }}
+          DOOMBERG_IBKR_QUOTE_PATH: ${{ vars.DOOMBERG_IBKR_QUOTE_PATH }}
+          DOOMBERG_IBKR_ACCOUNTS_PATH: ${{ vars.DOOMBERG_IBKR_ACCOUNTS_PATH }}
+          DOOMBERG_IBKR_POSITIONS_PATH: ${{ vars.DOOMBERG_IBKR_POSITIONS_PATH }}
+          DOOMBERG_IBKR_ORDERS_PATH: ${{ vars.DOOMBERG_IBKR_ORDERS_PATH }}
+          DOOMBERG_IBKR_ORDER_PATH: ${{ vars.DOOMBERG_IBKR_ORDER_PATH }}
+          IBKR_SIGNIN_PUBLIC: ${{ vars.IBKR_SIGNIN_PUBLIC }}
+          IBKR_SIGNIN_HOST: ${{ vars.IBKR_SIGNIN_HOST }}
+          IBKR_SIGNIN_REMOTE_IPS: ${{ vars.IBKR_SIGNIN_REMOTE_IPS }}
+          APPLY_CADDY: "0"
+          CADDY_APPLY_ENV: ${{ vars.CADDY_APPLY_ENV }}
+          DOOMBERG_ENABLE_LIVE_EXECUTION: ${{ vars.DOOMBERG_ENABLE_LIVE_EXECUTION }}
+          DOOMBERG_EXECUTION_MAX_NOTIONAL_USD: ${{ vars.DOOMBERG_EXECUTION_MAX_NOTIONAL_USD }}
+          DOOMBERG_EXECUTION_MAX_QUANTITY: ${{ vars.DOOMBERG_EXECUTION_MAX_QUANTITY }}
+          DOOMBERG_EXECUTION_MAX_FRESHNESS_MS: ${{ vars.DOOMBERG_EXECUTION_MAX_FRESHNESS_MS }}
+        run: bash deploy/deploy_services.sh
+
   deploy:
     name: 5/6 • deploy to ${{ needs.classify.outputs.deploy_env }}
     runs-on: self-hosted
     needs: [classify, build-push]
+    if: needs.classify.outputs.deploy_mode == 'deploy'
     environment: ${{ needs.classify.outputs.deploy_env }}
     concurrency:
       group: deploy-${{ needs.classify.outputs.deploy_env }}
