@@ -3,6 +3,7 @@
 #
 #   DEPLOY_ENV=dev IMAGE_TAG=dev-feature-a5fe2a0 deploy/deploy_services.sh
 #   DEPLOY_ENV=prod deploy/deploy_services.sh a5fe2a0
+#   DEPLOY_ENV=dev DEPLOY_DRY_RUN=client deploy/deploy_services.sh test-image
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -29,6 +30,22 @@ IBKR_SIGNIN_HOST="${IBKR_SIGNIN_HOST:-ibkr.doomberg.me}"
 IBKR_SIGNIN_REMOTE_IPS="${IBKR_SIGNIN_REMOTE_IPS:-0.0.0.0/0}"
 APP_REPLICAS_EXPLICIT="${APP_REPLICAS+x}"
 WORKER_REPLICAS_EXPLICIT="${WORKER_REPLICAS+x}"
+DEPLOY_DRY_RUN="${DEPLOY_DRY_RUN:-0}"
+case "${DEPLOY_DRY_RUN}" in
+  0|false|no|off|"")
+    DEPLOY_DRY_RUN_MODE="off"
+    ;;
+  1|true|yes|on|client)
+    DEPLOY_DRY_RUN_MODE="client"
+    ;;
+  server)
+    DEPLOY_DRY_RUN_MODE="server"
+    ;;
+  *)
+    echo "ERROR: DEPLOY_DRY_RUN must be off, client, or server; got ${DEPLOY_DRY_RUN}" >&2
+    exit 2
+    ;;
+esac
 
 case "${DEPLOY_ENV}" in
   prod)
@@ -240,11 +257,21 @@ render_manifest() {
     "${file}"
 }
 
+apply_manifest() {
+  if [[ "${DEPLOY_DRY_RUN_MODE}" == "client" ]]; then
+    kubectl apply --dry-run=client --validate=false -f -
+  elif [[ "${DEPLOY_DRY_RUN_MODE}" == "server" ]]; then
+    kubectl apply --dry-run=server -f -
+  else
+    kubectl apply -f -
+  fi
+}
+
 create_ibkr_secret() {
   kubectl -n "${K8S_GATEWAY_NAMESPACE}" create secret generic ibkr-engine \
     --from-literal=engine_token="${DOOMBERG_IBKR_ENGINE_TOKEN:-}" \
     --from-literal=enable_live_execution="${DOOMBERG_ENABLE_LIVE_EXECUTION:-0}" \
-    --dry-run=client -o yaml | kubectl apply -f -
+    --dry-run=client -o yaml | apply_manifest
 }
 
 create_doomberg_secret() {
@@ -276,13 +303,13 @@ create_doomberg_secret() {
     --from-literal=execution_max_notional_usd="${DOOMBERG_EXECUTION_MAX_NOTIONAL_USD:-10000}" \
     --from-literal=execution_max_quantity="${DOOMBERG_EXECUTION_MAX_QUANTITY:-10000}" \
     --from-literal=execution_max_freshness_ms="${DOOMBERG_EXECUTION_MAX_FRESHNESS_MS:-10000}" \
-    --dry-run=client -o yaml | kubectl apply -f -
+    --dry-run=client -o yaml | apply_manifest
 }
 
 create_anthropic_secret() {
   kubectl -n "${K8S_WORKER_NAMESPACE}" create secret generic doomberg-anthropic \
     --from-literal=anthropic_api_key="${ANTHROPIC_API_KEY:-}" \
-    --dry-run=client -o yaml | kubectl apply -f -
+    --dry-run=client -o yaml | apply_manifest
 }
 
 verify_deployment_images() {
@@ -299,6 +326,9 @@ verify_deployment_images() {
 }
 
 echo "==> deploy env=${DEPLOY_ENV} gateway=${K8S_GATEWAY_NAMESPACE} workers=${K8S_WORKER_NAMESPACE} image=${WORKER_IMAGE}"
+if [[ "${DEPLOY_DRY_RUN_MODE}" != "off" ]]; then
+  echo "==> deploy dry-run mode=${DEPLOY_DRY_RUN_MODE}; manifests will not be applied"
+fi
 if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
   echo "==> ibkr enabled wrapper_image=${IBKR_ENGINE_IMAGE} gateway_image=${IBKR_GATEWAY_IMAGE} public_signin=${IBKR_SIGNIN_PUBLIC}"
 elif [[ "${DEPLOY_ENV}" == "dev" ]]; then
@@ -308,7 +338,7 @@ echo "==> replicas app=${APP_REPLICAS} workers=${WORKER_REPLICAS} node_workloads
 echo "==> rollout app=maxSurge:${APP_MAX_SURGE},maxUnavailable:${APP_MAX_UNAVAILABLE} workers=maxSurge:${WORKER_MAX_SURGE},maxUnavailable:${WORKER_MAX_UNAVAILABLE}"
 
 echo "==> namespaces"
-render_manifest infra/k8s/namespace.yaml | kubectl apply -f -
+render_manifest infra/k8s/namespace.yaml | apply_manifest
 
 echo "==> secret doomberg-db (${DEPLOY_ENV}; values redacted)"
 create_doomberg_secret "${K8S_GATEWAY_NAMESPACE}"
@@ -321,17 +351,17 @@ if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
 fi
 
 echo "==> worker network policy"
-render_manifest infra/k8s/worker-networkpolicy.yaml | kubectl apply -f -
+render_manifest infra/k8s/worker-networkpolicy.yaml | apply_manifest
 
 if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
   echo "==> ibkr engine manifests"
-  render_manifest infra/k8s/ibkr-engine.yaml | kubectl apply -f -
-  render_manifest infra/k8s/ibkr-networkpolicy.yaml | kubectl apply -f -
+  render_manifest infra/k8s/ibkr-engine.yaml | apply_manifest
+  render_manifest infra/k8s/ibkr-networkpolicy.yaml | apply_manifest
 fi
 
 echo "==> app manifests"
 for file in infra/k8s/app-deployment.yaml infra/k8s/app-service.yaml infra/k8s/worker-deployment.yaml; do
-  render_manifest "${file}" | kubectl apply -f -
+  render_manifest "${file}" | apply_manifest
 done
 
 caddy_checksum() {
@@ -344,16 +374,25 @@ if [[ "${APPLY_CADDY:-1}" == "1" ]]; then
   before="$(caddy_checksum || true)"
   if [[ "${IBKR_SIGNIN_PUBLIC}" == "1" ]]; then
     echo "WARN: applying temporary public IBKR sign-in route host=${IBKR_SIGNIN_HOST} remote_ip=${IBKR_SIGNIN_REMOTE_IPS}" >&2
-    render_manifest infra/k8s/caddy-ibkr-signin.yaml | kubectl apply -f -
+    render_manifest infra/k8s/caddy-ibkr-signin.yaml | apply_manifest
   else
-    kubectl apply -f infra/k8s/caddy.yaml
+    apply_manifest < infra/k8s/caddy.yaml
   fi
   after="$(caddy_checksum || true)"
   if [[ "${FORCE_CADDY_RESTART:-0}" == "1" || "${before}" != "${after}" ]]; then
     echo "==> caddy config changed; restarting caddy"
-    kubectl -n "${CADDY_NAMESPACE}" rollout restart deployment/caddy
+    if [[ "${DEPLOY_DRY_RUN_MODE}" == "off" ]]; then
+      kubectl -n "${CADDY_NAMESPACE}" rollout restart deployment/caddy
+    fi
   fi
-  kubectl -n "${CADDY_NAMESPACE}" rollout status deployment/caddy --timeout=300s
+  if [[ "${DEPLOY_DRY_RUN_MODE}" == "off" ]]; then
+    kubectl -n "${CADDY_NAMESPACE}" rollout status deployment/caddy --timeout=300s
+  fi
+fi
+
+if [[ "${DEPLOY_DRY_RUN_MODE}" != "off" ]]; then
+  echo "==> ${DEPLOY_ENV} deploy dry-run validated: ${APP_HOST} / ${MCP_HOST}"
+  exit 0
 fi
 
 echo "==> waiting for ${DEPLOY_ENV} rollout"
