@@ -1,5 +1,5 @@
 import { LayoutDashboard, LogOut, Rocket, ScrollText } from "lucide-react";
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Dashboard } from "./pages/Dashboard";
 import { SessionsList } from "./pages/SessionsList";
 import { SessionDetail } from "./pages/SessionDetail";
@@ -19,8 +19,18 @@ const navItems = [
 
 export function App() {
   const { user, manageAccount, signOut } = useAuth();
+  const location = useLocation();
 
   if (!user) return <AuthPage />;
+
+  if (location.pathname === "/agent-link") {
+    return (
+      <Routes>
+        <Route path="/agent-link" element={<AgentLink />} />
+        <Route path="*" element={<Navigate to="/agent-link" replace />} />
+      </Routes>
+    );
+  }
 
   return (
     <div className="app">
