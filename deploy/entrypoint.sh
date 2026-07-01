@@ -10,6 +10,7 @@
 #   control-plane    -> uvicorn doomberg_control.app:app
 #   conductor        -> python scripts/run_workers.py   (backtest worker + paper scheduler)
 #   trigger-engine   -> python -m doomberg_runtime.trigger_engine
+#   adaptive-dashboard -> python scripts/recompute_adaptive_dashboards.py
 #   backtest-runner  -> python -m doomberg_runtime.backtest_runner
 #   live-runner      -> python -m doomberg_runtime.live_runner
 #   platform-migrate -> python scripts/migrate_platform.py
@@ -50,6 +51,10 @@ case "${ROLE}" in
   trigger-engine)
     # Poll active trigger policies and create durable runs from live provider events.
     exec python -m doomberg_runtime.trigger_engine "$@"
+    ;;
+  adaptive-dashboard)
+    # Manual/backfill adaptive dashboard recompute.
+    exec python scripts/recompute_adaptive_dashboards.py "$@"
     ;;
   backtest-runner)
     exec python -m doomberg_runtime.backtest_runner "$@"

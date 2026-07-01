@@ -22,6 +22,7 @@ from doomberg_control.money import make_applier
 from doomberg_core import Core
 from doomberg_platform import Platform
 from doomberg_runtime import (
+    AdaptiveDashboardWorker,
     AlwaysOpen,
     BacktestWorker,
     NotificationDispatcher,
@@ -44,6 +45,7 @@ def main() -> int:
     trigger_job_interval = float(os.environ.get("DOOMBERG_TRIGGER_JOB_INTERVAL_S", "2"))
     notification_interval = float(os.environ.get("DOOMBERG_NOTIFICATION_INTERVAL_S", "2"))
     paper_interval = float(os.environ.get("DOOMBERG_PAPER_INTERVAL_S", "60"))
+    adaptive_dashboard_interval = float(os.environ.get("DOOMBERG_ADAPTIVE_DASHBOARD_INTERVAL_S", "60"))
     paper_lease_ttl = float(os.environ.get(
         "DOOMBERG_PAPER_LEASE_TTL_S",
         str(max(180.0, paper_interval * 3.0)),
@@ -54,6 +56,7 @@ def main() -> int:
     worker = BacktestWorker(platform, core)
     trigger_worker = TriggerJobWorker(platform, core)
     notification_dispatcher = NotificationDispatcher(platform)
+    adaptive_dashboard_worker = AdaptiveDashboardWorker(platform)
     scheduler = PaperScheduler(platform, core, make_applier(platform), calendar=calendar)
     paper_owner_id = process_owner("paper-scheduler")
 
@@ -71,6 +74,13 @@ def main() -> int:
         with suppress(Exception):
             release_loop_lease(platform, lease_name="paper-scheduler", owner_id=paper_owner_id)
 
+    def run_adaptive_dashboard_worker() -> None:
+        while not stop.is_set():
+            result = adaptive_dashboard_worker.poll_once()
+            if result.get("status") == "ran" or result.get("failed"):
+                print(f"adaptive dashboard recompute: {result}")
+            stop.wait(adaptive_dashboard_interval)
+
     stop = threading.Event()
     threads = [
         threading.Thread(target=worker.run_forever, kwargs={"interval_s": backtest_interval, "stop": stop},
@@ -84,6 +94,11 @@ def main() -> int:
             daemon=True,
         ),
         threading.Thread(target=run_paper_scheduler, name="paper-scheduler", daemon=True),
+        threading.Thread(
+            target=run_adaptive_dashboard_worker,
+            name="adaptive-dashboard-worker",
+            daemon=True,
+        ),
     ]
 
     signal.signal(signal.SIGINT, lambda *_: stop.set())
@@ -92,6 +107,7 @@ def main() -> int:
     print(f"doomberg conductor up — db={db}, backtest every {backtest_interval}s, "
           f"trigger jobs every {trigger_job_interval}s, paper every {paper_interval}s, "
           f"notifications every {notification_interval}s, "
+          f"adaptive dashboard every {adaptive_dashboard_interval}s, "
           f"paper lease ttl={paper_lease_ttl}s owner={paper_owner_id}, "
           f"calendar={type(calendar).__name__}")
     for t in threads:

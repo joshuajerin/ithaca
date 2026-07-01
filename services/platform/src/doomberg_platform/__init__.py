@@ -12,6 +12,13 @@ See ``docs/plans/doomberg-v2/INTERFACES.md`` for the seam this package conforms 
 
 from __future__ import annotations
 
+from .adaptive_dashboard_store import (
+    ADAPTIVE_WIDGET_IDS,
+    DEFAULT_ADAPTIVE_DASHBOARD_SPEC,
+    AdaptiveDashboardProfileStore,
+    AdaptiveDashboardSpecError,
+    validate_adaptive_dashboard_spec,
+)
 from .auth_store import VALID_SCOPES, AuthStore, hash_secret
 from .book_store import BookConflict, BookNotFound, BookStore
 from .control_store import (
@@ -56,6 +63,11 @@ __all__ = [
     "StrategyStore",
     "BookStore",
     "AuthStore",
+    "AdaptiveDashboardProfileStore",
+    "ADAPTIVE_WIDGET_IDS",
+    "DEFAULT_ADAPTIVE_DASHBOARD_SPEC",
+    "AdaptiveDashboardSpecError",
+    "validate_adaptive_dashboard_spec",
     "JobStore",
     "JOB_PROFILES",
     "JobProfile",

@@ -228,6 +228,25 @@ CREATE TABLE IF NOT EXISTS worker_leases (
 CREATE INDEX IF NOT EXISTS idx_worker_leases_expires
     ON worker_leases (lease_expires_at);
 
+-- Per signed-in user adaptive dashboard profile. The spec is strict JSON over a
+-- server-side widget allowlist; no generated code or browser-exposed model output
+-- is stored here.
+CREATE TABLE IF NOT EXISTS adaptive_dashboard_profiles (
+    tenant_id            TEXT NOT NULL,
+    user_id              TEXT NOT NULL,
+    spec                 TEXT NOT NULL,
+    model                TEXT NOT NULL,
+    source_session_count INTEGER NOT NULL,
+    source_event_count   INTEGER NOT NULL,
+    generated_for_date   TEXT NOT NULL,
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_adaptive_dashboard_profiles_date
+    ON adaptive_dashboard_profiles (generated_for_date, tenant_id, user_id);
+
 -- Large outputs live outside trace_events; trace rows point at artifact ids.
 CREATE TABLE IF NOT EXISTS artifacts (
     tenant_id    TEXT NOT NULL,

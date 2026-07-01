@@ -279,6 +279,12 @@ create_doomberg_secret() {
     --dry-run=client -o yaml | kubectl apply -f -
 }
 
+create_anthropic_secret() {
+  kubectl -n "${K8S_WORKER_NAMESPACE}" create secret generic doomberg-anthropic \
+    --from-literal=anthropic_api_key="${ANTHROPIC_API_KEY:-}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+}
+
 verify_deployment_images() {
   local namespace="$1"
   local deployment="$2"
@@ -307,6 +313,8 @@ render_manifest infra/k8s/namespace.yaml | kubectl apply -f -
 echo "==> secret doomberg-db (${DEPLOY_ENV}; values redacted)"
 create_doomberg_secret "${K8S_GATEWAY_NAMESPACE}"
 create_doomberg_secret "${K8S_WORKER_NAMESPACE}"
+echo "==> secret doomberg-anthropic (${DEPLOY_ENV}; worker namespace only; values redacted)"
+create_anthropic_secret
 if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
   echo "==> secret ibkr-engine (${DEPLOY_ENV}; values redacted)"
   create_ibkr_secret

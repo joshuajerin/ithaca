@@ -48,6 +48,7 @@ from doomberg_core import Core
 from doomberg_core.providers import PUBLIC_DATA_SOURCE, PUBLIC_ENTITLEMENT_CLASS, IbkrEngineClient
 from doomberg_mcp import Toolset
 from doomberg_platform import (
+    AdaptiveDashboardProfileStore,
     AuthStore,
     ApprovalStore,
     ArtifactStore,
@@ -66,6 +67,7 @@ from doomberg_platform import (
     UserStore,
     open_db,
 )
+from doomberg_runtime import default_adaptive_dashboard_spec, usage_signals_for_user
 
 from .readmodel import shape_run, shape_run_row
 from .sse import event_stream, parse_last_event_id
@@ -86,6 +88,7 @@ class Stores:
         self.trace = TraceStore(db)
         self.books = BookStore(db)
         self.auth = AuthStore(db)
+        self.adaptive_dashboards = AdaptiveDashboardProfileStore(db)
         self.users = UserStore(db)
         self.jobs = JobStore(db)
         self.leases = LeaseStore(db)
@@ -949,6 +952,39 @@ def create_app(db: Any | None = None) -> FastAPI:
             if user is not None:
                 return user
         raise HTTPException(status_code=401, detail="sign in to manage API keys")
+
+    @app.get("/api/dashboard/adaptive")
+    def get_adaptive_dashboard(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        """Return the signed-in user's adaptive dashboard state.
+
+        This route intentionally rejects dev tenant headers and agent API keys. Profiles are
+        keyed to the real human user id, not just the tenant.
+        """
+        user = _session_user(authorization, stores)
+        signals = usage_signals_for_user(stores, user["tenant_id"], user["id"])
+        if int(signals["session_count"]) < 1:
+            return {"status": "empty"}
+        profile = stores.adaptive_dashboards.get(user["tenant_id"], user["id"])
+        if profile is None:
+            return {
+                "status": "pending",
+                "spec": default_adaptive_dashboard_spec(),
+                "source_session_count": int(signals["session_count"]),
+                "source_event_count": int(signals["event_count"]),
+            }
+        return {
+            "status": "ready",
+            "spec": profile["spec"],
+            "model": profile["model"],
+            "source_session_count": profile["source_session_count"],
+            "source_event_count": profile["source_event_count"],
+            "generated_for_date": profile["generated_for_date"],
+            "created_at": profile["created_at"],
+            "updated_at": profile["updated_at"],
+        }
 
     _DEFAULT_KEY_SCOPES = [
         "data:read",

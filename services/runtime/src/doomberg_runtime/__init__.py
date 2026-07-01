@@ -13,6 +13,17 @@ from .backtest_runner import DEFAULT_BUDGET_MS as BACKTEST_BUDGET_MS
 from .backtest_runner import result_hash, run_backtest_job
 from .calendar import AlwaysOpen, MarketCalendar, RegularHoursCalendar
 from .deadline import Deadline, DeadlineExceeded
+from .adaptive_dashboard import (
+    ANTHROPIC_HAIKU_MODEL,
+    AdaptiveDashboardWorker,
+    AnthropicDashboardClient,
+    AnthropicDashboardError,
+    all_users_with_session_history,
+    default_adaptive_dashboard_spec,
+    recompute_user_profile,
+    usage_signals_for_user,
+    user_has_session_history,
+)
 from .live_runner import DEFAULT_MAX_STALENESS_S, run_paper_tick
 from .notifications import NotificationDispatcher, webhook_signature
 from .orchestrator import BacktestWorker, PaperScheduler, TriggerJobWorker
@@ -38,6 +49,15 @@ __all__ = [
     "result_hash",
     "Deadline",
     "DeadlineExceeded",
+    "ANTHROPIC_HAIKU_MODEL",
+    "AdaptiveDashboardWorker",
+    "AnthropicDashboardClient",
+    "AnthropicDashboardError",
+    "all_users_with_session_history",
+    "default_adaptive_dashboard_spec",
+    "recompute_user_profile",
+    "usage_signals_for_user",
+    "user_has_session_history",
     "BACKTEST_BUDGET_MS",
     "DEFAULT_MAX_STALENESS_S",
     "BacktestWorker",
