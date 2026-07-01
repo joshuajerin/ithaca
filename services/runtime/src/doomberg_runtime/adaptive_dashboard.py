@@ -88,17 +88,6 @@ def _session_actor(events: list[dict[str, Any]]) -> tuple[str, str] | None:
     return None
 
 
-def _session_prompt_title(events: list[dict[str, Any]]) -> tuple[str | None, str | None]:
-    for event in events:
-        if event.get("type") != "session_open":
-            continue
-        data = event.get("data") if isinstance(event.get("data"), dict) else {}
-        prompt = _text(data.get("prompt") or data.get("userPrompt"), 220)
-        title = _text(data.get("title"), 120)
-        return prompt, title
-    return None, None
-
-
 def _events_by_research_run(platform: Any) -> dict[tuple[str, str], list[dict[str, Any]]]:
     rows = platform.db.conn.execute(
         "SELECT r.tenant_id, r.run_id, r.created_at AS run_created_at, "
@@ -141,7 +130,6 @@ def usage_signals_for_user(platform: Any, tenant_id: str, user_id: str) -> dict[
         actor = _session_actor(events)
         if actor is None or actor[1] != str(user_id):
             continue
-        prompt, title = _session_prompt_title(events)
         event_count += len(events)
         for event in events:
             if event.get("type") == "tool_call":
@@ -159,8 +147,6 @@ def usage_signals_for_user(platform: Any, tenant_id: str, user_id: str) -> dict[
             {
                 "run_id": run_id,
                 "opened_at": events[0]["ts"] if events else None,
-                "title": title,
-                "prompt": prompt,
                 "event_count": len(events),
                 "tool_calls": sum(1 for event in events if event.get("type") == "tool_call"),
             }

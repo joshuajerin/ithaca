@@ -77,16 +77,19 @@ class _FakeClient:
         return self.spec
 
 
-def test_usage_signals_do_not_forward_raw_tool_args(durable_platform):
+def test_usage_signals_do_not_forward_raw_user_or_tool_payloads(durable_platform):
     tenant_id = str(uuid.uuid4())
     user_id = str(uuid.uuid4())
-    _append_session(durable_platform, tenant_id, user_id)
+    _append_session(durable_platform, tenant_id, user_id, prompt="private NVDA thesis")
 
     signals = usage_signals_for_user(durable_platform, tenant_id, user_id)
 
     assert signals["session_count"] == 1
     assert signals["top_tools"] == [{"name": "market_news", "count": 1}]
-    assert "args" not in json.dumps(signals)
+    serialized = json.dumps(signals)
+    assert "private NVDA thesis" not in serialized
+    assert "NVDA" not in serialized
+    assert "args" not in serialized
 
 
 def test_worker_runs_only_at_midnight_utc_and_uses_lease(durable_platform):
