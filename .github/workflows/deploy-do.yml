@@ -85,30 +85,34 @@ jobs:
         env:
           EVENT_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
           DISPATCH_DEPLOY_ENV: ${{ github.event.inputs.deploy_env }}
           DISPATCH_MODE: ${{ github.event.inputs.mode }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           # When triggered by workflow_run, the SHA comes from the workflow_run event
-          # When triggered by pull_request, validate prod-shaped manifests without mutating
+          # When triggered by pull_request, deploy the merge SHA to dev with the
+          # same build-push/deploy jobs that prod uses after merge.
           # When triggered by workflow_dispatch, use GITHUB_SHA and the selected mode
           if [[ "${EVENT_NAME}" == "workflow_run" && -n "${EVENT_HEAD_SHA}" ]]; then
             short="${EVENT_HEAD_SHA}"
             short="${short:0:7}"
             deploy_env="prod"
             deploy_mode="deploy"
+            image_tag="${short}"
           elif [[ "${EVENT_NAME}" == "pull_request" ]]; then
-            short="${PULL_REQUEST_HEAD_SHA:-${GITHUB_SHA}}"
+            short="${GITHUB_SHA}"
             short="${short:0:7}"
-            deploy_env="prod"
-            deploy_mode="dry-run"
+            deploy_env="dev"
+            deploy_mode="deploy"
+            image_tag="pr-${PULL_REQUEST_NUMBER}-${short}"
           else
             short="${GITHUB_SHA::7}"
             deploy_env="${DISPATCH_DEPLOY_ENV:-dev}"
             deploy_mode="${DISPATCH_MODE:-dry-run}"
+            image_tag="${short}"
           fi
-          image_tag="${short}"
           push_latest="false"
           if [[ "${deploy_env}" == "prod" && "${deploy_mode}" == "deploy" ]]; then
             push_latest="true"
@@ -531,11 +535,6 @@ jobs:
 
       - name: Save kubeconfig
         run: doctl kubernetes cluster kubeconfig save "${DO_CLUSTER_NAME}"
-
-      - name: Install kubectl
-        run: |
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl
 
       - name: Deploy services
         env:
