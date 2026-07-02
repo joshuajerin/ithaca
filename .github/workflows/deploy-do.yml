@@ -209,7 +209,7 @@ jobs:
     name: 2/6 • deploy config preflight
     runs-on: self-hosted
     needs: classify
-    environment: ${{ needs.classify.outputs.deploy_env }}
+    environment: ${{ github.event_name == 'pull_request' && 'dev' || needs.classify.outputs.deploy_env }}
     steps:
       - name: Required secrets and variables
         shell: bash
@@ -253,8 +253,10 @@ jobs:
 
           if [[ "${DEPLOY_MODE}" == "dry-run" ]]; then
             echo "Deploy config preflight is in dry-run mode; live deploy credentials are not required."
-            require_env DIGITALOCEAN_ACCESS_TOKEN
-            require_env DO_CLUSTER_NAME
+            if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
+              require_env DIGITALOCEAN_ACCESS_TOKEN
+              require_env DO_CLUSTER_NAME
+            fi
           else
             require_env DIGITALOCEAN_ACCESS_TOKEN
             require_env DOOMBERG_PLATFORM_DB_URL
@@ -380,13 +382,14 @@ jobs:
     runs-on: self-hosted
     needs: [classify, checks]
     if: needs.classify.outputs.deploy_mode == 'dry-run'
-    environment: ${{ needs.classify.outputs.deploy_env }}
+    environment: ${{ github.event_name == 'pull_request' && 'dev' || needs.classify.outputs.deploy_env }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f
+        if: github.event_name != 'pull_request'
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
@@ -396,6 +399,7 @@ jobs:
           version: "v1.33.0"
 
       - name: Save kubeconfig
+        if: github.event_name != 'pull_request'
         env:
           DO_CLUSTER_NAME: ${{ vars.DO_CLUSTER_NAME }}
         run: doctl kubernetes cluster kubeconfig save "${DO_CLUSTER_NAME}"

@@ -42,7 +42,7 @@ variable "region" {
 variable "kubernetes_version" {
   description = "DOKS version slug prefix. Use the latest patch for this minor."
   type        = string
-  default     = "1.31"
+  default     = "1.33"
 }
 
 # Backtest pool: CPU-burst Jobs. RELIABILITY-FIRST: min 1 keeps a WARM node so a
