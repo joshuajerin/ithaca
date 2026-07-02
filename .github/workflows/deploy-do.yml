@@ -3,6 +3,7 @@ run-name: deploy-do ${{ github.event.inputs.deploy_env || 'prod' }} ${{ github.e
 
 # Deploy only after ci, deploy-checks, and prod-parity pass for the same main SHA.
 on:
+  pull_request:
   workflow_run:
     workflows: ["ci", "deploy-checks", "prod-parity"]
     types: [completed]
@@ -38,7 +39,7 @@ jobs:
   gate:
     name: 0/6 • gate (ci + deploy-checks + prod-parity must pass)
     runs-on: self-hosted
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -55,8 +56,8 @@ jobs:
           EVENT_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           echo "Triggered by: ${{ github.event_name }}"
-          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
-            echo "Manual dispatch — skipping gate check"
+          if [[ "${EVENT_NAME}" == "pull_request" || "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            echo "Pull-request/manual run — upstream workflow_run gate is not required."
           else
             echo "Upstream workflow: ${EVENT_WORKFLOW_NAME}"
             echo "Conclusion: ${EVENT_WORKFLOW_CONCLUSION}"
@@ -83,17 +84,25 @@ jobs:
         shell: bash
         env:
           EVENT_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           DISPATCH_DEPLOY_ENV: ${{ github.event.inputs.deploy_env }}
           DISPATCH_MODE: ${{ github.event.inputs.mode }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           # When triggered by workflow_run, the SHA comes from the workflow_run event
-          # When triggered by workflow_dispatch, use GITHUB_SHA
-          if [[ -n "${EVENT_HEAD_SHA}" ]]; then
+          # When triggered by pull_request, validate prod-shaped manifests without mutating
+          # When triggered by workflow_dispatch, use GITHUB_SHA and the selected mode
+          if [[ "${EVENT_NAME}" == "workflow_run" && -n "${EVENT_HEAD_SHA}" ]]; then
             short="${EVENT_HEAD_SHA}"
             short="${short:0:7}"
             deploy_env="prod"
             deploy_mode="deploy"
+          elif [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            short="${PULL_REQUEST_HEAD_SHA:-${GITHUB_SHA}}"
+            short="${short:0:7}"
+            deploy_env="prod"
+            deploy_mode="dry-run"
           else
             short="${GITHUB_SHA::7}"
             deploy_env="${DISPATCH_DEPLOY_ENV:-dev}"
@@ -148,7 +157,7 @@ jobs:
           load: true
           tags: doomberg:ci
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
 
       - name: IBKR engine image build smoke
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
@@ -160,7 +169,7 @@ jobs:
           load: true
           tags: doomberg-ibkr-engine:ci
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
 
       - name: Service role smoke
         run: |
@@ -336,7 +345,7 @@ jobs:
           push: true
           tags: registry.digitalocean.com/${{ env.REGISTRY_NAME }}/doomberg:${{ needs.classify.outputs.image_tag }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
           build-args: |
             CLERK_PUBLISHABLE_VALUE=${{ secrets.CLERK_PUBLISHABLE_KEY }}
             VITE_API_BASE=/api
@@ -357,7 +366,7 @@ jobs:
           push: true
           tags: registry.digitalocean.com/${{ env.REGISTRY_NAME }}/doomberg-ibkr-engine:${{ needs.classify.outputs.image_tag }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
 
       - name: Verify pushed IBKR engine image exists
         if: needs.classify.outputs.deploy_env == 'prod' && vars.IBKR_ENGINE_ENABLED != '0'

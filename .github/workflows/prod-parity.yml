@@ -48,7 +48,7 @@ jobs:
           load: true
           tags: doomberg:ci
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
 
       - name: IBKR engine image build smoke
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
@@ -60,7 +60,7 @@ jobs:
           load: true
           tags: doomberg-ibkr-engine:ci
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
 
       - name: Service role smoke
         run: |
