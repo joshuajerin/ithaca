@@ -532,11 +532,6 @@ jobs:
       - name: Save kubeconfig
         run: doctl kubernetes cluster kubeconfig save "${DO_CLUSTER_NAME}"
 
-      - name: Install kubectl
-        run: |
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl
-
       - name: Deploy services
         env:
           LOAD_LOCAL_ENV: "0"
