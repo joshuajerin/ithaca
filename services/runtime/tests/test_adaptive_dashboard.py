@@ -1,4 +1,4 @@
-"""Adaptive dashboard worker scheduling and Anthropic response handling."""
+"""Adaptive dashboard worker scheduling and model response handling."""
 
 from __future__ import annotations
 
@@ -13,6 +13,9 @@ from doomberg_runtime import (
     AdaptiveDashboardWorker,
     AnthropicDashboardClient,
     AnthropicDashboardError,
+    DashboardGenerationError,
+    OpenAICompatibleDashboardClient,
+    create_adaptive_dashboard_client,
     recompute_user_profile,
     usage_signals_for_user,
 )
@@ -185,3 +188,64 @@ def test_anthropic_client_rejects_invalid_json(monkeypatch):
 
     with pytest.raises(AnthropicDashboardError, match="invalid JSON"):
         AnthropicDashboardClient(api_key="test-key").generate({"session_count": 1})
+
+
+def test_openai_compatible_client_accepts_chat_completion_json(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {"choices": [{"message": {"content": json.dumps(_profile_spec())}}]}
+            ).encode("utf-8")
+
+    def _urlopen(request, **_kwargs):
+        captured["url"] = request.full_url
+        captured["headers"] = dict(request.header_items())
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return _Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+
+    result = OpenAICompatibleDashboardClient(
+        api_key="modal-key",
+        base_url="https://example.test/v1/",
+    ).generate({"session_count": 1})
+
+    assert captured["url"] == "https://example.test/v1/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer modal-key"
+    assert captured["body"]["model"] == "google/gemma-4-E4B-it"
+    assert result["widgets"][0]["id"] == "performance_pnl"
+
+
+def test_openai_compatible_client_rejects_invalid_json(monkeypatch):
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def read(self):
+            return b'{"choices":[{"message":{"content":"not json"}}]}'
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda *_args, **_kwargs: _Response())
+
+    with pytest.raises(DashboardGenerationError, match="invalid JSON"):
+        OpenAICompatibleDashboardClient(api_key="modal-key", base_url="https://example.test/v1").generate(
+            {"session_count": 1}
+        )
+
+
+def test_default_client_prefers_openai_compatible_provider(monkeypatch):
+    monkeypatch.delenv("DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER", raising=False)
+    monkeypatch.setenv("DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY", "modal-key")
+    monkeypatch.setenv("DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL", "https://example.test/v1")
+
+    assert isinstance(create_adaptive_dashboard_client(), OpenAICompatibleDashboardClient)

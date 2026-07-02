@@ -109,9 +109,21 @@ spec:
               value: "180"
             - name: DOOMBERG_ADAPTIVE_DASHBOARD_INTERVAL_S
               value: "60"
+            - name: DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER
+              valueFrom:
+                secretKeyRef: { name: doomberg-adaptive-dashboard, key: provider }
+            - name: DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL
+              valueFrom:
+                secretKeyRef: { name: doomberg-adaptive-dashboard, key: openai_base_url, optional: true }
+            - name: DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY
+              valueFrom:
+                secretKeyRef: { name: doomberg-adaptive-dashboard, key: api_key, optional: true }
+            - name: DOOMBERG_ADAPTIVE_DASHBOARD_MODEL
+              valueFrom:
+                secretKeyRef: { name: doomberg-adaptive-dashboard, key: model }
             - name: ANTHROPIC_API_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-anthropic, key: anthropic_api_key, optional: true }
+                secretKeyRef: { name: doomberg-adaptive-dashboard, key: anthropic_api_key, optional: true }
             - name: FMP_API_KEY
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: fmp_api_key, optional: true }

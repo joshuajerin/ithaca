@@ -1,7 +1,8 @@
 """Adaptive dashboard recompute worker.
 
-The worker sends only usage-derived metadata to Anthropic and persists the strict
-dashboard spec. It never sends credentials, raw market data, or arbitrary browser code.
+The worker sends only usage-derived metadata to the configured dashboard model and
+persists the strict dashboard spec. It never sends credentials, raw market data,
+or arbitrary browser code.
 """
 
 from __future__ import annotations
@@ -26,9 +27,15 @@ from .leader import acquire_loop_lease, process_owner
 ANTHROPIC_HAIKU_MODEL = "claude-haiku-4-5-20251001"
 ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
+DEFAULT_OPENAI_COMPATIBLE_MODEL = "google/gemma-4-E4B-it"
+DEFAULT_ADAPTIVE_DASHBOARD_PROVIDER = "openai-compatible"
 
 
-class AnthropicDashboardError(RuntimeError):
+class DashboardGenerationError(RuntimeError):
+    """The configured dashboard model did not return a usable profile."""
+
+
+class AnthropicDashboardError(DashboardGenerationError):
     """Anthropic did not return a usable dashboard profile."""
 
 
@@ -214,6 +221,92 @@ def _prompt(signals: dict[str, Any]) -> str:
     )
 
 
+def _extract_json_text(text: str, *, provider: str) -> dict[str, Any]:
+    text = text.strip()
+    if not text:
+        raise DashboardGenerationError(f"{provider} returned empty dashboard output")
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise DashboardGenerationError(f"{provider} returned invalid JSON") from exc
+    try:
+        return validate_adaptive_dashboard_spec(raw)
+    except AdaptiveDashboardSpecError as exc:
+        raise DashboardGenerationError(str(exc)) from exc
+
+
+def _openai_message_text(message: Any) -> str:
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if isinstance(part.get("text"), str):
+                parts.append(part["text"])
+            elif isinstance(part.get("content"), str):
+                parts.append(part["content"])
+        return "\n".join(parts)
+    return ""
+
+
+class OpenAICompatibleDashboardClient:
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str = DEFAULT_OPENAI_COMPATIBLE_MODEL,
+        timeout_s: float = 20.0,
+    ) -> None:
+        self.api_key = api_key if api_key is not None else os.environ.get(
+            "DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY", ""
+        )
+        configured_base_url = (
+            base_url
+            if base_url is not None
+            else os.environ.get("DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL", "")
+        )
+        self.base_url = configured_base_url.rstrip("/")
+        self.model = os.environ.get("DOOMBERG_ADAPTIVE_DASHBOARD_MODEL", model)
+        self.timeout_s = float(timeout_s)
+
+    def generate(self, signals: dict[str, Any]) -> dict[str, Any]:
+        if not self.base_url:
+            raise DashboardGenerationError(
+                "DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL is not configured"
+            )
+        if not self.api_key:
+            raise DashboardGenerationError("DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY is not configured")
+        body = {
+            "model": self.model,
+            "temperature": 0.2,
+            "max_tokens": 1200,
+            "messages": [{"role": "user", "content": _prompt(signals)}],
+        }
+        request = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps(body).encode("utf-8"),
+            method="POST",
+            headers={
+                "authorization": f"Bearer {self.api_key}",
+                "content-type": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.URLError as exc:
+            raise DashboardGenerationError(f"Dashboard model request failed: {exc}") from exc
+        choices = payload.get("choices")
+        message = choices[0].get("message") if isinstance(choices, list) and choices else {}
+        return _extract_json_text(_openai_message_text(message), provider="Dashboard model")
+
+
 class AnthropicDashboardClient:
     def __init__(
         self,
@@ -255,17 +348,22 @@ class AnthropicDashboardClient:
             for part in payload.get("content", [])
             if isinstance(part, dict) and part.get("type") == "text"
         ]
-        text = "\n".join(part for part in text_parts if part).strip()
-        if not text:
-            raise AnthropicDashboardError("Anthropic returned empty dashboard output")
         try:
-            raw = json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise AnthropicDashboardError("Anthropic returned invalid JSON") from exc
-        try:
-            return validate_adaptive_dashboard_spec(raw)
-        except AdaptiveDashboardSpecError as exc:
+            return _extract_json_text("\n".join(part for part in text_parts if part), provider="Anthropic")
+        except DashboardGenerationError as exc:
             raise AnthropicDashboardError(str(exc)) from exc
+
+
+def create_adaptive_dashboard_client() -> Any:
+    provider = os.environ.get(
+        "DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER",
+        DEFAULT_ADAPTIVE_DASHBOARD_PROVIDER,
+    ).strip().lower()
+    if provider in {"openai", "openai-compatible", "modal", "modal-openai"}:
+        return OpenAICompatibleDashboardClient()
+    if provider == "anthropic":
+        return AnthropicDashboardClient()
+    raise DashboardGenerationError(f"Unsupported adaptive dashboard provider: {provider}")
 
 
 def recompute_user_profile(
@@ -279,9 +377,9 @@ def recompute_user_profile(
     signals = usage_signals_for_user(platform, tenant_id, user_id)
     if signals["session_count"] < 1:
         return None
-    generator = client or AnthropicDashboardClient()
+    generator = client or create_adaptive_dashboard_client()
     spec = generator.generate(signals)
-    model = getattr(generator, "model", ANTHROPIC_HAIKU_MODEL)
+    model = getattr(generator, "model", DEFAULT_OPENAI_COMPATIBLE_MODEL)
     return platform.adaptive_dashboards.upsert(
         tenant_id,
         user_id,
@@ -303,7 +401,7 @@ class AdaptiveDashboardWorker:
         lease_ttl_seconds: float = 90000.0,
     ) -> None:
         self.platform = platform
-        self.client = client or AnthropicDashboardClient()
+        self.client = client or create_adaptive_dashboard_client()
         self.owner_id = owner_id or process_owner("adaptive-dashboard")
         self.lease_ttl_seconds = float(lease_ttl_seconds)
         self._last_daily_run: str | None = None
