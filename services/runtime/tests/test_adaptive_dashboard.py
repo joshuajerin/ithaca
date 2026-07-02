@@ -243,9 +243,45 @@ def test_openai_compatible_client_rejects_invalid_json(monkeypatch):
         )
 
 
-def test_default_client_prefers_openai_compatible_provider(monkeypatch):
+def test_modal_client_sends_proxy_token_headers(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {"choices": [{"message": {"content": json.dumps(_profile_spec())}}]}
+            ).encode("utf-8")
+
+    def _urlopen(request, **_kwargs):
+        captured["headers"] = dict(request.header_items())
+        return _Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+
+    OpenAICompatibleDashboardClient(
+        base_url="https://example.test/v1",
+        auth_mode="modal-proxy",
+        modal_key="wk-test",
+        modal_secret="ws-test",
+    ).generate({"session_count": 1})
+
+    assert captured["headers"]["Modal-key"] == "wk-test"
+    assert captured["headers"]["Modal-secret"] == "ws-test"
+
+
+def test_default_client_prefers_modal_provider(monkeypatch):
     monkeypatch.delenv("DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER", raising=False)
-    monkeypatch.setenv("DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY", "modal-key")
+    monkeypatch.setenv("DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY", "wk-test")
+    monkeypatch.setenv("DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET", "ws-test")
     monkeypatch.setenv("DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL", "https://example.test/v1")
 
-    assert isinstance(create_adaptive_dashboard_client(), OpenAICompatibleDashboardClient)
+    client = create_adaptive_dashboard_client()
+
+    assert isinstance(client, OpenAICompatibleDashboardClient)
+    assert client.auth_mode == "modal-proxy"

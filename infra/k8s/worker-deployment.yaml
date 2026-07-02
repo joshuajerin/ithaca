@@ -118,6 +118,12 @@ spec:
             - name: DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY
               valueFrom:
                 secretKeyRef: { name: doomberg-adaptive-dashboard, key: api_key, optional: true }
+            - name: DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY
+              valueFrom:
+                secretKeyRef: { name: doomberg-adaptive-dashboard, key: modal_key, optional: true }
+            - name: DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET
+              valueFrom:
+                secretKeyRef: { name: doomberg-adaptive-dashboard, key: modal_secret, optional: true }
             - name: DOOMBERG_ADAPTIVE_DASHBOARD_MODEL
               valueFrom:
                 secretKeyRef: { name: doomberg-adaptive-dashboard, key: model }

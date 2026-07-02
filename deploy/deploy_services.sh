@@ -234,10 +234,15 @@ if [[ "${DOOMBERG_ENABLE_LIVE_EXECUTION:-0}" == "1" && -z "${DOOMBERG_IBKR_ENGIN
   exit 2
 fi
 
-DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER="${DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER:-openai-compatible}"
+DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER="${DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER:-modal}"
 DOOMBERG_ADAPTIVE_DASHBOARD_MODEL="${DOOMBERG_ADAPTIVE_DASHBOARD_MODEL:-google/gemma-4-E4B-it}"
 case "${DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER}" in
-  openai|openai-compatible|modal|modal-openai)
+  modal|modal-openai)
+    : "${DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL:?DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL must be set for ${DEPLOY_ENV}}"
+    : "${DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY:?DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY must be set for ${DEPLOY_ENV}}"
+    : "${DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET:?DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET must be set for ${DEPLOY_ENV}}"
+    ;;
+  openai|openai-compatible)
     : "${DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL:?DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL must be set for ${DEPLOY_ENV}}"
     : "${DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY:?DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY must be set for ${DEPLOY_ENV}}"
     ;;
@@ -331,6 +336,8 @@ create_adaptive_dashboard_secret() {
     --from-literal=provider="${DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER}" \
     --from-literal=openai_base_url="${DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL:-}" \
     --from-literal=api_key="${DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY:-}" \
+    --from-literal=modal_key="${DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY:-}" \
+    --from-literal=modal_secret="${DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET:-}" \
     --from-literal=model="${DOOMBERG_ADAPTIVE_DASHBOARD_MODEL}" \
     --from-literal=anthropic_api_key="${ANTHROPIC_API_KEY:-}" \
     --dry-run=client -o yaml | apply_manifest

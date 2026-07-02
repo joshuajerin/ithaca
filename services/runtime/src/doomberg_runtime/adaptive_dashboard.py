@@ -28,7 +28,7 @@ ANTHROPIC_HAIKU_MODEL = "claude-haiku-4-5-20251001"
 ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_OPENAI_COMPATIBLE_MODEL = "google/gemma-4-E4B-it"
-DEFAULT_ADAPTIVE_DASHBOARD_PROVIDER = "openai-compatible"
+DEFAULT_ADAPTIVE_DASHBOARD_PROVIDER = "modal"
 
 
 class DashboardGenerationError(RuntimeError):
@@ -261,10 +261,19 @@ class OpenAICompatibleDashboardClient:
         api_key: str | None = None,
         base_url: str | None = None,
         model: str = DEFAULT_OPENAI_COMPATIBLE_MODEL,
+        auth_mode: str = "bearer",
+        modal_key: str | None = None,
+        modal_secret: str | None = None,
         timeout_s: float = 20.0,
     ) -> None:
         self.api_key = api_key if api_key is not None else os.environ.get(
             "DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY", ""
+        )
+        self.modal_key = modal_key if modal_key is not None else os.environ.get(
+            "DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY", ""
+        )
+        self.modal_secret = modal_secret if modal_secret is not None else os.environ.get(
+            "DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET", ""
         )
         configured_base_url = (
             base_url
@@ -273,6 +282,7 @@ class OpenAICompatibleDashboardClient:
         )
         self.base_url = configured_base_url.rstrip("/")
         self.model = os.environ.get("DOOMBERG_ADAPTIVE_DASHBOARD_MODEL", model)
+        self.auth_mode = auth_mode
         self.timeout_s = float(timeout_s)
 
     def generate(self, signals: dict[str, Any]) -> dict[str, Any]:
@@ -280,8 +290,24 @@ class OpenAICompatibleDashboardClient:
             raise DashboardGenerationError(
                 "DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL is not configured"
             )
-        if not self.api_key:
-            raise DashboardGenerationError("DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY is not configured")
+        headers = {"content-type": "application/json"}
+        if self.auth_mode == "modal-proxy":
+            if not self.modal_key:
+                raise DashboardGenerationError(
+                    "DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY is not configured"
+                )
+            if not self.modal_secret:
+                raise DashboardGenerationError(
+                    "DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET is not configured"
+                )
+            headers["Modal-Key"] = self.modal_key
+            headers["Modal-Secret"] = self.modal_secret
+        else:
+            if not self.api_key:
+                raise DashboardGenerationError(
+                    "DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY is not configured"
+                )
+            headers["authorization"] = f"Bearer {self.api_key}"
         body = {
             "model": self.model,
             "temperature": 0.2,
@@ -292,10 +318,7 @@ class OpenAICompatibleDashboardClient:
             f"{self.base_url}/chat/completions",
             data=json.dumps(body).encode("utf-8"),
             method="POST",
-            headers={
-                "authorization": f"Bearer {self.api_key}",
-                "content-type": "application/json",
-            },
+            headers=headers,
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
@@ -359,7 +382,9 @@ def create_adaptive_dashboard_client() -> Any:
         "DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER",
         DEFAULT_ADAPTIVE_DASHBOARD_PROVIDER,
     ).strip().lower()
-    if provider in {"openai", "openai-compatible", "modal", "modal-openai"}:
+    if provider in {"modal", "modal-openai"}:
+        return OpenAICompatibleDashboardClient(auth_mode="modal-proxy")
+    if provider in {"openai", "openai-compatible"}:
         return OpenAICompatibleDashboardClient()
     if provider == "anthropic":
         return AnthropicDashboardClient()
