@@ -628,11 +628,14 @@ jobs:
         env:
           IBKR_ENGINE_ENABLED: ${{ vars.IBKR_ENGINE_ENABLED }}
         run: |
+          set -euo pipefail
           docker buildx imagetools create \
             -t "registry.digitalocean.com/${REGISTRY_NAME}/doomberg:latest" \
             "registry.digitalocean.com/${REGISTRY_NAME}/doomberg:${{ needs.classify.outputs.image_tag }}"
+          docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/doomberg:latest" >/dev/null
           if [[ "${IBKR_ENGINE_ENABLED:-1}" != "0" ]]; then
             docker buildx imagetools create \
               -t "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:latest" \
               "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:${{ needs.classify.outputs.image_tag }}"
+            docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:latest" >/dev/null
           fi
