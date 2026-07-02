@@ -1,6 +1,7 @@
 name: infra-do
 
 on:
+  pull_request:
   workflow_dispatch:
     inputs:
       environment:
@@ -26,7 +27,7 @@ jobs:
   terraform:
     name: terraform plan
     runs-on: self-hosted
-    environment: ${{ inputs.environment }}
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
     defaults:
       run:
         working-directory: infra/terraform
@@ -43,7 +44,13 @@ jobs:
       - name: Terraform init
         env:
           DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-        run: terraform init -input=false
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            terraform init -backend=false -input=false
+          else
+            terraform init -input=false
+          fi
 
       - name: Terraform validate
         run: terraform validate -no-color
@@ -51,15 +58,18 @@ jobs:
       - name: Terraform plan
         env:
           DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+          TERRAFORM_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
+          DATA_GATEWAY_NAMESPACE: ${{ vars.K8S_GATEWAY_NAMESPACE || 'doomberg-dev-gateway' }}
+          WORKER_NAMESPACE: ${{ vars.K8S_WORKER_NAMESPACE || 'doomberg-dev-workers' }}
         run: |
           set -euo pipefail
           terraform plan -input=false \
-            -var="environment=${{ inputs.environment }}" \
-            -var="data_gateway_namespace=${{ vars.K8S_GATEWAY_NAMESPACE }}" \
-            -var="worker_namespace=${{ vars.K8S_WORKER_NAMESPACE }}"
+            -var="environment=${TERRAFORM_ENVIRONMENT}" \
+            -var="data_gateway_namespace=${DATA_GATEWAY_NAMESPACE}" \
+            -var="worker_namespace=${WORKER_NAMESPACE}"
 
       - name: Apply guard
-        if: inputs.apply
+        if: github.event_name == 'workflow_dispatch' && inputs.apply
         run: |
           echo "Terraform apply from GitHub is intentionally blocked until remote state is migrated and reviewed." >&2
           exit 1
