@@ -215,6 +215,12 @@ jobs:
           CLERK_ALLOWED_ORIGINS: ${{ vars.CLERK_ALLOWED_ORIGINS }}
           CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER || 'modal' }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_MODEL: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_MODEL || 'google/gemma-4-E4B-it' }}
           DOOMBERG_ADMIN_TOKEN: ${{ secrets.DOOMBERG_ADMIN_TOKEN }}
           DOOMBERG_SMOKE_API_KEY: ${{ secrets.DOOMBERG_SMOKE_API_KEY }}
           DOOMBERG_SMOKE_NO_SCOPE_API_KEY: ${{ secrets.DOOMBERG_SMOKE_NO_SCOPE_API_KEY }}
@@ -252,7 +258,26 @@ jobs:
             require_env K8S_WORKER_NAMESPACE
             require_env APP_HOST
             require_env MCP_HOST
-            require_env ANTHROPIC_API_KEY
+            require_env DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER
+            require_env DOOMBERG_ADAPTIVE_DASHBOARD_MODEL
+            case "${DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER}" in
+              modal|modal-openai)
+                require_env DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL
+                require_env DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY
+                require_env DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET
+                ;;
+              openai|openai-compatible)
+                require_env DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL
+                require_env DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY
+                ;;
+              anthropic)
+                require_env ANTHROPIC_API_KEY
+                ;;
+              *)
+                echo "ERROR: unsupported DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER=${DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER}" >&2
+                missing=1
+                ;;
+            esac
             if [[ -z "${CLERK_PEM_PUBLIC_KEY:-}" && -z "${CLERK_JWKS_URL:-}" ]]; then
               echo "ERROR: required ${DEPLOY_ENV} deploy config is missing: CLERK_PEM_PUBLIC_KEY or CLERK_JWKS_URL" >&2
               missing=1
@@ -316,6 +341,12 @@ jobs:
             CLERK_PUBLISHABLE_VALUE=${{ secrets.CLERK_PUBLISHABLE_KEY }}
             VITE_API_BASE=/api
 
+      - name: Verify pushed app image exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/doomberg:${{ needs.classify.outputs.image_tag }}" >/dev/null
+
       - name: Build and push immutable IBKR engine image
         if: needs.classify.outputs.deploy_env == 'prod' && vars.IBKR_ENGINE_ENABLED != '0'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
@@ -327,6 +358,13 @@ jobs:
           tags: registry.digitalocean.com/${{ env.REGISTRY_NAME }}/doomberg-ibkr-engine:${{ needs.classify.outputs.image_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Verify pushed IBKR engine image exists
+        if: needs.classify.outputs.deploy_env == 'prod' && vars.IBKR_ENGINE_ENABLED != '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:${{ needs.classify.outputs.image_tag }}" >/dev/null
 
   deploy-dry-run:
     name: 4/6 • deploy dry-run to ${{ needs.classify.outputs.deploy_env }}
@@ -393,7 +431,13 @@ jobs:
           CLERK_JWKS_URL: ${{ vars.CLERK_JWKS_URL || 'https://clerk.example.invalid/.well-known/jwks.json' }}
           CLERK_ALLOWED_ORIGINS: ${{ vars.CLERK_ALLOWED_ORIGINS || 'https://dev-app.doomberg.me' }}
           CLERK_ISSUER: ${{ vars.CLERK_ISSUER || 'https://clerk.example.invalid' }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY || 'dry-run-anthropic-key' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER || 'modal' }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL || 'https://dry-run.invalid/v1' }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY || 'dry-run-modal-key' }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY || 'wk-dry-run' }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET || 'ws-dry-run' }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_MODEL: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_MODEL || 'google/gemma-4-E4B-it' }}
           DOOMBERG_ADMIN_TOKEN: ${{ secrets.DOOMBERG_ADMIN_TOKEN }}
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
           DATABENTO_API_KEY: ${{ secrets.DATABENTO_API_KEY }}
@@ -498,6 +542,12 @@ jobs:
           CLERK_ALLOWED_ORIGINS: ${{ vars.CLERK_ALLOWED_ORIGINS }}
           CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER || 'modal' }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_MODEL: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_MODEL || 'google/gemma-4-E4B-it' }}
           DOOMBERG_ADMIN_TOKEN: ${{ secrets.DOOMBERG_ADMIN_TOKEN }}
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
           DATABENTO_API_KEY: ${{ secrets.DATABENTO_API_KEY }}
@@ -589,11 +639,14 @@ jobs:
         env:
           IBKR_ENGINE_ENABLED: ${{ vars.IBKR_ENGINE_ENABLED }}
         run: |
+          set -euo pipefail
           docker buildx imagetools create \
             -t "registry.digitalocean.com/${REGISTRY_NAME}/doomberg:latest" \
             "registry.digitalocean.com/${REGISTRY_NAME}/doomberg:${{ needs.classify.outputs.image_tag }}"
+          docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/doomberg:latest" >/dev/null
           if [[ "${IBKR_ENGINE_ENABLED:-1}" != "0" ]]; then
             docker buildx imagetools create \
               -t "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:latest" \
               "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:${{ needs.classify.outputs.image_tag }}"
+            docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:latest" >/dev/null
           fi

@@ -234,6 +234,27 @@ if [[ "${DOOMBERG_ENABLE_LIVE_EXECUTION:-0}" == "1" && -z "${DOOMBERG_IBKR_ENGIN
   exit 2
 fi
 
+DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER="${DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER:-modal}"
+DOOMBERG_ADAPTIVE_DASHBOARD_MODEL="${DOOMBERG_ADAPTIVE_DASHBOARD_MODEL:-google/gemma-4-E4B-it}"
+case "${DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER}" in
+  modal|modal-openai)
+    : "${DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL:?DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL must be set for ${DEPLOY_ENV}}"
+    : "${DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY:?DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY must be set for ${DEPLOY_ENV}}"
+    : "${DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET:?DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET must be set for ${DEPLOY_ENV}}"
+    ;;
+  openai|openai-compatible)
+    : "${DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL:?DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL must be set for ${DEPLOY_ENV}}"
+    : "${DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY:?DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY must be set for ${DEPLOY_ENV}}"
+    ;;
+  anthropic)
+    : "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY must be set when DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER=anthropic}"
+    ;;
+  *)
+    echo "ERROR: unsupported DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER=${DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER}" >&2
+    exit 2
+    ;;
+esac
+
 render_manifest() {
   local file="$1"
   sed \
@@ -310,8 +331,14 @@ create_doomberg_secret() {
     --dry-run=client -o yaml | apply_manifest
 }
 
-create_anthropic_secret() {
-  kubectl -n "${K8S_WORKER_NAMESPACE}" create secret generic doomberg-anthropic \
+create_adaptive_dashboard_secret() {
+  kubectl -n "${K8S_WORKER_NAMESPACE}" create secret generic doomberg-adaptive-dashboard \
+    --from-literal=provider="${DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER}" \
+    --from-literal=openai_base_url="${DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL:-}" \
+    --from-literal=api_key="${DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY:-}" \
+    --from-literal=modal_key="${DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY:-}" \
+    --from-literal=modal_secret="${DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET:-}" \
+    --from-literal=model="${DOOMBERG_ADAPTIVE_DASHBOARD_MODEL}" \
     --from-literal=anthropic_api_key="${ANTHROPIC_API_KEY:-}" \
     --dry-run=client -o yaml | apply_manifest
 }
@@ -347,8 +374,8 @@ render_manifest infra/k8s/namespace.yaml | apply_manifest
 echo "==> secret doomberg-db (${DEPLOY_ENV}; values redacted)"
 create_doomberg_secret "${K8S_GATEWAY_NAMESPACE}"
 create_doomberg_secret "${K8S_WORKER_NAMESPACE}"
-echo "==> secret doomberg-anthropic (${DEPLOY_ENV}; worker namespace only; values redacted)"
-create_anthropic_secret
+echo "==> secret doomberg-adaptive-dashboard (${DEPLOY_ENV}; worker namespace only; values redacted)"
+create_adaptive_dashboard_secret
 if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
   echo "==> secret ibkr-engine (${DEPLOY_ENV}; values redacted)"
   create_ibkr_secret
