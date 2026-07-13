@@ -21,8 +21,10 @@ metadata:
     doomberg/environment: ${DOOMBERG_ENV}
 spec:
   podSelector:
-    matchLabels:
-      doomberg/component: worker
+    matchExpressions:
+      - key: doomberg/component
+        operator: In
+        values: ["worker", "backtest-worker"]
   policyTypes: ["Egress"]
   egress:
     - to:
