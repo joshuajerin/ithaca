@@ -209,16 +209,23 @@ def _applied(conn: Any) -> dict[int, tuple[str, str]]:
 
 
 def _status(
-    applied: dict[int, tuple[str, str]], migrations: tuple[Migration, ...]
+    applied: dict[int, tuple[str, str]],
+    migrations: tuple[Migration, ...],
+    *,
+    allow_forward: bool = False,
 ) -> MigrationStatus:
     manifest = {migration.version: migration for migration in migrations}
     unknown = sorted(set(applied) - set(manifest))
-    if unknown:
+    latest_known = max(manifest, default=0)
+    forward_only = all(version > latest_known for version in unknown)
+    if unknown and (not allow_forward or not forward_only):
         raise MigrationDrift(
             "database contains migration versions unknown to this release: "
             + ", ".join(str(version) for version in unknown)
         )
     for version, (stored_name, stored_checksum) in applied.items():
+        if version not in manifest:
+            continue
         expected = manifest[version]
         if stored_name != expected.name or stored_checksum != expected.checksum:
             raise MigrationDrift(
@@ -234,14 +241,17 @@ def _status(
 
 
 def apply_migrations(
-    conn: Any, migrations: Iterable[Migration] = MIGRATIONS
+    conn: Any,
+    migrations: Iterable[Migration] = MIGRATIONS,
+    *,
+    allow_forward: bool = False,
 ) -> MigrationStatus:
     """Apply pending migrations atomically while holding the global schema lock."""
     ordered = _ordered(migrations)
     conn.execute("SELECT pg_advisory_xact_lock(?)", (MIGRATION_LOCK_ID,))
     conn.execute(_MIGRATION_LEDGER_DDL)
     applied = _applied(conn)
-    status = _status(applied, ordered)
+    status = _status(applied, ordered, allow_forward=allow_forward)
     by_version = {migration.version: migration for migration in ordered}
     for version in status.pending_versions:
         migration = by_version[version]
@@ -252,16 +262,19 @@ def apply_migrations(
             (migration.version, migration.name, migration.checksum),
         )
         applied[migration.version] = (migration.name, migration.checksum)
-    return _status(applied, ordered)
+    return _status(applied, ordered, allow_forward=allow_forward)
 
 
 def validate_migrations(
-    conn: Any, migrations: Iterable[Migration] = MIGRATIONS
+    conn: Any,
+    migrations: Iterable[Migration] = MIGRATIONS,
+    *,
+    allow_forward: bool = False,
 ) -> MigrationStatus:
     """Fail if the database is behind or differs from the release manifest."""
     ordered = _ordered(migrations)
     try:
-        status = _status(_applied(conn), ordered)
+        status = _status(_applied(conn), ordered, allow_forward=allow_forward)
     except Exception as exc:
         if exc.__class__.__name__ == "UndefinedTable":
             raise MigrationRequired(
