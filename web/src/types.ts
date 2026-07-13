@@ -199,6 +199,18 @@ export interface OpsReadinessRow {
   detail: string;
 }
 
+export interface OpsLeaseRow {
+  lease_name: string;
+  owner_id: string;
+  lease_expires_at: string;
+  heartbeat_at: string;
+  metadata: Record<string, unknown>;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  active: boolean;
+}
+
 export interface OpsStatus {
   platform: {
     database: string;
@@ -228,16 +240,27 @@ export interface OpsStatus {
     leased_or_running: number;
     terminal: number;
   };
-  leases: Array<{
-    lease_name: string;
-    owner_id: string;
-    lease_expires_at: string;
-    heartbeat_at: string;
-    metadata: Record<string, unknown>;
-    version: number;
-    created_at: string;
-    updated_at: string;
-  }>;
+  leases: OpsLeaseRow[];
+  stale_leases: OpsLeaseRow[];
+  workers: {
+    required_roles: string[];
+    healthy_roles: string[];
+    missing_roles: string[];
+    degraded_roles: string[];
+    rows: Array<{
+      worker_id: string;
+      role: string;
+      status: "starting" | "healthy" | "standby" | "degraded" | "stopped";
+      detail?: string | null;
+      metadata: Record<string, unknown>;
+      started_at: string;
+      heartbeat_at: string;
+      expires_at: string;
+      updated_at: string;
+      expired: boolean;
+      age_seconds?: number | null;
+    }>;
+  };
   triggers: {
     active: number;
     total: number;

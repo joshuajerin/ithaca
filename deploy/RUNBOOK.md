@@ -287,6 +287,20 @@ so only one worker replica owns each singleton loop at a time; if the owner dies
 another replica takes over after the lease TTL. Order reconciliation defaults to
 five seconds and is tunable with `DOOMBERG_RECONCILIATION_INTERVAL_S`.
 
+Migration 6 adds `worker_heartbeats`, a system-only durable process registry.
+Every conductor loop and the trigger engine records its role, instance id,
+status, last heartbeat, expiry, and bounded diagnostic metadata. Leadership
+leases still prevent duplicate singleton work; heartbeats answer the separate
+question of whether the responsible process is alive and making progress.
+`GET /api/ops/status` excludes expired leases from the active list and reports
+missing, degraded, expired, and healthy worker roles explicitly.
+
+Both gateways expose `GET /livez` for process liveness and `GET /healthz` plus
+`GET /readyz` for a live database ping, migration-ledger validation, and pool
+statistics. A database or migration failure returns 503; worker-role degradation
+remains visible through the authenticated ops status instead of ejecting a
+read-capable gateway from the load balancer.
+
 For connected-account live trigger quotes, use the managed in-cluster IBKR engine
 by default:
 

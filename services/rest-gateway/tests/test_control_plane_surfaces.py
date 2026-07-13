@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from rest_helpers import seed_run
+from doomberg_rest.app import _database_health
 
 
 def _h(tenant_id: str) -> dict[str, str]:
@@ -80,6 +81,8 @@ def test_ops_status_reports_live_data_and_paper_execution(client, stores, tenant
     run_id = seed_run(stores, tenant_a, kind="backtest")
     stores.jobs.create_for_run(tenant_a, run_id, kind="backtest", profile="backtest")
     stores.leases.acquire("trigger-engine", "worker-a", ttl_seconds=60)
+    for role in ("backtest-worker", "paper-scheduler", "notification-dispatcher"):
+        stores.worker_heartbeats.heartbeat(f"worker-{role}", role, ttl_seconds=60)
     stores.providers.upsert_connection(
         tenant_a,
         provider="ibkr",
@@ -100,8 +103,46 @@ def test_ops_status_reports_live_data_and_paper_execution(client, stores, tenant
     assert body["execution"]["disabled"] is False
     assert body["jobs"]["queued"] == 1
     assert body["leases"][0]["lease_name"] == "trigger-engine"
+    assert body["workers"]["missing_roles"] == ["execution-reconciler"]
+    assert set(body["workers"]["healthy_roles"]) == {
+        "backtest-worker", "notification-dispatcher", "paper-scheduler"
+    }
     assert any(row["name"] == "Trading" and row["state"] == "succeeded"
                for row in body["readiness"])
+
+
+def test_ops_status_separates_expired_leases_and_heartbeats(client, stores, tenant_a):
+    old = datetime.now(timezone.utc) - timedelta(minutes=10)
+    stores.leases.acquire("paper-scheduler", "old-worker", ttl_seconds=1, now=old)
+    stores.worker_heartbeats.heartbeat(
+        "old-worker", "paper-scheduler", ttl_seconds=1, now=old
+    )
+
+    body = client.get("/api/ops/status", headers=_h(tenant_a)).json()
+
+    assert body["leases"] == []
+    assert body["stale_leases"][0]["active"] is False
+    assert body["workers"]["rows"][0]["expired"] is True
+    assert "paper-scheduler" in body["workers"]["missing_roles"]
+
+
+def test_database_health_fails_closed_on_ping_error():
+    class BrokenConnection:
+        def execute(self, *_args):
+            raise RuntimeError("database unavailable")
+
+    class BrokenDb:
+        is_postgres = True
+        conn = BrokenConnection()
+
+        def system_scope(self):
+            from contextlib import nullcontext
+            return nullcontext()
+
+    health = _database_health(BrokenDb())
+    assert health["status"] == "error"
+    assert health["ready"] is False
+    assert "database unavailable" in health["error"]
 
 
 def test_live_data_smoke_route_calls_read_only_quote_engine(client, tenant_a, monkeypatch):
