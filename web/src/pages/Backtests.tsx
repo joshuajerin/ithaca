@@ -90,6 +90,33 @@ function MiniCurve({ run }: { run: RunRow | null }) {
   return <EquityCurve points={curve} height={72} />;
 }
 
+export interface BacktestCard {
+  strategy: StrategyRow | null;
+  latestRun: RunRow | null;
+  runCount: number;
+  displayName: string;
+}
+
+function runName(run: RunRow): string {
+  const name = run.spec?.name;
+  return typeof name === "string" && name.trim() ? name : `Agent backtest ${shortId(run.id)}`;
+}
+
+export function buildBacktestCards(strategies: StrategyRow[], runs: RunRow[]): BacktestCard[] {
+  const strategyIds = new Set(strategies.map((strategy) => strategy.id));
+  const byUpdatedAt = (a: RunRow, b: RunRow) =>
+    String(b.updated_at ?? b.created_at ?? "").localeCompare(String(a.updated_at ?? a.created_at ?? ""));
+  const linked = strategies.map((strategy) => {
+    const strategyRuns = runs.filter((run) => run.strategy_id === strategy.id).sort(byUpdatedAt);
+    return { strategy, latestRun: strategyRuns[0] ?? null, runCount: strategyRuns.length, displayName: strategy.name ?? `Strategy ${shortId(strategy.id)}` };
+  });
+  const unlinked = runs
+    .filter((run) => !run.strategy_id || !strategyIds.has(run.strategy_id))
+    .sort(byUpdatedAt)
+    .map((run) => ({ strategy: null, latestRun: run, runCount: 1, displayName: runName(run) }));
+  return [...linked, ...unlinked];
+}
+
 export function Backtests() {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
@@ -100,18 +127,11 @@ export function Backtests() {
   const { data: strategies, loading: strategiesLoading, reload: reloadStrategies } = useAsync<StrategyRow[]>((s) => api.listStrategies(s), []);
   const { data: runs, loading: runsLoading, reload: reloadRuns } = useAsync<RunRow[]>((s) => api.listRuns("backtest", s), []);
 
-  const cards = useMemo(() => {
-    return (strategies ?? []).map((strategy) => {
-      const strategyRuns = (runs ?? [])
-        .filter((run) => run.strategy_id === strategy.id)
-        .sort((a, b) => String(b.updated_at ?? b.created_at ?? "").localeCompare(String(a.updated_at ?? a.created_at ?? "")));
-      return { strategy, latestRun: strategyRuns[0] ?? null, runCount: strategyRuns.length };
-    });
-  }, [strategies, runs]);
+  const cards = useMemo(() => buildBacktestCards(strategies ?? [], runs ?? []), [strategies, runs]);
 
-  const filtered = cards.filter(({ strategy }) => {
+  const filtered = cards.filter(({ displayName }) => {
     const needle = query.trim().toLowerCase();
-    return !needle || String(strategy.name ?? strategy.id).toLowerCase().includes(needle);
+    return !needle || displayName.toLowerCase().includes(needle);
   });
 
   const loading = strategiesLoading || runsLoading;
@@ -176,14 +196,15 @@ export function Backtests() {
       )}
 
       <div className="deploy-grid">
-        {filtered.map(({ strategy, latestRun, runCount }) => {
+        {filtered.map(({ strategy, latestRun, runCount, displayName }) => {
           const stats = unwrap(latestRun).stats ?? {};
+          const href = strategy ? `/backtests/${strategy.id}` : `/backtests/agent?run=${encodeURIComponent(latestRun?.id ?? "")}`;
           return (
-            <article key={strategy.id} className="fcard backtest-card">
-              <button className="backtest-card-main" onClick={() => navigate(`/backtests/${strategy.id}`)}>
-                <div className="deploy-card-name">{strategy.name ?? `Strategy ${shortId(strategy.id)}`}</div>
+            <article key={strategy?.id ?? latestRun?.id} className="fcard backtest-card">
+              <button className="backtest-card-main" onClick={() => navigate(href)}>
+                <div className="deploy-card-name">{displayName}</div>
                 <div className="deploy-card-meta">
-                  v{strategy.version} · {runCount} run{runCount === 1 ? "" : "s"}
+                  {strategy ? `v${strategy.version} · ` : "Agent run · "}{runCount} run{runCount === 1 ? "" : "s"}
                   {latestRun ? ` · ${fmtTime(latestRun.updated_at ?? latestRun.created_at)}` : ""}
                 </div>
                 {latestRun && <span className={`badge ${stateClass(latestRun.state)}`}>{latestRun.state}</span>}
@@ -195,8 +216,8 @@ export function Backtests() {
                 </div>
               </button>
               <div className="backtest-card-actions">
-                <button className="btn" onClick={() => navigate(`/backtests/${strategy.id}`)}>History</button>
-                <button className="btn primary" onClick={() => quickRun(strategy.id)}>Run again</button>
+                <button className="btn" onClick={() => navigate(href)}>History</button>
+                {strategy && <button className="btn primary" onClick={() => quickRun(strategy.id)}>Run again</button>}
               </div>
             </article>
           );

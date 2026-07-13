@@ -28,12 +28,14 @@ export function DeploymentDetail() {
   const { data: allRuns, loading, reload } = useAsync<RunRow[]>((s) => api.listRuns("backtest", s), []);
 
   const strategy = (strategies ?? []).find((s) => s.id === id) ?? null;
-  const stratRuns = (allRuns ?? [])
+  const requestedRun = searchParams.get("run");
+  const requestedSummary = (allRuns ?? []).find((run) => run.id === requestedRun) ?? null;
+  const stratRuns = (strategy ? (allRuns ?? [])
     .filter((r) => r.strategy_id === id)
+    : requestedSummary ? [requestedSummary] : [])
     .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
 
   // Auto-select the latest run if none selected
-  const requestedRun = searchParams.get("run");
   const activeRunId = selectedRunId ?? requestedRun ?? (stratRuns[0]?.id ?? null);
   const activeRunSummary = stratRuns.find((r) => r.id === activeRunId) ?? stratRuns[0] ?? null;
   const { data: detailedRun, reload: reloadDetail } = useAsync<RunRow>(
@@ -66,7 +68,8 @@ export function DeploymentDetail() {
 
   const perfData = performanceFromRuns(activeRun ? [activeRun] : []);
 
-  const displayName = strategy?.name ?? `Strategy ${shortId(id ?? "")}`;
+  const runName = (activeRun ?? requestedSummary)?.spec?.name;
+  const displayName = strategy?.name ?? (typeof runName === "string" && runName.trim() ? runName : `Agent backtest ${shortId(activeRunId)}`);
 
   async function runAgain() {
     if (!id) return;
@@ -129,7 +132,7 @@ export function DeploymentDetail() {
             {displayName}
           </div>
           <div className="topbar-sub">
-            v{strategy?.version ?? "—"} · {shortId(id)} · {stratRuns.length} run{stratRuns.length !== 1 ? "s" : ""}
+            {strategy ? `v${strategy.version}` : "Agent run"} · {shortId(activeRunId ?? id)} · {stratRuns.length} run{stratRuns.length !== 1 ? "s" : ""}
           </div>
         </div>
         <div aria-hidden="true" />

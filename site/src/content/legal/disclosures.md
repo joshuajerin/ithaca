@@ -1,8 +1,6 @@
 # Risk Disclosures & Disclaimers
 
-> **Draft — review before publishing.** Contains fill-in token: `[LEGAL CONTACT EMAIL]`. These disclosures are drafts and should be reviewed by counsel and any applicable compliance requirements before public launch.
-
-These Risk Disclosures and Disclaimers apply to your use of the Doomberg platform and related services (the "Service") operated by **Ithaca**. Read them carefully. They supplement the [Terms of Service](/terms).
+These Risk Disclosures and Disclaimers apply to your use of the Doomberg platform and related services (the "Service") operated by **Ithaca, Inc., a Delaware corporation**. Read them carefully. They supplement the [Terms of Service](/terms).
 
 ## 1. Not investment advice
 
@@ -30,4 +28,4 @@ The Service is provided "as is" without warranties of any kind, as described in 
 
 ## 7. Contact
 
-Questions about these disclosures: `[LEGAL CONTACT EMAIL]`.
+Questions about these disclosures: [joshuaxjerin@gmail.com](mailto:joshuaxjerin@gmail.com).
