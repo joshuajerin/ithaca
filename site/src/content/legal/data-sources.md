@@ -1,8 +1,6 @@
 # Third-Party Data Sources
 
-> **Draft — review before publishing.** Contains fill-in token: `[LEGAL CONTACT EMAIL]`. Confirm each provider's required attribution and redistribution language against your current data-licensing agreements before publishing.
-
-Doomberg, operated by **Ithaca**, integrates market and reference data from third-party providers. This page describes those providers and the limitations that apply to data made available through the Service. Data is provided on an **"as is"** basis for research and simulated ("paper") use only; see our [Risk Disclosures](/disclosures).
+Doomberg, operated by **Ithaca, Inc., a Delaware corporation**, integrates market and reference data from third-party providers. This page describes those providers and the limitations that apply to data made available through the Service. Data is provided on an **"as is"** basis for research and simulated ("paper") use only; see our [Risk Disclosures](/disclosures).
 
 ## 1. Alpaca
 
@@ -29,4 +27,4 @@ Supplementary reference and fundamentals data may be sourced via **Financial Mod
 
 ## 6. Contact
 
-Questions about data sourcing or attribution: `[LEGAL CONTACT EMAIL]`.
+Questions about data sourcing or attribution: [joshuaxjerin@gmail.com](mailto:joshuaxjerin@gmail.com).

@@ -1,8 +1,6 @@
 # Privacy Policy
 
-> **Draft — review before publishing.** Contains fill-in tokens to finalize: `[GOVERNING-LAW JURISDICTION]`, `[LEGAL CONTACT EMAIL]`, and the registered entity address for data-controller notices. Not attorney-reviewed final language.
-
-This Privacy Policy explains how **Ithaca** ("Ithaca", "we", "our", or "us") collects, uses, and shares personal information when you use the Doomberg platform and related services (the "Service"). For the data controller's registered address, see `[LEGAL CONTACT EMAIL]`.
+This Privacy Policy explains how **Ithaca, Inc., a Delaware corporation** ("Ithaca", "we", "our", or "us") collects, uses, and shares personal information when you use the Doomberg platform and related services (the "Service"). For privacy or data-protection inquiries, contact [joshuaxjerin@gmail.com](mailto:joshuaxjerin@gmail.com).
 
 ## 1. Information we collect
 
@@ -27,7 +25,7 @@ Where applicable, we rely on: **performance of a contract** (to provide the Serv
 
 ## 4. How we share information
 
-We share personal information with **subprocessors** who help us run the Service — including Clerk (authentication), Vercel (hosting and analytics), Supabase (database), and DigitalOcean (compute), as well as market-data providers. See the full [Subprocessors](/subprocessors) list. We may also disclose information to comply with law, enforce our Terms, or protect rights and safety. We do **not** sell your personal information.
+We share personal information with **subprocessors** who help us run the Service — including Clerk (authentication), Vercel (hosting and analytics), and DigitalOcean (compute, database, and storage), as well as market-data providers. See the full [Subprocessors](/subprocessors) list. We may also disclose information to comply with law, enforce our Terms, or protect rights and safety. We do **not** sell your personal information.
 
 ## 5. Data retention
 
@@ -39,7 +37,7 @@ We use technical and organizational measures appropriate to the risk, including 
 
 ## 7. Your rights
 
-Depending on your location, you may have rights to access, correct, delete, port, or restrict processing of your personal information, and to object to certain processing. California residents (CCPA/CPRA) may request disclosure and deletion and may opt out of "sale"/"sharing" (we do not sell or share for cross-context behavioral advertising). To exercise rights, contact `[LEGAL CONTACT EMAIL]`. You may also lodge a complaint with your local data-protection authority.
+Depending on your location, you may have rights to access, correct, delete, port, or restrict processing of your personal information, and to object to certain processing. California residents (CCPA/CPRA) may request disclosure and deletion and may opt out of "sale"/"sharing" (we do not sell or share for cross-context behavioral advertising). To exercise rights, contact [joshuaxjerin@gmail.com](mailto:joshuaxjerin@gmail.com). You may also lodge a complaint with your local data-protection authority.
 
 ## 8. International transfers
 
@@ -55,4 +53,4 @@ We may update this Privacy Policy. Material changes will be reflected by updatin
 
 ## 11. Contact
 
-Privacy questions or rights requests: `[LEGAL CONTACT EMAIL]`. This policy is governed by the laws of `[GOVERNING-LAW JURISDICTION]`.
+Privacy questions or rights requests: [joshuaxjerin@gmail.com](mailto:joshuaxjerin@gmail.com). This policy is governed by the laws of the State of Delaware.
