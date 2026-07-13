@@ -332,13 +332,15 @@ class PostgresDb:
 
     def _migrate(self) -> MigrationStatus:
         mode = migration_mode()
+        if mode == "off":
+            return MigrationStatus(current_version=0, latest_version=0, pending_versions=())
         allow_forward = allow_forward_migrations()
         with self.system_scope(), self.conn as conn:
             if mode == "apply":
                 return apply_migrations(conn, allow_forward=allow_forward)
             if mode == "validate":
                 return validate_migrations(conn, allow_forward=allow_forward)
-        return MigrationStatus(current_version=0, latest_version=0, pending_versions=())
+        raise AssertionError(f"unsupported migration mode: {mode}")
 
     def publish(self, run_id: str, event: dict[str, Any]) -> None:
         payload = json.dumps({"run_id": str(run_id), "seq": int(event["seq"])})

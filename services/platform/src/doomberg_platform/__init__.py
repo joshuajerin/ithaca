@@ -24,6 +24,8 @@ from .book_store import BookConflict, BookNotFound, BookStore
 from .control_store import (
     ApprovalStore,
     ArtifactStore,
+    CompliancePolicyConflict,
+    CompliancePolicyStore,
     DeliveryTargetStore,
     ExecutionControlConflict,
     ExecutionControlStore,
@@ -55,6 +57,7 @@ from .run_store import (
 from .strategy_store import StrategyStore
 from .trace_store import TraceStore
 from .user_store import SessionError, UserStore
+from .worker_store import WorkerHeartbeatStore
 
 __all__ = [
     "open_db",
@@ -85,6 +88,8 @@ __all__ = [
     "ExecutionStore",
     "ExecutionControlStore",
     "ExecutionControlConflict",
+    "CompliancePolicyStore",
+    "CompliancePolicyConflict",
     "TriggerStore",
     "TriggerBaselineStore",
     "NotificationStore",
@@ -101,4 +106,5 @@ __all__ = [
     "BookNotFound",
     "UserStore",
     "SessionError",
+    "WorkerHeartbeatStore",
 ]

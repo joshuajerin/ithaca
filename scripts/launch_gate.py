@@ -678,6 +678,72 @@ def _check_unauthorized_rest(rest: RestClient) -> GateResult:
     )
 
 
+def _check_gateway_health(rest: RestClient) -> list[GateResult]:
+    results: list[GateResult] = []
+    live, failure = _get_json(rest, "/livez", token=None, tenant_id=None, name="gateway liveness")
+    if failure:
+        results.append(failure)
+    elif live and live.get("status") == "ok":
+        results.append(_pass("gateway liveness", "process liveness probe passed"))
+    else:
+        results.append(_fail("gateway liveness", "liveness response was not ok", body=live))
+
+    for path, name in (("/healthz", "gateway health"), ("/readyz", "gateway readiness")):
+        body, failure = _get_json(rest, path, token=None, tenant_id=None, name=name)
+        if failure:
+            results.append(failure)
+            continue
+        assert body is not None
+        pending = ((body.get("migrations") or {}).get("pending") or [])
+        if body.get("status") != "ok" or body.get("ready") is not True or pending:
+            results.append(
+                _fail(name, "database or migration readiness failed", body=body)
+            )
+        else:
+            results.append(
+                _pass(
+                    name,
+                    "database ping and migration ledger are ready",
+                    database=body.get("database"),
+                    migrations=body.get("migrations"),
+                    pool=body.get("pool"),
+                )
+            )
+    return results
+
+
+def _check_compliance_controls(
+    rest: RestClient, *, token: str | None, tenant_id: str | None
+) -> GateResult:
+    body, failure = _get_json(
+        rest,
+        "/api/compliance",
+        token=token,
+        tenant_id=tenant_id,
+        name="compliance controls",
+    )
+    if failure:
+        return failure
+    assert body is not None
+    required = {"limits", "restricted", "watch", "policyVersion", "limitsEnforced", "killSwitch"}
+    missing = sorted(required - set(body))
+    if missing or not isinstance(body.get("policyVersion"), int):
+        return _fail(
+            "compliance controls",
+            "personalized compliance state is incomplete",
+            missing=missing,
+            body=body,
+        )
+    return _pass(
+        "compliance controls",
+        "durable tenant policy and execution stop state are readable",
+        policy_version=body["policyVersion"],
+        limits_enforced=body["limitsEnforced"],
+        restricted_count=len(body.get("restricted") or []),
+        kill_source=body.get("killSource"),
+    )
+
+
 def _check_ops(
     rest: RestClient,
     *,
@@ -704,11 +770,33 @@ def _check_ops(
         results.append(_pass("database mode", f"platform database is {database}", database=database))
     leases = body.get("leases") or []
     if require_active_worker:
-        active = [lease for lease in leases if lease.get("lease_name") != "launch-gate"]
-        if not active:
-            results.append(_fail("active worker lease", "no non-launch-gate worker lease is active"))
+        workers = body.get("workers") or {}
+        missing = workers.get("missing_roles") or []
+        degraded = workers.get("degraded_roles") or []
+        required = workers.get("required_roles") or []
+        if not required:
+            results.append(_fail("worker readiness", "ops status did not declare required worker roles"))
+        elif missing or degraded:
+            results.append(
+                _fail(
+                    "worker readiness",
+                    "required worker roles are missing or degraded",
+                    required_roles=required,
+                    missing_roles=missing,
+                    degraded_roles=degraded,
+                    workers=workers.get("rows") or [],
+                )
+            )
         else:
-            results.append(_pass("active worker lease", "active worker lease found", leases=active))
+            results.append(
+                _pass(
+                    "worker readiness",
+                    "all required worker roles have current heartbeats",
+                    required_roles=required,
+                    healthy_roles=workers.get("healthy_roles") or [],
+                    active_leases=leases,
+                )
+            )
     return body, results
 
 
@@ -1628,6 +1716,7 @@ def _run_local(args: argparse.Namespace) -> list[GateResult]:
     try:
         with TestClient(app) as client:
             rest = InProcessRestClient(client)
+            results.extend(_check_gateway_health(rest))
             results.append(_check_unauthorized_rest(rest))
             _ops, ops_results = _check_ops(
                 rest,
@@ -1637,6 +1726,7 @@ def _run_local(args: argparse.Namespace) -> list[GateResult]:
                 require_active_worker=args.require_active_worker,
             )
             results.extend(ops_results)
+            results.append(_check_compliance_controls(rest, token=token, tenant_id=None))
             run_id, session_results = _check_session_and_events(rest, token=token, tenant_id=None)
             results.extend(session_results)
             results.extend(
@@ -1693,6 +1783,7 @@ def _run_http(args: argparse.Namespace) -> list[GateResult]:
     rest = RemoteRestClient(args.base_url)
     auth_tenant = None if token else tenant_id
     results = [_pass("configuration", "HTTP launch gate configured", base_url=args.base_url)]
+    results.extend(_check_gateway_health(rest))
     results.append(_check_unauthorized_rest(rest))
     _ops, ops_results = _check_ops(
         rest,
@@ -1702,6 +1793,9 @@ def _run_http(args: argparse.Namespace) -> list[GateResult]:
         require_active_worker=args.require_active_worker,
     )
     results.extend(ops_results)
+    results.append(
+        _check_compliance_controls(rest, token=token, tenant_id=auth_tenant)
+    )
     run_id, session_results = _check_session_and_events(rest, token=token, tenant_id=auth_tenant)
     results.extend(session_results)
     results.extend(
@@ -1797,7 +1891,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--skip-ibkr", action="store_true", help="Do not call /api/ops/live-data-smoke.")
     parser.add_argument("--require-ibkr", action="store_true", help="Fail if the live data smoke does not pass.")
     parser.add_argument("--require-postgres", action="store_true", help="Fail unless ops status reports Postgres.")
-    parser.add_argument("--require-active-worker", action="store_true", help="Fail unless an existing non-launch-gate worker lease is active.")
+    parser.add_argument(
+        "--require-workers-ready",
+        dest="require_active_worker",
+        action="store_true",
+        help="Fail unless every required worker role has a current, non-degraded heartbeat.",
+    )
+    parser.add_argument(
+        "--require-active-worker",
+        dest="require_active_worker",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--require-artifact", action="store_true", help="In HTTP mode, fail if no existing artifact can be fetched.")
     parser.add_argument("--require-mcp", action="store_true", help="In HTTP mode, fail if no MCP URL is configured.")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")

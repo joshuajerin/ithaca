@@ -123,6 +123,44 @@ def test_execution_gateway_policy_denies_oversized_order(client, platform, tenan
     assert platform.execution.get_intent(tenant_a, intent_id)["state"] == "policy_denied"
 
 
+def test_execution_gateway_enforces_tenant_restricted_and_watch_lists(platform, tenant_a):
+    platform.compliance_policies.set(
+        tenant_a,
+        limits={
+            "maxPositionPct": 100.0,
+            "maxNetPct": 1_000.0,
+            "maxLeverage": 10.0,
+            "maxConcentrationPct": 100.0,
+        },
+        limits_enforced=False,
+        restricted=["TSLA"],
+        watch=["AAPL"],
+        action="Execution lists",
+        actor_id="risk-officer",
+        expect_version=0,
+    )
+    gateway = ExecutionGateway(platform)
+    ctx = Ctx(tenant_a, "human", "trader-1")
+    payload = _intent_payload()
+    payload["orders"][0]["symbol"] = "TSLA"
+    intent = gateway.create_intent(ctx, run_id=_run(platform, tenant_a), payload=payload)
+    decision = gateway.evaluate(ctx, intent)
+    assert decision["decision"] == "denied"
+    assert "RESTRICTED_SYMBOL" in decision["reasons"]
+    assert decision["compliance"]["restricted_hits"] == ["TSLA"]
+
+    watched_payload = _intent_payload()
+    watched = gateway.create_intent(
+        ctx,
+        run_id=_run(platform, tenant_a),
+        payload=watched_payload,
+    )
+    watched_decision = gateway.evaluate(ctx, watched)
+    assert watched_decision["decision"] == "approved"
+    assert "WATCH_LIST_SYMBOL" in watched_decision["warnings"]
+    assert watched_decision["compliance"]["watch_hits"] == ["AAPL"]
+
+
 def test_execution_kill_switch_requires_human_and_blocks_submission(
     client, platform, tenant_a
 ):
@@ -298,6 +336,21 @@ def test_execution_missing_control_store_fails_closed(platform, tenant_a):
     assert platform.execution.get_record(tenant_a, intent["intent_id"])["orders"] == []
 
 
+def test_execution_missing_compliance_store_fails_closed(platform, tenant_a):
+    platform.compliance_policies = None
+    gateway = ExecutionGateway(platform)
+    ctx = Ctx(tenant_a, "human", "trader-1")
+    intent = gateway.create_intent(ctx, run_id=_run(platform, tenant_a), payload=_intent_payload())
+
+    with pytest.raises(ActionError) as exc_info:
+        gateway.submit(ctx, intent["intent_id"])
+
+    assert exc_info.value.status == 409
+    decision = exc_info.value.detail["risk_decision"]
+    assert "COMPLIANCE_POLICY_UNAVAILABLE" in decision["reasons"]
+    assert platform.execution.get_record(tenant_a, intent["intent_id"])["orders"] == []
+
+
 def test_execution_kill_switch_get_and_payload_validation(client, tenant_a):
     initial = client.get("/execution/kill-switch", headers=human_headers(tenant_a))
     assert initial.status_code == 200
@@ -378,6 +431,83 @@ def test_submission_fence_serializes_tenant_halt_with_broker_send(platform, tena
     assert submit_result[0]["state"] == "filled"
     assert halt_done.is_set()
     assert platform.execution_controls.get_effective(tenant_a)["enabled"] is True
+
+
+def test_submission_fence_serializes_compliance_change_with_broker_send(platform, tenant_a):
+    entered_broker = threading.Event()
+    release_broker = threading.Event()
+    policy_done = threading.Event()
+
+    class _BlockingAdapter:
+        broker = BROKER_PAPER
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def submit(self, **_kwargs: Any) -> dict[str, Any]:
+            self.calls += 1
+            entered_broker.set()
+            assert release_broker.wait(timeout=2)
+            return {
+                "broker_order_id": "paper-policy-fenced",
+                "state": "filled",
+                "fills": [],
+                "raw": {},
+            }
+
+    adapter = _BlockingAdapter()
+    gateway = ExecutionGateway(platform, adapters={BROKER_PAPER: adapter})
+    ctx = Ctx(tenant_a, "human", "trader-1")
+    intent = gateway.create_intent(
+        ctx,
+        run_id=_run(platform, tenant_a),
+        payload=_intent_payload(),
+    )
+    submit_result: list[dict[str, Any]] = []
+    submit_thread = threading.Thread(
+        target=lambda: submit_result.append(gateway.submit(ctx, intent["intent_id"])),
+        daemon=True,
+    )
+    submit_thread.start()
+    assert entered_broker.wait(timeout=2)
+
+    def restrict_symbol() -> None:
+        platform.compliance_policies.set(
+            tenant_a,
+            limits={
+                "maxPositionPct": 15.0,
+                "maxNetPct": 120.0,
+                "maxLeverage": 2.0,
+                "maxConcentrationPct": 50.0,
+            },
+            limits_enforced=False,
+            restricted=["AAPL"],
+            watch=[],
+            action="Restrict AAPL",
+            actor_id="risk-officer",
+            expect_version=0,
+        )
+        policy_done.set()
+
+    policy_thread = threading.Thread(target=restrict_symbol, daemon=True)
+    policy_thread.start()
+    assert not policy_done.wait(timeout=0.05)
+    release_broker.set()
+    submit_thread.join(timeout=2)
+    policy_thread.join(timeout=2)
+    assert submit_result[0]["state"] == "filled"
+    assert policy_done.is_set()
+
+    next_intent = gateway.create_intent(
+        ctx,
+        run_id=_run(platform, tenant_a),
+        payload=_intent_payload(),
+    )
+    with pytest.raises(ActionError) as exc_info:
+        gateway.submit(ctx, next_intent["intent_id"])
+    assert exc_info.value.status == 409
+    assert "RESTRICTED_SYMBOL" in exc_info.value.detail["risk_decision"]["reasons"]
+    assert adapter.calls == 1
 
 
 class _RecoveringAdapter:

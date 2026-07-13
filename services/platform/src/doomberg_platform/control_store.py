@@ -89,6 +89,7 @@ _OPEN_ORDER_STATES = (
 
 GLOBAL_EXECUTION_CONTROL_ID = "__global__"
 _GLOBAL_SUBMISSION_FENCE = "doomberg:execution:global"
+_COMPLIANCE_APPLICATION_FENCE_PREFIX = "doomberg:compliance:tenant:"
 
 
 def _tenant_submission_fence(tenant_id: str) -> str:
@@ -97,6 +98,10 @@ def _tenant_submission_fence(tenant_id: str) -> str:
 
 class ExecutionControlConflict(RuntimeError):
     """The execution control changed since the caller read its version."""
+
+
+class CompliancePolicyConflict(RuntimeError):
+    """The tenant compliance policy changed since the caller read its version."""
 
 
 def _execution_control_row(row: Any) -> dict[str, Any]:
@@ -1006,6 +1011,10 @@ class ExecutionControlStore:
                     "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
                     (_tenant_submission_fence(str(tenant_id)),),
                 )
+                conn.execute(
+                    "SELECT pg_advisory_xact_lock_shared(hashtextextended(?, 0))",
+                    (f"{_COMPLIANCE_APPLICATION_FENCE_PREFIX}{tenant_id}",),
+                )
                 yield
             return
         with self._db.write_lock:
@@ -1093,6 +1102,165 @@ class ExecutionControlStore:
                     ),
                 )
         return _execution_control_row(control)
+
+
+@tenant_scoped_store(skip_methods={"_row", "application_guard"})
+class CompliancePolicyStore:
+    """Versioned tenant compliance configuration with append-only audit snapshots."""
+
+    def __init__(self, db: Db) -> None:
+        self._db = db
+
+    @staticmethod
+    def _row(row: Any) -> dict[str, Any]:
+        return {
+            "tenant_id": row["tenant_id"],
+            "limits": _loads(row["limits"], {}),
+            "limits_enforced": bool(row["limits_enforced"]),
+            "restricted": _loads(row["restricted"], []),
+            "watch": _loads(row["watch"], []),
+            "updated_by": row["updated_by"],
+            "version": int(row["version"]),
+            "updated_at": row["updated_at"],
+        }
+
+    def get(self, tenant_id: str) -> dict[str, Any] | None:
+        row = self._db.conn.execute(
+            "SELECT * FROM compliance_policies WHERE tenant_id = ?",
+            (str(tenant_id),),
+        ).fetchone()
+        return self._row(row) if row else None
+
+    def list_events(self, tenant_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+        rows = self._db.conn.execute(
+            "SELECT * FROM compliance_policy_events WHERE tenant_id = ? "
+            "ORDER BY version DESC, event_id DESC LIMIT ?",
+            (str(tenant_id), max(1, min(int(limit), 500))),
+        ).fetchall()
+        return [
+            {
+                "tenant_id": row["tenant_id"],
+                "event_id": row["event_id"],
+                "action": row["action"],
+                "payload": _loads(row["payload"], {}),
+                "actor_id": row["actor_id"],
+                "version": int(row["version"]),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    @contextmanager
+    def application_guard(self, tenant_id: str) -> Iterator[None]:
+        """Linearize policy changes against broker sends and paper-book writes."""
+
+        fence = f"{_COMPLIANCE_APPLICATION_FENCE_PREFIX}{tenant_id}"
+        if self._db.is_postgres:
+            with self._db.conn as conn:
+                conn.execute(
+                    "SELECT pg_advisory_xact_lock_shared(hashtextextended(?, 0))",
+                    (fence,),
+                )
+                yield
+            return
+        with self._db.write_lock:
+            with self._db.conn as conn:
+                yield
+
+    def set(
+        self,
+        tenant_id: str,
+        *,
+        limits: dict[str, float],
+        limits_enforced: bool,
+        restricted: list[str],
+        watch: list[str],
+        action: str,
+        actor_id: str,
+        expect_version: int,
+    ) -> dict[str, Any]:
+        tenant_id = str(tenant_id)
+        actor_id = str(actor_id).strip()
+        action = str(action).strip()[:100]
+        if not actor_id:
+            raise ValueError("compliance policy actor_id is required")
+        if not action:
+            raise ValueError("compliance policy action is required")
+        snapshot = {
+            "limits": dict(limits),
+            "limits_enforced": bool(limits_enforced),
+            "restricted": list(restricted),
+            "watch": list(watch),
+        }
+        encoded = (
+            json.dumps(snapshot["limits"], sort_keys=True),
+            json.dumps(snapshot["restricted"]),
+            json.dumps(snapshot["watch"]),
+        )
+        now = _now()
+        with self._db.write_lock:
+            with self._db.conn as conn:
+                if self._db.is_postgres:
+                    conn.execute(
+                        "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                        (f"{_COMPLIANCE_APPLICATION_FENCE_PREFIX}{tenant_id}",),
+                    )
+                if int(expect_version) == 0:
+                    policy = conn.execute(
+                        "INSERT INTO compliance_policies "
+                        "(tenant_id, limits, limits_enforced, restricted, watch, updated_by, "
+                        " version, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?) "
+                        "ON CONFLICT(tenant_id) DO NOTHING RETURNING *",
+                        (
+                            tenant_id,
+                            encoded[0],
+                            int(bool(limits_enforced)),
+                            *encoded[1:],
+                            actor_id,
+                            now,
+                        ),
+                    ).fetchone()
+                else:
+                    policy = conn.execute(
+                        "UPDATE compliance_policies SET limits = ?, limits_enforced = ?, "
+                        "restricted = ?, watch = ?, updated_by = ?, version = version + 1, "
+                        "updated_at = ? "
+                        "WHERE tenant_id = ? AND version = ? RETURNING *",
+                        (
+                            encoded[0],
+                            int(bool(limits_enforced)),
+                            *encoded[1:],
+                            actor_id,
+                            now,
+                            tenant_id,
+                            int(expect_version),
+                        ),
+                    ).fetchone()
+                if policy is None:
+                    current = conn.execute(
+                        "SELECT version FROM compliance_policies WHERE tenant_id = ?",
+                        (tenant_id,),
+                    ).fetchone()
+                    current_version = int(current["version"]) if current else 0
+                    raise CompliancePolicyConflict(
+                        f"compliance policy version is {current_version}, expected {expect_version}"
+                    )
+                version = int(policy["version"])
+                conn.execute(
+                    "INSERT INTO compliance_policy_events "
+                    "(tenant_id, event_id, action, payload, actor_id, version, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        tenant_id,
+                        str(uuid.uuid4()),
+                        action,
+                        json.dumps(snapshot, sort_keys=True),
+                        actor_id,
+                        version,
+                        now,
+                    ),
+                )
+        return self._row(policy)
 
 
 @tenant_scoped_store(system_methods={"list_active_all"})

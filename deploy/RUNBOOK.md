@@ -200,7 +200,10 @@ WHERE rolname = current_user;
 
 SELECT relname, relrowsecurity, relforcerowsecurity
 FROM pg_class
-WHERE relname IN ('runs', 'trace_events', 'jobs', 'order_intents')
+WHERE relname IN (
+  'runs', 'trace_events', 'jobs', 'order_intents',
+  'execution_controls', 'compliance_policies'
+)
 ORDER BY relname;
 ```
 
@@ -231,6 +234,19 @@ dashboard compliance panel; site operators use the admin-token-protected
 and `expect_version` is required, so a stale release cannot overwrite a newer
 emergency halt. Site operators can read the current global control and its audit
 history with `GET /admin/execution/kill-switch`.
+
+Migration 5 adds versioned tenant compliance policies and append-only policy
+events with forced row-level security. The dashboard's limits, restricted list,
+watch list, and pre-trade check all use these rows. Every mutation requires the
+current `policyVersion`; stale writes return 409. Built-in limits remain visible
+reference defaults until the tenant explicitly saves the limits form, while the built-in
+restricted list is always enforced. Once saved, firm limits are enforced during
+strategy promotion and every paper-book application; restricted names also
+block direct execution intents and watch names produce warnings. Policy events
+appear in the same tenant compliance audit timeline as kill-switch events.
+Tenant policy writes take the same application fence used by broker sends and
+paper-book writes, so each mutation is ordered wholly before or after a money
+path action instead of racing its final check.
 
 ---
 
@@ -270,6 +286,20 @@ loops use the platform `worker_leases` table, as does the execution reconciler,
 so only one worker replica owns each singleton loop at a time; if the owner dies,
 another replica takes over after the lease TTL. Order reconciliation defaults to
 five seconds and is tunable with `DOOMBERG_RECONCILIATION_INTERVAL_S`.
+
+Migration 6 adds `worker_heartbeats`, a system-only durable process registry.
+Every conductor loop and the trigger engine records its role, instance id,
+status, last heartbeat, expiry, and bounded diagnostic metadata. Leadership
+leases still prevent duplicate singleton work; heartbeats answer the separate
+question of whether the responsible process is alive and making progress.
+`GET /api/ops/status` excludes expired leases from the active list and reports
+missing, degraded, expired, and healthy worker roles explicitly.
+
+Both gateways expose `GET /livez` for process liveness and `GET /healthz` plus
+`GET /readyz` for a live database ping, migration-ledger validation, and pool
+statistics. A database or migration failure returns 503; worker-role degradation
+remains visible through the authenticated ops status instead of ejecting a
+read-capable gateway from the load balancer.
 
 For connected-account live trigger quotes, use the managed in-cluster IBKR engine
 by default:
@@ -371,6 +401,8 @@ kubectl -n doomberg-workers run ibkr-smoke --rm -it --restart=Never \
 
 Run the full customer-handoff gate after rollout. This creates a synthetic
 launch-gate tenant/session/artifact, verifies REST auth rejection, ops status,
+gateway liveness plus database/migration readiness, current required worker
+heartbeats, the durable personalized compliance surface,
 SSE replay, artifact fetch, MCP unauthenticated rejection, authenticated MCP
 resource reads, real-time trigger-to-run readiness, MCP durable `run_skill`
 enqueue/read/cancel cleanup, MCP no-scope resource denial, and the IBKR quote
@@ -394,8 +426,18 @@ gate to prove resource reads are denied for a valid key without `data:read`.
 DOOMBERG_REST_URL=https://app.doomberg.me \
 DOOMBERG_MCP_URL=https://mcp.doomberg.me/mcp \
 DOOMBERG_API_KEY=dmbg_... \
-python scripts/launch_gate.py --mode http --require-postgres --require-ibkr --require-mcp --json
+python scripts/launch_gate.py --mode http --require-postgres --require-workers-ready --require-ibkr --require-mcp --json
 ```
+
+`--require-workers-ready` gates on the complete production role set returned by
+ops status, not on the mere presence of a lease row: backtest, trigger engine,
+trigger jobs, paper, notification, adaptive-dashboard, and execution
+reconciliation. Expired and degraded heartbeats fail the gate even when the
+corresponding queue happens to be empty.
+
+Use [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the exact preflight,
+evidence capture, rollback boundary, and handoff record for each production
+release.
 
 The repository's default IBKR engine is deliberately data-only: `GET /orders`
 supports state reconciliation, while `POST /orders` returns 403. Do not enable
@@ -431,6 +473,12 @@ only after the incident is resolved. If the variable is omitted, deploys preserv
 existing Secret value so a routine release cannot silently clear an active environment
 halt. Durable control changes are effective immediately and tenant plus global events
 appear in the compliance panel audit trail.
+
+Tenant compliance policy changes are also effective immediately. Removing a
+restricted name or loosening a limit requires a human principal with
+`deploy:paper` and the latest policy version. A policy update does not authorize
+or submit an order; subsequent promotion, paper-tick, and execution paths read
+the new policy independently at their normal gate boundaries.
 
 If `DOOMBERG_ENABLE_LIVE_EXECUTION=1` is set without `DOOMBERG_IBKR_ENGINE_URL`,
 `deploy/deploy_services.sh` fails before applying manifests. The gateway still

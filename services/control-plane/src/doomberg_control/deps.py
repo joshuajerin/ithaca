@@ -33,6 +33,7 @@ from doomberg_platform import (
     ArtifactStore,
     AuthStore,
     BookStore,
+    CompliancePolicyStore,
     DeliveryTargetStore,
     ExecutionControlStore,
     ExecutionStore,
@@ -45,6 +46,7 @@ from doomberg_platform import (
     TraceStore,
     TriggerBaselineStore,
     TriggerStore,
+    WorkerHeartbeatStore,
     open_db,
 )
 
@@ -110,11 +112,13 @@ class Platform:
         self.auth = AuthStore(self.db)
         self.jobs = JobStore(self.db)
         self.leases = LeaseStore(self.db)
+        self.worker_heartbeats = WorkerHeartbeatStore(self.db)
         self.artifacts = ArtifactStore(self.db)
         self.approvals = ApprovalStore(self.db)
         self.providers = ProviderStore(self.db)
         self.execution = ExecutionStore(self.db)
         self.execution_controls = ExecutionControlStore(self.db)
+        self.compliance_policies = CompliancePolicyStore(self.db)
         self.triggers = TriggerStore(self.db)
         self.baselines = TriggerBaselineStore(self.db)
         self.notifications = NotificationStore(self.db)

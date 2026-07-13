@@ -170,12 +170,64 @@ CREATE INDEX IF NOT EXISTS idx_execution_control_events_tenant
 {_policy_sql('execution_control_events', f'{_SYSTEM_ACCESS} OR {_TENANT_ACCESS}')}
 """
 
+_COMPLIANCE_POLICIES_SQL = f"""
+CREATE TABLE IF NOT EXISTS compliance_policies (
+    tenant_id   TEXT PRIMARY KEY,
+    limits      TEXT NOT NULL,
+    limits_enforced INTEGER NOT NULL DEFAULT 0,
+    restricted  TEXT NOT NULL,
+    watch       TEXT NOT NULL,
+    updated_by  TEXT NOT NULL,
+    version     INTEGER NOT NULL DEFAULT 1,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS compliance_policy_events (
+    tenant_id   TEXT NOT NULL,
+    event_id    TEXT NOT NULL,
+    action      TEXT NOT NULL,
+    payload     TEXT NOT NULL,
+    actor_id    TEXT NOT NULL,
+    version     INTEGER NOT NULL,
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_compliance_policy_events_tenant
+    ON compliance_policy_events (tenant_id, version DESC);
+
+{_policy_sql('compliance_policies', f'{_SYSTEM_ACCESS} OR {_TENANT_ACCESS}')}
+{_policy_sql('compliance_policy_events', f'{_SYSTEM_ACCESS} OR {_TENANT_ACCESS}')}
+"""
+
+_WORKER_HEARTBEATS_SQL = f"""
+CREATE TABLE IF NOT EXISTS worker_heartbeats (
+    worker_id    TEXT NOT NULL,
+    role         TEXT NOT NULL,
+    status       TEXT NOT NULL,
+    detail       TEXT,
+    metadata     TEXT NOT NULL,
+    started_at   TEXT NOT NULL,
+    heartbeat_at TEXT NOT NULL,
+    expires_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    PRIMARY KEY (worker_id, role)
+);
+
+CREATE INDEX IF NOT EXISTS idx_worker_heartbeats_role_expiry
+    ON worker_heartbeats (role, expires_at DESC);
+
+{_policy_sql('worker_heartbeats', _SYSTEM_ACCESS)}
+"""
+
 
 MIGRATIONS = (
     Migration(1, "platform baseline", _BASELINE_SCHEMA),
     Migration(2, "enforce tenant row security", _RLS_SQL),
     Migration(3, "deduplicate broker execution records", _EXECUTION_IDEMPOTENCY_SQL),
     Migration(4, "add durable execution kill switches", _EXECUTION_CONTROLS_SQL),
+    Migration(5, "add durable tenant compliance policies", _COMPLIANCE_POLICIES_SQL),
+    Migration(6, "add durable worker heartbeats", _WORKER_HEARTBEATS_SQL),
 )
 
 

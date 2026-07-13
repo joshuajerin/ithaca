@@ -36,7 +36,7 @@ from typing import Any
 import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from jwt import InvalidTokenError, PyJWKClient
 from pydantic import BaseModel, Field
 
@@ -44,6 +44,13 @@ from doomberg_control import actions
 from doomberg_control.actions import ActionError
 from doomberg_control.deps import HUMAN_ACTOR_KINDS, Ctx
 from doomberg_control.execution_gateway import ExecutionGateway
+from doomberg_control.compliance_policy import (
+    effective_compliance_policy,
+    normalize_limits,
+    normalize_symbol,
+    normalize_symbols,
+)
+from doomberg_control.gate import evaluate_spec_gate
 from doomberg_core import Core
 from doomberg_core.providers import PUBLIC_DATA_SOURCE, PUBLIC_ENTITLEMENT_CLASS, IbkrEngineClient
 from doomberg_mcp import Toolset
@@ -52,6 +59,8 @@ from doomberg_platform import (
     AuthStore,
     ApprovalStore,
     ArtifactStore,
+    CompliancePolicyConflict,
+    CompliancePolicyStore,
     BookStore,
     DeliveryTargetStore,
     ExecutionControlStore,
@@ -66,8 +75,10 @@ from doomberg_platform import (
     TriggerBaselineStore,
     TriggerStore,
     UserStore,
+    WorkerHeartbeatStore,
     open_db,
 )
+from doomberg_platform.migrations import validate_migrations
 from doomberg_runtime import default_adaptive_dashboard_spec, usage_signals_for_user
 
 from .readmodel import shape_run, shape_run_row
@@ -93,11 +104,13 @@ class Stores:
         self.users = UserStore(db)
         self.jobs = JobStore(db)
         self.leases = LeaseStore(db)
+        self.worker_heartbeats = WorkerHeartbeatStore(db)
         self.artifacts = ArtifactStore(db)
         self.approvals = ApprovalStore(db)
         self.providers = ProviderStore(db)
         self.execution = ExecutionStore(db)
         self.execution_controls = ExecutionControlStore(db)
+        self.compliance_policies = CompliancePolicyStore(db)
         self.triggers = TriggerStore(db)
         self.baselines = TriggerBaselineStore(db)
         self.notifications = NotificationStore(db)
@@ -179,6 +192,24 @@ class ComplianceKillSwitchBody(BaseModel):
     on: bool
     reason: str | None = None
     expect_version: int = Field(ge=0)
+
+
+class ComplianceLimitsBody(BaseModel):
+    limits: dict[str, float]
+    expect_version: int = Field(ge=0)
+
+
+class ComplianceSymbolBody(BaseModel):
+    symbol: str
+    expect_version: int = Field(ge=0)
+
+
+class ComplianceVersionBody(BaseModel):
+    expect_version: int = Field(ge=0)
+
+
+class ComplianceCheckBody(BaseModel):
+    strategy_id: str
 
 
 def _bearer_key(authorization: str | None) -> str | None:
@@ -619,12 +650,76 @@ async def _alert_event_stream(
             yield ": keepalive\n\n"
 
 
+def _parse_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _database_health(db: Any) -> dict[str, Any]:
+    try:
+        scope = db.system_scope() if hasattr(db, "system_scope") else None
+        if scope is None:
+            row = db.conn.execute("SELECT 1 AS ok").fetchone()
+            migration = None
+        else:
+            with scope:
+                row = db.conn.execute("SELECT 1 AS ok").fetchone()
+                migration = validate_migrations(db.conn) if getattr(db, "is_postgres", False) else None
+        if row is None or int(row["ok"]) != 1:
+            raise RuntimeError("database ping returned no row")
+    except Exception as exc:  # noqa: BLE001 - health response must retain a stable envelope.
+        return {
+            "status": "error",
+            "ready": False,
+            "database": "postgres" if getattr(db, "is_postgres", False) else "sqlite",
+            "error": f"{type(exc).__name__}: {exc}"[:500],
+        }
+
+    migration_body = {
+        "current": int(migration.current_version),
+        "latest": int(migration.latest_version),
+        "pending": list(migration.pending_versions),
+    } if migration is not None else {"mode": "local-inline", "pending": []}
+    ready = not migration_body["pending"]
+    return {
+        "status": "ok" if ready else "error",
+        "ready": ready,
+        "database": "postgres" if getattr(db, "is_postgres", False) else "sqlite",
+        "migrations": migration_body,
+        "pool": getattr(db, "pool_stats", None),
+    }
+
+
 def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
     connections = stores.providers.list_connections(tenant_id)
     snapshots = stores.providers.list_snapshots(tenant_id, limit=25)
     jobs = stores.jobs.list(tenant_id, limit=500)
     triggers = stores.triggers.list(tenant_id, limit=500)
-    leases = stores.leases.list()
+    now = datetime.now(timezone.utc)
+    lease_rows = stores.leases.list()
+    leases = []
+    stale_leases = []
+    for lease in lease_rows:
+        active = bool((expires := _parse_time(lease.get("lease_expires_at"))) and expires > now)
+        shaped = {**lease, "active": active}
+        (leases if active else stale_leases).append(shaped)
+    heartbeat_rows = stores.worker_heartbeats.list()
+    workers = []
+    for worker in heartbeat_rows:
+        heartbeat = _parse_time(worker.get("heartbeat_at"))
+        expires = _parse_time(worker.get("expires_at"))
+        expired = not expires or expires <= now
+        workers.append({
+            **worker,
+            "expired": expired,
+            "age_seconds": max(0.0, round((now - heartbeat).total_seconds(), 3))
+            if heartbeat
+            else None,
+        })
 
     connected = [c for c in connections if c.get("state") == "connected"]
     private_live_names = {
@@ -647,14 +742,35 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
     active_jobs = sum(1 for job in jobs if job.get("state") in {"leased", "running"})
     failed_jobs = sum(1 for job in jobs if job.get("state") in {"failed", "timed_out", "cancelled"})
     active_triggers = sum(1 for trigger in triggers if trigger.get("state") == "active")
+    required_roles = {
+        "adaptive-dashboard-worker",
+        "backtest-worker",
+        "execution-reconciler",
+        "notification-dispatcher",
+        "paper-scheduler",
+        "trigger-engine",
+        "trigger-job-worker",
+    }
+    healthy_roles = {
+        worker["role"]
+        for worker in workers
+        if not worker["expired"] and worker["status"] in {"healthy", "standby"}
+    }
+    degraded_roles = sorted({
+        worker["role"]
+        for worker in workers
+        if not worker["expired"] and worker["status"] == "degraded"
+    })
+    missing_roles = sorted(required_roles - healthy_roles)
+    db_health = _database_health(stores.db)
 
     readiness = [
         {
             "name": "Platform store",
-            "state": "succeeded" if getattr(stores.db, "is_postgres", False) else "paused",
-            "detail": "Postgres system-of-record"
-            if getattr(stores.db, "is_postgres", False)
-            else "Local SQLite system-of-record",
+            "state": "succeeded" if db_health["ready"] else "failed",
+            "detail": f"{db_health['database']} reachable; migrations current"
+            if db_health["ready"]
+            else db_health.get("error") or "database migrations are not current",
         },
         {
             "name": "Live market data",
@@ -681,7 +797,18 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
         {
             "name": "Worker leadership",
             "state": "succeeded" if leases else "paused",
-            "detail": f"{len(leases)} active lease row{'' if len(leases) == 1 else 's'}",
+            "detail": f"{len(leases)} active, {len(stale_leases)} expired lease row(s)",
+        },
+        {
+            "name": "Worker processes",
+            "state": "warn" if missing_roles or degraded_roles else "succeeded",
+            "detail": (
+                "missing: " + ", ".join(missing_roles)
+                if missing_roles
+                else "degraded: " + ", ".join(degraded_roles)
+                if degraded_roles
+                else f"{len(healthy_roles)} required worker role(s) healthy"
+            ),
         },
     ]
 
@@ -715,6 +842,14 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
             "terminal": failed_jobs,
         },
         "leases": leases,
+        "stale_leases": stale_leases,
+        "workers": {
+            "required_roles": sorted(required_roles),
+            "healthy_roles": sorted(healthy_roles),
+            "missing_roles": missing_roles,
+            "degraded_roles": degraded_roles,
+            "rows": workers,
+        },
         "triggers": {
             "active": active_triggers,
             "total": len(triggers),
@@ -921,9 +1056,17 @@ def create_app(db: Any | None = None) -> FastAPI:
     def get_stores(request: Request) -> Stores:
         return request.app.state.stores
 
-    @app.get("/healthz")
-    def healthz() -> dict[str, str]:
+    @app.get("/livez")
+    def livez() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/healthz")
+    @app.get("/readyz")
+    def healthz() -> Any:
+        health = _database_health(stores.db)
+        if not health["ready"]:
+            return JSONResponse(status_code=503, content=health)
+        return health
 
     def compliance_state(ctx: Ctx, stores: Stores) -> dict[str, Any]:
         """Shape the compliance panel from durable execution state.
@@ -932,10 +1075,10 @@ def create_app(db: Any | None = None) -> FastAPI:
         endpoint deliberately exposes only those defaults until tenant overrides are
         persisted; the kill switch and its audit trail are live, tenant-specific data.
         """
-        from doomberg_control.gate import DEFAULT_RESTRICTED
-        from doomberg_core.engine.compliance import DEFAULT_LIMITS, LIMIT_DEFS
+        from doomberg_core.engine.compliance import LIMIT_DEFS
 
         effective = ExecutionGateway(stores).get_kill_switch(ctx)
+        policy = effective_compliance_policy(stores, ctx.tenant_id)
         strategies = [
             {
                 "id": strategy["id"],
@@ -966,16 +1109,30 @@ def create_app(db: Any | None = None) -> FastAPI:
             }
             for event in stores.execution_controls.list_global_events()
         ]
+        policy_audit = [
+            {
+                "id": event["event_id"],
+                "at": event["created_at"],
+                "action": event["action"],
+                "decision": "updated",
+                "summary": f"Compliance policy v{event['version']}",
+                "scope": "tenant",
+            }
+            for event in stores.compliance_policies.list_events(ctx.tenant_id)
+        ]
         audit = sorted(
-            [*tenant_audit, *global_audit],
+            [*tenant_audit, *global_audit, *policy_audit],
             key=lambda event: (event["at"], event["id"]),
             reverse=True,
         )[:100]
         return {
-            "limits": dict(DEFAULT_LIMITS),
+            "limits": policy["limits"],
             "limitDefs": list(LIMIT_DEFS),
-            "restricted": list(DEFAULT_RESTRICTED),
-            "watch": [],
+            "restricted": policy["restricted"],
+            "watch": policy["watch"],
+            "policyConfigured": policy["configured"],
+            "limitsEnforced": policy["limits_enforced"],
+            "policyVersion": policy["version"],
             "killSwitch": effective["enabled"],
             "killReason": effective["reason"],
             "killSource": effective["source"],
@@ -986,11 +1143,59 @@ def create_app(db: Any | None = None) -> FastAPI:
             "check": None,
         }
 
+    def require_compliance_editor(ctx: Ctx) -> None:
+        if ctx.actor_kind not in HUMAN_ACTOR_KINDS:
+            raise HTTPException(status_code=403, detail="compliance policy requires a human actor")
+        _require_scope(ctx, "deploy:paper")
+
+    def compliance_symbol(value: str) -> str:
+        try:
+            return normalize_symbol(value)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def save_compliance_policy(
+        ctx: Ctx,
+        stores: Stores,
+        *,
+        action: str,
+        expect_version: int,
+        limits: dict[str, float] | None = None,
+        limits_enforced: bool | None = None,
+        restricted: list[str] | None = None,
+        watch: list[str] | None = None,
+    ) -> dict[str, Any]:
+        require_compliance_editor(ctx)
+        current = effective_compliance_policy(stores, ctx.tenant_id)
+        try:
+            stores.compliance_policies.set(
+                ctx.tenant_id,
+                limits=normalize_limits(limits if limits is not None else current["limits"]),
+                limits_enforced=(
+                    current["limits_enforced"]
+                    if limits_enforced is None
+                    else bool(limits_enforced)
+                ),
+                restricted=normalize_symbols(
+                    restricted if restricted is not None else current["restricted"]
+                ),
+                watch=normalize_symbols(watch if watch is not None else current["watch"]),
+                action=action,
+                actor_id=ctx.actor_id,
+                expect_version=expect_version,
+            )
+        except CompliancePolicyConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return compliance_state(ctx, stores)
+
     @app.get("/api/compliance")
     def get_compliance(
         ctx: Ctx = Depends(_ctx),
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
+        _require_scope(ctx, "data:read")
         return compliance_state(ctx, stores)
 
     @app.post("/api/compliance/kill-switch")
@@ -1009,6 +1214,121 @@ def create_app(db: Any | None = None) -> FastAPI:
         except ActionError as err:
             raise HTTPException(status_code=err.status, detail=err.detail) from err
         return compliance_state(ctx, stores)
+
+    @app.post("/api/compliance/limits")
+    def set_compliance_limits(
+        body: ComplianceLimitsBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        return save_compliance_policy(
+            ctx,
+            stores,
+            action="Firm limits updated",
+            expect_version=body.expect_version,
+            limits=body.limits,
+            limits_enforced=True,
+        )
+
+    @app.post("/api/compliance/restricted")
+    def add_compliance_restricted(
+        body: ComplianceSymbolBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        require_compliance_editor(ctx)
+        current = effective_compliance_policy(stores, ctx.tenant_id)
+        symbol = compliance_symbol(body.symbol)
+        return save_compliance_policy(
+            ctx,
+            stores,
+            action=f"Restricted name added: {symbol}",
+            expect_version=body.expect_version,
+            restricted=[*current["restricted"], symbol],
+        )
+
+    @app.delete("/api/compliance/restricted/{symbol}")
+    def remove_compliance_restricted(
+        symbol: str,
+        body: ComplianceVersionBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        require_compliance_editor(ctx)
+        current = effective_compliance_policy(stores, ctx.tenant_id)
+        normalized = compliance_symbol(symbol)
+        return save_compliance_policy(
+            ctx,
+            stores,
+            action=f"Restricted name removed: {normalized}",
+            expect_version=body.expect_version,
+            restricted=[item for item in current["restricted"] if item != normalized],
+        )
+
+    @app.post("/api/compliance/watch")
+    def add_compliance_watch(
+        body: ComplianceSymbolBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        require_compliance_editor(ctx)
+        current = effective_compliance_policy(stores, ctx.tenant_id)
+        symbol = compliance_symbol(body.symbol)
+        return save_compliance_policy(
+            ctx,
+            stores,
+            action=f"Watch name added: {symbol}",
+            expect_version=body.expect_version,
+            watch=[*current["watch"], symbol],
+        )
+
+    @app.delete("/api/compliance/watch/{symbol}")
+    def remove_compliance_watch(
+        symbol: str,
+        body: ComplianceVersionBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        require_compliance_editor(ctx)
+        current = effective_compliance_policy(stores, ctx.tenant_id)
+        normalized = compliance_symbol(symbol)
+        return save_compliance_policy(
+            ctx,
+            stores,
+            action=f"Watch name removed: {normalized}",
+            expect_version=body.expect_version,
+            watch=[item for item in current["watch"] if item != normalized],
+        )
+
+    @app.post("/api/compliance/check")
+    def check_strategy_compliance(
+        body: ComplianceCheckBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        _require_scope(ctx, "data:read")
+        strategy = stores.strategies.get(ctx.tenant_id, body.strategy_id)
+        if strategy is None:
+            raise HTTPException(status_code=404, detail="strategy not found")
+        policy = effective_compliance_policy(stores, ctx.tenant_id)
+        control = ExecutionGateway(stores).get_kill_switch(ctx)
+        decision = evaluate_spec_gate(
+            strategy["spec"],
+            restricted=policy["restricted"],
+            watch=policy["watch"],
+            firm_limits=policy["limits"] if policy["limits_enforced"] else None,
+            kill_switch=control["enabled"],
+            kill_reason=control["reason"],
+        ).to_dict()
+        state = compliance_state(ctx, stores)
+        state["check"] = {
+            **decision,
+            "strategyId": strategy["id"],
+            "strategyName": strategy["name"],
+            "stage": strategy.get("spec", {}).get("stage") or "draft",
+            "limitsEnforced": policy["limits_enforced"],
+        }
+        return state
 
     @app.get("/api/auth/me")
     def me(
