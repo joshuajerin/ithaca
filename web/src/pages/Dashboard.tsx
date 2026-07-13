@@ -11,6 +11,7 @@ import type {
   DashboardRunView,
   DashboardRiskData,
   DashboardSummaryData,
+  RunRow,
 } from "../types";
 import { DotWaveCanvas } from "../components/adaptive/DotWaveCanvas";
 import {
@@ -132,16 +133,29 @@ export function visibleAdaptiveWidgets(
     .sort((a, b) => a.priority - b.priority || a.layout.y - b.layout.y || a.layout.x - b.layout.x);
 }
 
-export function shouldShowAdaptiveEmptyState({
+export type AdaptiveDashboardView = "loading" | "empty" | "adaptive" | "fallback";
+
+export function resolveAdaptiveDashboardState({
   adaptive,
   adaptiveError,
+  adaptiveLoading,
+  runs,
+  runsError,
+  runsLoading,
 }: {
   adaptive: AdaptiveDashboardResponse | null;
   adaptiveError: string | null;
-}): boolean {
-  if (adaptive?.status === "empty") return true;
-  if (adaptive) return false;
-  return Boolean(adaptiveError);
+  adaptiveLoading: boolean;
+  runs: RunRow[] | null;
+  runsError: string | null;
+  runsLoading: boolean;
+}): AdaptiveDashboardView {
+  if (adaptiveLoading || runsLoading) return "loading";
+  if (adaptive && adaptive.status !== "empty") return "adaptive";
+  if (runs?.some((run) => run.kind === "research")) return "fallback";
+  if (adaptive?.status === "empty") return "empty";
+  if (adaptiveError && !runsError && runs !== null) return "empty";
+  return "fallback";
 }
 
 export function recentResearchSessions(rows: DashboardRunView[]): DashboardRunView[] {
@@ -257,7 +271,16 @@ function PanelLoading() {
 
 export function Dashboard() {
   const [query, setQuery] = useState("");
-  const { data: adaptive, error: adaptiveError } = useAsync<AdaptiveDashboardResponse>((s) => api.getAdaptiveDashboard(s), []);
+  const {
+    data: runs,
+    loading: runsLoading,
+    error: runsError,
+  } = useAsync<RunRow[]>((s) => api.listRuns(undefined, s), []);
+  const {
+    data: adaptive,
+    loading: adaptiveLoading,
+    error: adaptiveError,
+  } = useAsync<AdaptiveDashboardResponse>((s) => api.getAdaptiveDashboard(s), []);
   const { data: summary, loading: summaryLoading, error: summaryError } =
     useAsync<DashboardReadEnvelope<DashboardSummaryData>>((s) => api.getDashboardSummary(s), []);
   const { data: risk, loading: riskLoading, error: riskError } =
@@ -320,7 +343,30 @@ export function Dashboard() {
     ? visibleAdaptiveWidgets(adaptive.spec.widgets, query)
     : [];
 
-  if (shouldShowAdaptiveEmptyState({ adaptive, adaptiveError })) {
+  const dashboardState = resolveAdaptiveDashboardState({
+    adaptive,
+    adaptiveError,
+    adaptiveLoading,
+    runs,
+    runsError,
+    runsLoading,
+  });
+
+  if (dashboardState === "loading") {
+    return (
+      <div className="page" style={{ padding: 0, overflow: "hidden" }}>
+        <div className="topbar">
+          <div className="topbar-left">
+            <div className="topbar-title">Dashboard</div>
+          </div>
+          <div className="topbar-right" />
+        </div>
+        <div className="empty" style={{ padding: 40 }}>Loading dashboard…</div>
+      </div>
+    );
+  }
+
+  if (dashboardState === "empty") {
     return (
       <div className="page" style={{ padding: 0, overflow: "hidden" }}>
         <div className="topbar">
@@ -334,7 +380,7 @@ export function Dashboard() {
     );
   }
 
-  if (adaptive) {
+  if (dashboardState === "adaptive" && adaptive && adaptive.status !== "empty") {
     return (
       <div className="page" style={{ padding: 0, overflow: "auto" }}>
         <div className="topbar">

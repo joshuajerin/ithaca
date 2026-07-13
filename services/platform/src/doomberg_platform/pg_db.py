@@ -236,4 +236,5 @@ _TENANT_TABLES = (
     "order_intents",
     "orders",
     "fills",
+    "feedback",
 )

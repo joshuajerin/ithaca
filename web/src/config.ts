@@ -14,6 +14,21 @@ export const TENANT_ID: string =
 export const API_KEY: string | undefined =
   (import.meta.env.VITE_API_KEY as string | undefined) || undefined;
 
+export function shouldUseClerkApiToken(isDev: boolean, override?: string): boolean {
+  if (override != null && override.trim() !== "") {
+    return override.trim().toLowerCase() === "true";
+  }
+  return !isDev;
+}
+
+// Local Vite uses the gateway's X-Tenant-Id fallback. This keeps expired or revoked Clerk
+// development sessions from shadowing the seeded local tenant with an invalid bearer token.
+// Set VITE_USE_CLERK_API_AUTH=true only when intentionally testing Clerk-backed local APIs.
+export const USE_CLERK_API_AUTH = shouldUseClerkApiToken(
+  import.meta.env.DEV,
+  import.meta.env.VITE_USE_CLERK_API_AUTH as string | undefined,
+);
+
 // Hosted MCP target for external agents.
 export const MCP_BASE: string =
   (import.meta.env.VITE_MCP_BASE as string | undefined) || "https://mcp.doomberg.me/mcp";

@@ -269,6 +269,14 @@ export const api = {
     return postJson<RunRow>(`/sessions`, { prompt, title }, signal);
   },
 
+  async submitFeedback(message: string, signal?: AbortSignal): Promise<{
+    feedback_id: string;
+    status: "received";
+    created_at: string;
+  }> {
+    return postJson(`/feedback`, { message }, signal);
+  },
+
   async listStrategies(signal?: AbortSignal): Promise<StrategyRow[]> {
     const raw = await getJson<unknown>(`/strategies`, signal);
     return unwrapList<StrategyRow>(raw, "strategies");
