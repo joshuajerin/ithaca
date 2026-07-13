@@ -2,8 +2,8 @@
 
 Two front-door principal resolvers, same ``Ctx`` seam:
 
-- **Production / BYO agent:** an ``Authorization: Bearer dmbg_<env>_<keyid>_<secret>`` key
-  is verified by the platform :class:`AuthStore` (constant-time, revocation-aware). The
+- **Production / BYO agent:** an ``Authorization: Bearer <api-key>`` credential is verified
+  by Clerk, with legacy ``dmbg_`` verification during migration. The
   resolved principal carries ``tenant_id`` + capability ``scopes``; an API key is an *agent*
   actor (it can author + request, never self-promote — the money-path actor rule still binds).
 - **Local dev/test only:** when no bearer key is present we can fall back to the
@@ -44,6 +44,7 @@ from doomberg_platform import (
     TraceStore,
     TriggerBaselineStore,
     TriggerStore,
+    build_agent_key_store,
     open_db,
 )
 
@@ -107,6 +108,7 @@ class Platform:
         self.traces = TraceStore(self.db)
         self.books = BookStore(self.db)
         self.auth = AuthStore(self.db)
+        self.agent_keys = build_agent_key_store(self.db)
         self.jobs = JobStore(self.db)
         self.leases = LeaseStore(self.db)
         self.artifacts = ArtifactStore(self.db)
@@ -166,7 +168,7 @@ def resolve_ctx(
     """
     key = _bearer_key(authorization)
     if key is not None:
-        principal = platform.auth.verify(key)
+        principal = platform.agent_keys.verify(key)
         if principal is None:
             raise HTTPException(status_code=401, detail="invalid or revoked API key")
         # An API key is a BYO agent principal: it may author + request but never self-promote.

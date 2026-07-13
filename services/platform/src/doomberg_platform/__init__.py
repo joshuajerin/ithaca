@@ -21,6 +21,14 @@ from .adaptive_dashboard_store import (
 )
 from .auth_store import VALID_SCOPES, AuthStore, hash_secret
 from .book_store import BookConflict, BookNotFound, BookStore
+from .clerk_api_keys import (
+    AgentKeyStore,
+    ClerkApiError,
+    ClerkApiUnavailable,
+    ClerkManagedApiKeyStore,
+    ClerkWaitlistService,
+    build_agent_key_store,
+)
 from .control_store import (
     ApprovalStore,
     ArtifactStore,
@@ -63,6 +71,12 @@ __all__ = [
     "StrategyStore",
     "BookStore",
     "AuthStore",
+    "AgentKeyStore",
+    "ClerkApiError",
+    "ClerkApiUnavailable",
+    "ClerkManagedApiKeyStore",
+    "ClerkWaitlistService",
+    "build_agent_key_store",
     "AdaptiveDashboardProfileStore",
     "ADAPTIVE_WIDGET_IDS",
     "DEFAULT_ADAPTIVE_DASHBOARD_SPEC",

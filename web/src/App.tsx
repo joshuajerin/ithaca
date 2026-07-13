@@ -73,6 +73,8 @@ export function App() {
           <Route path="/deployments" element={<Deployments />} />
           <Route path="/deployments/:id" element={<DeploymentDetail />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/sign-up" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/waitlist" element={<Navigate to="/dashboard" replace />} />
 
           <Route path="/agent-link" element={<AgentLink />} />
           <Route path="/session-detail/:id" element={<SessionDetail />} />
