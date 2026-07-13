@@ -103,7 +103,12 @@ def test_ops_status_reports_live_data_and_paper_execution(client, stores, tenant
     assert body["execution"]["disabled"] is False
     assert body["jobs"]["queued"] == 1
     assert body["leases"][0]["lease_name"] == "trigger-engine"
-    assert body["workers"]["missing_roles"] == ["execution-reconciler"]
+    assert set(body["workers"]["missing_roles"]) == {
+        "adaptive-dashboard-worker",
+        "execution-reconciler",
+        "trigger-engine",
+        "trigger-job-worker",
+    }
     assert set(body["workers"]["healthy_roles"]) == {
         "backtest-worker", "notification-dispatcher", "paper-scheduler"
     }

@@ -742,11 +742,15 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
     active_jobs = sum(1 for job in jobs if job.get("state") in {"leased", "running"})
     failed_jobs = sum(1 for job in jobs if job.get("state") in {"failed", "timed_out", "cancelled"})
     active_triggers = sum(1 for trigger in triggers if trigger.get("state") == "active")
-    required_roles = {"backtest-worker", "paper-scheduler", "notification-dispatcher"}
-    if active_triggers:
-        required_roles.update({"trigger-engine", "trigger-job-worker"})
-    if _env_flag("DOOMBERG_ENABLE_LIVE_EXECUTION"):
-        required_roles.add("execution-reconciler")
+    required_roles = {
+        "adaptive-dashboard-worker",
+        "backtest-worker",
+        "execution-reconciler",
+        "notification-dispatcher",
+        "paper-scheduler",
+        "trigger-engine",
+        "trigger-job-worker",
+    }
     healthy_roles = {
         worker["role"]
         for worker in workers
