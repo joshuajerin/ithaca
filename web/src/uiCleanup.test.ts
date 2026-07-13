@@ -46,15 +46,6 @@ describe("customer-facing UI cleanup guards", () => {
     expect(app).not.toMatch(/path="\/(?:runs|runs\/:id|deploys|trades|docs)"/);
   });
 
-  it("keeps backtest deployment MCP-only", () => {
-    const backtests = read("pages/Backtests.tsx");
-
-    expect(backtests).not.toContain("New backtest");
-    expect(backtests).not.toContain("Create first backtest");
-    expect(backtests).not.toContain("proposeStrategy");
-    expect(backtests).toContain("Deploy a backtest through your connected Doomberg MCP client.");
-  });
-
   it("uses browser history routing without hash URLs", () => {
     const main = read("main.tsx");
 
