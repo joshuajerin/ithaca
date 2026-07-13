@@ -134,6 +134,7 @@ export function DeploymentDetail() {
             v{strategy?.version ?? "—"} · {shortId(id)} · {stratRuns.length} run{stratRuns.length !== 1 ? "s" : ""}
           </div>
         </div>
+        <div aria-hidden="true" />
         <div className="topbar-right">
           {!terminal && <button className="btn" onClick={cancelActive} disabled={acting}>Cancel</button>}
           <button className="btn primary" onClick={runAgain} disabled={acting || !strategy}>Run again</button>
