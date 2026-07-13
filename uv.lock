@@ -793,7 +793,7 @@ source = { editable = "services/runtime" }
 dependencies = [
     { name = "boto3" },
     { name = "doomberg-contracts" },
-    { name = "doomberg-core" },
+    { name = "doomberg-core", extra = ["databento"] },
     { name = "doomberg-platform" },
 ]
 
@@ -806,7 +806,7 @@ dev = [
 requires-dist = [
     { name = "boto3", specifier = ">=1.35" },
     { name = "doomberg-contracts", editable = "packages/contracts/py" },
-    { name = "doomberg-core", editable = "doomberg-core" },
+    { name = "doomberg-core", extras = ["databento"], editable = "doomberg-core" },
     { name = "doomberg-platform", editable = "services/platform" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
 ]
