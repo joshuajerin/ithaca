@@ -23,3 +23,25 @@ def test_deploy_workflow_uses_platform_db_secret() -> None:
     assert "DOOMBERG_PLATFORM_DB_URL: ${{ secrets.DOOMBERG_PLATFORM_DB_URL }}" in workflow
     assert "require_env DOOMBERG_PLATFORM_DB_URL" in workflow
     assert "DOOMBERG_ARCHIVE_URL" not in workflow
+
+
+def test_deploy_restarts_consumers_when_doomberg_secret_changes() -> None:
+    deploy_script = (REPO_ROOT / "deploy" / "deploy_services.sh").read_text()
+    kill_switch_lib = (
+        REPO_ROOT / "deploy" / "lib" / "execution_kill_switch.sh"
+    ).read_text()
+
+    assert 'gateway_db_secret_before="$(secret_checksum' in deploy_script
+    assert 'worker_db_secret_before="$(secret_checksum' in deploy_script
+    assert 'rollout restart deployment/doomberg-app' in deploy_script
+    assert 'rollout restart deployment/doomberg-workers' in deploy_script
+    assert 'resolve_execution_kill_switch "${K8S_GATEWAY_NAMESPACE}"' in deploy_script
+    assert 'preserving existing execution kill-switch value' in kill_switch_lib
+    assert 'refusing to default it off' in kill_switch_lib
+    assert '--ignore-not-found' in kill_switch_lib
+    assert 'requested="${requested:-0}"' in kill_switch_lib
+
+    workflow = (REPO_ROOT / ".github" / "workflows" / "deploy-do.yml").read_text()
+    assert workflow.count(
+        "DOOMBERG_EXECUTION_KILL_SWITCH: ${{ vars.DOOMBERG_EXECUTION_KILL_SWITCH }}"
+    ) == 2

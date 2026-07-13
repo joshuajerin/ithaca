@@ -38,7 +38,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from jwt import InvalidTokenError, PyJWKClient
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from doomberg_control import actions
 from doomberg_control.actions import ActionError
@@ -54,6 +54,7 @@ from doomberg_platform import (
     ArtifactStore,
     BookStore,
     DeliveryTargetStore,
+    ExecutionControlStore,
     ExecutionStore,
     JobStore,
     LeaseStore,
@@ -96,6 +97,7 @@ class Stores:
         self.approvals = ApprovalStore(db)
         self.providers = ProviderStore(db)
         self.execution = ExecutionStore(db)
+        self.execution_controls = ExecutionControlStore(db)
         self.triggers = TriggerStore(db)
         self.baselines = TriggerBaselineStore(db)
         self.notifications = NotificationStore(db)
@@ -171,6 +173,12 @@ class MintKeyBody(BaseModel):
 
 class MintSseTicketBody(BaseModel):
     after_seq: int | None = None
+
+
+class ComplianceKillSwitchBody(BaseModel):
+    on: bool
+    reason: str | None = None
+    expect_version: int = Field(ge=0)
 
 
 def _bearer_key(authorization: str | None) -> str | None:
@@ -916,6 +924,91 @@ def create_app(db: Any | None = None) -> FastAPI:
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    def compliance_state(ctx: Ctx, stores: Stores) -> dict[str, Any]:
+        """Shape the compliance panel from durable execution state.
+
+        Limit/list editing remains owned by the deterministic strategy gate.  This
+        endpoint deliberately exposes only those defaults until tenant overrides are
+        persisted; the kill switch and its audit trail are live, tenant-specific data.
+        """
+        from doomberg_control.gate import DEFAULT_RESTRICTED
+        from doomberg_core.engine.compliance import DEFAULT_LIMITS, LIMIT_DEFS
+
+        effective = ExecutionGateway(stores).get_kill_switch(ctx)
+        strategies = [
+            {
+                "id": strategy["id"],
+                "name": strategy["name"],
+                "stage": strategy.get("spec", {}).get("stage") or "draft",
+            }
+            for strategy in stores.strategies.list(ctx.tenant_id)
+        ]
+        tenant_audit = [
+            {
+                "id": event["event_id"],
+                "at": event["created_at"],
+                "action": "Kill switch engaged" if event["enabled"] else "Kill switch released",
+                "decision": "blocked" if event["enabled"] else "allowed",
+                "summary": event["reason"],
+                "scope": "tenant",
+            }
+            for event in stores.execution_controls.list_events(ctx.tenant_id)
+        ]
+        global_audit = [
+            {
+                "id": event["event_id"],
+                "at": event["created_at"],
+                "action": "Site kill switch engaged" if event["enabled"] else "Site kill switch released",
+                "decision": "blocked" if event["enabled"] else "allowed",
+                "summary": event["reason"],
+                "scope": "global",
+            }
+            for event in stores.execution_controls.list_global_events()
+        ]
+        audit = sorted(
+            [*tenant_audit, *global_audit],
+            key=lambda event: (event["at"], event["id"]),
+            reverse=True,
+        )[:100]
+        return {
+            "limits": dict(DEFAULT_LIMITS),
+            "limitDefs": list(LIMIT_DEFS),
+            "restricted": list(DEFAULT_RESTRICTED),
+            "watch": [],
+            "killSwitch": effective["enabled"],
+            "killReason": effective["reason"],
+            "killSource": effective["source"],
+            "killVersion": effective["tenant_version"],
+            "strategyKills": {},
+            "strategies": strategies,
+            "audit": audit,
+            "check": None,
+        }
+
+    @app.get("/api/compliance")
+    def get_compliance(
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        return compliance_state(ctx, stores)
+
+    @app.post("/api/compliance/kill-switch")
+    def set_compliance_kill_switch(
+        body: ComplianceKillSwitchBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        try:
+            ExecutionGateway(stores).set_kill_switch(
+                ctx,
+                enabled=body.on,
+                reason=body.reason,
+                expect_version=body.expect_version,
+            )
+        except ActionError as err:
+            raise HTTPException(status_code=err.status, detail=err.detail) from err
+        return compliance_state(ctx, stores)
 
     @app.get("/api/auth/me")
     def me(

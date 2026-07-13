@@ -18,6 +18,7 @@ import signal
 import threading
 from contextlib import suppress
 
+from doomberg_control.execution_gateway import ExecutionGateway
 from doomberg_control.money import make_applier
 from doomberg_core import Core
 from doomberg_platform import Platform
@@ -44,6 +45,7 @@ def main() -> int:
     backtest_interval = float(os.environ.get("DOOMBERG_BACKTEST_INTERVAL_S", "2"))
     trigger_job_interval = float(os.environ.get("DOOMBERG_TRIGGER_JOB_INTERVAL_S", "2"))
     notification_interval = float(os.environ.get("DOOMBERG_NOTIFICATION_INTERVAL_S", "2"))
+    reconciliation_interval = float(os.environ.get("DOOMBERG_RECONCILIATION_INTERVAL_S", "5"))
     paper_interval = float(os.environ.get("DOOMBERG_PAPER_INTERVAL_S", "60"))
     adaptive_dashboard_interval = float(os.environ.get("DOOMBERG_ADAPTIVE_DASHBOARD_INTERVAL_S", "60"))
     paper_lease_ttl = float(os.environ.get(
@@ -58,7 +60,9 @@ def main() -> int:
     notification_dispatcher = NotificationDispatcher(platform)
     adaptive_dashboard_worker = AdaptiveDashboardWorker(platform)
     scheduler = PaperScheduler(platform, core, make_applier(platform), calendar=calendar)
+    execution_gateway = ExecutionGateway(platform)
     paper_owner_id = process_owner("paper-scheduler")
+    reconciliation_owner_id = process_owner("execution-reconciler")
 
     def run_paper_scheduler() -> None:
         while not stop.is_set():
@@ -81,6 +85,27 @@ def main() -> int:
                 print(f"adaptive dashboard recompute: {result}")
             stop.wait(adaptive_dashboard_interval)
 
+    def run_execution_reconciler() -> None:
+        lease_ttl = max(30.0, reconciliation_interval * 3.0)
+        while not stop.is_set():
+            if acquire_loop_lease(
+                platform,
+                lease_name="execution-reconciler",
+                owner_id=reconciliation_owner_id,
+                ttl_seconds=lease_ttl,
+                role="execution-reconciler",
+            ):
+                result = execution_gateway.reconcile_open_orders()
+                if result.get("failed"):
+                    print(f"execution reconciliation: {result}")
+            stop.wait(reconciliation_interval)
+        with suppress(Exception):
+            release_loop_lease(
+                platform,
+                lease_name="execution-reconciler",
+                owner_id=reconciliation_owner_id,
+            )
+
     stop = threading.Event()
     threads = [
         threading.Thread(target=worker.run_forever, kwargs={"interval_s": backtest_interval, "stop": stop},
@@ -99,6 +124,11 @@ def main() -> int:
             name="adaptive-dashboard-worker",
             daemon=True,
         ),
+        threading.Thread(
+            target=run_execution_reconciler,
+            name="execution-reconciler",
+            daemon=True,
+        ),
     ]
 
     signal.signal(signal.SIGINT, lambda *_: stop.set())
@@ -107,6 +137,7 @@ def main() -> int:
     print(f"doomberg conductor up — db={db}, backtest every {backtest_interval}s, "
           f"trigger jobs every {trigger_job_interval}s, paper every {paper_interval}s, "
           f"notifications every {notification_interval}s, "
+          f"execution reconciliation every {reconciliation_interval}s, "
           f"adaptive dashboard every {adaptive_dashboard_interval}s, "
           f"paper lease ttl={paper_lease_ttl}s owner={paper_owner_id}, "
           f"calendar={type(calendar).__name__}")

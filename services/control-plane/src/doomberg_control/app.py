@@ -28,6 +28,8 @@ from typing import Any, Literal
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from doomberg_platform import ExecutionControlConflict
+
 from . import actions
 from .actions import ActionError
 from .deps import Ctx, Platform, get_core, get_ctx, get_platform
@@ -68,6 +70,12 @@ class CreateOrderIntentBody(BaseModel):
     strategy_id: str | None = None
     account_ref: str | None = None
     idempotency_key: str | None = None
+
+
+class ExecutionKillSwitchBody(BaseModel):
+    enabled: bool
+    reason: str | None = None
+    expect_version: int = Field(ge=0)
 
 
 def _require_admin(x_admin_token: str | None) -> None:
@@ -206,6 +214,29 @@ def create_app() -> FastAPI:
         return run
 
     # ---- deterministic execution gateway ----------------------------------------------
+    @app.get("/execution/kill-switch")
+    def get_execution_kill_switch(
+        ctx: Ctx = Depends(get_ctx),
+        platform: Platform = Depends(get_platform),
+    ) -> dict[str, Any]:
+        return ExecutionGateway(platform).get_kill_switch(ctx)
+
+    @app.post("/execution/kill-switch")
+    def set_execution_kill_switch(
+        body: ExecutionKillSwitchBody,
+        ctx: Ctx = Depends(get_ctx),
+        platform: Platform = Depends(get_platform),
+    ) -> dict[str, Any]:
+        try:
+            return ExecutionGateway(platform).set_kill_switch(
+                ctx,
+                enabled=body.enabled,
+                reason=body.reason,
+                expect_version=body.expect_version,
+            )
+        except ActionError as err:
+            _raise(err)
+
     @app.post("/execution/intents", status_code=201)
     def create_order_intent(
         body: CreateOrderIntentBody,
@@ -270,6 +301,34 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"tenant_id": tenant_id, "name": body.name}
+
+    @app.post("/admin/execution/kill-switch")
+    def set_global_execution_kill_switch(
+        body: ExecutionKillSwitchBody,
+        platform: Platform = Depends(get_platform),
+        x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+    ) -> dict[str, Any]:
+        _require_admin(x_admin_token)
+        try:
+            return platform.execution_controls.set_global(
+                enabled=body.enabled,
+                reason=body.reason,
+                actor_id="admin-token",
+                expect_version=body.expect_version,
+            )
+        except ExecutionControlConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/admin/execution/kill-switch")
+    def get_global_execution_kill_switch(
+        platform: Platform = Depends(get_platform),
+        x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+    ) -> dict[str, Any]:
+        _require_admin(x_admin_token)
+        return {
+            "control": platform.execution_controls.get_global(),
+            "audit": platform.execution_controls.list_global_events(),
+        }
 
     @app.post("/admin/tenants/{tenant_id}/keys", status_code=201)
     def mint_key(

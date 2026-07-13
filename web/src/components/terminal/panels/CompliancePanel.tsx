@@ -71,6 +71,8 @@ interface CheckResult {
   warnings: string[];
   killSwitch: boolean;
   killReason?: string | null;
+  killSource?: "none" | "tenant" | "global" | "environment" | "missing_control_store";
+  killVersion?: number;
 }
 
 interface ComplianceData {
@@ -224,6 +226,7 @@ export function CompliancePanel({ data }: CompliancePanelProps) {
       body: JSON.stringify({
         on: !state.killSwitch,
         reason: state.killSwitch ? null : "Engaged from compliance panel",
+        expect_version: state.killVersion ?? 0,
       }),
     });
 
@@ -237,6 +240,7 @@ export function CompliancePanel({ data }: CompliancePanelProps) {
   };
 
   const check = state?.check ?? null;
+  const tenantCanToggleKill = state.killSource === "none" || state.killSource === "tenant";
   const limitsDirty = useMemo(() => {
     for (const def of limitDefs) {
       const cur = state?.limits?.[def.key];
@@ -273,7 +277,12 @@ export function CompliancePanel({ data }: CompliancePanelProps) {
         </div>
         <button
           onClick={toggleKill}
-          disabled={busy}
+          disabled={busy || !tenantCanToggleKill}
+          title={
+            tenantCanToggleKill
+              ? undefined
+              : "This site-wide halt can only be released by an operator."
+          }
           className={`flex items-center gap-1.5 border px-2.5 py-1 editorial-label text-[9px] disabled:opacity-40 transition-colors ${
             state.killSwitch
               ? "border-border hover:bg-white/10"
@@ -281,7 +290,7 @@ export function CompliancePanel({ data }: CompliancePanelProps) {
           }`}
         >
           <Power className="w-3 h-3" strokeWidth={2} />
-          {state.killSwitch ? "Release" : "Halt all"}
+          {!tenantCanToggleKill ? "Site halt" : state.killSwitch ? "Release" : "Halt all"}
         </button>
       </div>
 

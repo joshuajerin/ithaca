@@ -76,6 +76,7 @@ The REST, control-plane, and MCP containers also receive the IBKR order endpoint
 and execution safety knobs:
 
 - `DOOMBERG_ENABLE_LIVE_EXECUTION` - must be `1` before the gateway will submit to IBKR.
+- `DOOMBERG_EXECUTION_KILL_SWITCH` - break-glass stop for every new broker submission.
 - `DOOMBERG_IBKR_ORDER_PATH` - default `/orders`.
 - `DOOMBERG_IBKR_HISTORY_PATH`, `DOOMBERG_IBKR_NEWS_PATH`, and
   `DOOMBERG_IBKR_SCANNER_PATH` - live IBKR market-data endpoints for MCP
