@@ -14,7 +14,12 @@ from doomberg_platform.migrations import (
     apply_migrations,
     validate_migrations,
 )
-from doomberg_platform.pg_db import _convert_placeholders, is_postgres_dsn, migration_mode
+from doomberg_platform.pg_db import (
+    _convert_placeholders,
+    allow_forward_migrations,
+    is_postgres_dsn,
+    migration_mode,
+)
 
 
 class _Rows:
@@ -94,6 +99,35 @@ def test_postgres_migration_validation_detects_definition_drift() -> None:
 
     with pytest.raises(MigrationDrift, match="migration 1 drifted"):
         validate_migrations(conn, (migration,))
+
+
+def test_postgres_migrations_allow_explicit_forward_compatible_schema() -> None:
+    conn = _MigrationConnection()
+    migration = Migration(1, "one", "SELECT 1")
+    future = Migration(2, "future", "SELECT 2")
+    conn.applied = {
+        1: (migration.name, migration.checksum),
+        2: (future.name, future.checksum),
+    }
+
+    with pytest.raises(MigrationDrift, match="unknown to this release: 2"):
+        validate_migrations(conn, (migration,))
+
+    status = validate_migrations(conn, (migration,), allow_forward=True)
+
+    assert status.current_version == 2
+    assert status.latest_version == 1
+    assert status.pending_versions == ()
+
+
+def test_forward_migration_override_is_explicit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS", raising=False)
+    assert allow_forward_migrations() is False
+    monkeypatch.setenv("DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS", "true")
+    assert allow_forward_migrations() is True
+    monkeypatch.setenv("DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS", "sometimes")
+    with pytest.raises(ValueError, match="must be a boolean value"):
+        allow_forward_migrations()
 
 
 def test_postgres_migration_mode_is_explicit(monkeypatch: pytest.MonkeyPatch) -> None:

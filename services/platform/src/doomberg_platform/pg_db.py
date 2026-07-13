@@ -141,11 +141,12 @@ class PostgresDb:
 
     def _migrate(self) -> MigrationStatus:
         mode = migration_mode()
+        allow_forward = allow_forward_migrations()
         with self.conn as conn:
             if mode == "apply":
-                return apply_migrations(conn)
+                return apply_migrations(conn, allow_forward=allow_forward)
             if mode == "validate":
-                return validate_migrations(conn)
+                return validate_migrations(conn, allow_forward=allow_forward)
         return MigrationStatus(current_version=0, latest_version=0, pending_versions=())
 
     def publish(self, run_id: str, event: dict[str, Any]) -> None:
@@ -198,3 +199,16 @@ def migration_mode() -> str:
     if mode not in {"apply", "validate", "off"}:
         raise ValueError("DOOMBERG_DB_MIGRATION_MODE must be apply, validate, or off")
     return mode
+
+
+def allow_forward_migrations() -> bool:
+    import os
+
+    value = os.environ.get("DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS", "0").strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off", ""}:
+        return False
+    raise ValueError(
+        "DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS must be a boolean value"
+    )
