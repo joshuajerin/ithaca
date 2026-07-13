@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
+from types import SimpleNamespace
 
 import psycopg
 import pytest
@@ -208,6 +210,36 @@ def test_postgres_migration_mode_is_explicit(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("DOOMBERG_DB_MIGRATION_MODE", "invalid")
     with pytest.raises(ValueError, match="must be apply, validate, or off"):
         migration_mode()
+
+
+@pytest.mark.parametrize("mode", ["apply", "validate"])
+def test_postgres_migration_mode_passes_forward_compatibility_override(
+    monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    monkeypatch.setenv("DOOMBERG_DB_MIGRATION_MODE", mode)
+    monkeypatch.setenv("DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS", "1")
+    conn = _MigrationConnection()
+    if mode == "validate":
+        for migration in MIGRATIONS:
+            conn.applied[migration.version] = (migration.name, migration.checksum)
+    db = SimpleNamespace(system_scope=lambda: nullcontext(), conn=nullcontext(conn))
+
+    status = PostgresDb._migrate(db)
+
+    assert status.current_version == MIGRATIONS[-1].version
+    assert status.pending_versions == ()
+
+
+def test_postgres_migration_mode_off_does_not_parse_forward_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DOOMBERG_DB_MIGRATION_MODE", "off")
+    monkeypatch.setenv("DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS", "invalid")
+    db = SimpleNamespace()
+
+    status = PostgresDb._migrate(db)
+
+    assert status == status.__class__(current_version=0, latest_version=0, pending_versions=())
 
 
 def test_postgres_pool_config_is_bounded_and_validated(
