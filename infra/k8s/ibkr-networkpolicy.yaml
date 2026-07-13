@@ -89,6 +89,9 @@ spec:
         - podSelector:
             matchLabels:
               doomberg/component: ibkr-engine
+        - podSelector:
+            matchLabels:
+              doomberg/component: ibkr-engine-keepalive
       ports:
         - protocol: TCP
           port: 5000
