@@ -65,10 +65,13 @@ export interface JobRow {
   profile: string;
   state: string;
   attempts: number;
+  max_attempts: number;
   worker_id?: string | null;
   lease_expires_at?: string | null;
   heartbeat_at?: string | null;
   checkpoint_ref?: string | null;
+  error?: Record<string, unknown> | null;
+  result?: Record<string, unknown> | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -239,6 +242,14 @@ export interface OpsStatus {
     queued: number;
     leased_or_running: number;
     terminal: number;
+    backtests?: {
+      queued: number;
+      leased_or_running: number;
+      failed_or_timed_out: number;
+      oldest_queued_seconds: number | null;
+      oldest_heartbeat_seconds: number | null;
+      stalled: boolean;
+    };
   };
   leases: OpsLeaseRow[];
   stale_leases: OpsLeaseRow[];
@@ -347,6 +358,120 @@ export type AdaptiveDashboardResponse =
       updated_at: string;
     };
 
+export type DashboardReadStatus = "ready" | "empty" | "stale" | "unavailable";
+
+export interface DashboardReadEnvelope<T> {
+  status: DashboardReadStatus;
+  as_of: string | null;
+  source: string;
+  entitlement_class: string | null;
+  freshness_ms: number | null;
+  data: T;
+  error: { code: string; message: string } | null;
+}
+
+export interface DashboardRunView {
+  run_id: string | null;
+  kind: string | null;
+  state: string | null;
+  strategy_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface DashboardBookView {
+  run_id: string | null;
+  capital: number | null;
+  gross: number | null;
+  cash: number | null;
+  weights: Record<string, number>;
+  updated_at: string | null;
+}
+
+export interface DashboardSummaryData {
+  run_counts: { total: number; active: number; by_state: Record<string, number> };
+  latest_run: DashboardRunView | null;
+  latest_backtest: (DashboardRunView & {
+    equity_curve: Array<{ d: string; v: number }>;
+    stats: Record<string, number>;
+  }) | null;
+  latest_paper: (DashboardRunView & { book: DashboardBookView | null }) | null;
+}
+
+export interface DashboardRiskData {
+  backtest: { run_id: string | null; metrics: Record<string, number> } | null;
+  paper_exposure: DashboardBookView | null;
+}
+
+export type DashboardSummaryResponse = DashboardReadEnvelope<DashboardSummaryData>;
+export type DashboardRiskResponse = DashboardReadEnvelope<DashboardRiskData>;
+
+export interface DashboardTriggerView {
+  trigger_id: string | null;
+  name: string | null;
+  state: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface DashboardAlertView {
+  notification_id: string | null;
+  event_type: string | null;
+  subject_type: string | null;
+  subject_id: string | null;
+  priority: string | null;
+  state: string | null;
+  payload: Record<string, string | number | boolean>;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface DashboardActivityData {
+  runs: DashboardRunView[];
+  triggers: DashboardTriggerView[];
+  alerts: DashboardAlertView[];
+}
+
+export interface DashboardEntitlementView {
+  dataset?: string | null;
+  entitlement_class?: string | null;
+  permitted_use?: string[];
+  freshness_class?: string | null;
+  as_of?: string | null;
+}
+
+export interface DashboardProviderConnectionView {
+  connection_id: string | null;
+  provider: string;
+  state: string | null;
+  capabilities: string[];
+  entitlements: DashboardEntitlementView[];
+  credential_configured: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface DashboardProviderStatusData {
+  connections: DashboardProviderConnectionView[];
+  counts: { total: number; connected: number };
+  live_engine_configured: boolean;
+}
+
+export interface DashboardMarketData {
+  snapshots: Array<{
+    snapshot_id: string | null;
+    provider: string;
+    dataset: string | null;
+    entitlement_class: string | null;
+    as_of: string | null;
+    created_at: string | null;
+  }>;
+  quote_providers: DashboardProviderConnectionView[];
+}
+
+export type DashboardActivityResponse = DashboardReadEnvelope<DashboardActivityData>;
+export type DashboardProviderStatusResponse = DashboardReadEnvelope<DashboardProviderStatusData>;
+export type DashboardMarketResponse = DashboardReadEnvelope<DashboardMarketData>;
 // Backtest result `data` shape (from INTERFACES.md / doomberg_core).
 export interface BacktestResult {
   equityCurve: { d: string; v: number }[];

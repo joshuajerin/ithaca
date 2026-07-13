@@ -115,6 +115,9 @@ spec:
             - name: DOOMBERG_SESSION_SECRET
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: session_secret, optional: true }
+            - name: CLERK_SECRET_KEY
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: clerk_secret_key }
             - name: CLERK_PEM_PUBLIC_KEY
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: clerk_pem_public_key, optional: true }
@@ -139,6 +142,21 @@ spec:
             - name: DOOMBERG_DATA_SOURCE
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: data_source, optional: true }
+            - name: DOOMBERG_ARTIFACT_BUCKET
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: artifact_bucket, optional: true }
+            - name: DOOMBERG_ARTIFACT_ENDPOINT_URL
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: artifact_endpoint_url, optional: true }
+            - name: DOOMBERG_ARTIFACT_REGION
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: artifact_region, optional: true }
+            - name: DOOMBERG_ARTIFACT_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: artifact_access_key_id, optional: true }
+            - name: DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: artifact_secret_access_key, optional: true }
             - name: DOOMBERG_ENABLE_LIVE_EXECUTION
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: enable_live_execution, optional: true }
@@ -231,6 +249,9 @@ spec:
             - name: DOOMBERG_ADMIN_TOKEN
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: admin_token, optional: true }
+            - name: CLERK_SECRET_KEY
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: clerk_secret_key }
             - name: DOOMBERG_ENABLE_LIVE_EXECUTION
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: enable_live_execution, optional: true }
@@ -323,6 +344,9 @@ spec:
               value: "validate"
             - name: DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS
               value: "${DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS}"
+            - name: CLERK_SECRET_KEY
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: clerk_secret_key }
             - name: FMP_API_KEY
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: fmp_api_key, optional: true }

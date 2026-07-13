@@ -482,3 +482,30 @@ def allow_forward_migrations() -> bool:
     raise ValueError(
         "DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS must be a boolean value"
     )
+
+
+_TENANT_TABLES = (
+    "runs",
+    "strategies",
+    "trace_events",
+    "books",
+    "api_keys",
+    "users",
+    "sse_tickets",
+    "jobs",
+    "adaptive_dashboard_profiles",
+    "artifacts",
+    "approvals",
+    "provider_connections",
+    "dataset_snapshots",
+    "trigger_policies",
+    "trigger_firings",
+    "trigger_baselines",
+    "notification_outbox",
+    "delivery_targets",
+    "notification_attempts",
+    "order_intents",
+    "orders",
+    "fills",
+    "feedback",
+)

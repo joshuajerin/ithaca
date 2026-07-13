@@ -68,13 +68,33 @@ class BacktestWorker:
         """
         jobs = getattr(self.platform, "jobs", None)
         if jobs is not None:
+            exhausted = jobs.fail_exhausted(profiles=("backtest",), kinds=("backtest",))
+            for job in exhausted:
+                run = self.platform.runs.get(job["tenant_id"], job["run_id"])
+                if run and run.get("state") in {"queued", "running"}:
+                    self.platform.runs.transition(
+                        job["tenant_id"], job["run_id"], "failed", expect=run["version"]
+                    )
+                    emit(
+                        self.platform.trace,
+                        tenant_id=job["tenant_id"],
+                        run_id=job["run_id"],
+                        type="error",
+                        data={
+                            "stage": "worker",
+                            "error": "retry_exhausted",
+                            "job_id": job["job_id"],
+                        },
+                    )
             claimed = jobs.claim_available(
                 profiles=("backtest",),
                 kinds=("backtest",),
                 worker_id=self.worker_id,
                 limit=self.batch,
             )
-            return self._run_claimed_jobs(claimed)
+            result = self._run_claimed_jobs(claimed)
+            result["exhausted"] = [job["job_id"] for job in exhausted]
+            return result
 
         claimed = self.platform.runs.claim_queued(("backtest",), limit=self.batch)
         succeeded: list[str] = []

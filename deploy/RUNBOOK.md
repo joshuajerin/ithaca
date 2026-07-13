@@ -25,11 +25,33 @@ verifies that the deploying SHA still equals `origin/main`.
 
 Each GitHub environment owns its own secrets and variables. Required secrets are
 `DIGITALOCEAN_ACCESS_TOKEN`, `DOOMBERG_PLATFORM_DB_URL`, `DOOMBERG_SESSION_SECRET`,
-`CLERK_PUBLISHABLE_KEY`, and either `CLERK_PEM_PUBLIC_KEY` or the
+`CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, and either `CLERK_PEM_PUBLIC_KEY` or the
 `CLERK_JWKS_URL` variable. Required variables include `CLERK_ALLOWED_ORIGINS`.
+
+### Clerk waitlist access
+
+Enable **Waitlist** mode in the Clerk Dashboard and keep email authentication enabled.
+Existing users and invited waitlist users can sign in; everyone else is sent to the
+Clerk-managed waitlist at `/waitlist`.
+
+Approve one or more email addresses with Clerk's waitlist API:
+
+```bash
+CLERK_SECRET_KEY=... uv run --package doomberg-platform \
+  python scripts/clerk_waitlist.py approved@example.com another@example.com
+```
+
+The command is idempotent for already invited or completed entries. Clerk sends the
+invitation email and remains the source of truth for approval status.
 Production also requires `DOOMBERG_ADMIN_TOKEN`, `DOOMBERG_SMOKE_API_KEY`, and
 `DOOMBERG_SMOKE_NO_SCOPE_API_KEY`. Optional secrets include `FMP_API_KEY` and
 `DATABENTO_API_KEY`.
+
+Before the first deploy, enable **User API keys** in Clerk Dashboard under
+**Configure → API keys → Enable API keys**. Doomberg creates keys through Clerk's Backend
+API with tenant-binding claims and capability scopes. Clerk owns the plaintext secret,
+verification, usage metadata, and revocation; the local `api_keys` table is retained only so
+previously-issued `dmbg_` keys keep working during migration.
 
 Local scripts in this directory remain available as break-glass tooling. They now
 accept `DEPLOY_ENV=prod|dev` and render environment-specific Kubernetes

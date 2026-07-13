@@ -228,6 +228,51 @@ class JobStore:
                     leased.append(self.get(row["tenant_id"], row["job_id"]))
         return [j for j in leased if j is not None]
 
+    def fail_exhausted(
+        self,
+        *,
+        profiles: tuple[str, ...] = ("backtest",),
+        kinds: tuple[str, ...] = ("backtest",),
+    ) -> list[dict[str, Any]]:
+        """Fail expired leases that consumed every retry instead of stranding them forever."""
+        if not profiles or not kinds:
+            return []
+        now = _now()
+        profile_marks = ",".join("?" for _ in profiles)
+        kind_marks = ",".join("?" for _ in kinds)
+        with self._db.write_lock:
+            with self._db.conn as conn:
+                lock_clause = " FOR UPDATE SKIP LOCKED" if getattr(self._db, "is_postgres", False) else ""
+                rows = conn.execute(
+                    f"SELECT tenant_id, job_id FROM jobs "
+                    f"WHERE profile IN ({profile_marks}) AND kind IN ({kind_marks}) "
+                    "AND state IN ('leased', 'running') AND attempts >= max_attempts "
+                    "AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?"
+                    f"{lock_clause}",
+                    (*profiles, *kinds, now),
+                ).fetchall()
+                for row in rows:
+                    conn.execute(
+                        "UPDATE jobs SET state = 'failed', error = ?, updated_at = ? "
+                        "WHERE tenant_id = ? AND job_id = ?",
+                        (
+                            json.dumps(
+                                {
+                                    "code": "RETRY_EXHAUSTED",
+                                    "detail": "worker lease expired after maximum attempts",
+                                }
+                            ),
+                            now,
+                            row["tenant_id"],
+                            row["job_id"],
+                        ),
+                    )
+        return [
+            job
+            for row in rows
+            if (job := self.get(row["tenant_id"], row["job_id"])) is not None
+        ]
+
     def mark_running(self, tenant_id: str, job_id: str, *, worker_id: str | None = None) -> dict[str, Any]:
         return self._update_state(tenant_id, job_id, "running", worker_id=worker_id)
 

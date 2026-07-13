@@ -41,6 +41,31 @@ def test_signed_in_user_mints_lists_and_uses_key(client, stores, clerk_auth):
     assert "api_key" not in listed[0]
 
 
+def test_signed_in_clerk_subject_is_used_for_managed_key_creation(
+    client, stores, clerk_auth
+):
+    token, tenant_id = _clerk_session(client, clerk_auth)
+    captured = {}
+
+    class ManagedKeys:
+        def mint_key(self, requested_tenant, scopes, *, subject=None):
+            captured.update(tenant_id=requested_tenant, scopes=scopes, subject=subject)
+            return "ak_live_clerk_managed", "ak_3beecc9c60adb5f9b850e91a8ee1e992"
+
+    stores.agent_keys = ManagedKeys()
+    response = client.post(
+        "/api/auth/keys",
+        json={"scopes": ["data:read"]},
+        headers=_bearer(token),
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["api_key"] == "ak_live_clerk_managed"
+    assert captured["tenant_id"] == tenant_id
+    assert captured["scopes"] == ["data:read"]
+    assert captured["subject"].startswith("user_")
+
+
 def test_mint_defaults_to_agent_operational_scope_set(client, clerk_auth):
     token, _ = _clerk_session(client, clerk_auth)
     r = client.post("/api/auth/keys", json={}, headers=_bearer(token))

@@ -41,6 +41,12 @@ CREATE TABLE IF NOT EXISTS runs (
     PRIMARY KEY (tenant_id, run_id)
 );
 
+CREATE INDEX IF NOT EXISTS idx_runs_tenant_updated
+    ON runs (tenant_id, updated_at DESC, run_id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_runs_tenant_kind_updated
+    ON runs (tenant_id, kind, updated_at DESC, run_id DESC);
+
 -- One immutable row per (strategy_id, version); same name -> new version, never updated.
 CREATE TABLE IF NOT EXISTS strategies (
     tenant_id   TEXT NOT NULL,
@@ -344,6 +350,9 @@ CREATE TABLE IF NOT EXISTS trigger_policies (
 CREATE INDEX IF NOT EXISTS idx_trigger_policies_state
     ON trigger_policies (tenant_id, state, name);
 
+CREATE INDEX IF NOT EXISTS idx_trigger_policies_recent
+    ON trigger_policies (tenant_id, updated_at DESC, trigger_id DESC);
+
 -- Trigger firings are the stateful dedupe/cooldown/budget memory for the trigger engine.
 -- They deliberately point at the run created by the trigger, so Sessions can replay the
 -- exact market event -> analysis run lineage.
@@ -409,6 +418,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_dedupe
 
 CREATE INDEX IF NOT EXISTS idx_notification_claim
     ON notification_outbox (state, next_attempt_at, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_notification_tenant_recent
+    ON notification_outbox (tenant_id, created_at DESC, notification_id DESC);
 
 CREATE TABLE IF NOT EXISTS delivery_targets (
     tenant_id       TEXT NOT NULL,
@@ -493,6 +505,18 @@ CREATE TABLE IF NOT EXISTS fills (
 
 CREATE INDEX IF NOT EXISTS idx_fills_order
     ON fills (tenant_id, order_id, event_time);
+
+-- Product feedback submitted by signed-in humans from the web rail.
+CREATE TABLE IF NOT EXISTS feedback (
+    feedback_id TEXT PRIMARY KEY,
+    tenant_id   TEXT NOT NULL,
+    user_id     TEXT NOT NULL,
+    message     TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_tenant_created
+    ON feedback (tenant_id, created_at);
 """
 
 # Portable post-baseline evolutions for SQLite local/dev. PostgreSQL applies the

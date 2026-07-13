@@ -8,14 +8,13 @@ connect over the network, using the MCP SDK's streamable-HTTP transport
 Auth is a thin ASGI middleware in front of that app rather than the SDK's ``TokenVerifier``
 hook: the SDK hook is an OAuth *resource-server* facility — it refuses to start without full
 ``AuthSettings`` (issuer URLs, RFC 9728 protected-resource metadata) and changes the wire
-protocol. Our credential is a single opaque per-tenant API key (``dmbg_...``) resolved by the
-platform's :class:`~doomberg_platform.AuthStore`, so a middleware is both simpler and exactly
-what the installed SDK (``mcp==1.27.x``) supports cleanly.
+protocol. Our credential is a Clerk-managed opaque API key, with legacy ``dmbg_``
+verification during migration, so middleware remains the simplest supported integration.
 
 The middleware:
 
-* requires ``Authorization: Bearer dmbg_...`` on every MCP request → **401** on
-  missing/invalid/revoked key (``AuthStore.verify`` is constant-time + revocation-aware);
+* requires ``Authorization: Bearer <api-key>`` on every MCP request → **401** on
+  missing/invalid/revoked keys;
 * requires scope ``data:read`` for any ``tools/call`` or MCP resource read/list request,
   and additionally ``strategy:author`` for the ``propose_strategy`` tool → **403** if
   missing;
@@ -204,7 +203,18 @@ class TenantAuthMiddleware:
             return
 
         token = _bearer(scope.get("headers") or [])
-        principal = self._resolve(token)
+        try:
+            principal = self._resolve(token)
+        except Exception as exc:
+            from doomberg_platform import ClerkApiError, ClerkApiUnavailable
+
+            if isinstance(exc, ClerkApiUnavailable):
+                await _json_error(503, "API key verification unavailable")(scope, receive, send)
+                return
+            if isinstance(exc, ClerkApiError):
+                await _json_error(401, "missing or invalid API key")(scope, receive, send)
+                return
+            raise
         if principal is None:
             await _json_error(401, "missing or invalid API key")(scope, receive, send)
             return
@@ -279,16 +289,16 @@ def _replay(body: bytes, more: bool, original_receive):
 
 
 def build_auth_store(db_url: str | None = None):
-    """Build an :class:`~doomberg_platform.AuthStore` from ``DOOMBERG_DB`` (or ``:memory:``).
+    """Build the migration-safe agent key verifier from ``DOOMBERG_DB`` (or ``:memory:``).
 
     Imported lazily so unit tests that construct their own AuthStore don't force the import,
     and a missing/unset DB falls back to ``:memory:`` (an empty store → every key 401s, which
     is the safe default for a misconfigured deploy).
     """
-    from doomberg_platform import Platform
+    from doomberg_platform import build_agent_key_store, open_db
 
     url = db_url or os.environ.get("DOOMBERG_DB", ":memory:")
-    return Platform(url).auth
+    return build_agent_key_store(open_db(url))
 
 
 def build_http_app(toolset=None, verifier=None, *, host: str | None = None,
@@ -296,7 +306,8 @@ def build_http_app(toolset=None, verifier=None, *, host: str | None = None,
     """Build the auth-wrapped streamable-HTTP ASGI app for the Doomberg MCP server.
 
     ``toolset`` defaults to the platform-backed Toolset (shared trace store). ``verifier``
-    defaults to an AuthStore over ``DOOMBERG_DB``. Returns ``(app, mcp, toolset)`` so callers
+    defaults to the configured agent key store over ``DOOMBERG_DB``. Returns
+    ``(app, mcp, toolset)`` so callers
     (and tests) can introspect. The tool wrappers pull the per-request principal from the
     ContextVar and pass ``_ctx`` into the Toolset, so every hosted call is tenant-scoped.
     """

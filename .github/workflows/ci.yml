@@ -53,7 +53,8 @@ jobs:
             services/mcp-gateway \
             services/control-plane \
             services/rest-gateway \
-            services/runtime
+            services/runtime \
+            services/ibkr-engine
           do
             echo "pytest ${pkg}"
             (cd "${pkg}" && uv run --extra dev pytest -q)
