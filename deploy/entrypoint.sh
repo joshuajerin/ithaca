@@ -12,6 +12,7 @@
 #   trigger-engine   -> python -m doomberg_runtime.trigger_engine
 #   adaptive-dashboard -> python scripts/recompute_adaptive_dashboards.py
 #   backtest-runner  -> python -m doomberg_runtime.backtest_runner
+#   backtest-worker  -> python scripts/run_backtest_workers.py
 #   live-runner      -> python -m doomberg_runtime.live_runner
 #   platform-migrate -> python scripts/migrate_platform.py
 #   ibkr-smoke       -> python scripts/ibkr_smoke.py
@@ -58,6 +59,9 @@ case "${ROLE}" in
     ;;
   backtest-runner)
     exec python -m doomberg_runtime.backtest_runner "$@"
+    ;;
+  backtest-worker)
+    exec python scripts/run_backtest_workers.py "$@"
     ;;
   live-runner)
     exec python -m doomberg_runtime.live_runner "$@"

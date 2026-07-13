@@ -186,18 +186,26 @@ spec:
             - name: DOOMBERG_IBKR_ENGINE_TOKEN
               valueFrom:
                 secretKeyRef: { name: ibkr-engine, key: engine_token }
+            - name: IBKR_AUTO_REPAIR_AUTH
+              value: "true"
+            - name: IBKR_AUTH_INIT_COMPETE
+              value: "true"
+            - name: IBKR_AUTH_INIT_ATTEMPTS
+              value: "10"
+            - name: IBKR_AUTH_INIT_RETRY_DELAY_S
+              value: "1"
             - name: DOOMBERG_ENABLE_LIVE_EXECUTION
               valueFrom:
                 secretKeyRef: { name: ibkr-engine, key: enable_live_execution }
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: ${IBKR_ENGINE_PORT}
             initialDelaySeconds: 10
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /livez
               port: ${IBKR_ENGINE_PORT}
             initialDelaySeconds: 30
             periodSeconds: 20
@@ -229,3 +237,70 @@ spec:
       port: ${IBKR_ENGINE_PORT}
       targetPort: ${IBKR_ENGINE_PORT}
       protocol: TCP
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ibkr-engine-keepalive
+  namespace: ${K8S_GATEWAY_NAMESPACE}
+  labels:
+    doomberg/component: ibkr-engine-keepalive
+    doomberg/environment: ${DOOMBERG_ENV}
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 45
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 8
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 55
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            doomberg/component: ibkr-engine-keepalive
+            doomberg/environment: ${DOOMBERG_ENV}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          nodeSelector:
+            workload: ${APP_NODE_WORKLOAD}
+          tolerations:
+            - key: workload
+              operator: Equal
+              value: ${APP_NODE_WORKLOAD}
+              effect: NoSchedule
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: keepalive
+              image: ${IBKR_ENGINE_IMAGE}
+              imagePullPolicy: IfNotPresent
+              args: ["shell", "-c", "/opt/venv/bin/python -m doomberg_ibkr_engine.keepalive --json"]
+              env:
+                - name: IBKR_CLIENT_PORTAL_URL
+                  value: https://ibkr-client-portal.${K8S_GATEWAY_NAMESPACE}.svc.cluster.local:5000/v1/api
+                - name: IBKR_CLIENT_PORTAL_VERIFY_SSL
+                  value: "false"
+                - name: IBKR_AUTO_REPAIR_AUTH
+                  value: "true"
+                - name: IBKR_AUTH_INIT_COMPETE
+                  value: "true"
+                - name: IBKR_AUTH_INIT_ATTEMPTS
+                  value: "10"
+                - name: IBKR_AUTH_INIT_RETRY_DELAY_S
+                  value: "1"
+              resources:
+                requests: { cpu: "25m", memory: 96Mi }
+                limits: { cpu: "200m", memory: 256Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                capabilities: { drop: ["ALL"] }
