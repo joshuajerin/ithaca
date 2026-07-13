@@ -58,3 +58,29 @@ def test_gate_reuses_core_attestation_gross():
     spec = valid_spec(symbols=["AAPL", "MSFT", "NVDA", "AMZN"])
     decision = evaluate_spec_gate(spec)
     assert abs(decision.attestation["gross"] - 1.0) < 1e-9
+
+
+def test_saved_firm_limits_are_hard_and_expose_dashboard_check_rows():
+    decision = evaluate_spec_gate(
+        valid_spec(),
+        firm_limits={
+            "maxPositionPct": 20.0,
+            "maxNetPct": 120.0,
+            "maxLeverage": 2.0,
+            "maxConcentrationPct": 100.0,
+        },
+    )
+    assert decision.ok is False
+    assert any("Firm max position" in violation for violation in decision.violations)
+    assert next(row for row in decision.checks if row["key"] == "maxPositionPct")["status"] == "breach"
+
+
+def test_gate_kill_switch_is_a_hard_block():
+    decision = evaluate_spec_gate(
+        valid_spec(),
+        kill_switch=True,
+        kill_reason="operator halt",
+    )
+    assert decision.ok is False
+    assert decision.kill_switch is True
+    assert "operator halt" in decision.violations[-1]

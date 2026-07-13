@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .db import Db
+from .db_scope import tenant_scoped_store
 
 
 class BookConflict(RuntimeError):
@@ -50,6 +51,7 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
     }
 
 
+@tenant_scoped_store()
 class BookStore:
     """The paper book row: target weights + capital, tenant-scoped, version-guarded."""
 

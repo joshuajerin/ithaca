@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .db import Db
+from .db_scope import tenant_scoped_store
 
 
 class TransitionError(ValueError):
@@ -35,7 +36,7 @@ class RunNotFound(KeyError):
 # Allowed transitions. Keys are source states; values are the set of legal targets.
 _TRANSITIONS: dict[str, set[str]] = {
     "draft": {"queued", "cancelled"},
-    "queued": {"running", "cancelled"},
+    "queued": {"running", "failed", "cancelled"},
     "running": {"succeeded", "failed", "timeout", "cancelled", "promoted"},
     # Terminal backtest states.
     "succeeded": {"promoted"},
@@ -71,6 +72,7 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
     }
 
 
+@tenant_scoped_store(system_methods={"claim_queued", "list_by_state"})
 class RunStore:
     """The run state-machine row, tenant-scoped, optimistic-version guarded."""
 

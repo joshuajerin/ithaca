@@ -56,6 +56,9 @@ createRoot(document.getElementById("root")!).render(
         publishableKey={clerkPublishableKey}
         localization={clerkLocalization}
         appearance={clerkAppearance}
+        signInUrl="/"
+        signUpUrl="/sign-up"
+        waitlistUrl="/waitlist"
       >
         <AuthProvider>
           <BrowserRouter>

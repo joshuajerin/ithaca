@@ -11,14 +11,19 @@ Public API (per INTERFACES.md):
 
 from .backtest_runner import DEFAULT_BUDGET_MS as BACKTEST_BUDGET_MS
 from .backtest_runner import result_hash, run_backtest_job
+from .artifact_storage import object_storage_configured, open_artifact, presign_artifact
 from .calendar import AlwaysOpen, MarketCalendar, RegularHoursCalendar
 from .deadline import Deadline, DeadlineExceeded
 from .adaptive_dashboard import (
     ANTHROPIC_HAIKU_MODEL,
+    DEFAULT_OPENAI_COMPATIBLE_MODEL,
     AdaptiveDashboardWorker,
     AnthropicDashboardClient,
     AnthropicDashboardError,
+    DashboardGenerationError,
+    OpenAICompatibleDashboardClient,
     all_users_with_session_history,
+    create_adaptive_dashboard_client,
     default_adaptive_dashboard_spec,
     recompute_user_profile,
     usage_signals_for_user,
@@ -47,13 +52,20 @@ __all__ = [
     "run_backtest_job",
     "run_paper_tick",
     "result_hash",
+    "object_storage_configured",
+    "presign_artifact",
+    "open_artifact",
     "Deadline",
     "DeadlineExceeded",
     "ANTHROPIC_HAIKU_MODEL",
+    "DEFAULT_OPENAI_COMPATIBLE_MODEL",
     "AdaptiveDashboardWorker",
     "AnthropicDashboardClient",
     "AnthropicDashboardError",
+    "DashboardGenerationError",
+    "OpenAICompatibleDashboardClient",
     "all_users_with_session_history",
+    "create_adaptive_dashboard_client",
     "default_adaptive_dashboard_spec",
     "recompute_user_profile",
     "usage_signals_for_user",

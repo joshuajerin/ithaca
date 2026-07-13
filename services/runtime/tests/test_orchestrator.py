@@ -4,6 +4,8 @@ live deployments and routes proposed deltas to the injected single-writer applie
 from __future__ import annotations
 
 import datetime as dt
+import threading
+import time
 
 from doomberg_runtime import AlwaysOpen, BacktestWorker, PaperScheduler, RegularHoursCalendar
 
@@ -60,6 +62,64 @@ def test_backtest_worker_empty_queue_is_noop(platform, core):
     assert BacktestWorker(platform, core).poll_once() == {
         "claimed": 0, "succeeded": [], "skipped": []
     }
+
+
+def test_backtest_worker_reports_and_retires_process_heartbeat(durable_platform, core):
+    stop = threading.Event()
+    worker = BacktestWorker(durable_platform, core)
+    thread = threading.Thread(
+        target=worker.run_forever,
+        kwargs={"interval_s": 0.01, "stop": stop},
+    )
+    thread.start()
+    deadline = time.monotonic() + 2
+    while not durable_platform.worker_heartbeats.list() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    rows = durable_platform.worker_heartbeats.list()
+    assert rows[0]["role"] == "backtest-worker"
+    assert rows[0]["status"] in {"starting", "healthy"}
+
+    stop.set()
+    thread.join(timeout=2)
+    assert thread.is_alive() is False
+    assert durable_platform.worker_heartbeats.list()[0]["status"] == "stopped"
+
+
+def test_backtest_worker_fails_expired_job_after_retry_exhaustion(
+    durable_platform, tenant_id, spec, core
+):
+    run_id = seed_queued_run(durable_platform, tenant_id, spec, kind="backtest")
+    job = durable_platform.jobs.create_for_run(
+        tenant_id,
+        run_id,
+        kind="backtest",
+        profile="backtest",
+        payload={"spec": spec, "range": "1y"},
+        max_attempts=3,
+    )
+    for attempt in range(3):
+        claimed = durable_platform.jobs.claim_available(
+            worker_id=f"dead-{attempt}", lease_seconds=60, limit=1
+        )
+        assert claimed[0]["job_id"] == job["job_id"]
+        with durable_platform.db.conn as conn:
+            conn.execute(
+                "UPDATE jobs SET lease_expires_at = ? WHERE tenant_id = ? AND job_id = ?",
+                ("2000-01-01T00:00:00+00:00", tenant_id, job["job_id"]),
+            )
+
+    summary = BacktestWorker(durable_platform, core).poll_once()
+
+    assert summary["claimed"] == 0
+    assert summary["exhausted"] == [job["job_id"]]
+    assert durable_platform.jobs.get(tenant_id, job["job_id"])["state"] == "failed"
+    assert durable_platform.runs.get(tenant_id, run_id)["state"] == "failed"
+    errors = [
+        event
+        for event in durable_platform.trace.events(tenant_id, run_id)
+        if event["type"] == "error"
+    ]
+    assert errors[-1]["data"]["error"] == "retry_exhausted"
 
 
 # --- paper scheduler --------------------------------------------------------------------

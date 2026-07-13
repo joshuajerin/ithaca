@@ -1,8 +1,6 @@
 # Terms of Service
 
-> **Draft — review before publishing.** This document contains fill-in tokens that must be finalized by Ithaca and its counsel before public launch: `[GOVERNING-LAW JURISDICTION]`, `[LEGAL CONTACT EMAIL]`, and the entity form (e.g. "Ithaca, Inc." vs "Ithaca, LLC"). These are drafts, not attorney-reviewed final language.
-
-These Terms of Service ("Terms") govern your access to and use of the Doomberg platform, websites, APIs, MCP gateway, and related services (collectively, the "Service"). The Service is operated by **Ithaca** ("Ithaca", "we", "our", or "us"). By accessing or using the Service, or by connecting an agent to it, you agree to be bound by these Terms. If you do not agree, do not use the Service.
+These Terms of Service ("Terms") govern your access to and use of the Doomberg platform, websites, APIs, MCP gateway, and related services (collectively, the "Service"). The Service is operated by **Ithaca, Inc., a Delaware corporation** ("Ithaca", "we", "our", or "us"). By accessing or using the Service, or by connecting an agent to it, you agree to be bound by these Terms. If you do not agree, do not use the Service.
 
 ## 1. Definitions
 
@@ -18,7 +16,7 @@ You must be at least 18 years old and able to form a binding contract to use the
 
 ## 3. Accounts and authentication
 
-Authentication is provided through our identity provider, Clerk. You are responsible for safeguarding your credentials and API keys and for all activity under your account or connected Agents. Notify us immediately at `[LEGAL CONTACT EMAIL]` of any unauthorized use.
+Authentication is provided through our identity provider, Clerk. You are responsible for safeguarding your credentials and API keys and for all activity under your account or connected Agents. Notify us immediately at [joshuaxjerin@gmail.com](mailto:joshuaxjerin@gmail.com) of any unauthorized use.
 
 ## 4. Paper-only; no live trading
 
@@ -70,8 +68,8 @@ We may update these Terms from time to time. Material changes will be reflected 
 
 ## 16. Governing law and disputes
 
-These Terms are governed by the laws of `[GOVERNING-LAW JURISDICTION]`, without regard to conflict-of-laws rules. The courts located in `[GOVERNING-LAW JURISDICTION]` will have exclusive jurisdiction over disputes, except where prohibited by applicable law.
+These Terms are governed by the laws of the State of Delaware, without regard to conflict-of-laws rules. The state and federal courts located in Delaware will have exclusive jurisdiction over disputes, except where prohibited by applicable law.
 
 ## 17. Contact
 
-Questions about these Terms: `[LEGAL CONTACT EMAIL]`.
+Questions about these Terms: [joshuaxjerin@gmail.com](mailto:joshuaxjerin@gmail.com).

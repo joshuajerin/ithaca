@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from rest_helpers import seed_run
+from doomberg_rest.app import _database_health
 
 
 def _h(tenant_id: str) -> dict[str, str]:
@@ -80,6 +81,8 @@ def test_ops_status_reports_live_data_and_paper_execution(client, stores, tenant
     run_id = seed_run(stores, tenant_a, kind="backtest")
     stores.jobs.create_for_run(tenant_a, run_id, kind="backtest", profile="backtest")
     stores.leases.acquire("trigger-engine", "worker-a", ttl_seconds=60)
+    for role in ("backtest-worker", "paper-scheduler", "notification-dispatcher"):
+        stores.worker_heartbeats.heartbeat(f"worker-{role}", role, ttl_seconds=60)
     stores.providers.upsert_connection(
         tenant_a,
         provider="ibkr",
@@ -100,8 +103,51 @@ def test_ops_status_reports_live_data_and_paper_execution(client, stores, tenant
     assert body["execution"]["disabled"] is False
     assert body["jobs"]["queued"] == 1
     assert body["leases"][0]["lease_name"] == "trigger-engine"
+    assert set(body["workers"]["missing_roles"]) == {
+        "adaptive-dashboard-worker",
+        "execution-reconciler",
+        "trigger-engine",
+        "trigger-job-worker",
+    }
+    assert set(body["workers"]["healthy_roles"]) == {
+        "backtest-worker", "notification-dispatcher", "paper-scheduler"
+    }
     assert any(row["name"] == "Trading" and row["state"] == "succeeded"
                for row in body["readiness"])
+
+
+def test_ops_status_separates_expired_leases_and_heartbeats(client, stores, tenant_a):
+    old = datetime.now(timezone.utc) - timedelta(minutes=10)
+    stores.leases.acquire("paper-scheduler", "old-worker", ttl_seconds=1, now=old)
+    stores.worker_heartbeats.heartbeat(
+        "old-worker", "paper-scheduler", ttl_seconds=1, now=old
+    )
+
+    body = client.get("/api/ops/status", headers=_h(tenant_a)).json()
+
+    assert body["leases"] == []
+    assert body["stale_leases"][0]["active"] is False
+    assert body["workers"]["rows"][0]["expired"] is True
+    assert "paper-scheduler" in body["workers"]["missing_roles"]
+
+
+def test_database_health_fails_closed_on_ping_error():
+    class BrokenConnection:
+        def execute(self, *_args):
+            raise RuntimeError("database unavailable")
+
+    class BrokenDb:
+        is_postgres = True
+        conn = BrokenConnection()
+
+        def system_scope(self):
+            from contextlib import nullcontext
+            return nullcontext()
+
+    health = _database_health(BrokenDb())
+    assert health["status"] == "error"
+    assert health["ready"] is False
+    assert "database unavailable" in health["error"]
 
 
 def test_live_data_smoke_route_calls_read_only_quote_engine(client, tenant_a, monkeypatch):
@@ -232,6 +278,7 @@ def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tena
     assert client.get(f"/api/artifacts/{artifact['artifact_id']}", headers=_h(tenant_a)).json()["uri"] == artifact["uri"]
     assert client.get(f"/api/artifacts/{artifact['artifact_id']}", headers=_h(tenant_b)).status_code == 404
 
+
     approvals = client.get("/api/approvals", headers=_h(tenant_a)).json()["approvals"]
     assert approvals[0]["approval_id"] == approval["approval_id"]
     decided = client.post(
@@ -327,3 +374,45 @@ def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tena
     )
     firings = client.get("/api/trigger-firings", headers=_h(tenant_a)).json()["firings"]
     assert firings[0]["trigger_id"] == trigger["trigger_id"]
+
+
+def test_artifact_download_is_tenant_scoped_and_serves_persisted_bytes(
+    client, stores, tenant_a, tenant_b, tmp_path
+):
+    content = b"metric,value\nsharpe,1.2\n"
+    path = tmp_path / "metrics.csv"
+    path.write_bytes(content)
+    run_id = stores.runs.create(tenant_a, "backtest", None, {"name": "download"})
+    artifact = stores.artifacts.create(
+        tenant_a,
+        run_id,
+        kind="metrics",
+        uri=path.as_uri(),
+        media_type="text/csv",
+        bytes_=len(content),
+        metadata={"filename": "metrics.csv"},
+    )
+
+    denied = client.get(f"/api/artifacts/{artifact['artifact_id']}/download", headers=_h(tenant_b))
+    assert denied.status_code == 404
+    response = client.get(
+        f"/api/artifacts/{artifact['artifact_id']}/download", headers=_h(tenant_a)
+    )
+    assert response.status_code == 200
+    assert response.content == content
+    assert "metrics.csv" in response.headers["content-disposition"]
+
+
+def test_memory_artifact_download_reports_missing_durable_bytes(client, stores, tenant_a):
+    run_id = stores.runs.create(tenant_a, "backtest", None, {"name": "memory"})
+    artifact = stores.artifacts.create(
+        tenant_a,
+        run_id,
+        kind="summary",
+        uri=f"memory://backtests/{tenant_a}/{run_id}/summary.json",
+    )
+    response = client.get(
+        f"/api/artifacts/{artifact['artifact_id']}/download", headers=_h(tenant_a)
+    )
+    assert response.status_code == 409
+    assert "not persisted" in response.json()["detail"]

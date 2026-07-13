@@ -17,6 +17,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from .db_scope import tenant_scoped_store
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -34,6 +36,7 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
     }
 
 
+@tenant_scoped_store()
 class StrategyStore:
     """Immutable versioned strategy specs (same name -> new version)."""
 

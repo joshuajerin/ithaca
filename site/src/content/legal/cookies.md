@@ -1,8 +1,6 @@
 # Cookie Policy
 
-> **Draft — review before publishing.** Contains fill-in token: `[LEGAL CONTACT EMAIL]`. Confirm the exact cookie/local-storage names set by Clerk and Vercel in production before publishing the table below.
-
-This Cookie Policy explains how **Ithaca** ("we") uses cookies and similar technologies (local storage, pixels) on the Doomberg websites and application (the "Service"). It supplements our [Privacy Policy](/privacy).
+This Cookie Policy explains how **Ithaca, Inc., a Delaware corporation** ("we") uses cookies and similar technologies (local storage, pixels) on the Doomberg websites and application (the "Service"). It supplements our [Privacy Policy](/privacy).
 
 ## 1. What are cookies?
 
@@ -27,4 +25,4 @@ We may update this Cookie Policy as our use of cookies evolves. The "Last update
 
 ## 5. Contact
 
-Questions about cookies: `[LEGAL CONTACT EMAIL]`.
+Questions about cookies: [joshuaxjerin@gmail.com](mailto:joshuaxjerin@gmail.com).

@@ -17,9 +17,9 @@ export type LegalDoc = {
   body: string;
 };
 
-// Shared effective / last-updated date for the initial publication.
-export const EFFECTIVE_DATE = "2026-06-28";
-export const LAST_UPDATED = "2026-06-28";
+// Shared effective / last-updated date for the published legal documents.
+export const EFFECTIVE_DATE = "July 13, 2026";
+export const LAST_UPDATED = "July 13, 2026";
 
 // Ordered so the in-page index renders in a sensible reading order.
 export const LEGAL_DOCS: LegalDoc[] = [

@@ -1,26 +1,45 @@
 name: deploy-do
+run-name: deploy-do ${{ github.event.inputs.deploy_env || 'prod' }} ${{ github.event.inputs.mode || 'auto' }} @ ${{ github.event.workflow_run.head_sha || github.sha }}
 
 # Deploy only after ci, deploy-checks, and prod-parity pass for the same main SHA.
 on:
+  pull_request:
   workflow_run:
     workflows: ["ci", "deploy-checks", "prod-parity"]
     types: [completed]
     branches: ["main"]
   workflow_dispatch:
+    inputs:
+      deploy_env:
+        description: Environment to validate or deploy.
+        type: choice
+        required: true
+        default: dev
+        options:
+          - dev
+          - prod
+      mode:
+        description: Use dry-run for a no-mutation deploy preflight; deploy mutates the selected environment.
+        type: choice
+        required: true
+        default: dry-run
+        options:
+          - dry-run
+          - deploy
 
 permissions:
   actions: read
   contents: read
 
 concurrency:
-  group: deploy-do-${{ github.ref }}
+  group: deploy-do-${{ github.event_name }}-${{ github.event.inputs.deploy_env || 'prod' }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   gate:
     name: 0/6 • gate (ci + deploy-checks + prod-parity must pass)
     runs-on: self-hosted
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -37,8 +56,8 @@ jobs:
           EVENT_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           echo "Triggered by: ${{ github.event_name }}"
-          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
-            echo "Manual dispatch — skipping gate check"
+          if [[ "${EVENT_NAME}" == "pull_request" || "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            echo "Pull-request/manual run — upstream workflow_run gate is not required."
           else
             echo "Upstream workflow: ${EVENT_WORKFLOW_NAME}"
             echo "Conclusion: ${EVENT_WORKFLOW_CONCLUSION}"
@@ -46,7 +65,7 @@ jobs:
               echo "ERROR: upstream workflow did not succeed. Aborting deploy."
               exit 1
             fi
-            python .github/scripts/verify_required_workflows.py
+            python3 .github/scripts/verify_required_workflows.py
           fi
           echo "Gate passed."
 
@@ -59,25 +78,48 @@ jobs:
       image_tag: ${{ steps.classify.outputs.image_tag }}
       short_sha: ${{ steps.classify.outputs.short_sha }}
       push_latest: ${{ steps.classify.outputs.push_latest }}
+      deploy_mode: ${{ steps.classify.outputs.deploy_mode }}
     steps:
       - id: classify
         shell: bash
+        env:
+          EVENT_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          DISPATCH_DEPLOY_ENV: ${{ github.event.inputs.deploy_env }}
+          DISPATCH_MODE: ${{ github.event.inputs.mode }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           # When triggered by workflow_run, the SHA comes from the workflow_run event
-          # When triggered by workflow_dispatch, use GITHUB_SHA
-          if [[ -n "${{ github.event.workflow_run.head_sha }}" ]]; then
-            short="${{ github.event.workflow_run.head_sha }}"
+          # When triggered by pull_request, deploy the merge SHA to dev with the
+          # same build-push/deploy jobs that prod uses after merge.
+          # When triggered by workflow_dispatch, use GITHUB_SHA and the selected mode
+          if [[ "${EVENT_NAME}" == "workflow_run" && -n "${EVENT_HEAD_SHA}" ]]; then
+            short="${EVENT_HEAD_SHA}"
             short="${short:0:7}"
+            deploy_env="prod"
+            deploy_mode="deploy"
+            image_tag="${short}"
+          elif [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            short="${GITHUB_SHA}"
+            short="${short:0:7}"
+            deploy_env="dev"
+            deploy_mode="deploy"
+            image_tag="pr-${PULL_REQUEST_NUMBER}-${short}"
           else
             short="${GITHUB_SHA::7}"
+            deploy_env="${DISPATCH_DEPLOY_ENV:-dev}"
+            deploy_mode="${DISPATCH_MODE:-dry-run}"
+            image_tag="${short}"
           fi
-          ref="main"
-          deploy_env="prod"
-          image_tag="${short}"
-          push_latest="true"
+          push_latest="false"
+          if [[ "${deploy_env}" == "prod" && "${deploy_mode}" == "deploy" ]]; then
+            push_latest="true"
+          fi
           {
             echo "deploy_env=${deploy_env}"
+            echo "deploy_mode=${deploy_mode}"
             echo "image_tag=${image_tag}"
             echo "short_sha=${short}"
             echo "push_latest=${push_latest}"
@@ -119,7 +161,7 @@ jobs:
           load: true
           tags: doomberg:ci
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
 
       - name: IBKR engine image build smoke
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
@@ -131,7 +173,7 @@ jobs:
           load: true
           tags: doomberg-ibkr-engine:ci
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
 
       - name: Service role smoke
         run: |
@@ -171,7 +213,7 @@ jobs:
     name: 2/6 • deploy config preflight
     runs-on: self-hosted
     needs: classify
-    environment: ${{ needs.classify.outputs.deploy_env }}
+    environment: ${{ github.event_name == 'pull_request' && 'dev' || needs.classify.outputs.deploy_env }}
     steps:
       - name: Required secrets and variables
         shell: bash
@@ -181,19 +223,32 @@ jobs:
           DOOMBERG_PLATFORM_DB_URL: ${{ secrets.DOOMBERG_PLATFORM_DB_URL }}
           DOOMBERG_SESSION_SECRET: ${{ secrets.DOOMBERG_SESSION_SECRET }}
           CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
           CLERK_PEM_PUBLIC_KEY: ${{ secrets.CLERK_PEM_PUBLIC_KEY }}
           CLERK_JWKS_URL: ${{ vars.CLERK_JWKS_URL }}
           CLERK_ALLOWED_ORIGINS: ${{ vars.CLERK_ALLOWED_ORIGINS }}
           CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER || 'modal' }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_MODEL: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_MODEL || 'google/gemma-4-E4B-it' }}
           DOOMBERG_ADMIN_TOKEN: ${{ secrets.DOOMBERG_ADMIN_TOKEN }}
           DOOMBERG_SMOKE_API_KEY: ${{ secrets.DOOMBERG_SMOKE_API_KEY }}
           DOOMBERG_SMOKE_NO_SCOPE_API_KEY: ${{ secrets.DOOMBERG_SMOKE_NO_SCOPE_API_KEY }}
+          DOOMBERG_ARTIFACT_BUCKET: ${{ vars.DOOMBERG_ARTIFACT_BUCKET }}
+          DOOMBERG_ARTIFACT_ENDPOINT_URL: ${{ vars.DOOMBERG_ARTIFACT_ENDPOINT_URL }}
+          DOOMBERG_ARTIFACT_ACCESS_KEY_ID: ${{ secrets.DOOMBERG_ARTIFACT_ACCESS_KEY_ID }}
+          DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY: ${{ secrets.DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY }}
+          BACKTEST_WORKER_ENABLED: ${{ vars.BACKTEST_WORKER_ENABLED }}
           DO_CLUSTER_NAME: ${{ vars.DO_CLUSTER_NAME }}
           K8S_GATEWAY_NAMESPACE: ${{ vars.K8S_GATEWAY_NAMESPACE }}
           K8S_WORKER_NAMESPACE: ${{ vars.K8S_WORKER_NAMESPACE }}
           APP_HOST: ${{ vars.APP_HOST }}
           MCP_HOST: ${{ vars.MCP_HOST }}
+          DEPLOY_MODE: ${{ needs.classify.outputs.deploy_mode }}
         run: |
           set -euo pipefail
 
@@ -206,27 +261,59 @@ jobs:
             fi
           }
 
-          require_env DIGITALOCEAN_ACCESS_TOKEN
-          require_env DOOMBERG_PLATFORM_DB_URL
-          require_env DOOMBERG_SESSION_SECRET
-          require_env CLERK_PUBLISHABLE_KEY
-          require_env CLERK_ALLOWED_ORIGINS
-          require_env CLERK_ISSUER
-          require_env DO_CLUSTER_NAME
-          require_env K8S_GATEWAY_NAMESPACE
-          require_env K8S_WORKER_NAMESPACE
-          require_env APP_HOST
-          require_env MCP_HOST
-          require_env ANTHROPIC_API_KEY
-          if [[ -z "${CLERK_PEM_PUBLIC_KEY:-}" && -z "${CLERK_JWKS_URL:-}" ]]; then
-            echo "ERROR: required ${DEPLOY_ENV} deploy config is missing: CLERK_PEM_PUBLIC_KEY or CLERK_JWKS_URL" >&2
-            missing=1
+          if [[ "${DEPLOY_MODE}" == "dry-run" ]]; then
+            echo "Deploy config preflight is in dry-run mode; live deploy credentials are not required."
+            require_env DIGITALOCEAN_ACCESS_TOKEN
+            require_env DO_CLUSTER_NAME
+          else
+            require_env DIGITALOCEAN_ACCESS_TOKEN
+            require_env DOOMBERG_PLATFORM_DB_URL
+            require_env DOOMBERG_SESSION_SECRET
+            require_env CLERK_PUBLISHABLE_KEY
+            require_env CLERK_SECRET_KEY
+            require_env CLERK_ALLOWED_ORIGINS
+            require_env CLERK_ISSUER
+            require_env DO_CLUSTER_NAME
+            require_env K8S_GATEWAY_NAMESPACE
+            require_env K8S_WORKER_NAMESPACE
+            require_env APP_HOST
+            require_env MCP_HOST
+            require_env DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER
+            require_env DOOMBERG_ADAPTIVE_DASHBOARD_MODEL
+            case "${DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER}" in
+              modal|modal-openai)
+                require_env DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL
+                require_env DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY
+                require_env DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET
+                ;;
+              openai|openai-compatible)
+                require_env DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL
+                require_env DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY
+                ;;
+              anthropic)
+                require_env ANTHROPIC_API_KEY
+                ;;
+              *)
+                echo "ERROR: unsupported DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER=${DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER}" >&2
+                missing=1
+                ;;
+            esac
+            if [[ -z "${CLERK_PEM_PUBLIC_KEY:-}" && -z "${CLERK_JWKS_URL:-}" ]]; then
+              echo "ERROR: required ${DEPLOY_ENV} deploy config is missing: CLERK_PEM_PUBLIC_KEY or CLERK_JWKS_URL" >&2
+              missing=1
+            fi
           fi
 
-          if [[ "${DEPLOY_ENV}" == "prod" ]]; then
+          if [[ "${DEPLOY_ENV}" == "prod" && "${DEPLOY_MODE}" != "dry-run" ]]; then
             require_env DOOMBERG_ADMIN_TOKEN
             require_env DOOMBERG_SMOKE_API_KEY
             require_env DOOMBERG_SMOKE_NO_SCOPE_API_KEY
+            if [[ "${BACKTEST_WORKER_ENABLED:-0}" == "1" ]]; then
+              require_env DOOMBERG_ARTIFACT_BUCKET
+              require_env DOOMBERG_ARTIFACT_ENDPOINT_URL
+              require_env DOOMBERG_ARTIFACT_ACCESS_KEY_ID
+              require_env DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY
+            fi
           fi
 
           if [[ "${missing}" != "0" ]]; then
@@ -239,6 +326,7 @@ jobs:
     name: 4/6 • build and push image
     runs-on: self-hosted
     needs: [classify, checks]
+    if: needs.classify.outputs.deploy_mode == 'deploy'
     environment: ${{ needs.classify.outputs.deploy_env }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -274,10 +362,16 @@ jobs:
           push: true
           tags: registry.digitalocean.com/${{ env.REGISTRY_NAME }}/doomberg:${{ needs.classify.outputs.image_tag }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
           build-args: |
             CLERK_PUBLISHABLE_VALUE=${{ secrets.CLERK_PUBLISHABLE_KEY }}
             VITE_API_BASE=/api
+
+      - name: Verify pushed app image exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/doomberg:${{ needs.classify.outputs.image_tag }}" >/dev/null
 
       - name: Build and push immutable IBKR engine image
         if: needs.classify.outputs.deploy_env == 'prod' && vars.IBKR_ENGINE_ENABLED != '0'
@@ -289,12 +383,117 @@ jobs:
           push: true
           tags: registry.digitalocean.com/${{ env.REGISTRY_NAME }}/doomberg-ibkr-engine:${{ needs.classify.outputs.image_tag }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
+
+      - name: Verify pushed IBKR engine image exists
+        if: needs.classify.outputs.deploy_env == 'prod' && vars.IBKR_ENGINE_ENABLED != '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:${{ needs.classify.outputs.image_tag }}" >/dev/null
+
+  deploy-dry-run:
+    name: 4/6 • deploy dry-run to ${{ needs.classify.outputs.deploy_env }}
+    runs-on: self-hosted
+    needs: [classify, checks]
+    if: needs.classify.outputs.deploy_mode == 'dry-run'
+    environment: ${{ github.event_name == 'pull_request' && 'dev' || needs.classify.outputs.deploy_env }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@c0c8b32d33a5244f1e5947304550403b63930415
+        with:
+          version: "v1.33.0"
+
+      - name: Save kubeconfig
+        env:
+          DO_CLUSTER_NAME: ${{ vars.DO_CLUSTER_NAME }}
+        run: doctl kubernetes cluster kubeconfig save "${DO_CLUSTER_NAME}"
+
+      - name: Resolve dry-run environment
+        shell: bash
+        env:
+          DEPLOY_ENV: ${{ needs.classify.outputs.deploy_env }}
+          IMAGE_TAG: ${{ needs.classify.outputs.image_tag }}
+          REGISTRY_NAME: ${{ vars.REGISTRY_NAME }}
+          DO_CLUSTER_NAME: ${{ vars.DO_CLUSTER_NAME }}
+          K8S_GATEWAY_NAMESPACE: ${{ vars.K8S_GATEWAY_NAMESPACE }}
+          K8S_WORKER_NAMESPACE: ${{ vars.K8S_WORKER_NAMESPACE }}
+          APP_HOST: ${{ vars.APP_HOST }}
+          MCP_HOST: ${{ vars.MCP_HOST }}
+        run: |
+          set -euo pipefail
+          {
+            echo "DEPLOY_ENV=${DEPLOY_ENV}"
+            echo "IMAGE_TAG=${IMAGE_TAG}"
+            echo "REGISTRY_NAME=${REGISTRY_NAME:-doomberg}"
+            echo "DO_CLUSTER_NAME=${DO_CLUSTER_NAME}"
+            echo "K8S_GATEWAY_NAMESPACE=${K8S_GATEWAY_NAMESPACE}"
+            echo "K8S_WORKER_NAMESPACE=${K8S_WORKER_NAMESPACE}"
+            echo "APP_HOST=${APP_HOST}"
+            echo "MCP_HOST=${MCP_HOST}"
+            echo "WORKER_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-doomberg}/doomberg:${IMAGE_TAG}"
+            echo "IBKR_ENGINE_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-doomberg}/doomberg-ibkr-engine:${IMAGE_TAG}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Render and validate deploy manifests without applying
+        env:
+          LOAD_LOCAL_ENV: "0"
+          DEPLOY_DRY_RUN: "client"
+          APP_NODE_WORKLOAD: ${{ vars.APP_NODE_WORKLOAD }}
+          WORKER_NODE_WORKLOAD: ${{ vars.WORKER_NODE_WORKLOAD }}
+          APP_REPLICAS: ${{ vars.APP_REPLICAS }}
+          WORKER_REPLICAS: ${{ vars.WORKER_REPLICAS }}
+          DOOMBERG_PLATFORM_DB_URL: ${{ secrets.DOOMBERG_PLATFORM_DB_URL || 'postgresql://dry-run.invalid/doomberg' }}
+          DOOMBERG_SESSION_SECRET: ${{ secrets.DOOMBERG_SESSION_SECRET || 'dry-run-session-secret' }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY || 'sk_test_dry-run' }}
+          CLERK_PEM_PUBLIC_KEY: ${{ secrets.CLERK_PEM_PUBLIC_KEY }}
+          CLERK_JWKS_URL: ${{ vars.CLERK_JWKS_URL || 'https://clerk.example.invalid/.well-known/jwks.json' }}
+          CLERK_ALLOWED_ORIGINS: ${{ vars.CLERK_ALLOWED_ORIGINS || 'https://dev-app.doomberg.me' }}
+          CLERK_ISSUER: ${{ vars.CLERK_ISSUER || 'https://clerk.example.invalid' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER || 'modal' }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL || 'https://dry-run.invalid/v1' }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY || 'dry-run-modal-key' }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY || 'wk-dry-run' }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET || 'ws-dry-run' }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_MODEL: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_MODEL || 'google/gemma-4-E4B-it' }}
+          DOOMBERG_ADMIN_TOKEN: ${{ secrets.DOOMBERG_ADMIN_TOKEN }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          DATABENTO_API_KEY: ${{ secrets.DATABENTO_API_KEY }}
+          IBKR_ENGINE_ENABLED: ${{ vars.IBKR_ENGINE_ENABLED }}
+          SHARED_IBKR_NAMESPACE: ${{ vars.SHARED_IBKR_NAMESPACE }}
+          DOOMBERG_IBKR_ENGINE_URL: ${{ vars.DOOMBERG_IBKR_ENGINE_URL }}
+          DOOMBERG_IBKR_ENGINE_TOKEN: ${{ secrets.DOOMBERG_IBKR_ENGINE_TOKEN }}
+          DOOMBERG_IBKR_QUOTE_PATH: ${{ vars.DOOMBERG_IBKR_QUOTE_PATH }}
+          DOOMBERG_IBKR_ACCOUNTS_PATH: ${{ vars.DOOMBERG_IBKR_ACCOUNTS_PATH }}
+          DOOMBERG_IBKR_POSITIONS_PATH: ${{ vars.DOOMBERG_IBKR_POSITIONS_PATH }}
+          DOOMBERG_IBKR_ORDERS_PATH: ${{ vars.DOOMBERG_IBKR_ORDERS_PATH }}
+          DOOMBERG_IBKR_ORDER_PATH: ${{ vars.DOOMBERG_IBKR_ORDER_PATH }}
+          IBKR_SIGNIN_PUBLIC: ${{ vars.IBKR_SIGNIN_PUBLIC }}
+          IBKR_SIGNIN_HOST: ${{ vars.IBKR_SIGNIN_HOST }}
+          IBKR_SIGNIN_REMOTE_IPS: ${{ vars.IBKR_SIGNIN_REMOTE_IPS }}
+          APPLY_CADDY: "0"
+          CADDY_APPLY_ENV: ${{ vars.CADDY_APPLY_ENV }}
+          DOOMBERG_ENABLE_LIVE_EXECUTION: ${{ vars.DOOMBERG_ENABLE_LIVE_EXECUTION }}
+          DOOMBERG_EXECUTION_KILL_SWITCH: ${{ vars.DOOMBERG_EXECUTION_KILL_SWITCH }}
+          DOOMBERG_EXECUTION_MAX_NOTIONAL_USD: ${{ vars.DOOMBERG_EXECUTION_MAX_NOTIONAL_USD }}
+          DOOMBERG_EXECUTION_MAX_QUANTITY: ${{ vars.DOOMBERG_EXECUTION_MAX_QUANTITY }}
+          DOOMBERG_EXECUTION_MAX_FRESHNESS_MS: ${{ vars.DOOMBERG_EXECUTION_MAX_FRESHNESS_MS }}
+        run: bash deploy/deploy_services.sh
 
   deploy:
     name: 5/6 • deploy to ${{ needs.classify.outputs.deploy_env }}
     runs-on: self-hosted
     needs: [classify, build-push]
+    if: needs.classify.outputs.deploy_mode == 'deploy'
     environment: ${{ needs.classify.outputs.deploy_env }}
     concurrency:
       group: deploy-${{ needs.classify.outputs.deploy_env }}
@@ -352,11 +551,6 @@ jobs:
       - name: Save kubeconfig
         run: doctl kubernetes cluster kubeconfig save "${DO_CLUSTER_NAME}"
 
-      - name: Install kubectl
-        run: |
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl
-
       - name: Deploy services
         env:
           LOAD_LOCAL_ENV: "0"
@@ -364,16 +558,31 @@ jobs:
           WORKER_NODE_WORKLOAD: ${{ vars.WORKER_NODE_WORKLOAD }}
           APP_REPLICAS: ${{ vars.APP_REPLICAS }}
           WORKER_REPLICAS: ${{ vars.WORKER_REPLICAS }}
+          BACKTEST_REPLICAS: ${{ vars.BACKTEST_REPLICAS }}
+          BACKTEST_MAX_REPLICAS: ${{ vars.BACKTEST_MAX_REPLICAS }}
+          BACKTEST_WORKER_ENABLED: ${{ vars.BACKTEST_WORKER_ENABLED }}
           DOOMBERG_PLATFORM_DB_URL: ${{ secrets.DOOMBERG_PLATFORM_DB_URL }}
           DOOMBERG_SESSION_SECRET: ${{ secrets.DOOMBERG_SESSION_SECRET }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
           CLERK_PEM_PUBLIC_KEY: ${{ secrets.CLERK_PEM_PUBLIC_KEY }}
           CLERK_JWKS_URL: ${{ vars.CLERK_JWKS_URL }}
           CLERK_ALLOWED_ORIGINS: ${{ vars.CLERK_ALLOWED_ORIGINS }}
           CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER || 'modal' }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET }}
+          DOOMBERG_ADAPTIVE_DASHBOARD_MODEL: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_MODEL || 'google/gemma-4-E4B-it' }}
           DOOMBERG_ADMIN_TOKEN: ${{ secrets.DOOMBERG_ADMIN_TOKEN }}
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
           DATABENTO_API_KEY: ${{ secrets.DATABENTO_API_KEY }}
+          DOOMBERG_ARTIFACT_BUCKET: ${{ vars.DOOMBERG_ARTIFACT_BUCKET }}
+          DOOMBERG_ARTIFACT_ENDPOINT_URL: ${{ vars.DOOMBERG_ARTIFACT_ENDPOINT_URL }}
+          DOOMBERG_ARTIFACT_REGION: ${{ vars.DOOMBERG_ARTIFACT_REGION }}
+          DOOMBERG_ARTIFACT_ACCESS_KEY_ID: ${{ secrets.DOOMBERG_ARTIFACT_ACCESS_KEY_ID }}
+          DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY: ${{ secrets.DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY }}
           IBKR_ENGINE_ENABLED: ${{ vars.IBKR_ENGINE_ENABLED }}
           SHARED_IBKR_NAMESPACE: ${{ vars.SHARED_IBKR_NAMESPACE }}
           DOOMBERG_IBKR_ENGINE_URL: ${{ vars.DOOMBERG_IBKR_ENGINE_URL }}
@@ -389,6 +598,7 @@ jobs:
           APPLY_CADDY: ${{ vars.APPLY_CADDY }}
           CADDY_APPLY_ENV: ${{ vars.CADDY_APPLY_ENV }}
           DOOMBERG_ENABLE_LIVE_EXECUTION: ${{ vars.DOOMBERG_ENABLE_LIVE_EXECUTION }}
+          DOOMBERG_EXECUTION_KILL_SWITCH: ${{ vars.DOOMBERG_EXECUTION_KILL_SWITCH }}
           DOOMBERG_EXECUTION_MAX_NOTIONAL_USD: ${{ vars.DOOMBERG_EXECUTION_MAX_NOTIONAL_USD }}
           DOOMBERG_EXECUTION_MAX_QUANTITY: ${{ vars.DOOMBERG_EXECUTION_MAX_QUANTITY }}
           DOOMBERG_EXECUTION_MAX_FRESHNESS_MS: ${{ vars.DOOMBERG_EXECUTION_MAX_FRESHNESS_MS }}
@@ -398,7 +608,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          curl -fsS --retry 6 --retry-delay 5 "https://${APP_HOST}/livez"
           curl -fsS --retry 6 --retry-delay 5 "https://${APP_HOST}/healthz"
+          curl -fsS --retry 6 --retry-delay 5 "https://${APP_HOST}/readyz"
           code="$(curl -sS -o /tmp/doomberg-mcp-response.txt -w "%{http_code}" "https://${MCP_HOST}/mcp")"
           test "${code}" = "401"
 
@@ -431,7 +643,7 @@ jobs:
                 --base-url "https://${APP_HOST}" \
                 --mcp-url "https://${MCP_HOST}/mcp" \
                 --require-postgres \
-                --require-active-worker \
+                --require-workers-ready \
                 --require-mcp \
                 "${ibkr_args[@]}" \
                 --json
@@ -462,11 +674,14 @@ jobs:
         env:
           IBKR_ENGINE_ENABLED: ${{ vars.IBKR_ENGINE_ENABLED }}
         run: |
+          set -euo pipefail
           docker buildx imagetools create \
             -t "registry.digitalocean.com/${REGISTRY_NAME}/doomberg:latest" \
             "registry.digitalocean.com/${REGISTRY_NAME}/doomberg:${{ needs.classify.outputs.image_tag }}"
+          docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/doomberg:latest" >/dev/null
           if [[ "${IBKR_ENGINE_ENABLED:-1}" != "0" ]]; then
             docker buildx imagetools create \
               -t "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:latest" \
               "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:${{ needs.classify.outputs.image_tag }}"
+            docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:latest" >/dev/null
           fi

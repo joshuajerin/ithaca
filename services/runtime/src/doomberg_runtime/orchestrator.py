@@ -34,6 +34,7 @@ from .backtest_runner import run_backtest_job
 from .calendar import MarketCalendar
 from .live_runner import DEFAULT_BUDGET_MS as PAPER_BUDGET_MS
 from .live_runner import DEFAULT_MAX_STALENESS_S, run_paper_tick
+from .health import WorkerReporter
 
 __all__ = ["BacktestWorker", "TriggerJobWorker", "PaperScheduler", "ApplyDelta"]
 
@@ -67,13 +68,33 @@ class BacktestWorker:
         """
         jobs = getattr(self.platform, "jobs", None)
         if jobs is not None:
+            exhausted = jobs.fail_exhausted(profiles=("backtest",), kinds=("backtest",))
+            for job in exhausted:
+                run = self.platform.runs.get(job["tenant_id"], job["run_id"])
+                if run and run.get("state") in {"queued", "running"}:
+                    self.platform.runs.transition(
+                        job["tenant_id"], job["run_id"], "failed", expect=run["version"]
+                    )
+                    emit(
+                        self.platform.trace,
+                        tenant_id=job["tenant_id"],
+                        run_id=job["run_id"],
+                        type="error",
+                        data={
+                            "stage": "worker",
+                            "error": "retry_exhausted",
+                            "job_id": job["job_id"],
+                        },
+                    )
             claimed = jobs.claim_available(
                 profiles=("backtest",),
                 kinds=("backtest",),
                 worker_id=self.worker_id,
                 limit=self.batch,
             )
-            return self._run_claimed_jobs(claimed)
+            result = self._run_claimed_jobs(claimed)
+            result["exhausted"] = [job["job_id"] for job in exhausted]
+            return result
 
         claimed = self.platform.runs.claim_queued(("backtest",), limit=self.batch)
         succeeded: list[str] = []
@@ -123,9 +144,20 @@ class BacktestWorker:
 
     def run_forever(self, *, interval_s: float = 1.0, stop: threading.Event | None = None) -> None:
         stop = stop or threading.Event()
-        while not stop.is_set():
-            self.poll_once()
-            stop.wait(interval_s)
+        reporter = WorkerReporter(
+            self.platform,
+            worker_id=self.worker_id,
+            role="backtest-worker",
+            ttl_seconds=max(15.0, interval_s * 4.0),
+        )
+        reporter.pulse(status="starting")
+        try:
+            while not stop.is_set():
+                result = self.poll_once()
+                reporter.pulse(metadata={"last_claimed": result["claimed"]})
+                stop.wait(interval_s)
+        finally:
+            reporter.stop()
 
 
 class TriggerJobWorker:
@@ -312,9 +344,24 @@ class TriggerJobWorker:
 
     def run_forever(self, *, interval_s: float = 2.0, stop: threading.Event | None = None) -> None:
         stop = stop or threading.Event()
-        while not stop.is_set():
-            self.poll_once()
-            stop.wait(interval_s)
+        reporter = WorkerReporter(
+            self.platform,
+            worker_id=self.worker_id,
+            role="trigger-job-worker",
+            ttl_seconds=max(15.0, interval_s * 4.0),
+        )
+        reporter.pulse(status="starting")
+        try:
+            while not stop.is_set():
+                result = self.poll_once()
+                reporter.pulse(
+                    status="degraded" if result["failed"] else "healthy",
+                    detail=f"{len(result['failed'])} job(s) failed" if result["failed"] else None,
+                    metadata={"last_claimed": result["claimed"]},
+                )
+                stop.wait(interval_s)
+        finally:
+            reporter.stop()
 
 
 class PaperScheduler:

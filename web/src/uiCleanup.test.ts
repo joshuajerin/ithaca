@@ -41,7 +41,7 @@ describe("customer-facing UI cleanup guards", () => {
     expect(app).toContain("navItems");
     expect(app).toContain("Dashboard");
     expect(app).toContain("Sessions");
-    expect(app).toContain("Deployments");
+    expect(app).toContain("Backtests");
     expect(app).not.toMatch(/\b(Runs|Orders|Approvals|Triggers|Artifacts|Providers|Trades|Docs)\b/);
     expect(app).not.toMatch(/path="\/(?:runs|runs\/:id|deploys|trades|docs)"/);
   });

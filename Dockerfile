@@ -9,6 +9,7 @@
 #   control-plane   :  doomberg-control    (uvicorn doomberg_control.app)   money-path writer
 #   conductor       :  doomberg-conductor  (python scripts/run_workers.py)  backtest worker + paper scheduler
 #   trigger-engine  :  doomberg-trigger    (python -m doomberg_runtime.trigger_engine)
+#   backtest-worker :  dedicated durable backtest queue worker
 #   backtest-runner :  doomberg-backtest   (python -m doomberg_runtime.backtest_runner)
 #   live-runner     :  doomberg-live       (python -m doomberg_runtime.live_runner)
 #
@@ -137,7 +138,7 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 
 USER doomberg
 
-# Default role = the conductor (backtest worker + paper scheduler). Override the
+# Default role = the conductor (singleton/interactive loops). Override the
 # CMD (or pass a role arg to the entrypoint) to run a different service.
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["conductor"]

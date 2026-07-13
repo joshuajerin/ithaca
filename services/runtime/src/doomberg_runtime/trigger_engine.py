@@ -29,6 +29,7 @@ from doomberg_core.providers import (
 from ._trace import emit
 from .baselines import BaselineResolver
 from .leader import acquire_loop_lease, process_owner, release_loop_lease
+from .health import WorkerReporter
 
 __all__ = [
     "HttpQuoteClient",
@@ -797,18 +798,36 @@ class TriggerEngine:
         stop = stop or threading.Event()
         ttl_s = float(os.environ.get("DOOMBERG_TRIGGER_LEASE_TTL_S", str(max(60.0, interval_s * 3.0))))
         lease_name = os.environ.get("DOOMBERG_TRIGGER_LEASE_NAME", "trigger-engine")
+        reporter = WorkerReporter(
+            self.platform,
+            worker_id=self.worker_id,
+            role="trigger-engine",
+            ttl_seconds=max(15.0, interval_s * 4.0),
+        )
+        reporter.pulse(status="starting")
         try:
             while not stop.is_set():
-                if acquire_loop_lease(
+                leader = acquire_loop_lease(
                     self.platform,
                     lease_name=lease_name,
                     owner_id=self.worker_id,
                     ttl_seconds=ttl_s,
                     role="trigger-engine",
-                ):
-                    self.poll_once()
+                )
+                if leader:
+                    result = self.poll_once()
+                    reporter.pulse(
+                        status="degraded" if result.get("errors") else "healthy",
+                        detail=f"{len(result.get('errors') or [])} trigger(s) failed"
+                        if result.get("errors")
+                        else None,
+                        metadata={"leader": True, "last_evaluated": result["evaluated"]},
+                    )
+                else:
+                    reporter.pulse(status="standby", metadata={"leader": False})
                 stop.wait(interval_s)
         finally:
+            reporter.stop()
             with suppress(Exception):
                 release_loop_lease(self.platform, lease_name=lease_name, owner_id=self.worker_id)
 

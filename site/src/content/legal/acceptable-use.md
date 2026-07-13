@@ -1,8 +1,6 @@
 # Acceptable Use Policy
 
-> **Draft — review before publishing.** Contains fill-in token: `[LEGAL CONTACT EMAIL]`. Not attorney-reviewed final language.
-
-This Acceptable Use Policy ("AUP") describes conduct that is prohibited on the Doomberg platform and related services (the "Service") operated by **Ithaca**. It is incorporated into our [Terms of Service](/terms). We may update it from time to time.
+This Acceptable Use Policy ("AUP") describes conduct that is prohibited on the Doomberg platform and related services (the "Service") operated by **Ithaca, Inc., a Delaware corporation**. It is incorporated into our [Terms of Service](/terms). We may update it from time to time.
 
 ## 1. No unlawful or manipulative market activity
 
@@ -29,7 +27,7 @@ You may not upload or transmit malware, attempt to gain unauthorized access to s
 
 ## 4. Security research
 
-We welcome good-faith security research. You may probe for vulnerabilities only against your own account/tenant, must not access or destroy other users' data, must not degrade the Service, and must report findings promptly to `[LEGAL CONTACT EMAIL]` before any disclosure. Do not run denial-of-service tests.
+We welcome good-faith security research. You may probe for vulnerabilities only against your own account/tenant, must not access or destroy other users' data, must not degrade the Service, and must report findings promptly to [joshuaxjerin@gmail.com](mailto:joshuaxjerin@gmail.com) before any disclosure. Do not run denial-of-service tests.
 
 ## 5. Responsibility for your Agents
 
@@ -41,4 +39,4 @@ We may investigate suspected violations and may suspend or terminate access, rem
 
 ## 7. Reporting
 
-Report suspected abuse to `[LEGAL CONTACT EMAIL]`.
+Report suspected abuse to [joshuaxjerin@gmail.com](mailto:joshuaxjerin@gmail.com).

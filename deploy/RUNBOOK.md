@@ -25,11 +25,33 @@ verifies that the deploying SHA still equals `origin/main`.
 
 Each GitHub environment owns its own secrets and variables. Required secrets are
 `DIGITALOCEAN_ACCESS_TOKEN`, `DOOMBERG_PLATFORM_DB_URL`, `DOOMBERG_SESSION_SECRET`,
-`CLERK_PUBLISHABLE_KEY`, and either `CLERK_PEM_PUBLIC_KEY` or the
+`CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, and either `CLERK_PEM_PUBLIC_KEY` or the
 `CLERK_JWKS_URL` variable. Required variables include `CLERK_ALLOWED_ORIGINS`.
+
+### Clerk waitlist access
+
+Enable **Waitlist** mode in the Clerk Dashboard and keep email authentication enabled.
+Existing users and invited waitlist users can sign in; everyone else is sent to the
+Clerk-managed waitlist at `/waitlist`.
+
+Approve one or more email addresses with Clerk's waitlist API:
+
+```bash
+CLERK_SECRET_KEY=... uv run --package doomberg-platform \
+  python scripts/clerk_waitlist.py approved@example.com another@example.com
+```
+
+The command is idempotent for already invited or completed entries. Clerk sends the
+invitation email and remains the source of truth for approval status.
 Production also requires `DOOMBERG_ADMIN_TOKEN`, `DOOMBERG_SMOKE_API_KEY`, and
 `DOOMBERG_SMOKE_NO_SCOPE_API_KEY`. Optional secrets include `FMP_API_KEY` and
 `DATABENTO_API_KEY`.
+
+Before the first deploy, enable **User API keys** in Clerk Dashboard under
+**Configure → API keys → Enable API keys**. Doomberg creates keys through Clerk's Backend
+API with tenant-binding claims and capability scopes. Clerk owns the plaintext secret,
+verification, usage metadata, and revocation; the local `api_keys` table is retained only so
+previously-issued `dmbg_` keys keep working during migration.
 
 Local scripts in this directory remain available as break-glass tooling. They now
 accept `DEPLOY_ENV=prod|dev` and render environment-specific Kubernetes
@@ -164,13 +186,89 @@ kubectl -n doomberg-workers create secret generic doomberg-db \
 ## 5. Apply the platform schema
 
 `deploy/deploy_services.sh` runs the `platform-migrate` init container before
-the API/worker containers start. The same idempotent schema migration also runs
-when a platform process opens `DOOMBERG_DB`, so ordinary restarts self-heal.
+the API/worker containers start. It applies ordered migrations under a Postgres
+advisory lock and records their checksums in `doomberg_schema_migrations`.
+Application containers use `DOOMBERG_DB_MIGRATION_MODE=validate`, so they fail
+closed on a missing, pending, or drifted schema instead of changing DDL during
+normal request startup. Outside Kubernetes, Postgres keeps the backwards-
+compatible `apply` default; set the mode explicitly to `validate` for managed
+deployments and `off` only for schema administration tooling.
 
-Optional RLS policies can be installed by setting `DOOMBERG_POSTGRES_ENABLE_RLS=1`
-for the migration role. Do not set `DOOMBERG_POSTGRES_FORCE_RLS=1` until the
-per-service DB role split is complete, because the conductor and auth resolver
-currently perform legitimate cross-tenant infrastructure reads.
+Each process uses a bounded psycopg connection pool. Defaults are one warm
+connection and four maximum connections per process, with a ten-second
+checkout/startup timeout and connection health checks before use. Tune with
+`DOOMBERG_POSTGRES_POOL_MIN`, `DOOMBERG_POSTGRES_POOL_MAX`,
+`DOOMBERG_POSTGRES_POOL_TIMEOUT_S`, `DOOMBERG_POSTGRES_POOL_MAX_LIFETIME_S`,
+`DOOMBERG_POSTGRES_POOL_MAX_IDLE_S`, and
+`DOOMBERG_POSTGRES_RECONNECT_TIMEOUT_S`. Size the per-process maximum against
+the managed Postgres connection budget multiplied by the total replica and
+container count.
+
+Postgres migration 2 enables and forces row-level security on every tenant
+table, including indirect ownership through `run_seq`, `oauth_accounts`, and
+`user_sessions`. Platform stores establish a transaction-local tenant scope
+automatically; trusted authentication and worker queue operations use an
+explicit system scope. A direct application query with no scope sees no tenant
+rows. Do not bypass the store layer for tenant data.
+
+The production database login must be `NOSUPERUSER NOBYPASSRLS`; PostgreSQL
+superusers bypass RLS even when a table uses `FORCE ROW LEVEL SECURITY`. Verify
+the deployed role and policy state before admitting traffic:
+
+```sql
+SELECT rolname, rolsuper, rolbypassrls
+FROM pg_roles
+WHERE rolname = current_user;
+
+SELECT relname, relrowsecurity, relforcerowsecurity
+FROM pg_class
+WHERE relname IN (
+  'runs', 'trace_events', 'jobs', 'order_intents',
+  'execution_controls', 'compliance_policies'
+)
+ORDER BY relname;
+```
+
+The application credential remains trusted: internal system operations set a
+transaction-local `doomberg.system_access` flag. RLS is a containment boundary
+for missing or incorrect tenant predicates, not a substitute for protecting
+database credentials or preventing arbitrary SQL execution.
+
+Migration 3 adds unique broker-order and broker-fill identities. Before applying
+it to an existing database, both queries below must return zero rows; duplicates
+require an operator-led broker audit rather than automatic deletion:
+
+```sql
+SELECT tenant_id, broker, broker_order_id, count(*)
+FROM orders WHERE broker_order_id IS NOT NULL
+GROUP BY tenant_id, broker, broker_order_id HAVING count(*) > 1;
+
+SELECT tenant_id, broker_fill_id, count(*)
+FROM fills WHERE broker_fill_id IS NOT NULL
+GROUP BY tenant_id, broker_fill_id HAVING count(*) > 1;
+```
+
+Migration 4 adds tenant and global execution controls plus their append-only
+audit events. Row-level security is forced on both tables. Tenant operators use
+the authenticated `POST /execution/kill-switch` control-plane route or the
+dashboard compliance panel; site operators use the admin-token-protected
+`POST /admin/execution/kill-switch` route. Both writes use optimistic versions,
+and `expect_version` is required, so a stale release cannot overwrite a newer
+emergency halt. Site operators can read the current global control and its audit
+history with `GET /admin/execution/kill-switch`.
+
+Migration 5 adds versioned tenant compliance policies and append-only policy
+events with forced row-level security. The dashboard's limits, restricted list,
+watch list, and pre-trade check all use these rows. Every mutation requires the
+current `policyVersion`; stale writes return 409. Built-in limits remain visible
+reference defaults until the tenant explicitly saves the limits form, while the built-in
+restricted list is always enforced. Once saved, firm limits are enforced during
+strategy promotion and every paper-book application; restricted names also
+block direct execution intents and watch names produce warnings. Policy events
+appear in the same tenant compliance audit timeline as kill-switch events.
+Tenant policy writes take the same application fence used by broker sends and
+paper-book writes, so each mutation is ordered wholly before or after a money
+path action instead of racing its final check.
 
 ---
 
@@ -193,7 +291,8 @@ runtime topology has two deployments:
 
 `doomberg-workers` in the worker namespace:
 
-- `conductor` (`BacktestWorker`, trigger-job worker, and paper scheduler)
+- `conductor` (backtest/trigger workers, paper scheduler, notifications, adaptive
+  dashboard recompute, and broker order reconciliation)
 - `trigger-engine` (active trigger policy polling)
 
 Both deployments intentionally share the managed Postgres platform store through
@@ -205,9 +304,24 @@ both `doomberg-db` Secrets, and replica counts are rendered/applied by
 
 Production defaults to `WORKER_REPLICAS=2`. Backtest and trigger-analysis jobs
 are claimed through durable job leases. The paper scheduler and trigger polling
-loops use the platform `worker_leases` table, so only one worker replica owns
-each singleton loop at a time; if the owner dies, another replica takes over
-after the lease TTL.
+loops use the platform `worker_leases` table, as does the execution reconciler,
+so only one worker replica owns each singleton loop at a time; if the owner dies,
+another replica takes over after the lease TTL. Order reconciliation defaults to
+five seconds and is tunable with `DOOMBERG_RECONCILIATION_INTERVAL_S`.
+
+Migration 6 adds `worker_heartbeats`, a system-only durable process registry.
+Every conductor loop and the trigger engine records its role, instance id,
+status, last heartbeat, expiry, and bounded diagnostic metadata. Leadership
+leases still prevent duplicate singleton work; heartbeats answer the separate
+question of whether the responsible process is alive and making progress.
+`GET /api/ops/status` excludes expired leases from the active list and reports
+missing, degraded, expired, and healthy worker roles explicitly.
+
+Both gateways expose `GET /livez` for process liveness and `GET /healthz` plus
+`GET /readyz` for a live database ping, migration-ledger validation, and pool
+statistics. A database or migration failure returns 503; worker-role degradation
+remains visible through the authenticated ops status instead of ejecting a
+read-capable gateway from the load balancer.
 
 For connected-account live trigger quotes, use the managed in-cluster IBKR engine
 by default:
@@ -244,6 +358,13 @@ open https://ibkr.doomberg.me/
 kubectl -n doomberg-gateway exec deploy/ibkr-engine -c doomberg-ibkr-engine -- \
   sh -lc 'curl -fsS -H "Authorization: Bearer ${DOOMBERG_IBKR_ENGINE_TOKEN}" http://127.0.0.1:8090/auth/status'
 
+# Probe semantics are intentionally separate:
+# - /livez proves the wrapper process can answer.
+# - /readyz proves the private Client Portal gateway is reachable.
+# - /data/healthz proves the brokerage/data session is authenticated.
+kubectl -n doomberg-gateway exec deploy/ibkr-engine -c doomberg-ibkr-engine -- \
+  sh -lc 'curl -fsS http://127.0.0.1:8090/livez && curl -fsS http://127.0.0.1:8090/readyz && curl -fsS http://127.0.0.1:8090/data/healthz'
+
 # Close the public route. Doomberg keeps using the internal ClusterIP service.
 IBKR_SIGNIN_PUBLIC=0 IBKR_ENGINE_ENABLED=1 DEPLOY_ENV=prod IMAGE_TAG="${IMAGE_TAG}" ./deploy/deploy_services.sh
 curl -I https://ibkr.doomberg.me/ || true
@@ -252,6 +373,30 @@ curl -I https://ibkr.doomberg.me/ || true
 If `ibkr.doomberg.me` is not available in DNS, set `IBKR_SIGNIN_HOST` to a
 temporary hostname that already resolves to the Caddy LoadBalancer, for example
 `ibkr.129.212.135.120.sslip.io`, and remove it after authentication the same way.
+
+Read operations repair an expired `/iserver` session by default. The repair calls
+`/tickle`, then a serialized `/iserver/auth/ssodh/init` when browser login is still
+valid. Set `IBKR_AUTO_REPAIR_AUTH=false` only for diagnosis. Tune bounded polling
+with `IBKR_AUTH_INIT_ATTEMPTS`, `IBKR_AUTH_INIT_RETRY_DELAY_S`, and
+`IBKR_AUTH_REPAIR_TIMEOUT_S`. Concurrent repair waiters fail quickly instead of
+occupying the API worker pool. A browser-login expiry still fails closed and
+requires a new sign-in window.
+
+The wrapper's operational endpoints are:
+
+| Endpoint | Auth | Side effects | Meaning |
+| --- | --- | --- | --- |
+| `GET /livez` | none | none | Wrapper process is alive. |
+| `GET /readyz` | none | none | Private Client Portal gateway is reachable. |
+| `GET /data/healthz` | none | none | Brokerage/data session is authenticated and connected. This probe never repairs auth. |
+| `GET /healthz` | none | none | Compatibility route with `/readyz` success semantics and its legacy failure envelope. |
+| `GET /auth/status` | engine bearer token | none | Sanitized authentication and connection state. Raw IBKR payloads are intentionally omitted. |
+| `POST /auth/tickle` | engine bearer token | IBKR keepalive tickle | Refresh and report sanitized session state. |
+| `POST /auth/ensure` | engine bearer token | May initialize `/iserver` auth | Run the bounded, serialized repair flow. |
+
+Authenticated control endpoints return `401` for a missing token, `403` for a bad
+token, and `503` with a stable `detail.code`, `detail.message`, and optional
+`detail.details` object when the upstream operation cannot complete.
 
 If you must point Doomberg at an external engine instead, set:
 
@@ -278,6 +423,8 @@ kubectl -n doomberg-workers run ibkr-smoke --rm -it --restart=Never \
 
 Run the full customer-handoff gate after rollout. This creates a synthetic
 launch-gate tenant/session/artifact, verifies REST auth rejection, ops status,
+gateway liveness plus database/migration readiness, current required worker
+heartbeats, the durable personalized compliance surface,
 SSE replay, artifact fetch, MCP unauthenticated rejection, authenticated MCP
 resource reads, real-time trigger-to-run readiness, MCP durable `run_skill`
 enqueue/read/cancel cleanup, MCP no-scope resource denial, and the IBKR quote
@@ -301,11 +448,24 @@ gate to prove resource reads are denied for a valid key without `data:read`.
 DOOMBERG_REST_URL=https://app.doomberg.me \
 DOOMBERG_MCP_URL=https://mcp.doomberg.me/mcp \
 DOOMBERG_API_KEY=dmbg_... \
-python scripts/launch_gate.py --mode http --require-postgres --require-ibkr --require-mcp --json
+python scripts/launch_gate.py --mode http --require-postgres --require-workers-ready --require-ibkr --require-mcp --json
 ```
 
-For live broker submission through the deterministic execution gateway, set the
-same engine URL plus the explicit live-execution switch and limits:
+`--require-workers-ready` gates on the complete production role set returned by
+ops status, not on the mere presence of a lease row: backtest, trigger engine,
+trigger jobs, paper, notification, adaptive-dashboard, and execution
+reconciliation. Expired and degraded heartbeats fail the gate even when the
+corresponding queue happens to be empty.
+
+Use [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the exact preflight,
+evidence capture, rollback boundary, and handoff record for each production
+release.
+
+The repository's default IBKR engine is deliberately data-only: `GET /orders`
+supports state reconciliation, while `POST /orders` returns 403. Do not enable
+live submission against that deployment. A separately approved execution-capable
+engine must preserve `client_order_id` idempotency and expose the same read-back
+surface before using the deterministic execution gateway:
 
 ```bash
 export DOOMBERG_ENABLE_LIVE_EXECUTION=1
@@ -315,10 +475,42 @@ export DOOMBERG_EXECUTION_MAX_QUANTITY=10000
 export DOOMBERG_EXECUTION_MAX_FRESHNESS_MS=10000
 ```
 
+There are three stop layers for new submissions:
+
+1. `DOOMBERG_EXECUTION_KILL_SWITCH=1` is the deployment-level break-glass stop.
+2. The global durable control halts every tenant.
+3. A tenant durable control halts only that tenant.
+
+The effective switch is checked during policy evaluation and again after the
+durable submission outbox is claimed. The final check and broker call run behind
+Postgres advisory fences: tenant changes exclude that tenant's submissions, while
+the global control excludes every submission. This makes each broker send orderable
+before or after a committed halt instead of leaving a check-to-send gap. Engaging a
+switch does not cancel orders already accepted by a broker; reconciliation continues
+so their actual state remains visible. Operators must separately cancel working
+broker orders when incident policy requires it. To use the environment stop, set the
+variable in the deployment environment and rerun the deployment; the deploy script
+detects the Secret change and restarts every consuming app pod. Clear it and redeploy
+only after the incident is resolved. If the variable is omitted, deploys preserve the
+existing Secret value so a routine release cannot silently clear an active environment
+halt. Durable control changes are effective immediately and tenant plus global events
+appear in the compliance panel audit trail.
+
+Tenant compliance policy changes are also effective immediately. Removing a
+restricted name or loosening a limit requires a human principal with
+`deploy:paper` and the latest policy version. A policy update does not authorize
+or submit an order; subsequent promotion, paper-tick, and execution paths read
+the new policy independently at their normal gate boundaries.
+
 If `DOOMBERG_ENABLE_LIVE_EXECUTION=1` is set without `DOOMBERG_IBKR_ENGINE_URL`,
 `deploy/deploy_services.sh` fails before applying manifests. The gateway still
 requires a connected provider row with order/trading capability for live broker
-intents, and human submission remains the only path from intent to order.
+intents, and human submission remains the only path from intent to order. The
+gateway persists a `pending_submission` order before contacting the broker; the
+conductor then reconciles `submitting`, submitted, and partially-filled orders
+from `GET /orders`, with cumulative fill deltas deduplicated by broker identity.
+Connection loss or a broker 5xx after send stays `submitting` and is never
+blindly retried because the broker outcome may already be real.
 
 If `IBKR_ENGINE_ENABLED=0` and `DOOMBERG_IBKR_ENGINE_URL` is unset, the trigger
 worker still deploys and idles, but active live-data policies will emit provider

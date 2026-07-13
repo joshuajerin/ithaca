@@ -36,25 +36,38 @@ from typing import Any
 import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from jwt import InvalidTokenError, PyJWKClient
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from doomberg_control import actions
 from doomberg_control.actions import ActionError
 from doomberg_control.deps import HUMAN_ACTOR_KINDS, Ctx
 from doomberg_control.execution_gateway import ExecutionGateway
+from doomberg_control.compliance_policy import (
+    effective_compliance_policy,
+    normalize_limits,
+    normalize_symbol,
+    normalize_symbols,
+)
+from doomberg_control.gate import evaluate_spec_gate
 from doomberg_core import Core
-from doomberg_core.providers import PUBLIC_DATA_SOURCE, PUBLIC_ENTITLEMENT_CLASS, IbkrEngineClient
+from doomberg_core.providers import PUBLIC_DATA_SOURCE, IbkrEngineClient
 from doomberg_mcp import Toolset
 from doomberg_platform import (
     AdaptiveDashboardProfileStore,
+    ClerkApiError,
+    ClerkApiUnavailable,
     AuthStore,
     ApprovalStore,
     ArtifactStore,
+    CompliancePolicyConflict,
+    CompliancePolicyStore,
     BookStore,
     DeliveryTargetStore,
+    ExecutionControlStore,
     ExecutionStore,
+    FeedbackStore,
     JobStore,
     LeaseStore,
     NotificationStore,
@@ -65,10 +78,35 @@ from doomberg_platform import (
     TriggerBaselineStore,
     TriggerStore,
     UserStore,
+    WorkerHeartbeatStore,
+    build_agent_key_store,
     open_db,
 )
-from doomberg_runtime import default_adaptive_dashboard_spec, usage_signals_for_user
+from doomberg_platform.migrations import validate_migrations
+from doomberg_runtime import (
+    default_adaptive_dashboard_spec,
+    object_storage_configured,
+    open_artifact,
+    usage_signals_for_user,
+)
 
+from .dashboard_readmodels import (
+    dashboard_activity,
+    dashboard_market,
+    dashboard_risk,
+    dashboard_summary,
+    provider_status,
+    public_provider_connection,
+)
+from .dashboard_models import (
+    DashboardActivityData,
+    DashboardEnvelope,
+    DashboardMarketData,
+    DashboardRiskData,
+    DashboardSummaryData,
+    ProviderStatusData,
+)
+from .dashboard_store import DashboardReadStore
 from .readmodel import shape_run, shape_run_row
 from .sse import event_stream, parse_last_event_id
 
@@ -88,18 +126,24 @@ class Stores:
         self.trace = TraceStore(db)
         self.books = BookStore(db)
         self.auth = AuthStore(db)
+        self.agent_keys = build_agent_key_store(db)
         self.adaptive_dashboards = AdaptiveDashboardProfileStore(db)
         self.users = UserStore(db)
         self.jobs = JobStore(db)
         self.leases = LeaseStore(db)
+        self.worker_heartbeats = WorkerHeartbeatStore(db)
         self.artifacts = ArtifactStore(db)
         self.approvals = ApprovalStore(db)
         self.providers = ProviderStore(db)
         self.execution = ExecutionStore(db)
+        self.execution_controls = ExecutionControlStore(db)
+        self.compliance_policies = CompliancePolicyStore(db)
+        self.feedback = FeedbackStore(db)
         self.triggers = TriggerStore(db)
         self.baselines = TriggerBaselineStore(db)
         self.notifications = NotificationStore(db)
         self.delivery_targets = DeliveryTargetStore(db)
+        self.dashboard = DashboardReadStore(db)
         self.core = Core()
 
 
@@ -171,6 +215,37 @@ class MintKeyBody(BaseModel):
 
 class MintSseTicketBody(BaseModel):
     after_seq: int | None = None
+
+
+class ComplianceKillSwitchBody(BaseModel):
+    on: bool
+    reason: str | None = None
+    expect_version: int = Field(ge=0)
+
+
+class ComplianceLimitsBody(BaseModel):
+    limits: dict[str, float]
+    expect_version: int = Field(ge=0)
+
+
+class ComplianceSymbolBody(BaseModel):
+    symbol: str
+    expect_version: int = Field(ge=0)
+
+
+class ComplianceVersionBody(BaseModel):
+    expect_version: int = Field(ge=0)
+
+
+class ComplianceCheckBody(BaseModel):
+    strategy_id: str
+
+
+class FeedbackBody(BaseModel):
+    message: str
+
+
+MAX_FEEDBACK_LENGTH = 5000
 
 
 def _bearer_key(authorization: str | None) -> str | None:
@@ -289,27 +364,30 @@ def _upsert_clerk_user(stores: "Stores", claims: dict[str, Any]) -> dict[str, An
     )
     avatar_url = claims.get("picture") or claims.get("image_url")
 
-    existing_link = stores.db.conn.execute(
-        "SELECT user_id FROM oauth_accounts WHERE provider=? AND provider_id=?",
-        ("clerk", sub),
-    ).fetchone()
-    if existing_link:
-        existing_user = stores.users.get_by_id(existing_link["user_id"])
-        tenant_id = (
-            existing_user["tenant_id"] if existing_user else stores.auth.create_tenant(str(name))
-        )
-    else:
-        existing_by_email = stores.db.conn.execute(
-            "SELECT id, tenant_id FROM users WHERE email=?",
-            (email,),
+    with stores.db.system_scope():
+        existing_link = stores.db.conn.execute(
+            "SELECT user_id FROM oauth_accounts WHERE provider=? AND provider_id=?",
+            ("clerk", sub),
         ).fetchone()
-        tenant_id = (
-            existing_by_email["tenant_id"]
-            if existing_by_email
-            else stores.auth.create_tenant(str(name or email))
-        )
+        if existing_link:
+            existing_user = stores.users.get_by_id(existing_link["user_id"])
+            tenant_id = (
+                existing_user["tenant_id"]
+                if existing_user
+                else stores.auth.create_tenant(str(name))
+            )
+        else:
+            existing_by_email = stores.db.conn.execute(
+                "SELECT id, tenant_id FROM users WHERE email=?",
+                (email,),
+            ).fetchone()
+            tenant_id = (
+                existing_by_email["tenant_id"]
+                if existing_by_email
+                else stores.auth.create_tenant(str(name or email))
+            )
 
-    return stores.users.oauth_upsert("clerk", sub, email, str(name), avatar_url, tenant_id)
+        return stores.users.oauth_upsert("clerk", sub, email, str(name), avatar_url, tenant_id)
 
 
 def _human_scopes() -> list[str]:
@@ -344,11 +422,11 @@ def _user_from_human_token(stores: "Stores", token: str) -> dict[str, Any] | Non
     claims = _decode_clerk_token(token)
     if claims is None:
         return None
-    return _upsert_clerk_user(stores, claims)
+    return {**_upsert_clerk_user(stores, claims), "clerk_subject": str(claims["sub"])}
 
 
 def _verify_bearer(request: Request, authorization: str | None) -> dict[str, Any] | None:
-    """Verify a bearer token — either a session JWT (human) or a dmbg_ API key (agent).
+    """Verify a bearer token — either a session JWT (human) or an agent API key.
 
     Returns a principal dict with at least ``tenant_id``, or ``None`` if no bearer
     token was presented (dev / X-Tenant-Id path). Raises 401 on invalid tokens.
@@ -357,9 +435,14 @@ def _verify_bearer(request: Request, authorization: str | None) -> dict[str, Any
     if key is None:
         return None
     stores = request.app.state.stores
-    # API key (BYO agents).
-    if key.startswith("dmbg_"):
-        principal = stores.auth.verify(key)
+    # Clerk-managed ``ak_`` keys and legacy ``dmbg_`` keys for BYO agents.
+    if key.startswith(("ak_", "dmbg_")):
+        try:
+            principal = stores.agent_keys.verify(key)
+        except ClerkApiUnavailable as exc:
+            raise HTTPException(status_code=503, detail="API key verification unavailable") from exc
+        except ClerkApiError as exc:
+            raise HTTPException(status_code=401, detail="invalid or revoked token") from exc
         if principal is None:
             raise HTTPException(status_code=401, detail="invalid or revoked token")
         return {**principal, "actor_kind": "agent"}
@@ -409,39 +492,6 @@ def _has_capability(connection: dict[str, Any], names: set[str]) -> bool:
     return bool(caps.intersection(names))
 
 
-def _public_provider_connection(connection: dict[str, Any]) -> dict[str, Any]:
-    """Return a REST-safe provider connection view without credential references."""
-    provider = str(connection.get("provider") or "")
-    is_private_live = provider.strip().lower() in {
-        "ibkr",
-        "ibkr-engine",
-        "interactive_brokers",
-        "interactive-brokers",
-        PUBLIC_DATA_SOURCE,
-    }
-    return {
-        "tenant_id": connection.get("tenant_id"),
-        "connection_id": connection.get("connection_id"),
-        "provider": PUBLIC_DATA_SOURCE if is_private_live else provider,
-        "state": connection.get("state"),
-        "capabilities": [
-            cap
-            for cap in (connection.get("capabilities") or [])
-            if str(cap).strip().lower() not in {"orders", "trading", "execution"}
-        ],
-        "entitlements": [
-            {**ent, "entitlement_class": PUBLIC_ENTITLEMENT_CLASS}
-            if isinstance(ent, dict) and is_private_live
-            else ent
-            for ent in (connection.get("entitlements") or [])
-        ],
-        "retention_policy": connection.get("retention_policy"),
-        "credential_configured": bool(connection.get("credential_ref")),
-        "created_at": connection.get("created_at"),
-        "updated_at": connection.get("updated_at"),
-    }
-
-
 def _sse_ticket_ttl_seconds() -> int:
     raw = os.environ.get("DOOMBERG_SSE_TICKET_TTL_SECONDS", "60")
     try:
@@ -464,26 +514,27 @@ def _mint_sse_ticket(stores: Stores, ctx: Ctx, run_id: str) -> dict[str, Any]:
     ticket_id = uuid.uuid4().hex
     secret = secrets.token_urlsafe(32)
     token = f"{ticket_id}.{secret}"
-    with stores.db.write_lock:
-        with stores.db.conn as conn:
-            conn.execute(
-                "DELETE FROM sse_tickets WHERE expires_at < ? OR used_at IS NOT NULL",
-                (now.isoformat(),),
-            )
-            conn.execute(
-                "INSERT INTO sse_tickets "
-                "(ticket_id, tenant_id, run_id, principal_id, secret_hash, created_at, expires_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    ticket_id,
-                    ctx.tenant_id,
-                    run_id,
-                    str(ctx.actor_id),
-                    _hash_sse_secret(secret),
-                    now.isoformat(),
-                    expires.isoformat(),
-                ),
-            )
+    with stores.db.tenant_scope(ctx.tenant_id):
+        with stores.db.write_lock:
+            with stores.db.conn as conn:
+                conn.execute(
+                    "DELETE FROM sse_tickets WHERE expires_at < ? OR used_at IS NOT NULL",
+                    (now.isoformat(),),
+                )
+                conn.execute(
+                    "INSERT INTO sse_tickets "
+                    "(ticket_id, tenant_id, run_id, principal_id, secret_hash, created_at, expires_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        ticket_id,
+                        ctx.tenant_id,
+                        run_id,
+                        str(ctx.actor_id),
+                        _hash_sse_secret(secret),
+                        now.isoformat(),
+                        expires.isoformat(),
+                    ),
+                )
     return {
         "sse_ticket": token,
         "run_id": run_id,
@@ -502,7 +553,7 @@ def _redeem_sse_ticket(stores: Stores, ticket: str, run_id: str) -> str:
         raise HTTPException(status_code=401, detail="invalid sse ticket")
 
     now = datetime.now(timezone.utc)
-    with stores.db.write_lock:
+    with stores.db.system_scope(), stores.db.write_lock:
         with stores.db.conn as conn:
             row = conn.execute(
                 "SELECT * FROM sse_tickets WHERE ticket_id = ? AND used_at IS NULL",
@@ -532,26 +583,27 @@ def _mint_alerts_sse_ticket(stores: Stores, ctx: Ctx) -> dict[str, Any]:
     ticket_id = uuid.uuid4().hex
     secret = secrets.token_urlsafe(32)
     token = f"{ticket_id}.{secret}"
-    with stores.db.write_lock:
-        with stores.db.conn as conn:
-            conn.execute(
-                "DELETE FROM sse_tickets WHERE expires_at < ? OR used_at IS NOT NULL",
-                (now.isoformat(),),
-            )
-            conn.execute(
-                "INSERT INTO sse_tickets "
-                "(ticket_id, tenant_id, run_id, principal_id, secret_hash, created_at, expires_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    ticket_id,
-                    ctx.tenant_id,
-                    "__alerts__",
-                    str(ctx.actor_id),
-                    _hash_sse_secret(secret),
-                    now.isoformat(),
-                    expires.isoformat(),
-                ),
-            )
+    with stores.db.tenant_scope(ctx.tenant_id):
+        with stores.db.write_lock:
+            with stores.db.conn as conn:
+                conn.execute(
+                    "DELETE FROM sse_tickets WHERE expires_at < ? OR used_at IS NOT NULL",
+                    (now.isoformat(),),
+                )
+                conn.execute(
+                    "INSERT INTO sse_tickets "
+                    "(ticket_id, tenant_id, run_id, principal_id, secret_hash, created_at, expires_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        ticket_id,
+                        ctx.tenant_id,
+                        "__alerts__",
+                        str(ctx.actor_id),
+                        _hash_sse_secret(secret),
+                        now.isoformat(),
+                        expires.isoformat(),
+                    ),
+                )
     return {
         "sse_ticket": token,
         "tenant_id": ctx.tenant_id,
@@ -606,12 +658,76 @@ async def _alert_event_stream(
             yield ": keepalive\n\n"
 
 
+def _parse_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _database_health(db: Any) -> dict[str, Any]:
+    try:
+        scope = db.system_scope() if hasattr(db, "system_scope") else None
+        if scope is None:
+            row = db.conn.execute("SELECT 1 AS ok").fetchone()
+            migration = None
+        else:
+            with scope:
+                row = db.conn.execute("SELECT 1 AS ok").fetchone()
+                migration = validate_migrations(db.conn) if getattr(db, "is_postgres", False) else None
+        if row is None or int(row["ok"]) != 1:
+            raise RuntimeError("database ping returned no row")
+    except Exception as exc:  # noqa: BLE001 - health response must retain a stable envelope.
+        return {
+            "status": "error",
+            "ready": False,
+            "database": "postgres" if getattr(db, "is_postgres", False) else "sqlite",
+            "error": f"{type(exc).__name__}: {exc}"[:500],
+        }
+
+    migration_body = {
+        "current": int(migration.current_version),
+        "latest": int(migration.latest_version),
+        "pending": list(migration.pending_versions),
+    } if migration is not None else {"mode": "local-inline", "pending": []}
+    ready = not migration_body["pending"]
+    return {
+        "status": "ok" if ready else "error",
+        "ready": ready,
+        "database": "postgres" if getattr(db, "is_postgres", False) else "sqlite",
+        "migrations": migration_body,
+        "pool": getattr(db, "pool_stats", None),
+    }
+
+
 def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
     connections = stores.providers.list_connections(tenant_id)
     snapshots = stores.providers.list_snapshots(tenant_id, limit=25)
     jobs = stores.jobs.list(tenant_id, limit=500)
     triggers = stores.triggers.list(tenant_id, limit=500)
-    leases = stores.leases.list()
+    now = datetime.now(timezone.utc)
+    lease_rows = stores.leases.list()
+    leases = []
+    stale_leases = []
+    for lease in lease_rows:
+        active = bool((expires := _parse_time(lease.get("lease_expires_at"))) and expires > now)
+        shaped = {**lease, "active": active}
+        (leases if active else stale_leases).append(shaped)
+    heartbeat_rows = stores.worker_heartbeats.list()
+    workers = []
+    for worker in heartbeat_rows:
+        heartbeat = _parse_time(worker.get("heartbeat_at"))
+        expires = _parse_time(worker.get("expires_at"))
+        expired = not expires or expires <= now
+        workers.append({
+            **worker,
+            "expired": expired,
+            "age_seconds": max(0.0, round((now - heartbeat).total_seconds(), 3))
+            if heartbeat
+            else None,
+        })
 
     connected = [c for c in connections if c.get("state") == "connected"]
     private_live_names = {
@@ -634,14 +750,61 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
     active_jobs = sum(1 for job in jobs if job.get("state") in {"leased", "running"})
     failed_jobs = sum(1 for job in jobs if job.get("state") in {"failed", "timed_out", "cancelled"})
     active_triggers = sum(1 for trigger in triggers if trigger.get("state") == "active")
+    required_roles = {
+        "adaptive-dashboard-worker",
+        "backtest-worker",
+        "execution-reconciler",
+        "notification-dispatcher",
+        "paper-scheduler",
+        "trigger-engine",
+        "trigger-job-worker",
+    }
+    healthy_roles = {
+        worker["role"]
+        for worker in workers
+        if not worker["expired"] and worker["status"] in {"healthy", "standby"}
+    }
+    degraded_roles = sorted({
+        worker["role"]
+        for worker in workers
+        if not worker["expired"] and worker["status"] == "degraded"
+    })
+    missing_roles = sorted(required_roles - healthy_roles)
+    db_health = _database_health(stores.db)
+
+    now = datetime.now(timezone.utc)
+
+    def age_seconds(value: Any) -> float | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return max(0.0, (now - parsed).total_seconds())
+        except ValueError:
+            return None
+
+    backtest_jobs = [job for job in jobs if job.get("profile") == "backtest"]
+    queued_backtests = [job for job in backtest_jobs if job.get("state") == "queued"]
+    running_backtests = [job for job in backtest_jobs if job.get("state") in {"leased", "running"}]
+    failed_backtests = [job for job in backtest_jobs if job.get("state") in {"failed", "timed_out"}]
+    queue_ages = [age for job in queued_backtests if (age := age_seconds(job.get("created_at"))) is not None]
+    heartbeat_ages = [age for job in running_backtests if (age := age_seconds(job.get("heartbeat_at"))) is not None]
+    oldest_queued_s = max(queue_ages, default=None)
+    oldest_heartbeat_s = max(heartbeat_ages, default=None)
+    backtest_stalled = bool(
+        (oldest_queued_s is not None and oldest_queued_s > 120)
+        or (oldest_heartbeat_s is not None and oldest_heartbeat_s > 90)
+    )
 
     readiness = [
         {
             "name": "Platform store",
-            "state": "succeeded" if getattr(stores.db, "is_postgres", False) else "paused",
-            "detail": "Postgres system-of-record"
-            if getattr(stores.db, "is_postgres", False)
-            else "Local SQLite system-of-record",
+            "state": "succeeded" if db_health["ready"] else "failed",
+            "detail": f"{db_health['database']} reachable; migrations current"
+            if db_health["ready"]
+            else db_health.get("error") or "database migrations are not current",
         },
         {
             "name": "Live market data",
@@ -668,7 +831,36 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
         {
             "name": "Worker leadership",
             "state": "succeeded" if leases else "paused",
-            "detail": f"{len(leases)} active lease row{'' if len(leases) == 1 else 's'}",
+            "detail": f"{len(leases)} active, {len(stale_leases)} expired lease row(s)",
+        },
+        {
+            "name": "Worker processes",
+            "state": "warn" if missing_roles or degraded_roles else "succeeded",
+            "detail": (
+                "missing: " + ", ".join(missing_roles)
+                if missing_roles
+                else "degraded: " + ", ".join(degraded_roles)
+                if degraded_roles
+                else f"{len(healthy_roles)} required worker role(s) healthy"
+            ),
+        },
+        {
+            "name": "Backtest workers",
+            "state": "warn" if backtest_stalled else "succeeded",
+            "detail": (
+                f"{len(queued_backtests)} queued, {len(running_backtests)} running, "
+                f"oldest queue {int(oldest_queued_s or 0)}s, "
+                f"heartbeat lag {int(oldest_heartbeat_s or 0)}s"
+            ),
+        },
+        {
+            "name": "Artifact storage",
+            "state": "succeeded" if object_storage_configured() else "warn",
+            "detail": (
+                "Private object storage configured"
+                if object_storage_configured()
+                else "Object storage unset; production bundles are not durable"
+            ),
         },
     ]
 
@@ -700,8 +892,24 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
             "queued": queued_jobs,
             "leased_or_running": active_jobs,
             "terminal": failed_jobs,
+            "backtests": {
+                "queued": len(queued_backtests),
+                "leased_or_running": len(running_backtests),
+                "failed_or_timed_out": len(failed_backtests),
+                "oldest_queued_seconds": oldest_queued_s,
+                "oldest_heartbeat_seconds": oldest_heartbeat_s,
+                "stalled": backtest_stalled,
+            },
         },
         "leases": leases,
+        "stale_leases": stale_leases,
+        "workers": {
+            "required_roles": sorted(required_roles),
+            "healthy_roles": sorted(healthy_roles),
+            "missing_roles": missing_roles,
+            "degraded_roles": degraded_roles,
+            "rows": workers,
+        },
         "triggers": {
             "active": active_triggers,
             "total": len(triggers),
@@ -871,16 +1079,27 @@ def _web_dist_dir() -> Path | None:
 
 def _spa_file_response(dist: Path, full_path: str) -> FileResponse:
     """Serve built files when present, otherwise fall back to the SPA index."""
+    shell_headers = {"Cache-Control": "no-store, max-age=0"}
     if full_path == "":
-        return FileResponse(dist / "index.html")
+        return FileResponse(dist / "index.html", headers=shell_headers)
     if full_path == "api" or full_path.startswith("api/"):
         raise HTTPException(status_code=404, detail="Not Found")
 
     root = dist.resolve()
     target = (root / full_path).resolve()
     if target.is_file() and target.is_relative_to(root):
-        return FileResponse(target)
-    return FileResponse(root / "index.html")
+        headers = (
+            {"Cache-Control": "public, max-age=31536000, immutable"}
+            if full_path.startswith("assets/")
+            else {"Cache-Control": "no-cache"}
+        )
+        return FileResponse(target, headers=headers)
+    # Vite gives bundled assets content-hashed names. If an old SPA shell asks for an
+    # asset removed by a newer deployment, returning index.html as JavaScript produces
+    # a module MIME error and a blank page. Only client-side routes get the SPA fallback.
+    if full_path.startswith("assets/"):
+        raise HTTPException(status_code=404, detail="Not Found")
+    return FileResponse(root / "index.html", headers=shell_headers)
 
 
 def _repo_root() -> Path:
@@ -908,9 +1127,279 @@ def create_app(db: Any | None = None) -> FastAPI:
     def get_stores(request: Request) -> Stores:
         return request.app.state.stores
 
-    @app.get("/healthz")
-    def healthz() -> dict[str, str]:
+    @app.get("/livez")
+    def livez() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/healthz")
+    @app.get("/readyz")
+    def healthz() -> Any:
+        health = _database_health(stores.db)
+        if not health["ready"]:
+            return JSONResponse(status_code=503, content=health)
+        return health
+
+    def compliance_state(ctx: Ctx, stores: Stores) -> dict[str, Any]:
+        """Shape the compliance panel from durable execution state.
+
+        Limit/list editing remains owned by the deterministic strategy gate.  This
+        endpoint deliberately exposes only those defaults until tenant overrides are
+        persisted; the kill switch and its audit trail are live, tenant-specific data.
+        """
+        from doomberg_core.engine.compliance import LIMIT_DEFS
+
+        effective = ExecutionGateway(stores).get_kill_switch(ctx)
+        policy = effective_compliance_policy(stores, ctx.tenant_id)
+        strategies = [
+            {
+                "id": strategy["id"],
+                "name": strategy["name"],
+                "stage": strategy.get("spec", {}).get("stage") or "draft",
+            }
+            for strategy in stores.strategies.list(ctx.tenant_id)
+        ]
+        tenant_audit = [
+            {
+                "id": event["event_id"],
+                "at": event["created_at"],
+                "action": "Kill switch engaged" if event["enabled"] else "Kill switch released",
+                "decision": "blocked" if event["enabled"] else "allowed",
+                "summary": event["reason"],
+                "scope": "tenant",
+            }
+            for event in stores.execution_controls.list_events(ctx.tenant_id)
+        ]
+        global_audit = [
+            {
+                "id": event["event_id"],
+                "at": event["created_at"],
+                "action": "Site kill switch engaged" if event["enabled"] else "Site kill switch released",
+                "decision": "blocked" if event["enabled"] else "allowed",
+                "summary": event["reason"],
+                "scope": "global",
+            }
+            for event in stores.execution_controls.list_global_events()
+        ]
+        policy_audit = [
+            {
+                "id": event["event_id"],
+                "at": event["created_at"],
+                "action": event["action"],
+                "decision": "updated",
+                "summary": f"Compliance policy v{event['version']}",
+                "scope": "tenant",
+            }
+            for event in stores.compliance_policies.list_events(ctx.tenant_id)
+        ]
+        audit = sorted(
+            [*tenant_audit, *global_audit, *policy_audit],
+            key=lambda event: (event["at"], event["id"]),
+            reverse=True,
+        )[:100]
+        return {
+            "limits": policy["limits"],
+            "limitDefs": list(LIMIT_DEFS),
+            "restricted": policy["restricted"],
+            "watch": policy["watch"],
+            "policyConfigured": policy["configured"],
+            "limitsEnforced": policy["limits_enforced"],
+            "policyVersion": policy["version"],
+            "killSwitch": effective["enabled"],
+            "killReason": effective["reason"],
+            "killSource": effective["source"],
+            "killVersion": effective["tenant_version"],
+            "strategyKills": {},
+            "strategies": strategies,
+            "audit": audit,
+            "check": None,
+        }
+
+    def require_compliance_editor(ctx: Ctx) -> None:
+        if ctx.actor_kind not in HUMAN_ACTOR_KINDS:
+            raise HTTPException(status_code=403, detail="compliance policy requires a human actor")
+        _require_scope(ctx, "deploy:paper")
+
+    def compliance_symbol(value: str) -> str:
+        try:
+            return normalize_symbol(value)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def save_compliance_policy(
+        ctx: Ctx,
+        stores: Stores,
+        *,
+        action: str,
+        expect_version: int,
+        limits: dict[str, float] | None = None,
+        limits_enforced: bool | None = None,
+        restricted: list[str] | None = None,
+        watch: list[str] | None = None,
+    ) -> dict[str, Any]:
+        require_compliance_editor(ctx)
+        current = effective_compliance_policy(stores, ctx.tenant_id)
+        try:
+            stores.compliance_policies.set(
+                ctx.tenant_id,
+                limits=normalize_limits(limits if limits is not None else current["limits"]),
+                limits_enforced=(
+                    current["limits_enforced"]
+                    if limits_enforced is None
+                    else bool(limits_enforced)
+                ),
+                restricted=normalize_symbols(
+                    restricted if restricted is not None else current["restricted"]
+                ),
+                watch=normalize_symbols(watch if watch is not None else current["watch"]),
+                action=action,
+                actor_id=ctx.actor_id,
+                expect_version=expect_version,
+            )
+        except CompliancePolicyConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return compliance_state(ctx, stores)
+
+    @app.get("/api/compliance")
+    def get_compliance(
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        _require_scope(ctx, "data:read")
+        return compliance_state(ctx, stores)
+
+    @app.post("/api/compliance/kill-switch")
+    def set_compliance_kill_switch(
+        body: ComplianceKillSwitchBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        try:
+            ExecutionGateway(stores).set_kill_switch(
+                ctx,
+                enabled=body.on,
+                reason=body.reason,
+                expect_version=body.expect_version,
+            )
+        except ActionError as err:
+            raise HTTPException(status_code=err.status, detail=err.detail) from err
+        return compliance_state(ctx, stores)
+
+    @app.post("/api/compliance/limits")
+    def set_compliance_limits(
+        body: ComplianceLimitsBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        return save_compliance_policy(
+            ctx,
+            stores,
+            action="Firm limits updated",
+            expect_version=body.expect_version,
+            limits=body.limits,
+            limits_enforced=True,
+        )
+
+    @app.post("/api/compliance/restricted")
+    def add_compliance_restricted(
+        body: ComplianceSymbolBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        require_compliance_editor(ctx)
+        current = effective_compliance_policy(stores, ctx.tenant_id)
+        symbol = compliance_symbol(body.symbol)
+        return save_compliance_policy(
+            ctx,
+            stores,
+            action=f"Restricted name added: {symbol}",
+            expect_version=body.expect_version,
+            restricted=[*current["restricted"], symbol],
+        )
+
+    @app.delete("/api/compliance/restricted/{symbol}")
+    def remove_compliance_restricted(
+        symbol: str,
+        body: ComplianceVersionBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        require_compliance_editor(ctx)
+        current = effective_compliance_policy(stores, ctx.tenant_id)
+        normalized = compliance_symbol(symbol)
+        return save_compliance_policy(
+            ctx,
+            stores,
+            action=f"Restricted name removed: {normalized}",
+            expect_version=body.expect_version,
+            restricted=[item for item in current["restricted"] if item != normalized],
+        )
+
+    @app.post("/api/compliance/watch")
+    def add_compliance_watch(
+        body: ComplianceSymbolBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        require_compliance_editor(ctx)
+        current = effective_compliance_policy(stores, ctx.tenant_id)
+        symbol = compliance_symbol(body.symbol)
+        return save_compliance_policy(
+            ctx,
+            stores,
+            action=f"Watch name added: {symbol}",
+            expect_version=body.expect_version,
+            watch=[*current["watch"], symbol],
+        )
+
+    @app.delete("/api/compliance/watch/{symbol}")
+    def remove_compliance_watch(
+        symbol: str,
+        body: ComplianceVersionBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        require_compliance_editor(ctx)
+        current = effective_compliance_policy(stores, ctx.tenant_id)
+        normalized = compliance_symbol(symbol)
+        return save_compliance_policy(
+            ctx,
+            stores,
+            action=f"Watch name removed: {normalized}",
+            expect_version=body.expect_version,
+            watch=[item for item in current["watch"] if item != normalized],
+        )
+
+    @app.post("/api/compliance/check")
+    def check_strategy_compliance(
+        body: ComplianceCheckBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        _require_scope(ctx, "data:read")
+        strategy = stores.strategies.get(ctx.tenant_id, body.strategy_id)
+        if strategy is None:
+            raise HTTPException(status_code=404, detail="strategy not found")
+        policy = effective_compliance_policy(stores, ctx.tenant_id)
+        control = ExecutionGateway(stores).get_kill_switch(ctx)
+        decision = evaluate_spec_gate(
+            strategy["spec"],
+            restricted=policy["restricted"],
+            watch=policy["watch"],
+            firm_limits=policy["limits"] if policy["limits_enforced"] else None,
+            kill_switch=control["enabled"],
+            kill_reason=control["reason"],
+        ).to_dict()
+        state = compliance_state(ctx, stores)
+        state["check"] = {
+            **decision,
+            "strategyId": strategy["id"],
+            "strategyName": strategy["name"],
+            "stage": strategy.get("spec", {}).get("stage") or "draft",
+            "limitsEnforced": policy["limits_enforced"],
+        }
+        return state
 
     @app.get("/api/auth/me")
     def me(
@@ -920,8 +1409,8 @@ def create_app(db: Any | None = None) -> FastAPI:
         key = _bearer_key(authorization)
         if not key:
             raise HTTPException(status_code=401, detail="not authenticated")
-        # Try session JWT first, fall back to API key.
-        user = _user_from_human_token(stores, key)
+        # Clerk API keys are opaque ``ak_`` values, not session JWTs.
+        user = None if key.startswith(("ak_", "dmbg_")) else _user_from_human_token(stores, key)
         if user is not None:
             return {
                 "id": user["id"],
@@ -930,8 +1419,13 @@ def create_app(db: Any | None = None) -> FastAPI:
                 "avatarUrl": user.get("avatar_url"),
                 "tenantId": user["tenant_id"],
             }
-        # Try API key (BYO agents).
-        principal = stores.auth.verify(key)
+        # Try a Clerk-managed or legacy API key (BYO agents).
+        try:
+            principal = stores.agent_keys.verify(key)
+        except ClerkApiUnavailable as exc:
+            raise HTTPException(status_code=503, detail="API key verification unavailable") from exc
+        except ClerkApiError as exc:
+            raise HTTPException(status_code=401, detail="invalid token") from exc
         if principal:
             return {
                 "id": principal["tenant_id"],
@@ -947,7 +1441,7 @@ def create_app(db: Any | None = None) -> FastAPI:
     # CANNOT mint more keys (only a session/human can) — key issuance requires sign-in.
     def _session_user(authorization: str | None, stores: "Stores") -> dict[str, Any]:
         key = _bearer_key(authorization)
-        if key:
+        if key and not key.startswith(("ak_", "dmbg_")):
             user = _user_from_human_token(stores, key)
             if user is not None:
                 return user
@@ -1010,9 +1504,15 @@ def create_app(db: Any | None = None) -> FastAPI:
         user = _session_user(authorization, stores)
         scopes = body.scopes if body.scopes else list(_DEFAULT_KEY_SCOPES)
         try:
-            plaintext, key_id = stores.auth.mint_key(user["tenant_id"], scopes)
+            plaintext, key_id = stores.agent_keys.mint_key(
+                user["tenant_id"], scopes, subject=user.get("clerk_subject")
+            )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ClerkApiUnavailable as exc:
+            raise HTTPException(status_code=503, detail="Clerk API key service unavailable") from exc
+        except ClerkApiError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         return {
             "api_key": plaintext,
             "key_id": key_id,
@@ -1027,7 +1527,15 @@ def create_app(db: Any | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         """List the signed-in user's tenant's keys (metadata only — secrets are never stored)."""
         user = _session_user(authorization, stores)
-        return {"keys": stores.auth.list_keys(user["tenant_id"])}
+        try:
+            keys = stores.agent_keys.list_keys(
+                user["tenant_id"], subject=user.get("clerk_subject")
+            )
+        except ClerkApiUnavailable as exc:
+            raise HTTPException(status_code=503, detail="Clerk API key service unavailable") from exc
+        except ClerkApiError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"keys": keys}
 
     @app.delete("/api/auth/keys/{key_id}")
     def revoke_api_key(
@@ -1037,10 +1545,18 @@ def create_app(db: Any | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         """Revoke a key — only if it belongs to the signed-in user's tenant (no cross-tenant)."""
         user = _session_user(authorization, stores)
-        owned = {k["key_id"] for k in stores.auth.list_keys(user["tenant_id"])}
-        if key_id not in owned:
+        try:
+            revoked = stores.agent_keys.revoke_key(
+                key_id,
+                tenant_id=user["tenant_id"],
+                subject=user.get("clerk_subject"),
+            )
+        except ClerkApiUnavailable as exc:
+            raise HTTPException(status_code=503, detail="Clerk API key service unavailable") from exc
+        except ClerkApiError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if not revoked:
             raise HTTPException(status_code=404, detail="key not found")
-        stores.auth.revoke_key(key_id)
         return {"key_id": key_id, "revoked": True}
 
     @app.get("/api/agent/toolkits")
@@ -1163,6 +1679,29 @@ def create_app(db: Any | None = None) -> FastAPI:
         shaped["artifacts"] = stores.artifacts.list_by_run(resolved_tenant, run_id)
         return shaped
 
+    @app.post("/api/feedback", status_code=201)
+    def submit_feedback(
+        body: FeedbackBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        if ctx.actor_kind not in HUMAN_ACTOR_KINDS:
+            raise HTTPException(status_code=403, detail="feedback requires a signed-in user")
+        message = body.message.strip()
+        if not message:
+            raise HTTPException(status_code=422, detail="feedback message is required")
+        if len(message) > MAX_FEEDBACK_LENGTH:
+            raise HTTPException(
+                status_code=422,
+                detail=f"feedback message must be {MAX_FEEDBACK_LENGTH} characters or fewer",
+            )
+        saved = stores.feedback.create(ctx.tenant_id, ctx.actor_id, message)
+        return {
+            "feedback_id": saved["feedback_id"],
+            "status": "received",
+            "created_at": saved["created_at"],
+        }
+
     # ---- reads -------------------------------------------------------------------------
     @app.get("/api/runs")
     def list_runs(
@@ -1171,6 +1710,59 @@ def create_app(db: Any | None = None) -> FastAPI:
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
         return {"runs": [shape_run_row(r) for r in stores.runs.list(tenant_id, kind=kind)]}
+
+    @app.get("/api/dashboard/summary")
+    def get_dashboard_summary(
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> DashboardEnvelope[DashboardSummaryData]:
+        _require_scope(ctx, "data:read")
+        return DashboardEnvelope[DashboardSummaryData].model_validate(
+            dashboard_summary(stores.dashboard, ctx.tenant_id)
+        )
+
+    @app.get("/api/dashboard/risk")
+    def get_dashboard_risk(
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> DashboardEnvelope[DashboardRiskData]:
+        _require_scope(ctx, "data:read")
+        return DashboardEnvelope[DashboardRiskData].model_validate(
+            dashboard_risk(stores.dashboard, ctx.tenant_id)
+        )
+
+    @app.get("/api/dashboard/activity")
+    def get_dashboard_activity(
+        limit: int = Query(default=20, ge=1, le=100),
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> DashboardEnvelope[DashboardActivityData]:
+        _require_scope(ctx, "data:read")
+        _require_scope(ctx, "triggers:read")
+        _require_scope(ctx, "alerts:read")
+        return DashboardEnvelope[DashboardActivityData].model_validate(
+            dashboard_activity(stores.dashboard, ctx.tenant_id, limit=limit)
+        )
+
+    @app.get("/api/dashboard/market")
+    def get_dashboard_market(
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> DashboardEnvelope[DashboardMarketData]:
+        _require_scope(ctx, "data:read")
+        return DashboardEnvelope[DashboardMarketData].model_validate(
+            dashboard_market(stores.dashboard, ctx.tenant_id)
+        )
+
+    @app.get("/api/providers/status")
+    def get_provider_status(
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> DashboardEnvelope[ProviderStatusData]:
+        _require_scope(ctx, "data:read")
+        return DashboardEnvelope[ProviderStatusData].model_validate(
+            provider_status(stores.dashboard, ctx.tenant_id)
+        )
 
     @app.get("/api/runs/{run_id}")
     def get_run(
@@ -1265,6 +1857,50 @@ def create_app(db: Any | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="artifact not found")
         return artifact
 
+    @app.get("/api/artifacts/{artifact_id}/download")
+    def download_artifact(
+        artifact_id: str,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ):
+        """Download a tenant-owned artifact without exposing storage credentials."""
+        _require_scope(ctx, "artifacts:read")
+        artifact = stores.artifacts.get(ctx.tenant_id, artifact_id)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="artifact not found")
+        uri = str(artifact.get("uri") or "")
+        if uri.startswith("s3://"):
+            try:
+                body, content_length, content_type = open_artifact(uri)
+            except (RuntimeError, ValueError) as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            except Exception as exc:  # noqa: BLE001 - stable storage boundary
+                raise HTTPException(status_code=503, detail="artifact storage unavailable") from exc
+            filename = Path(
+                str((artifact.get("metadata") or {}).get("filename") or "artifact")
+            ).name.replace('"', "").replace("\r", "").replace("\n", "")
+            headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+            if content_length is not None:
+                headers["Content-Length"] = str(content_length)
+            return StreamingResponse(
+                body.iter_chunks(),
+                media_type=content_type or artifact.get("media_type") or "application/octet-stream",
+                headers=headers,
+            )
+        if uri.startswith("file://"):
+            path = Path(urllib.parse.unquote(urllib.parse.urlparse(uri).path))
+            if not path.is_file():
+                raise HTTPException(status_code=404, detail="artifact bytes not found")
+            return FileResponse(
+                path,
+                media_type=artifact.get("media_type") or "application/octet-stream",
+                filename=str((artifact.get("metadata") or {}).get("filename") or path.name),
+            )
+        raise HTTPException(
+            status_code=409,
+            detail="artifact bytes were not persisted; rerun after storage is configured",
+        )
+
     @app.get("/api/approvals")
     def list_approvals(
         run_id: str | None = None,
@@ -1329,7 +1965,7 @@ def create_app(db: Any | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         return {
             "connections": [
-                _public_provider_connection(connection)
+                public_provider_connection(connection)
                 for connection in stores.providers.list_connections(tenant_id)
             ],
             "snapshots": stores.providers.list_snapshots(tenant_id, limit=25),
@@ -1372,7 +2008,7 @@ def create_app(db: Any | None = None) -> FastAPI:
             credential_ref=credential_ref,
             retention_policy=body.retention_policy,
         )
-        return _public_provider_connection(connection)
+        return public_provider_connection(connection)
 
     @app.get("/api/dataset-snapshots")
     def list_dataset_snapshots(

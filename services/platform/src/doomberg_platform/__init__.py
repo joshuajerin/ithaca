@@ -21,10 +21,22 @@ from .adaptive_dashboard_store import (
 )
 from .auth_store import VALID_SCOPES, AuthStore, hash_secret
 from .book_store import BookConflict, BookNotFound, BookStore
+from .clerk_api_keys import (
+    AgentKeyStore,
+    ClerkApiError,
+    ClerkApiUnavailable,
+    ClerkManagedApiKeyStore,
+    ClerkWaitlistService,
+    build_agent_key_store,
+)
 from .control_store import (
     ApprovalStore,
     ArtifactStore,
+    CompliancePolicyConflict,
+    CompliancePolicyStore,
     DeliveryTargetStore,
+    ExecutionControlConflict,
+    ExecutionControlStore,
     ExecutionStore,
     NotificationStore,
     ProviderStore,
@@ -32,6 +44,7 @@ from .control_store import (
     TriggerStore,
 )
 from .db import Db, open_db
+from .feedback_store import FeedbackStore
 from .job_store import JobConflict, JobNotFound, JobStore
 from .job_profiles import (
     JOB_PROFILES,
@@ -53,16 +66,24 @@ from .run_store import (
 from .strategy_store import StrategyStore
 from .trace_store import TraceStore
 from .user_store import SessionError, UserStore
+from .worker_store import WorkerHeartbeatStore
 
 __all__ = [
     "open_db",
     "Db",
+    "FeedbackStore",
     "Platform",
     "TraceStore",
     "RunStore",
     "StrategyStore",
     "BookStore",
     "AuthStore",
+    "AgentKeyStore",
+    "ClerkApiError",
+    "ClerkApiUnavailable",
+    "ClerkManagedApiKeyStore",
+    "ClerkWaitlistService",
+    "build_agent_key_store",
     "AdaptiveDashboardProfileStore",
     "ADAPTIVE_WIDGET_IDS",
     "DEFAULT_ADAPTIVE_DASHBOARD_SPEC",
@@ -81,6 +102,10 @@ __all__ = [
     "ApprovalStore",
     "ProviderStore",
     "ExecutionStore",
+    "ExecutionControlStore",
+    "ExecutionControlConflict",
+    "CompliancePolicyStore",
+    "CompliancePolicyConflict",
     "TriggerStore",
     "TriggerBaselineStore",
     "NotificationStore",
@@ -97,4 +122,5 @@ __all__ = [
     "BookNotFound",
     "UserStore",
     "SessionError",
+    "WorkerHeartbeatStore",
 ]

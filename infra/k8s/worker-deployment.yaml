@@ -70,6 +70,10 @@ spec:
                 secretKeyRef:
                   name: doomberg-db
                   key: platform_url
+            - name: DOOMBERG_DB_MIGRATION_MODE
+              value: "apply"
+            - name: DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS
+              value: "${DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS}"
           resources:
             requests: { cpu: "100m", memory: 128Mi }
             limits: { cpu: "500m", memory: 256Mi }
@@ -97,8 +101,14 @@ spec:
                 secretKeyRef:
                   name: doomberg-db
                   key: platform_url
+            - name: DOOMBERG_DB_MIGRATION_MODE
+              value: "validate"
+            - name: DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS
+              value: "${DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS}"
             - name: DOOMBERG_BACKTEST_INTERVAL_S
               value: "2"
+            - name: DOOMBERG_ENABLE_BACKTEST_LOOP
+              value: "${DOOMBERG_ENABLE_BACKTEST_LOOP}"
             - name: DOOMBERG_TRIGGER_JOB_INTERVAL_S
               value: "2"
             - name: DOOMBERG_NOTIFICATION_INTERVAL_S
@@ -109,9 +119,27 @@ spec:
               value: "180"
             - name: DOOMBERG_ADAPTIVE_DASHBOARD_INTERVAL_S
               value: "60"
+            - name: DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER
+              valueFrom:
+                secretKeyRef: { name: doomberg-adaptive-dashboard, key: provider }
+            - name: DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL
+              valueFrom:
+                secretKeyRef: { name: doomberg-adaptive-dashboard, key: openai_base_url, optional: true }
+            - name: DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY
+              valueFrom:
+                secretKeyRef: { name: doomberg-adaptive-dashboard, key: api_key, optional: true }
+            - name: DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY
+              valueFrom:
+                secretKeyRef: { name: doomberg-adaptive-dashboard, key: modal_key, optional: true }
+            - name: DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET
+              valueFrom:
+                secretKeyRef: { name: doomberg-adaptive-dashboard, key: modal_secret, optional: true }
+            - name: DOOMBERG_ADAPTIVE_DASHBOARD_MODEL
+              valueFrom:
+                secretKeyRef: { name: doomberg-adaptive-dashboard, key: model }
             - name: ANTHROPIC_API_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-anthropic, key: anthropic_api_key, optional: true }
+                secretKeyRef: { name: doomberg-adaptive-dashboard, key: anthropic_api_key, optional: true }
             - name: FMP_API_KEY
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: fmp_api_key, optional: true }
@@ -149,6 +177,10 @@ spec:
                 secretKeyRef:
                   name: doomberg-db
                   key: platform_url
+            - name: DOOMBERG_DB_MIGRATION_MODE
+              value: "validate"
+            - name: DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS
+              value: "${DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS}"
             - name: DOOMBERG_TRIGGER_INTERVAL_S
               value: "5"
             - name: DOOMBERG_TRIGGER_LEASE_TTL_S

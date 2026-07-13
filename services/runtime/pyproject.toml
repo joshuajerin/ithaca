@@ -3,7 +3,7 @@ name = "doomberg-runtime"
 version = "0.0.0"
 description = "DO workers: backtest_runner + live_runner. Out-of-process; imports doomberg-core."
 requires-python = ">=3.11"
-dependencies = ["doomberg-core", "doomberg-contracts", "doomberg-platform"]
+dependencies = ["doomberg-core[databento]", "doomberg-contracts", "doomberg-platform", "boto3>=1.35"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

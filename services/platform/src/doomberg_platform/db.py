@@ -20,9 +20,13 @@ import sqlite3
 import threading
 from collections import defaultdict
 from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
-_SCHEMA = """
+# Version 1 of the platform schema. This string is a migration artifact: do not
+# edit it in place. Add a new migration in ``migrations.py`` for every schema
+# change so existing Postgres installations have an ordered upgrade path.
+_BASELINE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
     tenant_id   TEXT NOT NULL,
     run_id      TEXT NOT NULL,
@@ -36,6 +40,12 @@ CREATE TABLE IF NOT EXISTS runs (
     updated_at  TEXT NOT NULL,
     PRIMARY KEY (tenant_id, run_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_runs_tenant_updated
+    ON runs (tenant_id, updated_at DESC, run_id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_runs_tenant_kind_updated
+    ON runs (tenant_id, kind, updated_at DESC, run_id DESC);
 
 -- One immutable row per (strategy_id, version); same name -> new version, never updated.
 CREATE TABLE IF NOT EXISTS strategies (
@@ -340,6 +350,9 @@ CREATE TABLE IF NOT EXISTS trigger_policies (
 CREATE INDEX IF NOT EXISTS idx_trigger_policies_state
     ON trigger_policies (tenant_id, state, name);
 
+CREATE INDEX IF NOT EXISTS idx_trigger_policies_recent
+    ON trigger_policies (tenant_id, updated_at DESC, trigger_id DESC);
+
 -- Trigger firings are the stateful dedupe/cooldown/budget memory for the trigger engine.
 -- They deliberately point at the run created by the trigger, so Sessions can replay the
 -- exact market event -> analysis run lineage.
@@ -405,6 +418,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_dedupe
 
 CREATE INDEX IF NOT EXISTS idx_notification_claim
     ON notification_outbox (state, next_attempt_at, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_notification_tenant_recent
+    ON notification_outbox (tenant_id, created_at DESC, notification_id DESC);
 
 CREATE TABLE IF NOT EXISTS delivery_targets (
     tenant_id       TEXT NOT NULL,
@@ -489,6 +505,94 @@ CREATE TABLE IF NOT EXISTS fills (
 
 CREATE INDEX IF NOT EXISTS idx_fills_order
     ON fills (tenant_id, order_id, event_time);
+
+-- Product feedback submitted by signed-in humans from the web rail.
+CREATE TABLE IF NOT EXISTS feedback (
+    feedback_id TEXT PRIMARY KEY,
+    tenant_id   TEXT NOT NULL,
+    user_id     TEXT NOT NULL,
+    message     TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_tenant_created
+    ON feedback (tenant_id, created_at);
+"""
+
+# Portable post-baseline evolutions for SQLite local/dev. PostgreSQL applies the
+# equivalent statements through the ordered migration manifest.
+_LOCAL_SCHEMA_EVOLUTIONS = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_broker_order
+    ON orders (tenant_id, broker, broker_order_id)
+    WHERE broker_order_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fills_broker_fill
+    ON fills (tenant_id, broker_fill_id)
+    WHERE broker_fill_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS execution_controls (
+    tenant_id   TEXT PRIMARY KEY,
+    enabled     INTEGER NOT NULL DEFAULT 0,
+    reason      TEXT,
+    updated_by  TEXT NOT NULL,
+    version     INTEGER NOT NULL DEFAULT 1,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS execution_control_events (
+    tenant_id   TEXT NOT NULL,
+    event_id    TEXT NOT NULL,
+    enabled     INTEGER NOT NULL,
+    reason      TEXT,
+    actor_id    TEXT NOT NULL,
+    version     INTEGER NOT NULL,
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_control_events_tenant
+    ON execution_control_events (tenant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS compliance_policies (
+    tenant_id   TEXT PRIMARY KEY,
+    limits      TEXT NOT NULL,
+    limits_enforced INTEGER NOT NULL DEFAULT 0,
+    restricted  TEXT NOT NULL,
+    watch       TEXT NOT NULL,
+    updated_by  TEXT NOT NULL,
+    version     INTEGER NOT NULL DEFAULT 1,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS compliance_policy_events (
+    tenant_id   TEXT NOT NULL,
+    event_id    TEXT NOT NULL,
+    action      TEXT NOT NULL,
+    payload     TEXT NOT NULL,
+    actor_id    TEXT NOT NULL,
+    version     INTEGER NOT NULL,
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_compliance_policy_events_tenant
+    ON compliance_policy_events (tenant_id, version DESC);
+
+CREATE TABLE IF NOT EXISTS worker_heartbeats (
+    worker_id    TEXT NOT NULL,
+    role         TEXT NOT NULL,
+    status       TEXT NOT NULL,
+    detail       TEXT,
+    metadata     TEXT NOT NULL,
+    started_at   TEXT NOT NULL,
+    heartbeat_at TEXT NOT NULL,
+    expires_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    PRIMARY KEY (worker_id, role)
+);
+
+CREATE INDEX IF NOT EXISTS idx_worker_heartbeats_role_expiry
+    ON worker_heartbeats (role, expires_at DESC);
 """
 
 
@@ -520,11 +624,23 @@ class Db:
         self._channels: dict[str, _RunChannel] = defaultdict(_RunChannel)
         self._channels_lock = threading.Lock()
         with self._conn:
-            self._conn.executescript(_SCHEMA)
+            self._conn.executescript(_BASELINE_SCHEMA)
+            self._conn.executescript(_LOCAL_SCHEMA_EVOLUTIONS)
 
     @property
     def conn(self) -> sqlite3.Connection:
         return self._conn
+
+    @contextmanager
+    def tenant_scope(self, tenant_id: str) -> Iterator[None]:
+        """SQLite compatibility shim for the Postgres RLS access scope."""
+        del tenant_id
+        yield
+
+    @contextmanager
+    def system_scope(self) -> Iterator[None]:
+        """SQLite compatibility shim for trusted cross-tenant operations."""
+        yield
 
     def _channel(self, run_id: str) -> _RunChannel:
         with self._channels_lock:
@@ -537,12 +653,15 @@ class Db:
             ch.events.append(event)
             ch.cond.notify_all()
 
-    def subscribe(self, run_id: str, after_seq: int = -1) -> Iterator[dict[str, Any]]:
+    def subscribe(
+        self, tenant_id: str, run_id: str, after_seq: int = -1
+    ) -> Iterator[dict[str, Any]]:
         """Yield live events for `run_id` with seq > after_seq, blocking for new ones.
 
         Local in-process stand-in for Postgres LISTEN/NOTIFY. Replay-from-seq for
         historical events is the store's job; this only tails what is published live.
         """
+        tenant_id = str(tenant_id)
         ch = self._channel(run_id)
         cursor = 0
         last_seq = after_seq
@@ -553,7 +672,7 @@ class Db:
                 pending = ch.events[cursor:]
                 cursor = len(ch.events)
             for ev in pending:
-                if int(ev["seq"]) > last_seq:
+                if ev.get("tenant_id") == tenant_id and int(ev["seq"]) > last_seq:
                     last_seq = int(ev["seq"])
                     yield ev
 
