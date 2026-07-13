@@ -145,3 +145,11 @@ def test_launch_gate_worker_flag_rejects_lease_only_state(capsys, monkeypatch):
     worker = next(row for row in body["results"] if row["name"] == "worker readiness")
     assert worker["status"] == "fail"
     assert "backtest-worker" in worker["evidence"]["missing_roles"]
+
+
+def test_execution_reconciler_has_one_heartbeat_reporting_loop() -> None:
+    source = (Path(__file__).resolve().parents[3] / "scripts" / "run_workers.py").read_text()
+
+    assert source.count("def run_execution_reconciler() -> None:") == 1
+    assert 'role="execution-reconciler"' in source
+    assert "reporter.pulse(status=\"starting\")" in source
