@@ -1,5 +1,4 @@
 import { Link } from "react-router-dom";
-import { DOCS_URL } from "../lib/links";
 
 export default function Footer() {
   return (
