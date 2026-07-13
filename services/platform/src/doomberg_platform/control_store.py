@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
 from .db import Db
+from .db_scope import tenant_scoped_store
 
 
 def _now() -> str:
@@ -77,6 +80,37 @@ def _fill_row_to_dict(row: Any) -> dict[str, Any]:
     }
 
 
+_OPEN_ORDER_STATES = (
+    "pending_submission",
+    "submitting",
+    "submitted",
+    "partially_filled",
+)
+
+GLOBAL_EXECUTION_CONTROL_ID = "__global__"
+_GLOBAL_SUBMISSION_FENCE = "doomberg:execution:global"
+
+
+def _tenant_submission_fence(tenant_id: str) -> str:
+    return f"doomberg:execution:tenant:{tenant_id}"
+
+
+class ExecutionControlConflict(RuntimeError):
+    """The execution control changed since the caller read its version."""
+
+
+def _execution_control_row(row: Any) -> dict[str, Any]:
+    return {
+        "tenant_id": row["tenant_id"],
+        "enabled": bool(row["enabled"]),
+        "reason": row["reason"],
+        "updated_by": row["updated_by"],
+        "version": int(row["version"]),
+        "updated_at": row["updated_at"],
+    }
+
+
+@tenant_scoped_store()
 class ArtifactStore:
     def __init__(self, db: Db) -> None:
         self._db = db
@@ -169,6 +203,7 @@ class ArtifactStore:
         return [a for r in rows if (a := self.get(str(tenant_id), r["artifact_id"])) is not None]
 
 
+@tenant_scoped_store()
 class ApprovalStore:
     def __init__(self, db: Db) -> None:
         self._db = db
@@ -292,6 +327,7 @@ class ApprovalStore:
         return self.get(tenant_id, approval_id)
 
 
+@tenant_scoped_store()
 class ProviderStore:
     def __init__(self, db: Db) -> None:
         self._db = db
@@ -446,6 +482,7 @@ class ProviderStore:
         return [s for r in rows if (s := self.get_snapshot(str(tenant_id), r["snapshot_id"])) is not None]
 
 
+@tenant_scoped_store(system_methods={"list_open_orders"})
 class ExecutionStore:
     def __init__(self, db: Db) -> None:
         self._db = db
@@ -593,35 +630,48 @@ class ExecutionStore:
     ) -> dict[str, Any]:
         existing = self.get_order_by_client_order_id(tenant_id, broker, client_order_id)
         if existing is not None:
+            if existing["intent_id"] != str(intent_id):
+                raise ValueError("client order id is already attached to another intent")
             return existing
+        if broker_order_id is not None:
+            existing = self.get_order_by_broker_order_id(tenant_id, broker, broker_order_id)
+            if existing is not None:
+                if existing["intent_id"] != str(intent_id):
+                    raise ValueError("broker order id is already attached to another intent")
+                return existing
         order_id = str(uuid.uuid4())
         now = _now()
         with self._db.write_lock:
             with self._db.conn as conn:
-                try:
-                    conn.execute(
-                        "INSERT INTO orders "
-                        "(tenant_id, order_id, intent_id, broker, broker_order_id, client_order_id, "
-                        "state, payload, created_at, updated_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (
-                            str(tenant_id),
-                            order_id,
-                            str(intent_id),
-                            broker,
-                            broker_order_id,
-                            client_order_id,
-                            state,
-                            json.dumps(payload),
-                            now,
-                            now,
-                        ),
-                    )
-                except Exception:
-                    existing = self.get_order_by_client_order_id(tenant_id, broker, client_order_id)
-                    if existing is not None:
-                        return existing
-                    raise
+                cur = conn.execute(
+                    "INSERT INTO orders "
+                    "(tenant_id, order_id, intent_id, broker, broker_order_id, client_order_id, "
+                    "state, payload, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+                    (
+                        str(tenant_id),
+                        order_id,
+                        str(intent_id),
+                        broker,
+                        broker_order_id,
+                        client_order_id,
+                        state,
+                        json.dumps(payload),
+                        now,
+                        now,
+                    ),
+                )
+        if cur.rowcount == 0:
+            existing = self.get_order_by_client_order_id(tenant_id, broker, client_order_id)
+            if existing is None and broker_order_id is not None:
+                existing = self.get_order_by_broker_order_id(
+                    tenant_id, broker, broker_order_id
+                )
+            if existing is None:
+                raise RuntimeError("order insert conflicted without a matching broker identity")
+            if existing["intent_id"] != str(intent_id):
+                raise ValueError("broker order identity is already attached to another intent")
+            return existing
         order = self.get_order(tenant_id, order_id)
         if order is None:
             raise KeyError(order_id)
@@ -640,6 +690,16 @@ class ExecutionStore:
         row = self._db.conn.execute(
             "SELECT * FROM orders WHERE tenant_id = ? AND broker = ? AND client_order_id = ?",
             (str(tenant_id), broker, client_order_id),
+        ).fetchone()
+        return _order_row_to_dict(row) if row else None
+
+    def get_order_by_broker_order_id(
+        self, tenant_id: str, broker: str, broker_order_id: str
+    ) -> dict[str, Any] | None:
+        row = self._db.conn.execute(
+            "SELECT * FROM orders "
+            "WHERE tenant_id = ? AND broker = ? AND broker_order_id = ?",
+            (str(tenant_id), broker, str(broker_order_id)),
         ).fetchone()
         return _order_row_to_dict(row) if row else None
 
@@ -667,6 +727,55 @@ class ExecutionStore:
             tuple(params),
         ).fetchall()
         return [_order_row_to_dict(row) for row in rows]
+
+    def list_open_orders(
+        self, *, broker: str | None = None, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        marks = ",".join("?" for _ in _OPEN_ORDER_STATES)
+        params: list[Any] = list(_OPEN_ORDER_STATES)
+        broker_clause = ""
+        if broker is not None:
+            broker_clause = " AND broker = ?"
+            params.append(str(broker))
+        params.append(max(1, min(int(limit), 2_000)))
+        rows = self._db.conn.execute(
+            f"SELECT * FROM orders WHERE state IN ({marks}){broker_clause} "
+            "ORDER BY updated_at ASC, order_id ASC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+        return [_order_row_to_dict(row) for row in rows]
+
+    def claim_order_submission(self, tenant_id: str, order_id: str) -> bool:
+        now = _now()
+        with self._db.write_lock:
+            with self._db.conn as conn:
+                cur = conn.execute(
+                    "UPDATE orders SET state = 'submitting', updated_at = ? "
+                    "WHERE tenant_id = ? AND order_id = ? AND state = 'pending_submission'",
+                    (now, str(tenant_id), str(order_id)),
+                )
+                return cur.rowcount == 1
+
+    def release_order_submission(
+        self, tenant_id: str, order_id: str, *, error: str
+    ) -> dict[str, Any]:
+        current = self.get_order(tenant_id, order_id)
+        if current is None:
+            raise KeyError(order_id)
+        payload = dict(current["payload"])
+        payload["submission_error"] = str(error)[:500]
+        now = _now()
+        with self._db.write_lock:
+            with self._db.conn as conn:
+                conn.execute(
+                    "UPDATE orders SET state = 'pending_submission', payload = ?, updated_at = ? "
+                    "WHERE tenant_id = ? AND order_id = ? AND state = 'submitting'",
+                    (json.dumps(payload), now, str(tenant_id), str(order_id)),
+                )
+        order = self.get_order(tenant_id, order_id)
+        if order is None:
+            raise KeyError(order_id)
+        return order
 
     def set_order_state(
         self,
@@ -712,14 +821,20 @@ class ExecutionStore:
         event_time: str,
         broker_fill_id: str | None = None,
     ) -> dict[str, Any]:
+        if broker_fill_id is not None:
+            existing = self.get_fill_by_broker_fill_id(tenant_id, broker_fill_id)
+            if existing is not None:
+                if existing["order_id"] != str(order_id):
+                    raise ValueError("broker fill id is already attached to another order")
+                return existing
         fill_id = str(uuid.uuid4())
         now = _now()
         with self._db.write_lock:
             with self._db.conn as conn:
-                conn.execute(
+                cur = conn.execute(
                     "INSERT INTO fills "
                     "(tenant_id, fill_id, order_id, broker_fill_id, payload, event_time, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
                     (
                         str(tenant_id),
                         fill_id,
@@ -730,6 +845,17 @@ class ExecutionStore:
                         now,
                     ),
                 )
+        if cur.rowcount == 0:
+            existing = (
+                self.get_fill_by_broker_fill_id(tenant_id, broker_fill_id)
+                if broker_fill_id is not None
+                else None
+            )
+            if existing is None:
+                raise RuntimeError("fill insert conflicted without a broker fill identity")
+            if existing["order_id"] != str(order_id):
+                raise ValueError("broker fill id is already attached to another order")
+            return existing
         fill = self.get_fill(tenant_id, fill_id)
         if fill is None:
             raise KeyError(fill_id)
@@ -739,6 +865,15 @@ class ExecutionStore:
         row = self._db.conn.execute(
             "SELECT * FROM fills WHERE tenant_id = ? AND fill_id = ?",
             (str(tenant_id), str(fill_id)),
+        ).fetchone()
+        return _fill_row_to_dict(row) if row else None
+
+    def get_fill_by_broker_fill_id(
+        self, tenant_id: str, broker_fill_id: str
+    ) -> dict[str, Any] | None:
+        row = self._db.conn.execute(
+            "SELECT * FROM fills WHERE tenant_id = ? AND broker_fill_id = ?",
+            (str(tenant_id), str(broker_fill_id)),
         ).fetchone()
         return _fill_row_to_dict(row) if row else None
 
@@ -764,6 +899,203 @@ class ExecutionStore:
         return [_fill_row_to_dict(row) for row in rows]
 
 
+@tenant_scoped_store(
+    system_methods={"get_global", "get_effective", "list_global_events", "set_global"},
+    skip_methods={"_get_raw", "_list_events", "_set", "submission_guard"},
+)
+class ExecutionControlStore:
+    """Durable tenant/global execution stop controls with append-only audit."""
+
+    def __init__(self, db: Db) -> None:
+        self._db = db
+
+    def get(self, tenant_id: str) -> dict[str, Any] | None:
+        return self._get_raw(str(tenant_id))
+
+    def get_global(self) -> dict[str, Any] | None:
+        return self._get_raw(GLOBAL_EXECUTION_CONTROL_ID)
+
+    def get_effective(self, tenant_id: str) -> dict[str, Any]:
+        tenant = self._get_raw(str(tenant_id))
+        global_control = self._get_raw(GLOBAL_EXECUTION_CONTROL_ID)
+        global_enabled = bool(global_control and global_control["enabled"])
+        tenant_enabled = bool(tenant and tenant["enabled"])
+        active = global_enabled or tenant_enabled
+        active_control = global_control if global_enabled else tenant if tenant_enabled else None
+        return {
+            "enabled": active,
+            "source": "global" if global_enabled else "tenant" if tenant_enabled else "none",
+            "reason": active_control["reason"] if active_control else None,
+            "version": active_control["version"] if active_control else 0,
+            # Tenant writes must compare against the tenant row even while a global
+            # halt is effective or after the tenant halt has been released.
+            "tenant_version": tenant["version"] if tenant else 0,
+            "tenant_control": tenant,
+            "global_control": global_control,
+        }
+
+    def set_tenant(
+        self,
+        tenant_id: str,
+        *,
+        enabled: bool,
+        reason: str | None,
+        actor_id: str,
+        expect_version: int,
+    ) -> dict[str, Any]:
+        return self._set(
+            str(tenant_id),
+            enabled=enabled,
+            reason=reason,
+            actor_id=actor_id,
+            expect_version=expect_version,
+        )
+
+    def set_global(
+        self,
+        *,
+        enabled: bool,
+        reason: str | None,
+        actor_id: str,
+        expect_version: int,
+    ) -> dict[str, Any]:
+        return self._set(
+            GLOBAL_EXECUTION_CONTROL_ID,
+            enabled=enabled,
+            reason=reason,
+            actor_id=actor_id,
+            expect_version=expect_version,
+        )
+
+    def list_events(self, tenant_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+        return self._list_events(str(tenant_id), limit=limit)
+
+    def list_global_events(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        return self._list_events(GLOBAL_EXECUTION_CONTROL_ID, limit=limit)
+
+    def _list_events(self, tenant_id: str, *, limit: int) -> list[dict[str, Any]]:
+        rows = self._db.conn.execute(
+            "SELECT * FROM execution_control_events WHERE tenant_id = ? "
+            "ORDER BY version DESC, event_id DESC LIMIT ?",
+            (str(tenant_id), max(1, min(int(limit), 500))),
+        ).fetchall()
+        return [
+            {
+                "tenant_id": row["tenant_id"],
+                "event_id": row["event_id"],
+                "enabled": bool(row["enabled"]),
+                "reason": row["reason"],
+                "actor_id": row["actor_id"],
+                "version": int(row["version"]),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    @contextmanager
+    def submission_guard(self, tenant_id: str) -> Iterator[None]:
+        """Linearize broker sends against tenant and global control changes."""
+
+        if self._db.is_postgres:
+            with self._db.conn as conn:
+                conn.execute(
+                    "SELECT pg_advisory_xact_lock_shared(hashtextextended(?, 0))",
+                    (_GLOBAL_SUBMISSION_FENCE,),
+                )
+                conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                    (_tenant_submission_fence(str(tenant_id)),),
+                )
+                yield
+            return
+        with self._db.write_lock:
+            with self._db.conn as conn:
+                yield
+
+    def _get_raw(self, tenant_id: str) -> dict[str, Any] | None:
+        row = self._db.conn.execute(
+            "SELECT * FROM execution_controls WHERE tenant_id = ?",
+            (str(tenant_id),),
+        ).fetchone()
+        return _execution_control_row(row) if row else None
+
+    def _set(
+        self,
+        tenant_id: str,
+        *,
+        enabled: bool,
+        reason: str | None,
+        actor_id: str,
+        expect_version: int,
+    ) -> dict[str, Any]:
+        reason = str(reason).strip()[:500] if reason else None
+        actor_id = str(actor_id).strip()
+        if not actor_id:
+            raise ValueError("execution control actor_id is required")
+        now = _now()
+        with self._db.write_lock:
+            with self._db.conn as conn:
+                if self._db.is_postgres:
+                    fence = (
+                        _GLOBAL_SUBMISSION_FENCE
+                        if tenant_id == GLOBAL_EXECUTION_CONTROL_ID
+                        else _tenant_submission_fence(tenant_id)
+                    )
+                    conn.execute(
+                        "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                        (fence,),
+                    )
+                values = (tenant_id, int(bool(enabled)), reason, actor_id, now)
+                if int(expect_version) == 0:
+                    control = conn.execute(
+                        "INSERT INTO execution_controls "
+                        "(tenant_id, enabled, reason, updated_by, version, updated_at) "
+                        "VALUES (?, ?, ?, ?, 1, ?) "
+                        "ON CONFLICT(tenant_id) DO NOTHING RETURNING *",
+                        values,
+                    ).fetchone()
+                else:
+                    control = conn.execute(
+                        "UPDATE execution_controls SET enabled = ?, reason = ?, updated_by = ?, "
+                        "version = version + 1, updated_at = ? "
+                        "WHERE tenant_id = ? AND version = ? RETURNING *",
+                        (
+                            int(bool(enabled)),
+                            reason,
+                            actor_id,
+                            now,
+                            tenant_id,
+                            int(expect_version),
+                        ),
+                    ).fetchone()
+                if control is None:
+                    current = conn.execute(
+                        "SELECT version FROM execution_controls WHERE tenant_id = ?",
+                        (tenant_id,),
+                    ).fetchone()
+                    current_version = int(current["version"]) if current else 0
+                    raise ExecutionControlConflict(
+                        f"execution control version is {current_version}, expected {expect_version}"
+                    )
+                version = int(control["version"])
+                conn.execute(
+                    "INSERT INTO execution_control_events "
+                    "(tenant_id, event_id, enabled, reason, actor_id, version, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        tenant_id,
+                        str(uuid.uuid4()),
+                        int(bool(enabled)),
+                        reason,
+                        actor_id,
+                        version,
+                        now,
+                    ),
+                )
+        return _execution_control_row(control)
+
+
+@tenant_scoped_store(system_methods={"list_active_all"})
 class TriggerStore:
     def __init__(self, db: Db) -> None:
         self._db = db
@@ -956,6 +1288,7 @@ class TriggerStore:
         return [f for r in rows if (f := self.get_firing(str(tenant_id), r["firing_id"])) is not None]
 
 
+@tenant_scoped_store()
 class TriggerBaselineStore:
     def __init__(self, db: Db) -> None:
         self._db = db
@@ -1024,6 +1357,7 @@ class TriggerBaselineStore:
         return self.get(tenant_id, trigger_id, baseline_key)
 
 
+@tenant_scoped_store()
 class DeliveryTargetStore:
     def __init__(self, db: Db) -> None:
         self._db = db
@@ -1112,6 +1446,7 @@ class DeliveryTargetStore:
         return [t for r in rows if (t := self.get(str(tenant_id), r["target_id"])) is not None]
 
 
+@tenant_scoped_store(system_methods={"claim_available"})
 class NotificationStore:
     def __init__(self, db: Db) -> None:
         self._db = db

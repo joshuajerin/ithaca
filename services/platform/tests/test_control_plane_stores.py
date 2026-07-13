@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 
-from doomberg_platform import LeaseConflict, UnknownJobProfile
+from doomberg_platform import ExecutionControlConflict, LeaseConflict, UnknownJobProfile
 
 
 def test_job_store_idempotent_enqueue_and_lease(platform):
@@ -139,6 +139,99 @@ def test_lease_store_heartbeat_requires_current_owner(platform):
     assert platform.leases.heartbeat("paper-scheduler", "worker-a", ttl_seconds=30)["owner_id"] == "worker-a"
 
 
+def test_execution_controls_are_durable_versioned_and_tenant_scoped(platform):
+    tenant_a = platform.auth.create_tenant("controls-a")
+    tenant_b = platform.auth.create_tenant("controls-b")
+
+    assert platform.execution_controls.get_effective(tenant_a)["enabled"] is False
+    engaged = platform.execution_controls.set_tenant(
+        tenant_a,
+        enabled=True,
+        reason="operator halt",
+        actor_id="user-a",
+        expect_version=0,
+    )
+    assert engaged["version"] == 1
+    assert platform.execution_controls.get_effective(tenant_a)["source"] == "tenant"
+    assert platform.execution_controls.get_effective(tenant_b)["enabled"] is False
+
+    with pytest.raises(ExecutionControlConflict, match="version is 1, expected 0"):
+        platform.execution_controls.set_tenant(
+            tenant_a,
+            enabled=False,
+            reason="stale release",
+            actor_id="user-a",
+            expect_version=0,
+        )
+
+    released = platform.execution_controls.set_tenant(
+        tenant_a,
+        enabled=False,
+        reason="incident cleared",
+        actor_id="user-a",
+        expect_version=1,
+    )
+    effective_a = platform.execution_controls.get_effective(tenant_a)
+    assert released["version"] == 2
+    assert effective_a["enabled"] is False
+    assert effective_a["tenant_version"] == 2
+
+    reengaged = platform.execution_controls.set_tenant(
+        tenant_a,
+        enabled=True,
+        reason="incident recurred",
+        actor_id="user-a",
+        expect_version=effective_a["tenant_version"],
+    )
+    assert reengaged["version"] == 3
+
+    global_control = platform.execution_controls.set_global(
+        enabled=True,
+        reason="site incident",
+        actor_id="site-admin",
+        expect_version=0,
+    )
+    assert global_control["version"] == 1
+    effective_b = platform.execution_controls.get_effective(tenant_b)
+    assert effective_b["enabled"] is True
+    assert effective_b["source"] == "global"
+    assert effective_b["reason"] == "site incident"
+    assert platform.execution_controls.list_events(tenant_a)[0]["reason"] == "incident recurred"
+
+
+def test_execution_controls_global_release_reveals_existing_tenant_halt(platform):
+    tenant = platform.auth.create_tenant("layered-controls")
+    tenant_halt = platform.execution_controls.set_tenant(
+        tenant,
+        enabled=True,
+        reason="tenant incident",
+        actor_id="tenant-operator",
+        expect_version=0,
+    )
+    global_halt = platform.execution_controls.set_global(
+        enabled=True,
+        reason="site incident",
+        actor_id="site-operator",
+        expect_version=0,
+    )
+
+    effective = platform.execution_controls.get_effective(tenant)
+    assert effective["source"] == "global"
+    assert effective["tenant_version"] == tenant_halt["version"]
+
+    platform.execution_controls.set_global(
+        enabled=False,
+        reason="site recovered",
+        actor_id="site-operator",
+        expect_version=global_halt["version"],
+    )
+    fallback = platform.execution_controls.get_effective(tenant)
+    assert fallback["enabled"] is True
+    assert fallback["source"] == "tenant"
+    assert fallback["reason"] == "tenant incident"
+    assert fallback["tenant_version"] == tenant_halt["version"]
+
+
 def test_artifacts_approvals_providers_and_execution(platform):
     tenant = platform.auth.create_tenant("control")
     run_id = platform.runs.create(tenant, "interactive", None, {})
@@ -233,6 +326,29 @@ def test_artifacts_approvals_providers_and_execution(platform):
         payload={"symbol": "AAPL", "quantity": 1, "price": 100},
         event_time="2026-06-24T00:00:00+00:00",
     )
+    same_fill = platform.execution.create_fill(
+        tenant,
+        order["order_id"],
+        broker_fill_id="fill-1",
+        payload={"symbol": "AAPL", "quantity": 1, "price": 100},
+        event_time="2026-06-24T00:00:00+00:00",
+    )
+    assert same_fill["fill_id"] == fill["fill_id"]
+    other_order = platform.execution.create_order(
+        tenant,
+        intent["intent_id"],
+        broker="paper",
+        client_order_id="dmbg-test-2",
+        payload={"symbol": "MSFT", "quantity": 1},
+    )
+    with pytest.raises(ValueError, match="another order"):
+        platform.execution.create_fill(
+            tenant,
+            other_order["order_id"],
+            broker_fill_id="fill-1",
+            payload={"symbol": "MSFT", "quantity": 1, "price": 50},
+            event_time="2026-06-24T00:01:00+00:00",
+        )
     record = platform.execution.get_record(tenant, intent["intent_id"])
     assert record["orders"][0]["order_id"] == order["order_id"]
     assert record["fills"][0]["fill_id"] == fill["fill_id"]

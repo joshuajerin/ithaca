@@ -182,6 +182,56 @@ checkout/startup timeout and connection health checks before use. Tune with
 the managed Postgres connection budget multiplied by the total replica and
 container count.
 
+Postgres migration 2 enables and forces row-level security on every tenant
+table, including indirect ownership through `run_seq`, `oauth_accounts`, and
+`user_sessions`. Platform stores establish a transaction-local tenant scope
+automatically; trusted authentication and worker queue operations use an
+explicit system scope. A direct application query with no scope sees no tenant
+rows. Do not bypass the store layer for tenant data.
+
+The production database login must be `NOSUPERUSER NOBYPASSRLS`; PostgreSQL
+superusers bypass RLS even when a table uses `FORCE ROW LEVEL SECURITY`. Verify
+the deployed role and policy state before admitting traffic:
+
+```sql
+SELECT rolname, rolsuper, rolbypassrls
+FROM pg_roles
+WHERE rolname = current_user;
+
+SELECT relname, relrowsecurity, relforcerowsecurity
+FROM pg_class
+WHERE relname IN ('runs', 'trace_events', 'jobs', 'order_intents')
+ORDER BY relname;
+```
+
+The application credential remains trusted: internal system operations set a
+transaction-local `doomberg.system_access` flag. RLS is a containment boundary
+for missing or incorrect tenant predicates, not a substitute for protecting
+database credentials or preventing arbitrary SQL execution.
+
+Migration 3 adds unique broker-order and broker-fill identities. Before applying
+it to an existing database, both queries below must return zero rows; duplicates
+require an operator-led broker audit rather than automatic deletion:
+
+```sql
+SELECT tenant_id, broker, broker_order_id, count(*)
+FROM orders WHERE broker_order_id IS NOT NULL
+GROUP BY tenant_id, broker, broker_order_id HAVING count(*) > 1;
+
+SELECT tenant_id, broker_fill_id, count(*)
+FROM fills WHERE broker_fill_id IS NOT NULL
+GROUP BY tenant_id, broker_fill_id HAVING count(*) > 1;
+```
+
+Migration 4 adds tenant and global execution controls plus their append-only
+audit events. Row-level security is forced on both tables. Tenant operators use
+the authenticated `POST /execution/kill-switch` control-plane route or the
+dashboard compliance panel; site operators use the admin-token-protected
+`POST /admin/execution/kill-switch` route. Both writes use optimistic versions,
+and `expect_version` is required, so a stale release cannot overwrite a newer
+emergency halt. Site operators can read the current global control and its audit
+history with `GET /admin/execution/kill-switch`.
+
 ---
 
 ## 6. Verify live-data wiring
@@ -203,7 +253,8 @@ runtime topology has two deployments:
 
 `doomberg-workers` in the worker namespace:
 
-- `conductor` (`BacktestWorker`, trigger-job worker, and paper scheduler)
+- `conductor` (backtest/trigger workers, paper scheduler, notifications, adaptive
+  dashboard recompute, and broker order reconciliation)
 - `trigger-engine` (active trigger policy polling)
 
 Both deployments intentionally share the managed Postgres platform store through
@@ -215,9 +266,10 @@ both `doomberg-db` Secrets, and replica counts are rendered/applied by
 
 Production defaults to `WORKER_REPLICAS=2`. Backtest and trigger-analysis jobs
 are claimed through durable job leases. The paper scheduler and trigger polling
-loops use the platform `worker_leases` table, so only one worker replica owns
-each singleton loop at a time; if the owner dies, another replica takes over
-after the lease TTL.
+loops use the platform `worker_leases` table, as does the execution reconciler,
+so only one worker replica owns each singleton loop at a time; if the owner dies,
+another replica takes over after the lease TTL. Order reconciliation defaults to
+five seconds and is tunable with `DOOMBERG_RECONCILIATION_INTERVAL_S`.
 
 For connected-account live trigger quotes, use the managed in-cluster IBKR engine
 by default:
@@ -345,8 +397,11 @@ DOOMBERG_API_KEY=dmbg_... \
 python scripts/launch_gate.py --mode http --require-postgres --require-ibkr --require-mcp --json
 ```
 
-For live broker submission through the deterministic execution gateway, set the
-same engine URL plus the explicit live-execution switch and limits:
+The repository's default IBKR engine is deliberately data-only: `GET /orders`
+supports state reconciliation, while `POST /orders` returns 403. Do not enable
+live submission against that deployment. A separately approved execution-capable
+engine must preserve `client_order_id` idempotency and expose the same read-back
+surface before using the deterministic execution gateway:
 
 ```bash
 export DOOMBERG_ENABLE_LIVE_EXECUTION=1
@@ -356,10 +411,36 @@ export DOOMBERG_EXECUTION_MAX_QUANTITY=10000
 export DOOMBERG_EXECUTION_MAX_FRESHNESS_MS=10000
 ```
 
+There are three stop layers for new submissions:
+
+1. `DOOMBERG_EXECUTION_KILL_SWITCH=1` is the deployment-level break-glass stop.
+2. The global durable control halts every tenant.
+3. A tenant durable control halts only that tenant.
+
+The effective switch is checked during policy evaluation and again after the
+durable submission outbox is claimed. The final check and broker call run behind
+Postgres advisory fences: tenant changes exclude that tenant's submissions, while
+the global control excludes every submission. This makes each broker send orderable
+before or after a committed halt instead of leaving a check-to-send gap. Engaging a
+switch does not cancel orders already accepted by a broker; reconciliation continues
+so their actual state remains visible. Operators must separately cancel working
+broker orders when incident policy requires it. To use the environment stop, set the
+variable in the deployment environment and rerun the deployment; the deploy script
+detects the Secret change and restarts every consuming app pod. Clear it and redeploy
+only after the incident is resolved. If the variable is omitted, deploys preserve the
+existing Secret value so a routine release cannot silently clear an active environment
+halt. Durable control changes are effective immediately and tenant plus global events
+appear in the compliance panel audit trail.
+
 If `DOOMBERG_ENABLE_LIVE_EXECUTION=1` is set without `DOOMBERG_IBKR_ENGINE_URL`,
 `deploy/deploy_services.sh` fails before applying manifests. The gateway still
 requires a connected provider row with order/trading capability for live broker
-intents, and human submission remains the only path from intent to order.
+intents, and human submission remains the only path from intent to order. The
+gateway persists a `pending_submission` order before contacting the broker; the
+conductor then reconciles `submitting`, submitted, and partially-filled orders
+from `GET /orders`, with cumulative fill deltas deduplicated by broker identity.
+Connection loss or a broker 5xx after send stays `submitting` and is never
+blindly retried because the broker outcome may already be real.
 
 If `IBKR_ENGINE_ENABLED=0` and `DOOMBERG_IBKR_ENGINE_URL` is unset, the trigger
 worker still deploys and idles, but active live-data policies will emit provider

@@ -20,6 +20,7 @@ import sqlite3
 import threading
 from collections import defaultdict
 from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 # Version 1 of the platform schema. This string is a migration artifact: do not
@@ -494,6 +495,41 @@ CREATE INDEX IF NOT EXISTS idx_fills_order
     ON fills (tenant_id, order_id, event_time);
 """
 
+# Portable post-baseline evolutions for SQLite local/dev. PostgreSQL applies the
+# equivalent statements through the ordered migration manifest.
+_LOCAL_SCHEMA_EVOLUTIONS = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_broker_order
+    ON orders (tenant_id, broker, broker_order_id)
+    WHERE broker_order_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fills_broker_fill
+    ON fills (tenant_id, broker_fill_id)
+    WHERE broker_fill_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS execution_controls (
+    tenant_id   TEXT PRIMARY KEY,
+    enabled     INTEGER NOT NULL DEFAULT 0,
+    reason      TEXT,
+    updated_by  TEXT NOT NULL,
+    version     INTEGER NOT NULL DEFAULT 1,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS execution_control_events (
+    tenant_id   TEXT NOT NULL,
+    event_id    TEXT NOT NULL,
+    enabled     INTEGER NOT NULL,
+    reason      TEXT,
+    actor_id    TEXT NOT NULL,
+    version     INTEGER NOT NULL,
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_control_events_tenant
+    ON execution_control_events (tenant_id, created_at DESC);
+"""
+
 
 class _RunChannel:
     """Live tail buffer + condition for one run (in-proc pub/sub)."""
@@ -524,10 +560,22 @@ class Db:
         self._channels_lock = threading.Lock()
         with self._conn:
             self._conn.executescript(_BASELINE_SCHEMA)
+            self._conn.executescript(_LOCAL_SCHEMA_EVOLUTIONS)
 
     @property
     def conn(self) -> sqlite3.Connection:
         return self._conn
+
+    @contextmanager
+    def tenant_scope(self, tenant_id: str) -> Iterator[None]:
+        """SQLite compatibility shim for the Postgres RLS access scope."""
+        del tenant_id
+        yield
+
+    @contextmanager
+    def system_scope(self) -> Iterator[None]:
+        """SQLite compatibility shim for trusted cross-tenant operations."""
+        yield
 
     def _channel(self, run_id: str) -> _RunChannel:
         with self._channels_lock:
@@ -540,12 +588,15 @@ class Db:
             ch.events.append(event)
             ch.cond.notify_all()
 
-    def subscribe(self, run_id: str, after_seq: int = -1) -> Iterator[dict[str, Any]]:
+    def subscribe(
+        self, tenant_id: str, run_id: str, after_seq: int = -1
+    ) -> Iterator[dict[str, Any]]:
         """Yield live events for `run_id` with seq > after_seq, blocking for new ones.
 
         Local in-process stand-in for Postgres LISTEN/NOTIFY. Replay-from-seq for
         historical events is the store's job; this only tails what is published live.
         """
+        tenant_id = str(tenant_id)
         ch = self._channel(run_id)
         cursor = 0
         last_seq = after_seq
@@ -556,7 +607,7 @@ class Db:
                 pending = ch.events[cursor:]
                 cursor = len(ch.events)
             for ev in pending:
-                if int(ev["seq"]) > last_seq:
+                if ev.get("tenant_id") == tenant_id and int(ev["seq"]) > last_seq:
                     last_seq = int(ev["seq"])
                     yield ev
 

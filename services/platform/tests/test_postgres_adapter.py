@@ -6,9 +6,21 @@ from concurrent.futures import ThreadPoolExecutor
 
 import psycopg
 import pytest
+from psycopg import sql
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from platform_helpers import new_uuid, trace_event
 
-from doomberg_platform import AuthStore, ExecutionStore, JobStore, LeaseStore, TraceStore, open_db
+from doomberg_platform import (
+    AuthStore,
+    ExecutionControlConflict,
+    ExecutionControlStore,
+    ExecutionStore,
+    JobStore,
+    LeaseStore,
+    RunStore,
+    TraceStore,
+    open_db,
+)
 from doomberg_platform.migrations import (
     MIGRATIONS,
     Migration,
@@ -89,6 +101,37 @@ def test_postgres_migrations_are_ordered_idempotent_and_locked() -> None:
     assert first_lock < first_ledger
 
 
+def test_postgres_rls_migration_forces_direct_and_indirect_tenant_policies() -> None:
+    rls = MIGRATIONS[1]
+    assert rls.version == 2
+    for table in ("runs", "api_keys", "trace_events", "order_intents", "run_seq"):
+        assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY" in rls.sql
+        assert f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY" in rls.sql
+        assert f"CREATE POLICY doomberg_{table}_access ON {table}" in rls.sql
+    assert "scoped_run.tenant_id = current_setting('doomberg.tenant_id', true)" in rls.sql
+    assert "scoped_user.id = oauth_accounts.user_id" in rls.sql
+    assert "scoped_user.id = user_sessions.user_id" in rls.sql
+
+
+def test_postgres_execution_migration_deduplicates_broker_records() -> None:
+    execution = MIGRATIONS[2]
+    assert execution.version == 3
+    assert "idx_orders_broker_order" in execution.sql
+    assert "WHERE broker_order_id IS NOT NULL" in execution.sql
+    assert "idx_fills_broker_fill" in execution.sql
+    assert "WHERE broker_fill_id IS NOT NULL" in execution.sql
+
+
+def test_postgres_execution_control_migration_is_forced_and_tenant_scoped() -> None:
+    controls = MIGRATIONS[3]
+    assert controls.version == 4
+    for table in ("execution_controls", "execution_control_events"):
+        assert f"CREATE TABLE IF NOT EXISTS {table}" in controls.sql
+        assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY" in controls.sql
+        assert f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY" in controls.sql
+        assert f"CREATE POLICY doomberg_{table}_access ON {table}" in controls.sql
+
+
 def test_postgres_migration_validation_fails_on_pending_schema() -> None:
     conn = _MigrationConnection()
 
@@ -167,7 +210,7 @@ def test_live_postgres_pool_parallelism_transaction_pinning_and_recovery() -> No
         run_ids = (new_uuid(), new_uuid())
 
         def next_event(run_id: str) -> dict[str, object]:
-            stream = db.subscribe(run_id)
+            stream = db.subscribe(tenant_id, run_id)
             try:
                 return next(stream)
             finally:
@@ -217,12 +260,94 @@ def test_live_postgres_pool_parallelism_transaction_pinning_and_recovery() -> No
 
 @pytest.mark.skipif(
     not os.environ.get("DOOMBERG_PLATFORM_PG_URL"),
+    reason="set DOOMBERG_PLATFORM_PG_URL to run the live Postgres RLS test",
+)
+def test_live_postgres_rls_fails_closed_and_scopes_tenant_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = os.environ["DOOMBERG_PLATFORM_PG_URL"]
+    owner_db = PostgresDb(url, pool_config=PostgresPoolConfig(min_size=1, max_size=2))
+    role = f"doomberg_rls_{new_uuid().replace('-', '')[:16]}"
+    password = new_uuid()
+    app_db: PostgresDb | None = None
+    role_created = False
+    try:
+        tenant_a = AuthStore(owner_db).create_tenant("RLS tenant A")
+        tenant_b = AuthStore(owner_db).create_tenant("RLS tenant B")
+        run_a = RunStore(owner_db).create(tenant_a, "research", None, {"name": "A"})
+        run_b = RunStore(owner_db).create(tenant_b, "research", None, {"name": "B"})
+        TraceStore(owner_db).append(trace_event(tenant_a, run_a))
+        TraceStore(owner_db).append(trace_event(tenant_b, run_b))
+        controls = ExecutionControlStore(owner_db)
+        controls.set_tenant(
+            tenant_a, enabled=True, reason="tenant-a", actor_id="owner", expect_version=0
+        )
+        controls.set_tenant(
+            tenant_b, enabled=False, reason=None, actor_id="owner", expect_version=0
+        )
+
+        with psycopg.connect(url, autocommit=True) as admin:
+            admin.execute(
+                sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(
+                    sql.Identifier(role), sql.Literal(password)
+                )
+            )
+            role_created = True
+            admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
+                sql.Identifier(conninfo_to_dict(url).get("dbname") or admin.info.dbname),
+                sql.Identifier(role),
+            ))
+            admin.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(
+                sql.Identifier(role)
+            ))
+            admin.execute(sql.SQL(
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {}"
+            ).format(sql.Identifier(role)))
+
+        app_url = make_conninfo(url, user=role, password=password)
+        with psycopg.connect(app_url) as raw_app:
+            assert raw_app.execute("SELECT run_id FROM runs").fetchall() == []
+            raw_app.execute("SELECT set_config('doomberg.tenant_id', %s, true)", (tenant_a,))
+            assert raw_app.execute("SELECT run_id FROM runs").fetchall() == [(run_a,)]
+            assert raw_app.execute("SELECT run_id FROM run_seq").fetchall() == [(run_a,)]
+
+        monkeypatch.setenv("DOOMBERG_DB_MIGRATION_MODE", "validate")
+        app_db = PostgresDb(app_url, pool_config=PostgresPoolConfig(min_size=1, max_size=2))
+        assert RunStore(app_db).get(tenant_a, run_a) is not None
+        assert RunStore(app_db).get(tenant_b, run_a) is None
+        assert ExecutionControlStore(app_db).get(tenant_a)["reason"] == "tenant-a"
+        assert ExecutionControlStore(app_db).get(tenant_b)["reason"] is None
+        assert {row["run_id"] for row in RunStore(app_db).list_by_state("draft")} == {
+            run_a,
+            run_b,
+        }
+        with app_db.tenant_scope(tenant_a):
+            with pytest.raises(RuntimeError, match="cannot switch tenant"):
+                with app_db.tenant_scope(tenant_b):
+                    pass
+            with pytest.raises(RuntimeError, match="cannot elevate"):
+                with app_db.system_scope():
+                    pass
+    finally:
+        if app_db is not None:
+            app_db.close()
+        owner_db.close()
+        if role_created:
+            with psycopg.connect(url, autocommit=True) as admin:
+                admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
+                admin.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
+
+
+@pytest.mark.skipif(
+    not os.environ.get("DOOMBERG_PLATFORM_PG_URL"),
     reason="set DOOMBERG_PLATFORM_PG_URL to run the live Postgres platform smoke test",
 )
 def test_live_postgres_platform_smoke() -> None:
     db = open_db(os.environ["DOOMBERG_PLATFORM_PG_URL"])
+    second_db = open_db(os.environ["DOOMBERG_PLATFORM_PG_URL"])
     try:
         tenant_id = AuthStore(db).create_tenant("pg smoke")
+        other_tenant_id = AuthStore(db).create_tenant("pg smoke unrelated tenant")
         run_id = new_uuid()
         jobs = JobStore(db)
         job = jobs.create_for_run(
@@ -262,11 +387,88 @@ def test_live_postgres_platform_smoke() -> None:
         fill = execution.create_fill(
             tenant_id,
             order["order_id"],
+            broker_fill_id="pg-smoke-fill",
             payload={"symbol": "AAPL", "quantity": 1, "price": 100},
             event_time="2026-06-24T00:00:00+00:00",
         )
+        same_fill = execution.create_fill(
+            tenant_id,
+            order["order_id"],
+            broker_fill_id="pg-smoke-fill",
+            payload={"symbol": "AAPL", "quantity": 1, "price": 100},
+            event_time="2026-06-24T00:00:00+00:00",
+        )
+        assert same_fill["fill_id"] == fill["fill_id"]
         record = execution.get_record(tenant_id, intent["intent_id"])
         assert record["orders"][0]["order_id"] == order["order_id"]
         assert record["fills"][0]["fill_id"] == fill["fill_id"]
+
+        controls_a = ExecutionControlStore(db)
+        controls_b = ExecutionControlStore(second_db)
+        controls_a.set_tenant(
+            tenant_id,
+            enabled=True,
+            reason="initial",
+            actor_id="pg-smoke-a",
+            expect_version=0,
+        )
+
+        def release(store: ExecutionControlStore, actor_id: str) -> str:
+            try:
+                store.set_tenant(
+                    tenant_id,
+                    enabled=False,
+                    reason=actor_id,
+                    actor_id=actor_id,
+                    expect_version=1,
+                )
+            except ExecutionControlConflict:
+                return "conflict"
+            return "updated"
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(
+                executor.map(
+                    lambda args: release(*args),
+                    ((controls_a, "pg-smoke-a"), (controls_b, "pg-smoke-b")),
+                )
+            )
+        assert sorted(outcomes) == ["conflict", "updated"]
+        assert controls_a.get(tenant_id)["version"] == 2
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with controls_a.submission_guard(tenant_id):
+                halted = executor.submit(
+                    controls_b.set_tenant,
+                    tenant_id,
+                    enabled=True,
+                    reason="fenced",
+                    actor_id="pg-smoke-b",
+                    expect_version=2,
+                )
+                time.sleep(0.05)
+                assert not halted.done()
+            assert halted.result(timeout=2)["version"] == 3
+
+        # Tenant fences do not serialize unrelated tenants.
+        with controls_a.submission_guard(tenant_id):
+            with controls_b.submission_guard(other_tenant_id):
+                assert True
+
+        # A global halt takes the exclusive global fence and therefore waits
+        # for an in-flight submission from any tenant to finish.
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with controls_a.submission_guard(other_tenant_id):
+                global_halt = executor.submit(
+                    controls_b.set_global,
+                    enabled=True,
+                    reason="global fence",
+                    actor_id="pg-smoke-admin",
+                    expect_version=0,
+                )
+                time.sleep(0.05)
+                assert not global_halt.done()
+            assert global_halt.result(timeout=2)["version"] == 1
     finally:
+        second_db.close()
         db.close()
