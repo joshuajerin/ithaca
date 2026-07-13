@@ -166,6 +166,27 @@ def main() -> int:
                     owner_id=reconciliation_owner_id,
                 )
 
+    def run_execution_reconciler() -> None:
+        lease_ttl = max(30.0, reconciliation_interval * 3.0)
+        while not stop.is_set():
+            if acquire_loop_lease(
+                platform,
+                lease_name="execution-reconciler",
+                owner_id=reconciliation_owner_id,
+                ttl_seconds=lease_ttl,
+                role="execution-reconciler",
+            ):
+                result = execution_gateway.reconcile_open_orders()
+                if result.get("failed"):
+                    print(f"execution reconciliation: {result}")
+            stop.wait(reconciliation_interval)
+        with suppress(Exception):
+            release_loop_lease(
+                platform,
+                lease_name="execution-reconciler",
+                owner_id=reconciliation_owner_id,
+            )
+
     stop = threading.Event()
     threads = [
         threading.Thread(target=worker.run_forever, kwargs={"interval_s": backtest_interval, "stop": stop},

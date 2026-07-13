@@ -74,6 +74,8 @@ spec:
                   key: platform_url
             - name: DOOMBERG_DB_MIGRATION_MODE
               value: "apply"
+            - name: DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS
+              value: "${DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS}"
           resources:
             requests: { cpu: "100m", memory: 128Mi }
             limits: { cpu: "500m", memory: 256Mi }
@@ -106,6 +108,8 @@ spec:
                   key: platform_url
             - name: DOOMBERG_DB_MIGRATION_MODE
               value: "validate"
+            - name: DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS
+              value: "${DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS}"
             - name: DOOMBERG_REST_PORT
               value: "8000"
             - name: DOOMBERG_SESSION_SECRET
@@ -220,6 +224,8 @@ spec:
                   key: platform_url
             - name: DOOMBERG_DB_MIGRATION_MODE
               value: "validate"
+            - name: DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS
+              value: "${DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS}"
             - name: DOOMBERG_CONTROL_PORT
               value: "8001"
             - name: DOOMBERG_ADMIN_TOKEN
@@ -315,6 +321,8 @@ spec:
                   key: platform_url
             - name: DOOMBERG_DB_MIGRATION_MODE
               value: "validate"
+            - name: DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS
+              value: "${DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS}"
             - name: FMP_API_KEY
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: fmp_api_key, optional: true }
