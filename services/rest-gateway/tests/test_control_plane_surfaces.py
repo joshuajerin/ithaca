@@ -232,6 +232,7 @@ def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tena
     assert client.get(f"/api/artifacts/{artifact['artifact_id']}", headers=_h(tenant_a)).json()["uri"] == artifact["uri"]
     assert client.get(f"/api/artifacts/{artifact['artifact_id']}", headers=_h(tenant_b)).status_code == 404
 
+
     approvals = client.get("/api/approvals", headers=_h(tenant_a)).json()["approvals"]
     assert approvals[0]["approval_id"] == approval["approval_id"]
     decided = client.post(
@@ -327,3 +328,45 @@ def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tena
     )
     firings = client.get("/api/trigger-firings", headers=_h(tenant_a)).json()["firings"]
     assert firings[0]["trigger_id"] == trigger["trigger_id"]
+
+
+def test_artifact_download_is_tenant_scoped_and_serves_persisted_bytes(
+    client, stores, tenant_a, tenant_b, tmp_path
+):
+    content = b"metric,value\nsharpe,1.2\n"
+    path = tmp_path / "metrics.csv"
+    path.write_bytes(content)
+    run_id = stores.runs.create(tenant_a, "backtest", None, {"name": "download"})
+    artifact = stores.artifacts.create(
+        tenant_a,
+        run_id,
+        kind="metrics",
+        uri=path.as_uri(),
+        media_type="text/csv",
+        bytes_=len(content),
+        metadata={"filename": "metrics.csv"},
+    )
+
+    denied = client.get(f"/api/artifacts/{artifact['artifact_id']}/download", headers=_h(tenant_b))
+    assert denied.status_code == 404
+    response = client.get(
+        f"/api/artifacts/{artifact['artifact_id']}/download", headers=_h(tenant_a)
+    )
+    assert response.status_code == 200
+    assert response.content == content
+    assert "metrics.csv" in response.headers["content-disposition"]
+
+
+def test_memory_artifact_download_reports_missing_durable_bytes(client, stores, tenant_a):
+    run_id = stores.runs.create(tenant_a, "backtest", None, {"name": "memory"})
+    artifact = stores.artifacts.create(
+        tenant_a,
+        run_id,
+        kind="summary",
+        uri=f"memory://backtests/{tenant_a}/{run_id}/summary.json",
+    )
+    response = client.get(
+        f"/api/artifacts/{artifact['artifact_id']}/download", headers=_h(tenant_a)
+    )
+    assert response.status_code == 409
+    assert "not persisted" in response.json()["detail"]
