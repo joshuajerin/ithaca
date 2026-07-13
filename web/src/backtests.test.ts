@@ -1,61 +1,40 @@
 import { describe, expect, it } from "vitest";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { buildBacktestCards, filterBacktestCards } from "./pages/Backtests";
-import { unwrapBacktestResult } from "./lib/backtest";
-import type { RunRow, StrategyRow } from "./types";
+import { StrategySpec } from "@doomberg/contracts";
+import { buildStrategySpec, normalizeSymbols, type BacktestBuilderState } from "./pages/Backtests";
 
-const srcDir = path.dirname(fileURLToPath(import.meta.url));
+const base: BacktestBuilderState = {
+  name: "Momentum research",
+  symbols: "AAPL, MSFT",
+  primitive: "momentum",
+  scheme: "rank_weight",
+  range: "1y",
+  lookback: 90,
+  fast: 20,
+  slow: 50,
+  threshold: 1,
+  top: 2,
+  gross: 1,
+  maxName: 0.5,
+  costBps: 5,
+  slippageBps: 2,
+  rebalance: "monthly@close",
+  seed: 42,
+};
 
-function read(rel: string): string {
-  return fs.readFileSync(path.join(srcDir, rel), "utf8");
-}
-
-describe("backtest UI boundary", () => {
-  it("keeps backtest creation and reruns out of the browser UI", () => {
-    const text = [read("pages/Backtests.tsx"), read("pages/DeploymentDetail.tsx")].join("\n");
-
-    expect(text).not.toContain("New backtest");
-    expect(text).not.toContain("Create first backtest");
-    expect(text).not.toContain("Run again");
-    expect(text).not.toContain("api.createRun(");
-    expect(text).not.toContain("api.proposeStrategy(");
-    expect(text).toContain("through Doomberg MCP");
+describe("backtest builder", () => {
+  it("normalizes and deduplicates symbols", () => {
+    expect(normalizeSymbols("aapl, MSFT aapl\nNVDA")).toEqual(["AAPL", "MSFT", "NVDA"]);
   });
 
-  it("normalizes direct and nested backtest results", () => {
-    const direct = { id: "r1", tenant_id: "t1", kind: "backtest", state: "completed", strategy_id: "s1", result: { stats: { sharpe: 1.2 } } } satisfies RunRow;
-    const nested = { ...direct, id: "r2", result: { data: { stats: { sharpe: 2.4 } } } } satisfies RunRow;
-
-    expect(unwrapBacktestResult(direct).stats).toEqual({ sharpe: 1.2 });
-    expect(unwrapBacktestResult(nested).stats).toEqual({ sharpe: 2.4 });
-    expect(unwrapBacktestResult(null)).toEqual({});
+  it("builds a contract-valid momentum StrategySpec", () => {
+    const spec = StrategySpec.parse(buildStrategySpec(base));
+    expect(spec.strategy).toEqual({ id: "momentum", params: { lookback: 90 } });
   });
 
-  it("correlates runs by strategy and selects the newest run", () => {
-    const strategies: StrategyRow[] = [
-      { id: "s1", tenant_id: "t1", version: 1, name: "Momentum" },
-      { id: "s2", tenant_id: "t1", version: 1, name: "Value" },
-    ];
-    const runs: RunRow[] = [
-      { id: "old", tenant_id: "t1", kind: "backtest", state: "completed", strategy_id: "s1", updated_at: "2026-01-01" },
-      { id: "new", tenant_id: "t1", kind: "backtest", state: "completed", strategy_id: "s1", updated_at: "2026-02-01" },
-    ];
-
-    const cards = buildBacktestCards(strategies, runs);
-    expect(cards[0]).toMatchObject({ latestRun: { id: "new" }, runCount: 2 });
-    expect(cards[1]).toMatchObject({ latestRun: null, runCount: 0 });
-  });
-
-  it("filters cards case-insensitively after trimming whitespace", () => {
-    const cards = buildBacktestCards([
-      { id: "s1", tenant_id: "t1", version: 1, name: "NVDA Momentum" },
-      { id: "rate-cut", tenant_id: "t1", version: 1 },
-    ], []);
-
-    expect(filterBacktestCards(cards, "  momentum ").map(({ strategy }) => strategy.id)).toEqual(["s1"]);
-    expect(filterBacktestCards(cards, "RATE").map(({ strategy }) => strategy.id)).toEqual(["rate-cut"]);
-    expect(filterBacktestCards(cards, "")).toHaveLength(2);
+  it("uses only the selected primitive parameters", () => {
+    const spec = StrategySpec.parse(
+      buildStrategySpec({ ...base, primitive: "ma_cross", fast: 10, slow: 40 }),
+    );
+    expect(spec.strategy.params).toEqual({ fast: 10, slow: 40 });
   });
 });

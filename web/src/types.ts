@@ -65,10 +65,13 @@ export interface JobRow {
   profile: string;
   state: string;
   attempts: number;
+  max_attempts: number;
   worker_id?: string | null;
   lease_expires_at?: string | null;
   heartbeat_at?: string | null;
   checkpoint_ref?: string | null;
+  error?: Record<string, unknown> | null;
+  result?: Record<string, unknown> | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -227,6 +230,14 @@ export interface OpsStatus {
     queued: number;
     leased_or_running: number;
     terminal: number;
+    backtests?: {
+      queued: number;
+      leased_or_running: number;
+      failed_or_timed_out: number;
+      oldest_queued_seconds: number | null;
+      oldest_heartbeat_seconds: number | null;
+      stalled: boolean;
+    };
   };
   leases: Array<{
     lease_name: string;

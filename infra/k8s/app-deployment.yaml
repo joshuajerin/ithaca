@@ -131,6 +131,21 @@ spec:
             - name: DOOMBERG_DATA_SOURCE
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: data_source, optional: true }
+            - name: DOOMBERG_ARTIFACT_BUCKET
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: artifact_bucket, optional: true }
+            - name: DOOMBERG_ARTIFACT_ENDPOINT_URL
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: artifact_endpoint_url, optional: true }
+            - name: DOOMBERG_ARTIFACT_REGION
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: artifact_region, optional: true }
+            - name: DOOMBERG_ARTIFACT_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: artifact_access_key_id, optional: true }
+            - name: DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: artifact_secret_access_key, optional: true }
             - name: DOOMBERG_ENABLE_LIVE_EXECUTION
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: enable_live_execution, optional: true }
