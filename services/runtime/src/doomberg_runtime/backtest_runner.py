@@ -27,6 +27,7 @@ from typing import Any
 from doomberg_core import Core, CoreContext
 
 from ._trace import emit
+from .artifact_storage import object_storage_configured, put_artifact
 from .deadline import Deadline, DeadlineExceeded
 
 __all__ = ["run_backtest_job", "result_hash", "DEFAULT_BUDGET_MS"]
@@ -97,7 +98,22 @@ def _checkpoint(
     return ref
 
 
-def _artifact_uri(tenant_id: str, run_id: str, filename: str, content: bytes, sha256: str) -> tuple[str, bool]:
+def _artifact_uri(
+    tenant_id: str,
+    run_id: str,
+    filename: str,
+    content: bytes,
+    sha256: str,
+    media_type: str,
+) -> tuple[str, bool]:
+    if object_storage_configured():
+        key = f"backtests/{tenant_id}/{run_id}/{filename}"
+        return put_artifact(
+            key=key,
+            content=content,
+            media_type=media_type,
+            sha256=sha256,
+        ), True
     root = os.environ.get("DOOMBERG_ARTIFACT_DIR", "").strip()
     if not root:
         return f"memory://backtests/{tenant_id}/{run_id}/{filename}#sha256={sha256}", False
@@ -259,7 +275,14 @@ def _record_backtest_artifacts(
     ):
         content = payload["content"]
         sha256 = _sha256_bytes(content)
-        uri, stored = _artifact_uri(tenant_id, run_id, payload["filename"], content, sha256)
+        uri, stored = _artifact_uri(
+            tenant_id,
+            run_id,
+            payload["filename"],
+            content,
+            sha256,
+            payload["media_type"],
+        )
         artifact = artifacts_store.create(
             tenant_id,
             run_id,

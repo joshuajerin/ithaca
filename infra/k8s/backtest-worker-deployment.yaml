@@ -1,0 +1,159 @@
+# Dedicated, horizontally scalable backtest compute. No ingress or Service.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doomberg-backtest-workers
+  namespace: ${K8S_WORKER_NAMESPACE}
+  labels:
+    doomberg/component: backtest-worker
+    doomberg/environment: ${DOOMBERG_ENV}
+spec:
+  replicas: ${BACKTEST_REPLICAS}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector:
+    matchLabels: { doomberg/component: backtest-worker }
+  template:
+    metadata:
+      labels:
+        doomberg/component: backtest-worker
+        doomberg/worker-role: backtest
+        doomberg/environment: ${DOOMBERG_ENV}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 45
+      nodeSelector: { workload: backtest }
+      tolerations:
+        - { key: workload, operator: Equal, value: backtest, effect: NoSchedule }
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels: { doomberg/component: backtest-worker }
+                topologyKey: kubernetes.io/hostname
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      initContainers:
+        - name: platform-migrate
+          image: ${WORKER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args: ["platform-migrate"]
+          env:
+            - { name: DOOMBERG_ENV, value: "${DOOMBERG_ENV}" }
+            - name: DOOMBERG_DB
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: platform_url }
+          resources:
+            requests: { cpu: "100m", memory: 128Mi }
+            limits: { cpu: "500m", memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      containers:
+        - name: backtest-worker
+          image: ${WORKER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args: ["backtest-worker"]
+          env:
+            - { name: DOOMBERG_ENV, value: "${DOOMBERG_ENV}" }
+            - name: DOOMBERG_DB
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: platform_url }
+            - { name: DOOMBERG_BACKTEST_INTERVAL_S, value: "2" }
+            - { name: DOOMBERG_BACKTEST_BATCH, value: "4" }
+            - name: DOOMBERG_ARTIFACT_BUCKET
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: artifact_bucket }
+            - name: DOOMBERG_ARTIFACT_ENDPOINT_URL
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: artifact_endpoint_url }
+            - name: DOOMBERG_ARTIFACT_REGION
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: artifact_region }
+            - name: DOOMBERG_ARTIFACT_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: artifact_access_key_id }
+            - name: DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: artifact_secret_access_key }
+            - name: FMP_API_KEY
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: fmp_api_key, optional: true }
+            - name: DATABENTO_API_KEY
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: databento_api_key, optional: true }
+            - name: DATABENTO_DATASET
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: databento_dataset, optional: true }
+            - name: DOOMBERG_DATA_SOURCE
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: data_source, optional: true }
+          resources:
+            requests: { cpu: "500m", memory: 512Mi }
+            limits: { cpu: "2", memory: 2Gi }
+          readinessProbe:
+            exec:
+              command: ["python", "-m", "doomberg_runtime.worker_health"]
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command: ["python", "-c", "import os; assert os.getppid() > 0"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: doomberg-backtest-workers
+  namespace: ${K8S_WORKER_NAMESPACE}
+spec:
+  minAvailable: ${BACKTEST_MIN_AVAILABLE}
+  selector:
+    matchLabels: { doomberg/component: backtest-worker }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: doomberg-backtest-workers
+  namespace: ${K8S_WORKER_NAMESPACE}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: doomberg-backtest-workers
+  minReplicas: ${BACKTEST_MIN_REPLICAS}
+  maxReplicas: ${BACKTEST_MAX_REPLICAS}
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies: [{ type: Percent, value: 100, periodSeconds: 60 }]
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies: [{ type: Percent, value: 25, periodSeconds: 60 }]
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 65 }
