@@ -28,6 +28,7 @@ from .run_store import RunStore
 from .strategy_store import StrategyStore
 from .trace_store import TraceStore
 from .user_store import UserStore
+from .worker_store import WorkerHeartbeatStore
 
 __all__ = ["Platform"]
 
@@ -44,6 +45,7 @@ class Platform:
         self.users = UserStore(self.db)
         self.jobs = JobStore(self.db)
         self.leases = LeaseStore(self.db)
+        self.worker_heartbeats = WorkerHeartbeatStore(self.db)
         self.artifacts = ArtifactStore(self.db)
         self.approvals = ApprovalStore(self.db)
         self.providers = ProviderStore(self.db)

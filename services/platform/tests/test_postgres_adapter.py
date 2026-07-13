@@ -21,6 +21,7 @@ from doomberg_platform import (
     LeaseStore,
     RunStore,
     TraceStore,
+    WorkerHeartbeatStore,
     open_db,
 )
 from doomberg_platform.migrations import (
@@ -142,6 +143,15 @@ def test_postgres_compliance_policy_migration_is_forced_and_tenant_scoped() -> N
         assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY" in policies.sql
         assert f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY" in policies.sql
         assert f"CREATE POLICY doomberg_{table}_access ON {table}" in policies.sql
+
+
+def test_postgres_worker_heartbeat_migration_is_system_only() -> None:
+    heartbeats = MIGRATIONS[5]
+    assert heartbeats.version == 6
+    assert "CREATE TABLE IF NOT EXISTS worker_heartbeats" in heartbeats.sql
+    assert "ALTER TABLE worker_heartbeats ENABLE ROW LEVEL SECURITY" in heartbeats.sql
+    assert "ALTER TABLE worker_heartbeats FORCE ROW LEVEL SECURITY" in heartbeats.sql
+    assert "current_setting('doomberg.system_access', true) = 'on'" in heartbeats.sql
 
 
 def test_postgres_migration_validation_fails_on_pending_schema() -> None:
@@ -407,6 +417,11 @@ def test_live_postgres_platform_smoke() -> None:
         assert leases.acquire("pg-smoke-leader", "worker-a", ttl_seconds=30) is not None
         assert leases.acquire("pg-smoke-leader", "worker-b", ttl_seconds=30) is None
         assert leases.release("pg-smoke-leader", "worker-a") is True
+        heartbeat = WorkerHeartbeatStore(db).heartbeat(
+            "pg-smoke-worker", "backtest-worker", ttl_seconds=30
+        )
+        assert heartbeat["status"] == "healthy"
+        assert WorkerHeartbeatStore(second_db).list()[0]["worker_id"] == "pg-smoke-worker"
 
         seq = TraceStore(db).append(trace_event(tenant_id, run_id))
         assert seq >= 0
