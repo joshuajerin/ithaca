@@ -55,6 +55,7 @@ from doomberg_platform import (
     BookStore,
     DeliveryTargetStore,
     ExecutionStore,
+    FeedbackStore,
     JobStore,
     LeaseStore,
     NotificationStore,
@@ -96,6 +97,7 @@ class Stores:
         self.approvals = ApprovalStore(db)
         self.providers = ProviderStore(db)
         self.execution = ExecutionStore(db)
+        self.feedback = FeedbackStore(db)
         self.triggers = TriggerStore(db)
         self.baselines = TriggerBaselineStore(db)
         self.notifications = NotificationStore(db)
@@ -171,6 +173,13 @@ class MintKeyBody(BaseModel):
 
 class MintSseTicketBody(BaseModel):
     after_seq: int | None = None
+
+
+class FeedbackBody(BaseModel):
+    message: str
+
+
+MAX_FEEDBACK_LENGTH = 5000
 
 
 def _bearer_key(authorization: str | None) -> str | None:
@@ -1162,6 +1171,29 @@ def create_app(db: Any | None = None) -> FastAPI:
         shaped["jobs"] = stores.jobs.list_by_run(resolved_tenant, run_id)
         shaped["artifacts"] = stores.artifacts.list_by_run(resolved_tenant, run_id)
         return shaped
+
+    @app.post("/api/feedback", status_code=201)
+    def submit_feedback(
+        body: FeedbackBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        if ctx.actor_kind not in HUMAN_ACTOR_KINDS:
+            raise HTTPException(status_code=403, detail="feedback requires a signed-in user")
+        message = body.message.strip()
+        if not message:
+            raise HTTPException(status_code=422, detail="feedback message is required")
+        if len(message) > MAX_FEEDBACK_LENGTH:
+            raise HTTPException(
+                status_code=422,
+                detail=f"feedback message must be {MAX_FEEDBACK_LENGTH} characters or fewer",
+            )
+        saved = stores.feedback.create(ctx.tenant_id, ctx.actor_id, message)
+        return {
+            "feedback_id": saved["feedback_id"],
+            "status": "received",
+            "created_at": saved["created_at"],
+        }
 
     # ---- reads -------------------------------------------------------------------------
     @app.get("/api/runs")

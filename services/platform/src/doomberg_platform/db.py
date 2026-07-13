@@ -489,6 +489,18 @@ CREATE TABLE IF NOT EXISTS fills (
 
 CREATE INDEX IF NOT EXISTS idx_fills_order
     ON fills (tenant_id, order_id, event_time);
+
+-- Product feedback submitted by signed-in humans from the web rail.
+CREATE TABLE IF NOT EXISTS feedback (
+    feedback_id TEXT PRIMARY KEY,
+    tenant_id   TEXT NOT NULL,
+    user_id     TEXT NOT NULL,
+    message     TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_tenant_created
+    ON feedback (tenant_id, created_at);
 """
 
 

@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useAuth as useClerkAuth, useClerk, useUser } from "@clerk/react";
 import { setAuthTokenProvider } from "../api";
+import { USE_CLERK_API_AUTH } from "../config";
 
 export type Provider = "google" | "github";
 
@@ -37,6 +38,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const clerk = useClerk();
 
   useEffect(() => {
+    if (!USE_CLERK_API_AUTH) {
+      setAuthTokenProvider(null);
+      return () => setAuthTokenProvider(null);
+    }
     setAuthTokenProvider(async () => (await getToken()) ?? null);
     return () => setAuthTokenProvider(null);
   }, [getToken]);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldShowAdaptiveEmptyState, visibleAdaptiveWidgets } from "./pages/Dashboard";
+import { resolveAdaptiveDashboardState, visibleAdaptiveWidgets } from "./pages/Dashboard";
 import type { AdaptiveDashboardWidget } from "./types";
 
 function widget(id: string, priority: number): AdaptiveDashboardWidget {
@@ -45,17 +45,95 @@ describe("adaptive dashboard frontend mapping", () => {
     expect(visible.map((item) => item.id)).toEqual(["yield_curve"]);
   });
 
-  it("shows the empty state when the adaptive endpoint is stale", () => {
-    expect(shouldShowAdaptiveEmptyState({
+  it("waits for both session and adaptive state before choosing a dashboard", () => {
+    expect(resolveAdaptiveDashboardState({
       adaptive: null,
-      adaptiveError: "GET /dashboard/adaptive -> 404 Not Found",
-    })).toBe(true);
+      adaptiveError: null,
+      adaptiveLoading: true,
+      runs: null,
+      runsError: null,
+      runsLoading: true,
+    })).toBe("loading");
   });
 
-  it("does not infer personal dashboard history from tenant-wide sessions on adaptive failure", () => {
-    expect(shouldShowAdaptiveEmptyState({
+  it("never shows onboarding when a research session already exists", () => {
+    expect(resolveAdaptiveDashboardState({
       adaptive: null,
-      adaptiveError: "GET /dashboard/adaptive -> 404 Not Found",
-    })).toBe(true);
+      adaptiveError: "GET /dashboard/adaptive -> 401 Unauthorized",
+      adaptiveLoading: false,
+      runs: [{
+        id: "session-1",
+        tenant_id: "tenant-1",
+        kind: "research",
+        state: "running",
+        strategy_id: null,
+      }],
+      runsError: null,
+      runsLoading: false,
+    })).toBe("fallback");
+  });
+
+  it("renders a ready adaptive dashboard after both requests resolve", () => {
+    expect(resolveAdaptiveDashboardState({
+      adaptive: {
+        status: "ready",
+        spec: { summary: "Ready", widgets: [] },
+        model: "test-model",
+        source_session_count: 1,
+        source_event_count: 1,
+        generated_for_date: "2026-07-12",
+        created_at: "2026-07-12T00:00:00Z",
+        updated_at: "2026-07-12T00:00:00Z",
+      },
+      adaptiveError: null,
+      adaptiveLoading: false,
+      runs: [],
+      runsError: null,
+      runsLoading: false,
+    })).toBe("adaptive");
+  });
+
+  it("shows onboarding only after both requests resolve with no research history", () => {
+    expect(resolveAdaptiveDashboardState({
+      adaptive: { status: "empty" },
+      adaptiveError: null,
+      adaptiveLoading: false,
+      runs: [],
+      runsError: null,
+      runsLoading: false,
+    })).toBe("empty");
+  });
+
+  it("does not misclassify an unknown double-error state as a new user", () => {
+    expect(resolveAdaptiveDashboardState({
+      adaptive: null,
+      adaptiveError: "GET /dashboard/adaptive -> 401 Unauthorized",
+      adaptiveLoading: false,
+      runs: null,
+      runsError: "GET /runs -> 401 Unauthorized",
+      runsLoading: false,
+    })).toBe("fallback");
+  });
+
+  it("uses onboarding when adaptive loading fails but runs resolve empty", () => {
+    expect(resolveAdaptiveDashboardState({
+      adaptive: null,
+      adaptiveError: "temporary failure",
+      adaptiveLoading: false,
+      runs: [],
+      runsError: null,
+      runsLoading: false,
+    })).toBe("empty");
+  });
+
+  it("falls back when resolved responses do not establish another state", () => {
+    expect(resolveAdaptiveDashboardState({
+      adaptive: null,
+      adaptiveError: null,
+      adaptiveLoading: false,
+      runs: [],
+      runsError: null,
+      runsLoading: false,
+    })).toBe("fallback");
   });
 });

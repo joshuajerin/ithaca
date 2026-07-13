@@ -3,17 +3,12 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useAsync } from "../hooks/useAsync";
 import type { RunRow, StrategyRow } from "../types";
-import type { BacktestResult } from "../types";
 import { EquityCurve } from "../panels/EquityCurve";
 import { RiskBadge } from "../panels/RiskBadge";
 import { PerformancePnlPanel } from "../dashboard/panels/PerformancePnlPanel";
 import { getPerformance } from "../dashboard/data";
 import { fmtTime, shortId, stateClass } from "../lib/format";
-
-function unwrapRun(run: RunRow): Partial<BacktestResult> {
-  const result = (run.result ?? {}) as Partial<BacktestResult> & { data?: Partial<BacktestResult> };
-  return (result.data ?? result) as Partial<BacktestResult>;
-}
+import { unwrapBacktestResult } from "../lib/backtest";
 
 export function DeploymentDetail() {
   const { id } = useParams<{ id: string }>();
@@ -30,7 +25,7 @@ export function DeploymentDetail() {
   // Auto-select the latest run if none selected
   const activeRunId = selectedRunId ?? (stratRuns[0]?.id ?? null);
   const activeRun = stratRuns.find((r) => r.id === activeRunId) ?? stratRuns[0] ?? null;
-  const bt = activeRun ? unwrapRun(activeRun) : null;
+  const bt = unwrapBacktestResult(activeRun);
   const curve = Array.isArray(bt?.equityCurve) ? bt!.equityCurve : [];
 
   // Build performance panel data from the active run
@@ -45,7 +40,7 @@ export function DeploymentDetail() {
       <div className="topbar">
         <div className="topbar-left">
           <div className="topbar-title">
-            <Link to="/deployments" style={{ color: "var(--muted-dim)" }}>Deployments</Link>
+            <Link to="/backtests" style={{ color: "var(--muted-dim)" }}>Backtests</Link>
             {" / "}
             {displayName}
           </div>
@@ -69,7 +64,7 @@ export function DeploymentDetail() {
               <div className="deploy-stat-val">{(v as number).toFixed(2)}</div>
             </div>
           ))}
-          {!bt?.stats && (
+          {!bt.stats && (
             <div className="empty">{loading ? "Loading…" : "No result data."}</div>
           )}
         </div>
