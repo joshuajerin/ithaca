@@ -25,12 +25,21 @@ def test_spa_served_and_api_precedence(tmp_path, db, monkeypatch):
         root = c.get("/")
         assert root.status_code == 200
         assert "doomberg" in root.text
+        assert root.headers["cache-control"] == "no-store, max-age=0"
         # BrowserRouter deep links fall back to the SPA shell.
         sessions = c.get("/sessions")
         assert sessions.status_code == 200
         assert "doomberg" in sessions.text
+        assert sessions.headers["cache-control"] == "no-store, max-age=0"
         # A built asset is served.
-        assert c.get("/assets/app.js").status_code == 200
+        asset = c.get("/assets/app.js")
+        assert asset.status_code == 200
+        assert asset.headers["cache-control"] == "public, max-age=31536000, immutable"
+        # Deleted assets must not receive the HTML shell as JavaScript. Browsers reject
+        # that MIME mismatch before React can render, leaving a completely blank page.
+        missing_asset = c.get("/assets/old-build.js")
+        assert missing_asset.status_code == 404
+        assert missing_asset.headers["content-type"].startswith("application/json")
         # /healthz still wins over the SPA mount.
         assert c.get("/healthz").json()["ready"] is True
         # /api/* still wins (tenant required => 400, NOT the SPA's index.html).
