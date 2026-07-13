@@ -142,11 +142,40 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_fills_broker_fill
     WHERE broker_fill_id IS NOT NULL;
 """
 
+_EXECUTION_CONTROLS_SQL = f"""
+CREATE TABLE IF NOT EXISTS execution_controls (
+    tenant_id   TEXT PRIMARY KEY,
+    enabled     INTEGER NOT NULL DEFAULT 0,
+    reason      TEXT,
+    updated_by  TEXT NOT NULL,
+    version     INTEGER NOT NULL DEFAULT 1,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS execution_control_events (
+    tenant_id   TEXT NOT NULL,
+    event_id    TEXT NOT NULL,
+    enabled     INTEGER NOT NULL,
+    reason      TEXT,
+    actor_id    TEXT NOT NULL,
+    version     INTEGER NOT NULL,
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_control_events_tenant
+    ON execution_control_events (tenant_id, created_at DESC);
+
+{_policy_sql('execution_controls', f'{_SYSTEM_ACCESS} OR {_TENANT_ACCESS}')}
+{_policy_sql('execution_control_events', f'{_SYSTEM_ACCESS} OR {_TENANT_ACCESS}')}
+"""
+
 
 MIGRATIONS = (
     Migration(1, "platform baseline", _BASELINE_SCHEMA),
     Migration(2, "enforce tenant row security", _RLS_SQL),
     Migration(3, "deduplicate broker execution records", _EXECUTION_IDEMPOTENCY_SQL),
+    Migration(4, "add durable execution kill switches", _EXECUTION_CONTROLS_SQL),
 )
 
 

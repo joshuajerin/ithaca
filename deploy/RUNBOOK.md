@@ -223,6 +223,15 @@ FROM fills WHERE broker_fill_id IS NOT NULL
 GROUP BY tenant_id, broker_fill_id HAVING count(*) > 1;
 ```
 
+Migration 4 adds tenant and global execution controls plus their append-only
+audit events. Row-level security is forced on both tables. Tenant operators use
+the authenticated `POST /execution/kill-switch` control-plane route or the
+dashboard compliance panel; site operators use the admin-token-protected
+`POST /admin/execution/kill-switch` route. Both writes use optimistic versions,
+and `expect_version` is required, so a stale release cannot overwrite a newer
+emergency halt. Site operators can read the current global control and its audit
+history with `GET /admin/execution/kill-switch`.
+
 ---
 
 ## 6. Verify live-data wiring
@@ -401,6 +410,27 @@ export DOOMBERG_EXECUTION_MAX_NOTIONAL_USD=10000
 export DOOMBERG_EXECUTION_MAX_QUANTITY=10000
 export DOOMBERG_EXECUTION_MAX_FRESHNESS_MS=10000
 ```
+
+There are three stop layers for new submissions:
+
+1. `DOOMBERG_EXECUTION_KILL_SWITCH=1` is the deployment-level break-glass stop.
+2. The global durable control halts every tenant.
+3. A tenant durable control halts only that tenant.
+
+The effective switch is checked during policy evaluation and again after the
+durable submission outbox is claimed. The final check and broker call run behind
+Postgres advisory fences: tenant changes exclude that tenant's submissions, while
+the global control excludes every submission. This makes each broker send orderable
+before or after a committed halt instead of leaving a check-to-send gap. Engaging a
+switch does not cancel orders already accepted by a broker; reconciliation continues
+so their actual state remains visible. Operators must separately cancel working
+broker orders when incident policy requires it. To use the environment stop, set the
+variable in the deployment environment and rerun the deployment; the deploy script
+detects the Secret change and restarts every consuming app pod. Clear it and redeploy
+only after the incident is resolved. If the variable is omitted, deploys preserve the
+existing Secret value so a routine release cannot silently clear an active environment
+halt. Durable control changes are effective immediately and tenant plus global events
+appear in the compliance panel audit trail.
 
 If `DOOMBERG_ENABLE_LIVE_EXECUTION=1` is set without `DOOMBERG_IBKR_ENGINE_URL`,
 `deploy/deploy_services.sh` fails before applying manifests. The gateway still

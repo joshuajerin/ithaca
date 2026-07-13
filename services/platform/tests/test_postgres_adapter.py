@@ -12,6 +12,8 @@ from platform_helpers import new_uuid, trace_event
 
 from doomberg_platform import (
     AuthStore,
+    ExecutionControlConflict,
+    ExecutionControlStore,
     ExecutionStore,
     JobStore,
     LeaseStore,
@@ -118,6 +120,16 @@ def test_postgres_execution_migration_deduplicates_broker_records() -> None:
     assert "WHERE broker_order_id IS NOT NULL" in execution.sql
     assert "idx_fills_broker_fill" in execution.sql
     assert "WHERE broker_fill_id IS NOT NULL" in execution.sql
+
+
+def test_postgres_execution_control_migration_is_forced_and_tenant_scoped() -> None:
+    controls = MIGRATIONS[3]
+    assert controls.version == 4
+    for table in ("execution_controls", "execution_control_events"):
+        assert f"CREATE TABLE IF NOT EXISTS {table}" in controls.sql
+        assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY" in controls.sql
+        assert f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY" in controls.sql
+        assert f"CREATE POLICY doomberg_{table}_access ON {table}" in controls.sql
 
 
 def test_postgres_migration_validation_fails_on_pending_schema() -> None:
@@ -266,6 +278,13 @@ def test_live_postgres_rls_fails_closed_and_scopes_tenant_rows(
         run_b = RunStore(owner_db).create(tenant_b, "research", None, {"name": "B"})
         TraceStore(owner_db).append(trace_event(tenant_a, run_a))
         TraceStore(owner_db).append(trace_event(tenant_b, run_b))
+        controls = ExecutionControlStore(owner_db)
+        controls.set_tenant(
+            tenant_a, enabled=True, reason="tenant-a", actor_id="owner", expect_version=0
+        )
+        controls.set_tenant(
+            tenant_b, enabled=False, reason=None, actor_id="owner", expect_version=0
+        )
 
         with psycopg.connect(url, autocommit=True) as admin:
             admin.execute(
@@ -296,6 +315,8 @@ def test_live_postgres_rls_fails_closed_and_scopes_tenant_rows(
         app_db = PostgresDb(app_url, pool_config=PostgresPoolConfig(min_size=1, max_size=2))
         assert RunStore(app_db).get(tenant_a, run_a) is not None
         assert RunStore(app_db).get(tenant_b, run_a) is None
+        assert ExecutionControlStore(app_db).get(tenant_a)["reason"] == "tenant-a"
+        assert ExecutionControlStore(app_db).get(tenant_b)["reason"] is None
         assert {row["run_id"] for row in RunStore(app_db).list_by_state("draft")} == {
             run_a,
             run_b,
@@ -323,8 +344,10 @@ def test_live_postgres_rls_fails_closed_and_scopes_tenant_rows(
 )
 def test_live_postgres_platform_smoke() -> None:
     db = open_db(os.environ["DOOMBERG_PLATFORM_PG_URL"])
+    second_db = open_db(os.environ["DOOMBERG_PLATFORM_PG_URL"])
     try:
         tenant_id = AuthStore(db).create_tenant("pg smoke")
+        other_tenant_id = AuthStore(db).create_tenant("pg smoke unrelated tenant")
         run_id = new_uuid()
         jobs = JobStore(db)
         job = jobs.create_for_run(
@@ -379,5 +402,73 @@ def test_live_postgres_platform_smoke() -> None:
         record = execution.get_record(tenant_id, intent["intent_id"])
         assert record["orders"][0]["order_id"] == order["order_id"]
         assert record["fills"][0]["fill_id"] == fill["fill_id"]
+
+        controls_a = ExecutionControlStore(db)
+        controls_b = ExecutionControlStore(second_db)
+        controls_a.set_tenant(
+            tenant_id,
+            enabled=True,
+            reason="initial",
+            actor_id="pg-smoke-a",
+            expect_version=0,
+        )
+
+        def release(store: ExecutionControlStore, actor_id: str) -> str:
+            try:
+                store.set_tenant(
+                    tenant_id,
+                    enabled=False,
+                    reason=actor_id,
+                    actor_id=actor_id,
+                    expect_version=1,
+                )
+            except ExecutionControlConflict:
+                return "conflict"
+            return "updated"
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(
+                executor.map(
+                    lambda args: release(*args),
+                    ((controls_a, "pg-smoke-a"), (controls_b, "pg-smoke-b")),
+                )
+            )
+        assert sorted(outcomes) == ["conflict", "updated"]
+        assert controls_a.get(tenant_id)["version"] == 2
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with controls_a.submission_guard(tenant_id):
+                halted = executor.submit(
+                    controls_b.set_tenant,
+                    tenant_id,
+                    enabled=True,
+                    reason="fenced",
+                    actor_id="pg-smoke-b",
+                    expect_version=2,
+                )
+                time.sleep(0.05)
+                assert not halted.done()
+            assert halted.result(timeout=2)["version"] == 3
+
+        # Tenant fences do not serialize unrelated tenants.
+        with controls_a.submission_guard(tenant_id):
+            with controls_b.submission_guard(other_tenant_id):
+                assert True
+
+        # A global halt takes the exclusive global fence and therefore waits
+        # for an in-flight submission from any tenant to finish.
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with controls_a.submission_guard(other_tenant_id):
+                global_halt = executor.submit(
+                    controls_b.set_global,
+                    enabled=True,
+                    reason="global fence",
+                    actor_id="pg-smoke-admin",
+                    expect_version=0,
+                )
+                time.sleep(0.05)
+                assert not global_halt.done()
+            assert global_halt.result(timeout=2)["version"] == 1
     finally:
+        second_db.close()
         db.close()

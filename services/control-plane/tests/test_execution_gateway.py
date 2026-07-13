@@ -123,6 +123,263 @@ def test_execution_gateway_policy_denies_oversized_order(client, platform, tenan
     assert platform.execution.get_intent(tenant_a, intent_id)["state"] == "policy_denied"
 
 
+def test_execution_kill_switch_requires_human_and_blocks_submission(
+    client, platform, tenant_a
+):
+    denied_toggle = client.post(
+        "/execution/kill-switch",
+        json={"enabled": True, "reason": "agent request", "expect_version": 0},
+        headers=agent_headers(tenant_a),
+    )
+    assert denied_toggle.status_code == 403
+
+    engaged = client.post(
+        "/execution/kill-switch",
+        json={"enabled": True, "reason": "operator halt", "expect_version": 0},
+        headers=human_headers(tenant_a),
+    )
+    assert engaged.status_code == 200, engaged.text
+    assert engaged.json()["source"] == "tenant"
+
+    run_id = _run(platform, tenant_a)
+    gateway = ExecutionGateway(platform)
+    ctx = Ctx(tenant_a, "human", "trader-1")
+    intent = gateway.create_intent(ctx, run_id=run_id, payload=_intent_payload())
+    with pytest.raises(ActionError) as exc_info:
+        gateway.submit(ctx, intent["intent_id"])
+    assert exc_info.value.status == 409
+    assert "EXECUTION_KILL_SWITCH_ACTIVE" in exc_info.value.detail["risk_decision"]["reasons"]
+    assert platform.execution.get_record(tenant_a, intent["intent_id"])["orders"] == []
+
+
+def test_execution_kill_switch_is_rechecked_after_durable_submission_claim(
+    monkeypatch: pytest.MonkeyPatch, platform, tenant_a
+):
+    class _NeverCalledAdapter:
+        broker = BROKER_PAPER
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def submit(self, **_kwargs: Any) -> dict[str, Any]:
+            self.calls += 1
+            raise AssertionError("broker must not be called after the kill switch changes")
+
+    adapter = _NeverCalledAdapter()
+    gateway = ExecutionGateway(platform, adapters={BROKER_PAPER: adapter})
+    ctx = Ctx(tenant_a, "human", "trader-1")
+    run_id = _run(platform, tenant_a)
+    intent = gateway.create_intent(ctx, run_id=run_id, payload=_intent_payload())
+    checks = 0
+
+    def changing_control(_tenant_id: str) -> dict[str, Any]:
+        nonlocal checks
+        checks += 1
+        enabled = checks > 1
+        return {
+            "enabled": enabled,
+            "source": "tenant" if enabled else "none",
+            "reason": "race halt" if enabled else None,
+            "version": 1 if enabled else 0,
+            "tenant_control": None,
+            "global_control": None,
+        }
+
+    monkeypatch.setattr(gateway, "_execution_control", changing_control)
+    with pytest.raises(ActionError) as exc_info:
+        gateway.submit(ctx, intent["intent_id"])
+
+    assert exc_info.value.status == 409
+    record = platform.execution.get_record(tenant_a, intent["intent_id"])
+    assert record["state"] == "policy_denied"
+    assert record["orders"][0]["state"] == "cancelled"
+    assert adapter.calls == 0
+
+
+def test_execution_kill_switch_preserves_partial_execution_state(
+    monkeypatch: pytest.MonkeyPatch, platform, tenant_a
+):
+    class _FirstFillAdapter:
+        broker = BROKER_PAPER
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def submit(self, **kwargs: Any) -> dict[str, Any]:
+            self.calls += 1
+            assert self.calls == 1
+            return {
+                "broker_order_id": "paper-first",
+                "state": "filled",
+                "fills": [
+                    {
+                        "broker_fill_id": "paper-first-fill",
+                        "payload": {"quantity": 1, "price": 100},
+                    }
+                ],
+                "raw": {"client_order_id": kwargs["client_order_id"]},
+            }
+
+    adapter = _FirstFillAdapter()
+    gateway = ExecutionGateway(platform, adapters={BROKER_PAPER: adapter})
+    ctx = Ctx(tenant_a, "human", "trader-1")
+    run_id = _run(platform, tenant_a)
+    payload = _intent_payload()
+    payload["orders"].append(
+        {
+            "symbol": "MSFT",
+            "side": "buy",
+            "quantity": 1,
+            "order_type": "limit",
+            "limit_price": 100,
+            "time_in_force": "day",
+        }
+    )
+    intent = gateway.create_intent(ctx, run_id=run_id, payload=payload)
+    checks = 0
+
+    def changing_control(_tenant_id: str) -> dict[str, Any]:
+        nonlocal checks
+        checks += 1
+        enabled = checks > 2
+        return {
+            "enabled": enabled,
+            "source": "tenant" if enabled else "none",
+            "reason": "race halt" if enabled else None,
+            "version": 1 if enabled else 0,
+            "tenant_version": 1 if enabled else 0,
+            "tenant_control": None,
+            "global_control": None,
+        }
+
+    monkeypatch.setattr(gateway, "_execution_control", changing_control)
+    with pytest.raises(ActionError) as exc_info:
+        gateway.submit(ctx, intent["intent_id"])
+
+    assert exc_info.value.status == 409
+    record = platform.execution.get_record(tenant_a, intent["intent_id"])
+    assert record["state"] == "partially_filled"
+    assert [order["state"] for order in record["orders"]] == ["filled", "cancelled"]
+    assert len(record["fills"]) == 1
+    assert adapter.calls == 1
+
+
+def test_execution_environment_kill_switch_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, platform, tenant_a
+):
+    monkeypatch.setenv("DOOMBERG_EXECUTION_KILL_SWITCH", "1")
+    gateway = ExecutionGateway(platform)
+    control = gateway.get_kill_switch(Ctx(tenant_a, "human", "trader-1"))
+    assert control["enabled"] is True
+    assert control["source"] == "environment"
+
+    ctx = Ctx(tenant_a, "human", "trader-1")
+    intent = gateway.create_intent(ctx, run_id=_run(platform, tenant_a), payload=_intent_payload())
+    with pytest.raises(ActionError) as exc_info:
+        gateway.submit(ctx, intent["intent_id"])
+    assert exc_info.value.status == 409
+    assert "EXECUTION_KILL_SWITCH_ACTIVE" in exc_info.value.detail["risk_decision"]["reasons"]
+    assert platform.execution.get_record(tenant_a, intent["intent_id"])["orders"] == []
+
+
+def test_execution_missing_control_store_fails_closed(platform, tenant_a):
+    platform.execution_controls = None
+    gateway = ExecutionGateway(platform)
+    ctx = Ctx(tenant_a, "human", "trader-1")
+    intent = gateway.create_intent(ctx, run_id=_run(platform, tenant_a), payload=_intent_payload())
+
+    with pytest.raises(ActionError) as exc_info:
+        gateway.submit(ctx, intent["intent_id"])
+
+    assert exc_info.value.status == 409
+    decision = exc_info.value.detail["risk_decision"]
+    assert decision["execution_control"]["source"] == "missing_control_store"
+    assert "EXECUTION_KILL_SWITCH_ACTIVE" in decision["reasons"]
+    assert platform.execution.get_record(tenant_a, intent["intent_id"])["orders"] == []
+
+
+def test_execution_kill_switch_get_and_payload_validation(client, tenant_a):
+    initial = client.get("/execution/kill-switch", headers=human_headers(tenant_a))
+    assert initial.status_code == 200
+    assert initial.json()["enabled"] is False
+    assert initial.json()["tenant_version"] == 0
+
+    omitted = client.post(
+        "/execution/kill-switch",
+        json={"enabled": True},
+        headers=human_headers(tenant_a),
+    )
+    assert omitted.status_code == 422
+
+    negative = client.post(
+        "/execution/kill-switch",
+        json={"enabled": True, "expect_version": -1},
+        headers=human_headers(tenant_a),
+    )
+    assert negative.status_code == 422
+
+
+def test_submission_fence_serializes_tenant_halt_with_broker_send(platform, tenant_a):
+    entered_broker = threading.Event()
+    release_broker = threading.Event()
+    halt_done = threading.Event()
+
+    class _BlockingAdapter:
+        broker = BROKER_PAPER
+
+        def submit(self, **_kwargs: Any) -> dict[str, Any]:
+            entered_broker.set()
+            assert release_broker.wait(timeout=2)
+            return {
+                "broker_order_id": "paper-fenced-1",
+                "state": "filled",
+                "fills": [
+                    {
+                        "broker_fill_id": "paper-fenced-fill-1",
+                        "payload": {"quantity": 2, "price": 100},
+                    }
+                ],
+                "raw": {},
+            }
+
+    gateway = ExecutionGateway(platform, adapters={BROKER_PAPER: _BlockingAdapter()})
+    ctx = Ctx(tenant_a, "human", "trader-1")
+    intent = gateway.create_intent(
+        ctx,
+        run_id=_run(platform, tenant_a),
+        payload=_intent_payload(),
+    )
+    submit_result: list[dict[str, Any]] = []
+
+    submit_thread = threading.Thread(
+        target=lambda: submit_result.append(gateway.submit(ctx, intent["intent_id"])),
+        daemon=True,
+    )
+    submit_thread.start()
+    assert entered_broker.wait(timeout=2)
+
+    def engage_halt() -> None:
+        platform.execution_controls.set_tenant(
+            tenant_a,
+            enabled=True,
+            reason="serialized halt",
+            actor_id="operator",
+            expect_version=0,
+        )
+        halt_done.set()
+
+    halt_thread = threading.Thread(target=engage_halt, daemon=True)
+    halt_thread.start()
+    assert not halt_done.wait(timeout=0.05)
+    release_broker.set()
+    submit_thread.join(timeout=2)
+    halt_thread.join(timeout=2)
+
+    assert submit_result[0]["state"] == "filled"
+    assert halt_done.is_set()
+    assert platform.execution_controls.get_effective(tenant_a)["enabled"] is True
+
+
 class _RecoveringAdapter:
     broker = BROKER_PAPER
 
