@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useAsync } from "../hooks/useAsync";
 import { api } from "../api";
 import type {
@@ -13,13 +13,22 @@ import type {
   DashboardSummaryData,
 } from "../types";
 import { DotWaveCanvas } from "../components/adaptive/DotWaveCanvas";
-import { PerformancePnlPanel } from "../dashboard/panels/PerformancePnlPanel";
-import { PortfolioRiskPanel } from "../dashboard/panels/PortfolioRiskPanel";
 import {
   performanceFromDashboard,
   riskFromDashboard,
 } from "../dashboard/data";
 import type { ReactNode } from "react";
+
+const PerformancePnlPanel = lazy(() =>
+  import("../dashboard/panels/PerformancePnlPanel").then((module) => ({
+    default: module.PerformancePnlPanel,
+  })),
+);
+const PortfolioRiskPanel = lazy(() =>
+  import("../dashboard/panels/PortfolioRiskPanel").then((module) => ({
+    default: module.PortfolioRiskPanel,
+  })),
+);
 
 interface BandDef {
   id: string;
@@ -242,6 +251,10 @@ function UnsupportedPanel({ label }: { label: string }) {
   );
 }
 
+function PanelLoading() {
+  return <DataStatePanel loading emptyMessage="Loading panel…" />;
+}
+
 export function Dashboard() {
   const [query, setQuery] = useState("");
   const { data: adaptive, error: adaptiveError } = useAsync<AdaptiveDashboardResponse>((s) => api.getAdaptiveDashboard(s), []);
@@ -266,11 +279,11 @@ export function Dashboard() {
     switch (widget.id) {
       case "performance_pnl":
         return performanceData
-          ? <PerformancePnlPanel data={performanceData} />
+          ? <Suspense fallback={<PanelLoading />}><PerformancePnlPanel data={performanceData} /></Suspense>
           : <DataStatePanel loading={summaryLoading} error={summaryError} response={summary} emptyMessage="Run a completed backtest to see performance." />;
       case "portfolio_risk":
         return portfolioRiskData
-          ? <PortfolioRiskPanel data={portfolioRiskData} />
+          ? <Suspense fallback={<PanelLoading />}><PortfolioRiskPanel data={portfolioRiskData} /></Suspense>
           : <DataStatePanel loading={riskLoading} error={riskError} response={risk} emptyMessage="No recorded risk metrics or paper positions yet." />;
       case "trade_flow":
         return <UnsupportedPanel label="Trade flow" />;
@@ -384,14 +397,14 @@ export function Dashboard() {
               {panelVisible("Performance & P&L") && (
                 <FCardPanel title="Performance & P&L" minHeight={340}>
                   {performanceData
-                    ? <PerformancePnlPanel data={performanceData} />
+                    ? <Suspense fallback={<PanelLoading />}><PerformancePnlPanel data={performanceData} /></Suspense>
                     : <DataStatePanel loading={summaryLoading} error={summaryError} response={summary} emptyMessage="Run a completed backtest to see performance." />}
                 </FCardPanel>
               )}
               {panelVisible("Portfolio Risk") && (
                 <FCardPanel title="Portfolio Risk" minHeight={340}>
                   {portfolioRiskData
-                    ? <PortfolioRiskPanel data={portfolioRiskData} />
+                    ? <Suspense fallback={<PanelLoading />}><PortfolioRiskPanel data={portfolioRiskData} /></Suspense>
                     : <DataStatePanel loading={riskLoading} error={riskError} response={risk} emptyMessage="No recorded risk metrics or paper positions yet." />}
                 </FCardPanel>
               )}
