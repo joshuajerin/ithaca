@@ -24,6 +24,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from .deps import HUMAN_ACTOR_KINDS, Ctx
 from .gate import evaluate_spec_gate
+from .compliance_policy import effective_compliance_policy, effective_execution_control
 
 __all__ = [
     "ActionError",
@@ -256,7 +257,19 @@ def promote_run(platform: Any, ctx: Ctx, run_id: str) -> dict[str, Any]:
               data={"action": "promote", "reason": "run has no spec to gate"})
         raise ActionError(409, "run has no spec to gate")
 
-    decision = evaluate_spec_gate(spec)
+    compliance = effective_compliance_policy(platform, ctx.tenant_id)
+    execution_control = effective_execution_control(platform, ctx.tenant_id)
+    decision = evaluate_spec_gate(
+        spec,
+        restricted=compliance["restricted"],
+        watch=compliance["watch"],
+        firm_limits=compliance["limits"] if compliance["limits_enforced"] else None,
+        kill_switch=execution_control["enabled"],
+        kill_reason=execution_control["reason"],
+    )
+    if not compliance["available"]:
+        decision.ok = False
+        decision.violations.append("Compliance policy store is unavailable")
     if not decision.ok:
         _emit(platform, ctx=ctx, run_id=run_id, event_type="denial",
               data={"action": "promote", "reason": "compliance/risk gate blocked",

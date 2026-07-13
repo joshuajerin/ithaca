@@ -33,6 +33,7 @@ from doomberg_platform import (
     ArtifactStore,
     AuthStore,
     BookStore,
+    CompliancePolicyStore,
     DeliveryTargetStore,
     ExecutionControlStore,
     ExecutionStore,
@@ -115,6 +116,7 @@ class Platform:
         self.providers = ProviderStore(self.db)
         self.execution = ExecutionStore(self.db)
         self.execution_controls = ExecutionControlStore(self.db)
+        self.compliance_policies = CompliancePolicyStore(self.db)
         self.triggers = TriggerStore(self.db)
         self.baselines = TriggerBaselineStore(self.db)
         self.notifications = NotificationStore(self.db)

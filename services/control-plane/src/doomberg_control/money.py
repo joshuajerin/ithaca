@@ -19,13 +19,15 @@ while this code stays the authoritative writer.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from contextlib import nullcontext
 from typing import Any, Callable, Iterable
 
 import numpy as np
 
 from doomberg_core.risk import RiskLimits, attest
+from doomberg_core.engine.compliance import evaluate_gate
 
-from .gate import DEFAULT_RESTRICTED
+from .compliance_policy import effective_compliance_policy, effective_execution_control
 
 __all__ = ["apply_paper_delta", "make_applier"]
 
@@ -70,12 +72,41 @@ def apply_paper_delta(
                     "kind": run.get("kind"), "state": run.get("state")})
         return {"applied": False, "reason": "not_live_paper"}
 
+    controls = getattr(platform, "execution_controls", None)
+    control_guard = (
+        controls.submission_guard(tenant_id) if controls is not None else nullcontext()
+    )
+    with control_guard:
+        return _apply_paper_delta_guarded(
+            platform,
+            tenant_id,
+            run_id,
+            run,
+            proposal,
+            capital=capital,
+            restricted=restricted,
+        )
+
+
+def _apply_paper_delta_guarded(
+    platform: Any,
+    tenant_id: str,
+    run_id: str,
+    run: dict[str, Any],
+    proposal: dict[str, Any],
+    *,
+    capital: float,
+    restricted: Iterable[str] | None,
+) -> dict[str, Any]:
+    """Re-read every mutable control while holding both tenant application fences."""
+
     spec = run.get("spec") or {}
     target = {str(s).upper(): float(w) for s, w in (proposal.get("targetWeights") or {}).items()}
     marks = {str(s).upper(): float(m) for s, m in (proposal.get("marks") or {}).items()}
 
-    # (2) restricted names in the target book -> hard block.
-    rset = {s.strip().upper() for s in (restricted if restricted is not None else DEFAULT_RESTRICTED)}
+    policy = effective_compliance_policy(platform, tenant_id)
+    policy_restricted = restricted if restricted is not None else policy["restricted"]
+    rset = {s.strip().upper() for s in policy_restricted}
     hits = sorted(s for s in target if s in rset)
     if hits:
         _emit(platform, tenant_id=tenant_id, run_id=run_id, type="denial",
@@ -83,7 +114,40 @@ def apply_paper_delta(
                     "restricted": hits})
         return {"applied": False, "reason": "restricted", "restricted": hits}
 
-    # (3) gross-L1 re-attestation on the proposed target (the realized book that would trade).
+    execution_control = effective_execution_control(platform, tenant_id)
+    firm_gate = evaluate_gate(
+        weights=target,
+        limits=policy["limits"] if policy["limits_enforced"] else None,
+        restricted=[],
+        watch=policy["watch"],
+        kill_switch=execution_control["enabled"],
+        kill_reason=execution_control["reason"],
+    )
+    firm_violations = firm_gate["violations"] if policy["limits_enforced"] else [
+        violation for violation in firm_gate["violations"] if violation.startswith("Kill switch")
+    ]
+    if not policy["available"]:
+        firm_violations.append("Compliance policy store is unavailable")
+    if not policy["limits_enforced"]:
+        firm_gate["warnings"] = [
+            warning for warning in firm_gate["warnings"] if warning.startswith("Watch-list")
+        ]
+    firm_gate["violations"] = firm_violations
+    firm_gate["blocked"] = bool(firm_violations)
+    firm_gate["ok"] = not firm_violations
+    firm_gate["reason"] = "; ".join(firm_violations) or None
+    firm_gate["limitsEnforced"] = policy["limits_enforced"]
+    if firm_violations:
+        _emit(
+            platform,
+            tenant_id=tenant_id,
+            run_id=run_id,
+            type="denial",
+            data={"action": "apply_delta", "reason": "firm compliance gate blocked",
+                  "gate": firm_gate},
+        )
+        return {"applied": False, "reason": "compliance", "gate": firm_gate}
+
     syms = sorted(target)
     weights = np.array([target[s] for s in syms], dtype=float)
     limits = RiskLimits.from_spec(spec.get("risk") or {})
@@ -94,7 +158,6 @@ def apply_paper_delta(
                     "attestation": att.to_dict()})
         return {"applied": False, "reason": "risk", "attestation": att.to_dict()}
 
-    # (4) write the book under the optimistic guard, then audit the applied fill.
     book = platform.books.ensure(tenant_id, run_id, capital=capital)
     deltas = {
         s: round(target.get(s, 0.0) - float(book["weights"].get(s, 0.0)), 6)
@@ -107,8 +170,10 @@ def apply_paper_delta(
     _emit(platform, tenant_id=tenant_id, run_id=run_id, type="fill",
           data={"applied": True, "deltas": deltas, "targetWeights": target,
                 "previousWeights": book["weights"], "marks": marks,
-                "attestation": att.to_dict(), "bookVersion": updated["version"]})
-    return {"applied": True, "deltas": deltas, "book": updated, "attestation": att.to_dict()}
+                "attestation": att.to_dict(), "compliance": firm_gate,
+                "bookVersion": updated["version"]})
+    return {"applied": True, "deltas": deltas, "book": updated,
+            "attestation": att.to_dict(), "compliance": firm_gate}
 
 
 def make_applier(

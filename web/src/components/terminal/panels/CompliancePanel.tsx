@@ -80,6 +80,9 @@ interface ComplianceData {
   limitDefs: LimitDef[];
   restricted: string[];
   watch: string[];
+  policyConfigured?: boolean;
+  limitsEnforced?: boolean;
+  policyVersion?: number;
   killSwitch: boolean;
   killReason?: string | null;
   strategyKills?: Record<string, string>;
@@ -151,7 +154,11 @@ export function CompliancePanel({ data }: CompliancePanelProps) {
         const res = await fetch(`/api/compliance${path}`, init);
         const json = await res.json().catch(() => ({}));
         if (!res.ok) {
-          setError(json.detail || "Request failed.");
+          setError(typeof json.detail === "string" ? json.detail : "Request failed.");
+          if (res.status === 409) {
+            const latest = await fetch("/api/compliance");
+            if (latest.ok) setState(await latest.json());
+          }
           return false;
         }
         setState(json);
@@ -187,7 +194,7 @@ export function CompliancePanel({ data }: CompliancePanelProps) {
     if (await apply("/restricted", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ symbol: sym }),
+      body: JSON.stringify({ symbol: sym, expect_version: state.policyVersion ?? 0 }),
     })) setNewRestricted("");
   };
 
@@ -198,12 +205,16 @@ export function CompliancePanel({ data }: CompliancePanelProps) {
     if (await apply("/watch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ symbol: sym }),
+      body: JSON.stringify({ symbol: sym, expect_version: state.policyVersion ?? 0 }),
     })) setNewWatch("");
   };
 
   const removeFrom = (list: "restricted" | "watch", sym: string) =>
-    apply(`/${list}/${encodeURIComponent(sym)}`, { method: "DELETE" });
+    apply(`/${list}/${encodeURIComponent(sym)}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expect_version: state.policyVersion ?? 0 }),
+    });
 
   const saveLimits = async () => {
     const limits: Record<string, number> = {};
@@ -215,7 +226,7 @@ export function CompliancePanel({ data }: CompliancePanelProps) {
     await apply("/limits", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ limits }),
+      body: JSON.stringify({ limits, expect_version: state.policyVersion ?? 0 }),
     });
   };
 
@@ -235,7 +246,7 @@ export function CompliancePanel({ data }: CompliancePanelProps) {
     await apply("/check", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ symbol: selStrategy }),
+      body: JSON.stringify({ strategy_id: selStrategy }),
     });
   };
 
@@ -304,8 +315,12 @@ export function CompliancePanel({ data }: CompliancePanelProps) {
       {/* Firm limits */}
       <section className="shrink-0">
         <div className="editorial-label text-[8.5px] text-muted-foreground mb-1.5">
-          Firm limits
+          Firm limits · {state.limitsEnforced ? `active · policy v${state.policyVersion}` : "reference defaults"}
         </div>
+        <p className="mb-2 text-[9px] leading-tight text-muted-foreground/70">
+          Applied to strategy promotion and paper books. Direct orders use order-level
+          notional and quantity caps.
+        </p>
         <div className="grid grid-cols-2 gap-2">
           {limitDefs.map((def) => (
             <label key={def.key} className="flex flex-col gap-1" title={def.help}>

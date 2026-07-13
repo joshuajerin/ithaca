@@ -22,6 +22,7 @@ from doomberg_core.providers import (
 from doomberg_platform import ExecutionControlConflict
 
 from .actions import ActionError
+from .compliance_policy import effective_compliance_policy
 from .deps import HUMAN_ACTOR_KINDS, Ctx
 
 BROKER_PAPER = "paper"
@@ -446,10 +447,21 @@ class ExecutionGateway:
             ):
                 continue
             response: dict[str, Any] | None = None
+            restricted_hits: list[str] = []
             try:
                 with self._submission_guard(ctx.tenant_id):
                     execution_control = self._execution_control(ctx.tenant_id)
-                    if not execution_control["enabled"]:
+                    compliance = effective_compliance_policy(self.platform, ctx.tenant_id)
+                    restricted_hits = (
+                        [normalized["symbol"]]
+                        if normalized["symbol"] in set(compliance["restricted"])
+                        else []
+                    )
+                    if (
+                        not execution_control["enabled"]
+                        and compliance["available"]
+                        and not restricted_hits
+                    ):
                         response = adapter.submit(
                             tenant_id=ctx.tenant_id,
                             intent_id=intent_id,
@@ -477,23 +489,43 @@ class ExecutionGateway:
                     error=f"{type(exc).__name__}: {exc}",
                 )
                 raise
-            if execution_control["enabled"]:
+            if execution_control["enabled"] or not compliance["available"] or restricted_hits:
+                stop_reason = (
+                    "EXECUTION_KILL_SWITCH_ACTIVE"
+                    if execution_control["enabled"]
+                    else "COMPLIANCE_POLICY_UNAVAILABLE"
+                    if not compliance["available"]
+                    else "RESTRICTED_SYMBOL"
+                )
                 denied = {
                     **decision,
                     "decision": "denied",
                     "reasons": list(
                         dict.fromkeys(
-                            [*decision["reasons"], "EXECUTION_KILL_SWITCH_ACTIVE"]
+                            [*decision["reasons"], stop_reason]
                         )
                     ),
                     "execution_control": execution_control,
+                    "compliance": {
+                        **decision["compliance"],
+                        "policy_version": compliance["version"],
+                        "restricted_hits": restricted_hits,
+                    },
                     "evaluated_at": _now_iso(),
                 }
                 self.platform.execution.set_order_state(
                     ctx.tenant_id,
                     order["order_id"],
                     state="cancelled",
-                    payload={"cancel_reason": "execution kill switch activated before send"},
+                    payload={
+                        "cancel_reason": (
+                            "execution kill switch activated before send"
+                            if execution_control["enabled"]
+                            else "compliance policy store became unavailable before send"
+                            if not compliance["available"]
+                            else "symbol became restricted before send"
+                        )
+                    },
                 )
                 stopped_record = self.platform.execution.get_record(ctx.tenant_id, intent_id)
                 stopped_state = "policy_denied"
@@ -838,6 +870,20 @@ class ExecutionGateway:
             if not self._has_connected_execution_provider(ctx.tenant_id, broker):
                 errors.append("BROKER_CONNECTION_REQUIRED")
 
+        compliance = effective_compliance_policy(self.platform, ctx.tenant_id)
+        if not compliance["available"]:
+            errors.append("COMPLIANCE_POLICY_UNAVAILABLE")
+        restricted = set(compliance["restricted"])
+        watch = set(compliance["watch"])
+        restricted_hits = sorted(
+            {order["symbol"] for order in normalized if order["symbol"] in restricted}
+        )
+        watch_hits = sorted({order["symbol"] for order in normalized if order["symbol"] in watch})
+        if restricted_hits:
+            errors.append("RESTRICTED_SYMBOL")
+        if watch_hits:
+            warnings.append("WATCH_LIST_SYMBOL")
+
         if total_notional > self.policy.max_notional_usd:
             errors.append("MAX_NOTIONAL_EXCEEDED")
         for order in normalized:
@@ -862,6 +908,11 @@ class ExecutionGateway:
                 "require_connected_provider_for_live": self.policy.require_connected_provider_for_live,
             },
             "execution_control": execution_control,
+            "compliance": {
+                "policy_version": compliance["version"],
+                "restricted_hits": restricted_hits,
+                "watch_hits": watch_hits,
+            },
             "evaluated_at": _now_iso(),
         }
 

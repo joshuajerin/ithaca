@@ -198,6 +198,84 @@ def test_promote_blocked_by_restricted_name(client, platform, tenant_a):
     assert "denial" in types
 
 
+def test_promote_uses_saved_tenant_compliance_policy(client, platform, tenant_a):
+    platform.compliance_policies.set(
+        tenant_a,
+        limits={
+            "maxPositionPct": 100.0,
+            "maxNetPct": 1_000.0,
+            "maxLeverage": 10.0,
+            "maxConcentrationPct": 100.0,
+        },
+        limits_enforced=False,
+        restricted=["TSLA"],
+        watch=[],
+        action="Custom restricted list",
+        actor_id="risk-officer",
+        expect_version=0,
+    )
+    spec = valid_spec(name="Tenant Restricted", symbols=["AAPL", "TSLA"])
+    sid = _propose(client, tenant_a, spec).json()["id"]
+    run_id = _create_run(client, tenant_a, sid, kind="paper").json()["run_id"]
+
+    response = client.post(f"/runs/{run_id}/promote", headers=human_headers(tenant_a))
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["gate"]["restricted"] == ["TSLA"]
+    assert platform.runs.get(tenant_a, run_id)["state"] == "queued"
+
+
+def test_promote_enforces_saved_firm_limits(client, platform, tenant_a):
+    platform.compliance_policies.set(
+        tenant_a,
+        limits={
+            "maxPositionPct": 20.0,
+            "maxNetPct": 120.0,
+            "maxLeverage": 2.0,
+            "maxConcentrationPct": 100.0,
+        },
+        limits_enforced=True,
+        restricted=[],
+        watch=[],
+        action="Strict firm limits",
+        actor_id="risk-officer",
+        expect_version=0,
+    )
+    sid = _propose(client, tenant_a, valid_spec(name="Firm Limit Breach")).json()["id"]
+    run_id = _create_run(client, tenant_a, sid, kind="paper").json()["run_id"]
+    response = client.post(f"/runs/{run_id}/promote", headers=human_headers(tenant_a))
+    assert response.status_code == 409
+    assert any(
+        "Firm max position" in violation
+        for violation in response.json()["detail"]["gate"]["violations"]
+    )
+
+
+def test_promote_watch_only_policy_warns_without_activating_limits(
+    client, platform, tenant_a
+):
+    platform.compliance_policies.set(
+        tenant_a,
+        limits={
+            "maxPositionPct": 15.0,
+            "maxNetPct": 120.0,
+            "maxLeverage": 2.0,
+            "maxConcentrationPct": 50.0,
+        },
+        limits_enforced=False,
+        restricted=[],
+        watch=["AAPL"],
+        action="Watch only",
+        actor_id="risk-officer",
+        expect_version=0,
+    )
+    sid = _propose(client, tenant_a, valid_spec(name="Watched Strategy")).json()["id"]
+    run_id = _create_run(client, tenant_a, sid, kind="paper").json()["run_id"]
+    response = client.post(f"/runs/{run_id}/promote", headers=human_headers(tenant_a))
+    assert response.status_code == 200
+    assert any("Watch-list" in warning for warning in response.json()["gate"]["warnings"])
+
+
 def test_promote_missing_run_404(client, tenant_a):
     resp = client.post(f"/runs/{uuid.uuid4()}/promote", headers=human_headers(tenant_a))
     assert resp.status_code == 404

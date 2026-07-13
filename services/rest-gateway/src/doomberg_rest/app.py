@@ -44,6 +44,13 @@ from doomberg_control import actions
 from doomberg_control.actions import ActionError
 from doomberg_control.deps import HUMAN_ACTOR_KINDS, Ctx
 from doomberg_control.execution_gateway import ExecutionGateway
+from doomberg_control.compliance_policy import (
+    effective_compliance_policy,
+    normalize_limits,
+    normalize_symbol,
+    normalize_symbols,
+)
+from doomberg_control.gate import evaluate_spec_gate
 from doomberg_core import Core
 from doomberg_core.providers import PUBLIC_DATA_SOURCE, PUBLIC_ENTITLEMENT_CLASS, IbkrEngineClient
 from doomberg_mcp import Toolset
@@ -52,6 +59,8 @@ from doomberg_platform import (
     AuthStore,
     ApprovalStore,
     ArtifactStore,
+    CompliancePolicyConflict,
+    CompliancePolicyStore,
     BookStore,
     DeliveryTargetStore,
     ExecutionControlStore,
@@ -98,6 +107,7 @@ class Stores:
         self.providers = ProviderStore(db)
         self.execution = ExecutionStore(db)
         self.execution_controls = ExecutionControlStore(db)
+        self.compliance_policies = CompliancePolicyStore(db)
         self.triggers = TriggerStore(db)
         self.baselines = TriggerBaselineStore(db)
         self.notifications = NotificationStore(db)
@@ -179,6 +189,24 @@ class ComplianceKillSwitchBody(BaseModel):
     on: bool
     reason: str | None = None
     expect_version: int = Field(ge=0)
+
+
+class ComplianceLimitsBody(BaseModel):
+    limits: dict[str, float]
+    expect_version: int = Field(ge=0)
+
+
+class ComplianceSymbolBody(BaseModel):
+    symbol: str
+    expect_version: int = Field(ge=0)
+
+
+class ComplianceVersionBody(BaseModel):
+    expect_version: int = Field(ge=0)
+
+
+class ComplianceCheckBody(BaseModel):
+    strategy_id: str
 
 
 def _bearer_key(authorization: str | None) -> str | None:
@@ -932,10 +960,10 @@ def create_app(db: Any | None = None) -> FastAPI:
         endpoint deliberately exposes only those defaults until tenant overrides are
         persisted; the kill switch and its audit trail are live, tenant-specific data.
         """
-        from doomberg_control.gate import DEFAULT_RESTRICTED
-        from doomberg_core.engine.compliance import DEFAULT_LIMITS, LIMIT_DEFS
+        from doomberg_core.engine.compliance import LIMIT_DEFS
 
         effective = ExecutionGateway(stores).get_kill_switch(ctx)
+        policy = effective_compliance_policy(stores, ctx.tenant_id)
         strategies = [
             {
                 "id": strategy["id"],
@@ -966,16 +994,30 @@ def create_app(db: Any | None = None) -> FastAPI:
             }
             for event in stores.execution_controls.list_global_events()
         ]
+        policy_audit = [
+            {
+                "id": event["event_id"],
+                "at": event["created_at"],
+                "action": event["action"],
+                "decision": "updated",
+                "summary": f"Compliance policy v{event['version']}",
+                "scope": "tenant",
+            }
+            for event in stores.compliance_policies.list_events(ctx.tenant_id)
+        ]
         audit = sorted(
-            [*tenant_audit, *global_audit],
+            [*tenant_audit, *global_audit, *policy_audit],
             key=lambda event: (event["at"], event["id"]),
             reverse=True,
         )[:100]
         return {
-            "limits": dict(DEFAULT_LIMITS),
+            "limits": policy["limits"],
             "limitDefs": list(LIMIT_DEFS),
-            "restricted": list(DEFAULT_RESTRICTED),
-            "watch": [],
+            "restricted": policy["restricted"],
+            "watch": policy["watch"],
+            "policyConfigured": policy["configured"],
+            "limitsEnforced": policy["limits_enforced"],
+            "policyVersion": policy["version"],
             "killSwitch": effective["enabled"],
             "killReason": effective["reason"],
             "killSource": effective["source"],
@@ -986,11 +1028,59 @@ def create_app(db: Any | None = None) -> FastAPI:
             "check": None,
         }
 
+    def require_compliance_editor(ctx: Ctx) -> None:
+        if ctx.actor_kind not in HUMAN_ACTOR_KINDS:
+            raise HTTPException(status_code=403, detail="compliance policy requires a human actor")
+        _require_scope(ctx, "deploy:paper")
+
+    def compliance_symbol(value: str) -> str:
+        try:
+            return normalize_symbol(value)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def save_compliance_policy(
+        ctx: Ctx,
+        stores: Stores,
+        *,
+        action: str,
+        expect_version: int,
+        limits: dict[str, float] | None = None,
+        limits_enforced: bool | None = None,
+        restricted: list[str] | None = None,
+        watch: list[str] | None = None,
+    ) -> dict[str, Any]:
+        require_compliance_editor(ctx)
+        current = effective_compliance_policy(stores, ctx.tenant_id)
+        try:
+            stores.compliance_policies.set(
+                ctx.tenant_id,
+                limits=normalize_limits(limits if limits is not None else current["limits"]),
+                limits_enforced=(
+                    current["limits_enforced"]
+                    if limits_enforced is None
+                    else bool(limits_enforced)
+                ),
+                restricted=normalize_symbols(
+                    restricted if restricted is not None else current["restricted"]
+                ),
+                watch=normalize_symbols(watch if watch is not None else current["watch"]),
+                action=action,
+                actor_id=ctx.actor_id,
+                expect_version=expect_version,
+            )
+        except CompliancePolicyConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return compliance_state(ctx, stores)
+
     @app.get("/api/compliance")
     def get_compliance(
         ctx: Ctx = Depends(_ctx),
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
+        _require_scope(ctx, "data:read")
         return compliance_state(ctx, stores)
 
     @app.post("/api/compliance/kill-switch")
@@ -1009,6 +1099,121 @@ def create_app(db: Any | None = None) -> FastAPI:
         except ActionError as err:
             raise HTTPException(status_code=err.status, detail=err.detail) from err
         return compliance_state(ctx, stores)
+
+    @app.post("/api/compliance/limits")
+    def set_compliance_limits(
+        body: ComplianceLimitsBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        return save_compliance_policy(
+            ctx,
+            stores,
+            action="Firm limits updated",
+            expect_version=body.expect_version,
+            limits=body.limits,
+            limits_enforced=True,
+        )
+
+    @app.post("/api/compliance/restricted")
+    def add_compliance_restricted(
+        body: ComplianceSymbolBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        require_compliance_editor(ctx)
+        current = effective_compliance_policy(stores, ctx.tenant_id)
+        symbol = compliance_symbol(body.symbol)
+        return save_compliance_policy(
+            ctx,
+            stores,
+            action=f"Restricted name added: {symbol}",
+            expect_version=body.expect_version,
+            restricted=[*current["restricted"], symbol],
+        )
+
+    @app.delete("/api/compliance/restricted/{symbol}")
+    def remove_compliance_restricted(
+        symbol: str,
+        body: ComplianceVersionBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        require_compliance_editor(ctx)
+        current = effective_compliance_policy(stores, ctx.tenant_id)
+        normalized = compliance_symbol(symbol)
+        return save_compliance_policy(
+            ctx,
+            stores,
+            action=f"Restricted name removed: {normalized}",
+            expect_version=body.expect_version,
+            restricted=[item for item in current["restricted"] if item != normalized],
+        )
+
+    @app.post("/api/compliance/watch")
+    def add_compliance_watch(
+        body: ComplianceSymbolBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        require_compliance_editor(ctx)
+        current = effective_compliance_policy(stores, ctx.tenant_id)
+        symbol = compliance_symbol(body.symbol)
+        return save_compliance_policy(
+            ctx,
+            stores,
+            action=f"Watch name added: {symbol}",
+            expect_version=body.expect_version,
+            watch=[*current["watch"], symbol],
+        )
+
+    @app.delete("/api/compliance/watch/{symbol}")
+    def remove_compliance_watch(
+        symbol: str,
+        body: ComplianceVersionBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        require_compliance_editor(ctx)
+        current = effective_compliance_policy(stores, ctx.tenant_id)
+        normalized = compliance_symbol(symbol)
+        return save_compliance_policy(
+            ctx,
+            stores,
+            action=f"Watch name removed: {normalized}",
+            expect_version=body.expect_version,
+            watch=[item for item in current["watch"] if item != normalized],
+        )
+
+    @app.post("/api/compliance/check")
+    def check_strategy_compliance(
+        body: ComplianceCheckBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        _require_scope(ctx, "data:read")
+        strategy = stores.strategies.get(ctx.tenant_id, body.strategy_id)
+        if strategy is None:
+            raise HTTPException(status_code=404, detail="strategy not found")
+        policy = effective_compliance_policy(stores, ctx.tenant_id)
+        control = ExecutionGateway(stores).get_kill_switch(ctx)
+        decision = evaluate_spec_gate(
+            strategy["spec"],
+            restricted=policy["restricted"],
+            watch=policy["watch"],
+            firm_limits=policy["limits"] if policy["limits_enforced"] else None,
+            kill_switch=control["enabled"],
+            kill_reason=control["reason"],
+        ).to_dict()
+        state = compliance_state(ctx, stores)
+        state["check"] = {
+            **decision,
+            "strategyId": strategy["id"],
+            "strategyName": strategy["name"],
+            "stage": strategy.get("spec", {}).get("stage") or "draft",
+            "limitsEnforced": policy["limits_enforced"],
+        }
+        return state
 
     @app.get("/api/auth/me")
     def me(

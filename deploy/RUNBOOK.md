@@ -200,7 +200,10 @@ WHERE rolname = current_user;
 
 SELECT relname, relrowsecurity, relforcerowsecurity
 FROM pg_class
-WHERE relname IN ('runs', 'trace_events', 'jobs', 'order_intents')
+WHERE relname IN (
+  'runs', 'trace_events', 'jobs', 'order_intents',
+  'execution_controls', 'compliance_policies'
+)
 ORDER BY relname;
 ```
 
@@ -231,6 +234,19 @@ dashboard compliance panel; site operators use the admin-token-protected
 and `expect_version` is required, so a stale release cannot overwrite a newer
 emergency halt. Site operators can read the current global control and its audit
 history with `GET /admin/execution/kill-switch`.
+
+Migration 5 adds versioned tenant compliance policies and append-only policy
+events with forced row-level security. The dashboard's limits, restricted list,
+watch list, and pre-trade check all use these rows. Every mutation requires the
+current `policyVersion`; stale writes return 409. Built-in limits remain visible
+reference defaults until the tenant explicitly saves the limits form, while the built-in
+restricted list is always enforced. Once saved, firm limits are enforced during
+strategy promotion and every paper-book application; restricted names also
+block direct execution intents and watch names produce warnings. Policy events
+appear in the same tenant compliance audit timeline as kill-switch events.
+Tenant policy writes take the same application fence used by broker sends and
+paper-book writes, so each mutation is ordered wholly before or after a money
+path action instead of racing its final check.
 
 ---
 
@@ -431,6 +447,12 @@ only after the incident is resolved. If the variable is omitted, deploys preserv
 existing Secret value so a routine release cannot silently clear an active environment
 halt. Durable control changes are effective immediately and tenant plus global events
 appear in the compliance panel audit trail.
+
+Tenant compliance policy changes are also effective immediately. Removing a
+restricted name or loosening a limit requires a human principal with
+`deploy:paper` and the latest policy version. A policy update does not authorize
+or submit an order; subsequent promotion, paper-tick, and execution paths read
+the new policy independently at their normal gate boundaries.
 
 If `DOOMBERG_ENABLE_LIVE_EXECUTION=1` is set without `DOOMBERG_IBKR_ENGINE_URL`,
 `deploy/deploy_services.sh` fails before applying manifests. The gateway still
