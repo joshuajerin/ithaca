@@ -8,7 +8,7 @@ import type { BacktestResult } from "../types";
 import { EquityCurve } from "../panels/EquityCurve";
 import { RiskBadge } from "../panels/RiskBadge";
 import { PerformancePnlPanel } from "../dashboard/panels/PerformancePnlPanel";
-import { getPerformance } from "../dashboard/data";
+import { performanceFromRuns } from "../dashboard/data";
 import { fmtTime, shortId, stateClass } from "../lib/format";
 
 function unwrapRun(run: RunRow): Partial<BacktestResult> {
@@ -64,9 +64,7 @@ export function DeploymentDetail() {
     reloadDetail();
   }, [liveEvents.length, reloadDetail]);
 
-  // Build performance panel data from the active run
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const perfData = getPerformance(activeRun ? [activeRun] : []) as any;
+  const perfData = performanceFromRuns(activeRun ? [activeRun] : []);
 
   const displayName = strategy?.name ?? `Strategy ${shortId(id ?? "")}`;
 
@@ -211,7 +209,7 @@ export function DeploymentDetail() {
           </div>
 
           {/* Performance panel */}
-          {curve.length > 2 && (
+          {perfData && (
             <div className="fcard" style={{ minHeight: 320 }}>
               <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.14em", color: "var(--muted-dim)", marginBottom: 10 }}>Performance & P&L</div>
               <div style={{ height: 280 }}>

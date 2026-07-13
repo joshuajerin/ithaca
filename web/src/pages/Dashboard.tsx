@@ -1,23 +1,20 @@
 import { useState } from "react";
 import { useAsync } from "../hooks/useAsync";
 import { api } from "../api";
-import type { AdaptiveDashboardResponse, AdaptiveDashboardWidget, RunRow } from "../types";
+import type {
+  AdaptiveDashboardResponse,
+  AdaptiveDashboardWidget,
+  DashboardReadEnvelope,
+  DashboardRiskData,
+  DashboardSummaryData,
+  RunRow,
+} from "../types";
 import { DotWaveCanvas } from "../components/adaptive/DotWaveCanvas";
 import { PerformancePnlPanel } from "../dashboard/panels/PerformancePnlPanel";
 import { PortfolioRiskPanel } from "../dashboard/panels/PortfolioRiskPanel";
-import { TradeFlowPanel } from "../dashboard/panels/TradeFlowPanel";
-import { OrderBookPanel } from "../dashboard/panels/OrderBookPanel";
-import { CongressTradesPanel } from "../dashboard/panels/CongressTradesPanel";
-import { YieldCurvePanel } from "../dashboard/panels/YieldCurvePanel";
-import { SentimentPanel } from "../dashboard/panels/SentimentPanel";
 import {
-  getPerformance,
-  getPortfolioRisk,
-  getTradeFlow,
-  getOrderBook,
-  getCongressTrades,
-  getYieldCurve,
-  getSentiment,
+  performanceFromDashboard,
+  riskFromDashboard,
 } from "../dashboard/data";
 import type { ReactNode } from "react";
 
@@ -175,12 +172,38 @@ function WarningWatch({ rows }: { rows: RunRow[] }) {
   );
 }
 
-function LiveDataStatus() {
+function DataStatePanel({
+  loading,
+  error,
+  response,
+  emptyMessage,
+}: {
+  loading?: boolean;
+  error?: string | null;
+  response?: DashboardReadEnvelope<unknown> | null;
+  emptyMessage: string;
+}) {
+  const message = loading
+    ? "Loading your data…"
+    : error
+      ? "This data could not be loaded."
+      : response?.status === "unavailable"
+        ? response.error?.message ?? "This data source is unavailable."
+        : response?.status === "stale"
+          ? "The latest recorded data is stale."
+          : emptyMessage;
   return (
-    <div className="adaptive-metric-stack">
-      <div><strong>Live</strong><span>Data path</span></div>
-      <div><strong>Server</strong><span>Credential boundary</span></div>
+    <div className="empty" style={{ minHeight: 160, display: "grid", placeItems: "center", padding: 24, textAlign: "center" }}>
+      <span>{message}</span>
     </div>
+  );
+}
+
+function UnsupportedPanel({ label }: { label: string }) {
+  return (
+    <DataStatePanel
+      emptyMessage={`${label} is not available from a connected tenant data source yet.`}
+    />
   );
 }
 
@@ -188,21 +211,12 @@ export function Dashboard() {
   const [query, setQuery] = useState("");
   const { data: runs } = useAsync<RunRow[]>((s) => api.listRuns(undefined, s), []);
   const { data: adaptive, error: adaptiveError } = useAsync<AdaptiveDashboardResponse>((s) => api.getAdaptiveDashboard(s), []);
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const performanceData = getPerformance(runs ?? []) as any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const portfolioRiskData = getPortfolioRisk() as any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tradeFlowData = getTradeFlow() as any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const orderBookData = getOrderBook() as any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const congressData = getCongressTrades() as any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const yieldCurveData = getYieldCurve() as any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sentimentData = getSentiment() as any;
+  const { data: summary, loading: summaryLoading, error: summaryError } =
+    useAsync<DashboardReadEnvelope<DashboardSummaryData>>((s) => api.getDashboardSummary(s), []);
+  const { data: risk, loading: riskLoading, error: riskError } =
+    useAsync<DashboardReadEnvelope<DashboardRiskData>>((s) => api.getDashboardRisk(s), []);
+  const performanceData = performanceFromDashboard(summary);
+  const portfolioRiskData = riskFromDashboard(risk);
 
   const q = query.toLowerCase().trim();
   const panelVisible = (title: string) => !q || title.toLowerCase().includes(q);
@@ -212,19 +226,23 @@ export function Dashboard() {
   const renderAdaptiveWidget = (widget: AdaptiveDashboardWidget): ReactNode => {
     switch (widget.id) {
       case "performance_pnl":
-        return <PerformancePnlPanel data={performanceData} />;
+        return performanceData
+          ? <PerformancePnlPanel data={performanceData} />
+          : <DataStatePanel loading={summaryLoading} error={summaryError} response={summary} emptyMessage="Run a completed backtest to see performance." />;
       case "portfolio_risk":
-        return <PortfolioRiskPanel data={portfolioRiskData} />;
+        return portfolioRiskData
+          ? <PortfolioRiskPanel data={portfolioRiskData} />
+          : <DataStatePanel loading={riskLoading} error={riskError} response={risk} emptyMessage="No recorded risk metrics or paper positions yet." />;
       case "trade_flow":
-        return <TradeFlowPanel data={tradeFlowData} />;
+        return <UnsupportedPanel label="Trade flow" />;
       case "order_book":
-        return <OrderBookPanel data={orderBookData} />;
+        return <UnsupportedPanel label="Order book depth" />;
       case "congress_trades":
-        return <CongressTradesPanel data={congressData} />;
+        return <UnsupportedPanel label="Congress trades" />;
       case "yield_curve":
-        return <YieldCurvePanel data={yieldCurveData} />;
+        return <UnsupportedPanel label="Yield curve" />;
       case "sentiment":
-        return <SentimentPanel data={sentimentData} />;
+        return <UnsupportedPanel label="Sentiment" />;
       case "recent_sessions":
         return <UsageList rows={rows} />;
       case "tool_usage":
@@ -232,7 +250,7 @@ export function Dashboard() {
       case "warning_watch":
         return <WarningWatch rows={rows} />;
       case "live_data_status":
-        return <LiveDataStatus />;
+        return <UnsupportedPanel label="Live-data status" />;
       default:
         return null;
     }
@@ -318,12 +336,16 @@ export function Dashboard() {
             <div className="band-grid-2">
               {panelVisible("Performance & P&L") && (
                 <FCardPanel title="Performance & P&L" minHeight={340}>
-                  <PerformancePnlPanel data={performanceData} />
+                  {performanceData
+                    ? <PerformancePnlPanel data={performanceData} />
+                    : <DataStatePanel loading={summaryLoading} error={summaryError} response={summary} emptyMessage="Run a completed backtest to see performance." />}
                 </FCardPanel>
               )}
               {panelVisible("Portfolio Risk") && (
                 <FCardPanel title="Portfolio Risk" minHeight={340}>
-                  <PortfolioRiskPanel data={portfolioRiskData} />
+                  {portfolioRiskData
+                    ? <PortfolioRiskPanel data={portfolioRiskData} />
+                    : <DataStatePanel loading={riskLoading} error={riskError} response={risk} emptyMessage="No recorded risk metrics or paper positions yet." />}
                 </FCardPanel>
               )}
             </div>
@@ -336,17 +358,17 @@ export function Dashboard() {
             <div className="band-grid-3">
               {panelVisible("Trade Flow") && (
                 <FCardPanel title="Trade Flow" minHeight={300}>
-                  <TradeFlowPanel data={tradeFlowData} />
+                  <UnsupportedPanel label="Trade flow" />
                 </FCardPanel>
               )}
               {panelVisible("Order Book") && (
                 <FCardPanel title="Order Book" minHeight={300}>
-                  <OrderBookPanel data={orderBookData} />
+                  <UnsupportedPanel label="Order book depth" />
                 </FCardPanel>
               )}
               {panelVisible("Congress Trades") && (
                 <FCardPanel title="Congress Trades" minHeight={300}>
-                  <CongressTradesPanel data={congressData} />
+                  <UnsupportedPanel label="Congress trades" />
                 </FCardPanel>
               )}
             </div>
@@ -359,12 +381,12 @@ export function Dashboard() {
             <div className="band-grid-2">
               {panelVisible("Yield Curve") && (
                 <FCardPanel title="Yield Curve" minHeight={300}>
-                  <YieldCurvePanel data={yieldCurveData} />
+                  <UnsupportedPanel label="Yield curve" />
                 </FCardPanel>
               )}
               {panelVisible("Sentiment") && (
                 <FCardPanel title="Sentiment" minHeight={300}>
-                  <SentimentPanel data={sentimentData} />
+                  <UnsupportedPanel label="Sentiment" />
                 </FCardPanel>
               )}
             </div>

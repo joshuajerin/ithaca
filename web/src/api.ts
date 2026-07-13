@@ -14,6 +14,8 @@ import type {
   TriggerDryRunResult,
   TriggerRow,
   AdaptiveDashboardResponse,
+  DashboardRiskResponse,
+  DashboardSummaryResponse,
 } from "./types";
 
 export interface ProviderConnectionInput {
@@ -280,6 +282,14 @@ export const api = {
 
   async getAdaptiveDashboard(signal?: AbortSignal): Promise<AdaptiveDashboardResponse> {
     return getJson<AdaptiveDashboardResponse>(`/dashboard/adaptive`, signal);
+  },
+
+  async getDashboardSummary(signal?: AbortSignal): Promise<DashboardSummaryResponse> {
+    return getJson<DashboardSummaryResponse>(`/dashboard/summary`, signal);
+  },
+
+  async getDashboardRisk(signal?: AbortSignal): Promise<DashboardRiskResponse> {
+    return getJson<DashboardRiskResponse>(`/dashboard/risk`, signal);
   },
 
   async liveDataSmoke(symbol = "AAPL", signal?: AbortSignal): Promise<LiveDataSmokeStatus> {
