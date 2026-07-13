@@ -8,6 +8,8 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
+# shellcheck source=deploy/lib/execution_kill_switch.sh
+source "${REPO_ROOT}/deploy/lib/execution_kill_switch.sh"
 
 if [[ "${LOAD_LOCAL_ENV:-1}" != "0" && -f infra/terraform/.env ]]; then
   set -a
@@ -301,6 +303,13 @@ apply_manifest() {
   fi
 }
 
+secret_checksum() {
+  local namespace="$1"
+  local secret="$2"
+  kubectl -n "${namespace}" get secret "${secret}" \
+    -o jsonpath='{.data}' 2>/dev/null | cksum | awk '{print $1 ":" $2}'
+}
+
 create_ibkr_secret() {
   kubectl -n "${K8S_GATEWAY_NAMESPACE}" create secret generic ibkr-engine \
     --from-literal=engine_token="${DOOMBERG_IBKR_ENGINE_TOKEN:-}" \
@@ -334,6 +343,7 @@ create_doomberg_secret() {
     --from-literal=ibkr_positions_path="${DOOMBERG_IBKR_POSITIONS_PATH:-}" \
     --from-literal=ibkr_orders_path="${DOOMBERG_IBKR_ORDERS_PATH:-}" \
     --from-literal=enable_live_execution="${DOOMBERG_ENABLE_LIVE_EXECUTION:-0}" \
+    --from-literal=execution_kill_switch="${DOOMBERG_EXECUTION_KILL_SWITCH:-0}" \
     --from-literal=execution_max_notional_usd="${DOOMBERG_EXECUTION_MAX_NOTIONAL_USD:-10000}" \
     --from-literal=execution_max_quantity="${DOOMBERG_EXECUTION_MAX_QUANTITY:-10000}" \
     --from-literal=execution_max_freshness_ms="${DOOMBERG_EXECUTION_MAX_FRESHNESS_MS:-10000}" \
@@ -381,8 +391,17 @@ echo "==> namespaces"
 render_manifest infra/k8s/namespace.yaml | apply_manifest
 
 echo "==> secret doomberg-db (${DEPLOY_ENV}; values redacted)"
+if ! DOOMBERG_EXECUTION_KILL_SWITCH="$(
+  resolve_execution_kill_switch "${K8S_GATEWAY_NAMESPACE}" "${DEPLOY_DRY_RUN_MODE}"
+)"; then
+  exit 1
+fi
+gateway_db_secret_before="$(secret_checksum "${K8S_GATEWAY_NAMESPACE}" doomberg-db || true)"
+worker_db_secret_before="$(secret_checksum "${K8S_WORKER_NAMESPACE}" doomberg-db || true)"
 create_doomberg_secret "${K8S_GATEWAY_NAMESPACE}"
 create_doomberg_secret "${K8S_WORKER_NAMESPACE}"
+gateway_db_secret_after="$(secret_checksum "${K8S_GATEWAY_NAMESPACE}" doomberg-db || true)"
+worker_db_secret_after="$(secret_checksum "${K8S_WORKER_NAMESPACE}" doomberg-db || true)"
 echo "==> secret doomberg-adaptive-dashboard (${DEPLOY_ENV}; worker namespace only; values redacted)"
 create_adaptive_dashboard_secret
 if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
@@ -403,6 +422,17 @@ echo "==> app manifests"
 for file in infra/k8s/app-deployment.yaml infra/k8s/app-service.yaml infra/k8s/worker-deployment.yaml; do
   render_manifest "${file}" | apply_manifest
 done
+
+if [[ "${DEPLOY_DRY_RUN_MODE}" == "off" ]]; then
+  if [[ "${gateway_db_secret_before}" != "${gateway_db_secret_after}" ]]; then
+    echo "==> doomberg-db secret changed; restarting app pods"
+    kubectl -n "${K8S_GATEWAY_NAMESPACE}" rollout restart deployment/doomberg-app
+  fi
+  if [[ "${worker_db_secret_before}" != "${worker_db_secret_after}" ]]; then
+    echo "==> doomberg-db secret changed; restarting worker pods"
+    kubectl -n "${K8S_WORKER_NAMESPACE}" rollout restart deployment/doomberg-workers
+  fi
+fi
 
 caddy_checksum() {
   kubectl -n "${CADDY_NAMESPACE}" get configmap caddy-config \

@@ -134,7 +134,7 @@ def test_subscribe_receives_live_events(trace_store):
     received: list[int] = []
 
     def consume():
-        for ev in trace_store.subscribe(run):
+        for ev in trace_store.subscribe(tenant, run):
             received.append(ev["seq"])
             if len(received) == 3:
                 return

@@ -24,6 +24,7 @@ from typing import Any, Iterable
 import numpy as np
 
 from doomberg_core.risk import RiskLimits, attest, project_feasible
+from doomberg_core.engine.compliance import book_metrics, evaluate_limits
 
 __all__ = ["GateDecision", "evaluate_spec_gate", "DEFAULT_RESTRICTED"]
 
@@ -50,6 +51,11 @@ class GateDecision:
         violations: list[str],
         warnings: list[str],
         restricted_hits: list[str],
+        watch_hits: list[str] | None = None,
+        checks: list[dict[str, Any]] | None = None,
+        metrics: dict[str, Any] | None = None,
+        kill_switch: bool = False,
+        kill_reason: str | None = None,
     ) -> None:
         self.ok = ok
         self.attestation = attestation
@@ -58,6 +64,11 @@ class GateDecision:
         self.violations = violations
         self.warnings = warnings
         self.restricted_hits = restricted_hits
+        self.watch_hits = watch_hits or []
+        self.checks = checks or []
+        self.metrics = metrics or book_metrics(target_weights)
+        self.kill_switch = bool(kill_switch)
+        self.kill_reason = kill_reason if kill_switch else None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -69,6 +80,11 @@ class GateDecision:
             "violations": self.violations,
             "warnings": self.warnings,
             "restricted": self.restricted_hits,
+            "watch": self.watch_hits,
+            "checks": self.checks,
+            "metrics": self.metrics,
+            "killSwitch": self.kill_switch,
+            "killReason": self.kill_reason,
             "reason": None if self.ok else "; ".join(self.violations),
         }
 
@@ -113,6 +129,9 @@ def evaluate_spec_gate(
     *,
     restricted: Iterable[str] | None = None,
     watch: Iterable[str] | None = None,
+    firm_limits: dict[str, float] | None = None,
+    kill_switch: bool = False,
+    kill_reason: str | None = None,
 ) -> GateDecision:
     """Run the full pre-trade gate over a validated StrategySpec.
 
@@ -137,6 +156,7 @@ def evaluate_spec_gate(
     # Read the book AS AUTHORED first (did the construction over-reach?), then project.
     as_authored = attest(weights, limits)
     projected_w, projected_att = project_feasible(weights, limits)
+    projected_weights = {s: round(float(w), 6) for s, w in zip(symbols, projected_w)}
     relaxed = not as_authored.ok and projected_att.ok
 
     violations: list[str] = []
@@ -159,13 +179,36 @@ def evaluate_spec_gate(
     if watch_hits:
         warnings.append("Watch-list name(s): " + ", ".join(watch_hits))
 
+    checks = evaluate_limits(projected_weights, firm_limits)
+    if firm_limits is not None:
+        for check in checks:
+            if check["status"] == "breach":
+                violations.append(
+                    f"Firm {check['label'].lower()} {check['value']:.1f}{check['unit']} "
+                    f"exceeds {check['limit']:.1f}{check['unit']}"
+                )
+            elif check["status"] == "warn":
+                warnings.append(
+                    f"Firm {check['label'].lower()} at "
+                    f"{check['utilization'] * 100:.0f}% of its limit"
+                )
+    if kill_switch:
+        violations.append(
+            "Kill switch is engaged" + (f": {kill_reason}" if kill_reason else "")
+        )
+
     ok = not violations
     return GateDecision(
         ok=ok,
         attestation=projected_att.to_dict(),
         relaxed=relaxed,
-        target_weights={s: round(float(w), 6) for s, w in zip(symbols, projected_w)},
+        target_weights=projected_weights,
         violations=violations,
         warnings=warnings,
         restricted_hits=restricted_hits,
+        watch_hits=watch_hits,
+        checks=checks,
+        metrics=book_metrics(projected_weights),
+        kill_switch=kill_switch,
+        kill_reason=kill_reason,
     )

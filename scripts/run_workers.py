@@ -18,6 +18,7 @@ import signal
 import threading
 from contextlib import suppress
 
+from doomberg_control.execution_gateway import ExecutionGateway
 from doomberg_control.money import make_applier
 from doomberg_core import Core
 from doomberg_platform import Platform
@@ -31,6 +32,7 @@ from doomberg_runtime import (
     TriggerJobWorker,
 )
 from doomberg_runtime.leader import acquire_loop_lease, process_owner, release_loop_lease
+from doomberg_runtime.health import WorkerReporter
 
 
 def main() -> int:
@@ -44,6 +46,7 @@ def main() -> int:
     backtest_interval = float(os.environ.get("DOOMBERG_BACKTEST_INTERVAL_S", "2"))
     trigger_job_interval = float(os.environ.get("DOOMBERG_TRIGGER_JOB_INTERVAL_S", "2"))
     notification_interval = float(os.environ.get("DOOMBERG_NOTIFICATION_INTERVAL_S", "2"))
+    reconciliation_interval = float(os.environ.get("DOOMBERG_RECONCILIATION_INTERVAL_S", "5"))
     paper_interval = float(os.environ.get("DOOMBERG_PAPER_INTERVAL_S", "60"))
     adaptive_dashboard_interval = float(os.environ.get("DOOMBERG_ADAPTIVE_DASHBOARD_INTERVAL_S", "60"))
     paper_lease_ttl = float(os.environ.get(
@@ -55,31 +58,113 @@ def main() -> int:
 
     worker = BacktestWorker(platform, core)
     trigger_worker = TriggerJobWorker(platform, core)
-    notification_dispatcher = NotificationDispatcher(platform)
+    notification_dispatcher = NotificationDispatcher(
+        platform, worker_id=process_owner("notification-dispatcher")
+    )
     adaptive_dashboard_worker = AdaptiveDashboardWorker(platform)
     scheduler = PaperScheduler(platform, core, make_applier(platform), calendar=calendar)
+    execution_gateway = ExecutionGateway(platform)
     paper_owner_id = process_owner("paper-scheduler")
+    reconciliation_owner_id = process_owner("execution-reconciler")
+    adaptive_owner_id = adaptive_dashboard_worker.owner_id
 
     def run_paper_scheduler() -> None:
-        while not stop.is_set():
-            if acquire_loop_lease(
-                platform,
-                lease_name="paper-scheduler",
-                owner_id=paper_owner_id,
-                ttl_seconds=paper_lease_ttl,
-                role="paper-scheduler",
-            ):
-                scheduler.tick_once()
-            stop.wait(paper_interval)
-        with suppress(Exception):
-            release_loop_lease(platform, lease_name="paper-scheduler", owner_id=paper_owner_id)
+        reporter = WorkerReporter(
+            platform,
+            worker_id=paper_owner_id,
+            role="paper-scheduler",
+            ttl_seconds=max(15.0, paper_interval * 4.0),
+        )
+        reporter.pulse(status="starting")
+        try:
+            while not stop.is_set():
+                leader = acquire_loop_lease(
+                    platform,
+                    lease_name="paper-scheduler",
+                    owner_id=paper_owner_id,
+                    ttl_seconds=paper_lease_ttl,
+                    role="paper-scheduler",
+                )
+                if leader:
+                    results = scheduler.tick_once()
+                    failures = [result for result in results if result.get("error")]
+                    reporter.pulse(
+                        status="degraded" if failures else "healthy",
+                        detail=f"{len(failures)} paper tick(s) failed" if failures else None,
+                        metadata={"leader": True, "last_runs": len(results)},
+                    )
+                else:
+                    reporter.pulse(status="standby", metadata={"leader": False})
+                stop.wait(paper_interval)
+        finally:
+            reporter.stop()
+            with suppress(Exception):
+                release_loop_lease(
+                    platform, lease_name="paper-scheduler", owner_id=paper_owner_id
+                )
 
     def run_adaptive_dashboard_worker() -> None:
-        while not stop.is_set():
-            result = adaptive_dashboard_worker.poll_once()
-            if result.get("status") == "ran" or result.get("failed"):
-                print(f"adaptive dashboard recompute: {result}")
-            stop.wait(adaptive_dashboard_interval)
+        reporter = WorkerReporter(
+            platform,
+            worker_id=adaptive_owner_id,
+            role="adaptive-dashboard-worker",
+            ttl_seconds=max(15.0, adaptive_dashboard_interval * 4.0),
+        )
+        reporter.pulse(status="starting")
+        try:
+            while not stop.is_set():
+                result = adaptive_dashboard_worker.poll_once()
+                failures = result.get("failed") or []
+                reporter.pulse(
+                    status="degraded" if failures else "healthy",
+                    detail=f"{len(failures)} dashboard profile(s) failed" if failures else None,
+                    metadata={"last_result": result.get("status")},
+                )
+                if result.get("status") == "ran" or failures:
+                    print(f"adaptive dashboard recompute: {result}")
+                stop.wait(adaptive_dashboard_interval)
+        finally:
+            reporter.stop()
+
+    def run_execution_reconciler() -> None:
+        lease_ttl = max(30.0, reconciliation_interval * 3.0)
+        reporter = WorkerReporter(
+            platform,
+            worker_id=reconciliation_owner_id,
+            role="execution-reconciler",
+            ttl_seconds=max(15.0, reconciliation_interval * 4.0),
+        )
+        reporter.pulse(status="starting")
+        try:
+            while not stop.is_set():
+                leader = acquire_loop_lease(
+                    platform,
+                    lease_name="execution-reconciler",
+                    owner_id=reconciliation_owner_id,
+                    ttl_seconds=lease_ttl,
+                    role="execution-reconciler",
+                )
+                if leader:
+                    result = execution_gateway.reconcile_open_orders()
+                    failures = result.get("failed") or []
+                    reporter.pulse(
+                        status="degraded" if failures else "healthy",
+                        detail=f"{len(failures)} reconciliation(s) failed" if failures else None,
+                        metadata={"leader": True},
+                    )
+                    if failures:
+                        print(f"execution reconciliation: {result}")
+                else:
+                    reporter.pulse(status="standby", metadata={"leader": False})
+                stop.wait(reconciliation_interval)
+        finally:
+            reporter.stop()
+            with suppress(Exception):
+                release_loop_lease(
+                    platform,
+                    lease_name="execution-reconciler",
+                    owner_id=reconciliation_owner_id,
+                )
 
     stop = threading.Event()
     threads = [
@@ -99,6 +184,11 @@ def main() -> int:
             name="adaptive-dashboard-worker",
             daemon=True,
         ),
+        threading.Thread(
+            target=run_execution_reconciler,
+            name="execution-reconciler",
+            daemon=True,
+        ),
     ]
 
     signal.signal(signal.SIGINT, lambda *_: stop.set())
@@ -107,6 +197,7 @@ def main() -> int:
     print(f"doomberg conductor up — db={db}, backtest every {backtest_interval}s, "
           f"trigger jobs every {trigger_job_interval}s, paper every {paper_interval}s, "
           f"notifications every {notification_interval}s, "
+          f"execution reconciliation every {reconciliation_interval}s, "
           f"adaptive dashboard every {adaptive_dashboard_interval}s, "
           f"paper lease ttl={paper_lease_ttl}s owner={paper_owner_id}, "
           f"calendar={type(calendar).__name__}")

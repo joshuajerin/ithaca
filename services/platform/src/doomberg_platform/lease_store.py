@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .db import Db
+from .db_scope import system_scoped_store
 
 
 class LeaseConflict(RuntimeError):
@@ -46,6 +47,7 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
     }
 
 
+@system_scoped_store
 class LeaseStore:
     """Small compare-and-set lease store for active infrastructure loops."""
 

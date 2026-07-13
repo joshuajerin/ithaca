@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .db import Db
+from .db_scope import tenant_scoped_store
 
 __all__ = ["AuthStore", "VALID_SCOPES", "KEY_PREFIX", "hash_secret"]
 
@@ -74,6 +75,7 @@ def hash_secret(salt: str, secret: str) -> str:
     return hashlib.sha256((salt + secret).encode("utf-8")).hexdigest()
 
 
+@tenant_scoped_store(system_methods={"create_tenant", "verify", "revoke_key"})
 class AuthStore:
     """Tenants + API keys. The principal resolver both HTTP front doors call."""
 

@@ -26,7 +26,11 @@ import os
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+
+from doomberg_platform import ExecutionControlConflict
+from doomberg_platform.migrations import validate_migrations
 
 from . import actions
 from .actions import ActionError
@@ -70,6 +74,12 @@ class CreateOrderIntentBody(BaseModel):
     idempotency_key: str | None = None
 
 
+class ExecutionKillSwitchBody(BaseModel):
+    enabled: bool
+    reason: str | None = None
+    expect_version: int = Field(ge=0)
+
+
 def _require_admin(x_admin_token: str | None) -> None:
     """Gate the operator-only admin endpoints behind ``DOOMBERG_ADMIN_TOKEN``.
 
@@ -94,9 +104,45 @@ def _raise(err: ActionError) -> None:
 def create_app() -> FastAPI:
     app = FastAPI(title="doomberg-control-plane", version="0.0.0")
 
-    @app.get("/healthz")
-    def healthz() -> dict[str, str]:
+    @app.get("/livez")
+    def livez() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/healthz")
+    @app.get("/readyz")
+    def healthz(platform: Platform = Depends(get_platform)) -> Any:
+        try:
+            with platform.db.system_scope():
+                row = platform.db.conn.execute("SELECT 1 AS ok").fetchone()
+                migration = (
+                    validate_migrations(platform.db.conn)
+                    if getattr(platform.db, "is_postgres", False)
+                    else None
+                )
+            if row is None or int(row["ok"]) != 1:
+                raise RuntimeError("database ping returned no row")
+            pending = list(migration.pending_versions) if migration is not None else []
+            body = {
+                "status": "ok" if not pending else "error",
+                "ready": not pending,
+                "database": "postgres" if getattr(platform.db, "is_postgres", False) else "sqlite",
+                "migrations": {
+                    "current": migration.current_version,
+                    "latest": migration.latest_version,
+                    "pending": pending,
+                } if migration is not None else {"mode": "local-inline", "pending": []},
+                "pool": getattr(platform.db, "pool_stats", None),
+            }
+        except Exception as exc:  # noqa: BLE001 - stable readiness envelope.
+            body = {
+                "status": "error",
+                "ready": False,
+                "database": "postgres" if getattr(platform.db, "is_postgres", False) else "sqlite",
+                "error": f"{type(exc).__name__}: {exc}"[:500],
+            }
+        if not body["ready"]:
+            return JSONResponse(status_code=503, content=body)
+        return body
 
     @app.post("/strategies", status_code=201)
     def propose_strategy(
@@ -206,6 +252,29 @@ def create_app() -> FastAPI:
         return run
 
     # ---- deterministic execution gateway ----------------------------------------------
+    @app.get("/execution/kill-switch")
+    def get_execution_kill_switch(
+        ctx: Ctx = Depends(get_ctx),
+        platform: Platform = Depends(get_platform),
+    ) -> dict[str, Any]:
+        return ExecutionGateway(platform).get_kill_switch(ctx)
+
+    @app.post("/execution/kill-switch")
+    def set_execution_kill_switch(
+        body: ExecutionKillSwitchBody,
+        ctx: Ctx = Depends(get_ctx),
+        platform: Platform = Depends(get_platform),
+    ) -> dict[str, Any]:
+        try:
+            return ExecutionGateway(platform).set_kill_switch(
+                ctx,
+                enabled=body.enabled,
+                reason=body.reason,
+                expect_version=body.expect_version,
+            )
+        except ActionError as err:
+            _raise(err)
+
     @app.post("/execution/intents", status_code=201)
     def create_order_intent(
         body: CreateOrderIntentBody,
@@ -270,6 +339,34 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"tenant_id": tenant_id, "name": body.name}
+
+    @app.post("/admin/execution/kill-switch")
+    def set_global_execution_kill_switch(
+        body: ExecutionKillSwitchBody,
+        platform: Platform = Depends(get_platform),
+        x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+    ) -> dict[str, Any]:
+        _require_admin(x_admin_token)
+        try:
+            return platform.execution_controls.set_global(
+                enabled=body.enabled,
+                reason=body.reason,
+                actor_id="admin-token",
+                expect_version=body.expect_version,
+            )
+        except ExecutionControlConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/admin/execution/kill-switch")
+    def get_global_execution_kill_switch(
+        platform: Platform = Depends(get_platform),
+        x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+    ) -> dict[str, Any]:
+        _require_admin(x_admin_token)
+        return {
+            "control": platform.execution_controls.get_global(),
+            "audit": platform.execution_controls.list_global_events(),
+        }
 
     @app.post("/admin/tenants/{tenant_id}/keys", status_code=201)
     def mint_key(

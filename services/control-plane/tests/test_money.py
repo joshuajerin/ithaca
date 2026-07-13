@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import uuid
 
 import pytest
@@ -98,3 +99,159 @@ def test_make_applier_bound_callable(platform, tenant):
     apply = make_applier(platform)
     out = apply(tenant, run_id, {"action": "propose", "targetWeights": {"AAPL": 0.5, "MSFT": 0.5}})
     assert out["applied"] is True
+
+
+def test_apply_blocks_saved_firm_limit_breach(platform, tenant):
+    run_id = _live_paper(platform, tenant)
+    platform.compliance_policies.set(
+        tenant,
+        limits={
+            "maxPositionPct": 40.0,
+            "maxNetPct": 120.0,
+            "maxLeverage": 2.0,
+            "maxConcentrationPct": 100.0,
+        },
+        limits_enforced=True,
+        restricted=["GME", "AMC", "SDNY"],
+        watch=[],
+        action="Strict position limit",
+        actor_id="risk-officer",
+        expect_version=0,
+    )
+    out = apply_paper_delta(
+        platform,
+        tenant,
+        run_id,
+        {"targetWeights": {"AAPL": 0.5, "MSFT": 0.5}},
+    )
+    assert out["applied"] is False
+    assert out["reason"] == "compliance"
+    assert platform.books.get(tenant, run_id) is None
+
+
+def test_list_only_policy_does_not_silently_activate_reference_limits(platform, tenant):
+    run_id = _live_paper(platform, tenant)
+    platform.compliance_policies.set(
+        tenant,
+        limits={
+            "maxPositionPct": 15.0,
+            "maxNetPct": 120.0,
+            "maxLeverage": 2.0,
+            "maxConcentrationPct": 50.0,
+        },
+        limits_enforced=False,
+        restricted=["GME", "AMC", "SDNY"],
+        watch=["AAPL"],
+        action="Watch list only",
+        actor_id="risk-officer",
+        expect_version=0,
+    )
+    out = apply_paper_delta(
+        platform,
+        tenant,
+        run_id,
+        {"targetWeights": {"AAPL": 0.5, "MSFT": 0.5}},
+    )
+    assert out["applied"] is True
+    assert out["compliance"]["warnings"] == ["Watch-list name(s): AAPL"]
+
+
+def test_apply_blocks_when_execution_halt_is_active(platform, tenant):
+    run_id = _live_paper(platform, tenant)
+    platform.execution_controls.set_tenant(
+        tenant,
+        enabled=True,
+        reason="operator halt",
+        actor_id="operator",
+        expect_version=0,
+    )
+    out = apply_paper_delta(
+        platform,
+        tenant,
+        run_id,
+        {"targetWeights": {"AAPL": 0.5, "MSFT": 0.5}},
+    )
+    assert out["applied"] is False
+    assert out["reason"] == "compliance"
+    assert "operator halt" in out["gate"]["reason"]
+
+
+def test_apply_missing_compliance_store_fails_closed(platform, tenant):
+    run_id = _live_paper(platform, tenant)
+    platform.compliance_policies = None
+    out = apply_paper_delta(
+        platform,
+        tenant,
+        run_id,
+        {"targetWeights": {"AAPL": 0.5, "MSFT": 0.5}},
+    )
+    assert out["applied"] is False
+    assert out["reason"] == "compliance"
+    assert "Compliance policy store is unavailable" in out["gate"]["violations"]
+
+
+def test_paper_apply_fence_serializes_policy_change_with_book_write(
+    monkeypatch: pytest.MonkeyPatch, platform, tenant
+):
+    run_id = _live_paper(platform, tenant)
+    entered_write = threading.Event()
+    release_write = threading.Event()
+    policy_done = threading.Event()
+    original_apply = platform.books.apply
+
+    def blocking_apply(*args, **kwargs):
+        entered_write.set()
+        assert release_write.wait(timeout=2)
+        return original_apply(*args, **kwargs)
+
+    monkeypatch.setattr(platform.books, "apply", blocking_apply)
+    result: list[dict] = []
+    apply_thread = threading.Thread(
+        target=lambda: result.append(
+            apply_paper_delta(
+                platform,
+                tenant,
+                run_id,
+                {"targetWeights": {"AAPL": 0.5, "MSFT": 0.5}},
+            )
+        ),
+        daemon=True,
+    )
+    apply_thread.start()
+    assert entered_write.wait(timeout=2)
+
+    def restrict_symbol() -> None:
+        platform.compliance_policies.set(
+            tenant,
+            limits={
+                "maxPositionPct": 15.0,
+                "maxNetPct": 120.0,
+                "maxLeverage": 2.0,
+                "maxConcentrationPct": 50.0,
+            },
+            limits_enforced=False,
+            restricted=["AAPL"],
+            watch=[],
+            action="Restrict AAPL",
+            actor_id="risk-officer",
+            expect_version=0,
+        )
+        policy_done.set()
+
+    policy_thread = threading.Thread(target=restrict_symbol, daemon=True)
+    policy_thread.start()
+    assert not policy_done.wait(timeout=0.05)
+    release_write.set()
+    apply_thread.join(timeout=2)
+    policy_thread.join(timeout=2)
+    assert result[0]["applied"] is True
+    assert policy_done.is_set()
+
+    denied = apply_paper_delta(
+        platform,
+        tenant,
+        run_id,
+        {"targetWeights": {"AAPL": 0.5, "MSFT": 0.5}},
+    )
+    assert denied["applied"] is False
+    assert denied["reason"] == "restricted"

@@ -33,6 +33,10 @@ def test_launch_gate_local_mode_passes_without_external_services(capsys, monkeyp
     assert body["ok"] is True
     statuses = {row["name"]: row["status"] for row in body["results"]}
     assert statuses["platform migration"] == "pass"
+    assert statuses["gateway liveness"] == "pass"
+    assert statuses["gateway health"] == "pass"
+    assert statuses["gateway readiness"] == "pass"
+    assert statuses["compliance controls"] == "pass"
     assert statuses["rest unauthorized rejection"] == "pass"
     assert statuses["session create"] == "pass"
     assert statuses["event replay"] == "pass"
@@ -71,6 +75,48 @@ def test_launch_gate_local_mode_passes_without_external_services(capsys, monkeyp
     assert cleanup["evidence"]["run_id"] == created["evidence"]["run_id"]
 
 
+def test_launch_gate_requires_current_worker_role_heartbeats():
+    gate = _load_gate()
+
+    class StaticRest(gate.RestClient):
+        def __init__(self, body):
+            self.body = body
+
+        def request(self, *_args, **_kwargs):
+            return gate.Response(200, json.dumps(self.body).encode())
+
+    base = {
+        "platform": {"database": "postgres"},
+        "leases": [],
+        "workers": {
+            "required_roles": ["backtest-worker", "paper-scheduler"],
+            "healthy_roles": ["backtest-worker"],
+            "missing_roles": ["paper-scheduler"],
+            "degraded_roles": [],
+            "rows": [],
+        },
+    }
+    _, failed = gate._check_ops(
+        StaticRest(base),
+        token="token",
+        tenant_id=None,
+        require_postgres=True,
+        require_active_worker=True,
+    )
+    assert next(row for row in failed if row.name == "worker readiness").status == "fail"
+
+    base["workers"]["healthy_roles"].append("paper-scheduler")
+    base["workers"]["missing_roles"] = []
+    _, passed = gate._check_ops(
+        StaticRest(base),
+        token="token",
+        tenant_id=None,
+        require_postgres=True,
+        require_active_worker=True,
+    )
+    assert next(row for row in passed if row.name == "worker readiness").status == "pass"
+
+
 def test_launch_gate_can_require_ibkr_smoke(capsys, monkeypatch):
     monkeypatch.delenv("DOOMBERG_IBKR_ENGINE_URL", raising=False)
     gate = _load_gate()
@@ -83,3 +129,27 @@ def test_launch_gate_can_require_ibkr_smoke(capsys, monkeypatch):
     ibkr = next(row for row in body["results"] if row["name"] == "live data smoke")
     assert ibkr["status"] == "fail"
     assert ibkr["evidence"]["code"] == "BROKER_CONNECTION_REQUIRED"
+
+
+def test_launch_gate_worker_flag_rejects_lease_only_state(capsys, monkeypatch):
+    monkeypatch.delenv("DOOMBERG_IBKR_ENGINE_URL", raising=False)
+    gate = _load_gate()
+
+    code = gate.main([
+        "--mode", "local", "--db", ":memory:", "--skip-ibkr",
+        "--require-workers-ready", "--json",
+    ])
+
+    assert code == 1
+    body = _json_payload(capsys.readouterr().out)
+    worker = next(row for row in body["results"] if row["name"] == "worker readiness")
+    assert worker["status"] == "fail"
+    assert "backtest-worker" in worker["evidence"]["missing_roles"]
+
+
+def test_execution_reconciler_has_one_heartbeat_reporting_loop() -> None:
+    source = (Path(__file__).resolve().parents[3] / "scripts" / "run_workers.py").read_text()
+
+    assert source.count("def run_execution_reconciler() -> None:") == 1
+    assert 'role="execution-reconciler"' in source
+    assert "reporter.pulse(status=\"starting\")" in source
