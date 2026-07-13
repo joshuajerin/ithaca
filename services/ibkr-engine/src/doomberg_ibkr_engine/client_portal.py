@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import ssl
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -21,13 +23,24 @@ class ClientPortalError(RuntimeError):
     """Base error for private market-data gateway calls."""
 
 
+class ClientPortalAuthError(ClientPortalError):
+    """The Client Portal session is alive, but brokerage/data auth is unusable."""
+
+
 class ClientPortalHttpError(ClientPortalError):
     """The gateway returned a non-2xx response."""
 
     def __init__(self, status: int, detail: str = "") -> None:
         self.status = int(status)
-        self.detail = detail[:1000]
-        super().__init__(f"market-data gateway HTTP {self.status}")
+        self.detail = _redact_error_detail(detail)
+        message = f"market-data gateway HTTP {self.status}"
+        if self.detail:
+            message = f"{message}: {self.detail}"
+        super().__init__(message)
+
+
+def _redact_error_detail(detail: str) -> str:
+    return "[upstream response omitted]" if (detail or "").strip() else ""
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -35,6 +48,20 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name) or default)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name) or default)
+    except ValueError:
+        return default
 
 
 def _now_iso() -> str:
@@ -59,6 +86,8 @@ def _first_number(data: dict[str, Any], names: tuple[str, ...]) -> float | None:
 
 class ClientPortalGateway:
     """Small stdlib client for the local private market-data gateway."""
+
+    _auth_lock = threading.Lock()
 
     def __init__(
         self,
@@ -109,9 +138,44 @@ class ClientPortalGateway:
             "requires_login": bool(status.get("requires_login")),
         }
 
-    def auth_status(self) -> dict[str, Any]:
+    def data_health(self, *, repair: bool = False) -> dict[str, Any]:
+        started = time.perf_counter()
         try:
-            raw = self._request_json("GET", "/iserver/auth/status")
+            status = self.ensure_authenticated() if repair else self.auth_status()
+        except ClientPortalHttpError as exc:
+            return {
+                "ok": False,
+                "upstream": "private-market-data",
+                "latency_ms": int((time.perf_counter() - started) * 1000),
+                "authenticated": False,
+                "connected": False,
+                "requires_login": exc.status in {401, 403},
+                "error": str(exc),
+            }
+        except ClientPortalError as exc:
+            return {
+                "ok": False,
+                "upstream": "private-market-data",
+                "latency_ms": int((time.perf_counter() - started) * 1000),
+                "authenticated": False,
+                "connected": False,
+                "requires_login": "login" in str(exc).lower(),
+                "error": str(exc),
+            }
+        usable = _auth_usable(status)
+        return {
+            "ok": usable,
+            "upstream": "private-market-data",
+            "latency_ms": int((time.perf_counter() - started) * 1000),
+            "authenticated": bool(status.get("authenticated")),
+            "connected": bool(status.get("connected")),
+            "requires_login": bool(status.get("requires_login")),
+            "status": public_auth_status(status),
+        }
+
+    def auth_status(self, *, timeout_s: float | None = None) -> dict[str, Any]:
+        try:
+            raw = self._request_json("GET", "/iserver/auth/status", timeout_s=timeout_s)
         except ClientPortalHttpError as exc:
             if exc.status in {401, 403}:
                 return {
@@ -122,16 +186,113 @@ class ClientPortalGateway:
                 }
             raise
         if not isinstance(raw, dict):
+            return {"authenticated": False, "connected": False, "requires_login": False}
+        return _auth_status_from_raw(raw)
+
+    def tickle(self, *, timeout_s: float | None = None) -> dict[str, Any]:
+        """Ping Client Portal and inspect its embedded brokerage auth status."""
+        raw = self._request_json("POST", "/tickle", body={}, timeout_s=timeout_s)
+        return _auth_status_from_tickle(raw)
+
+    def initialize_brokerage_session(
+        self,
+        *,
+        compete: bool | None = None,
+        timeout_s: float | None = None,
+    ) -> dict[str, Any]:
+        if compete is None:
+            compete = _env_bool("IBKR_AUTH_INIT_COMPETE", default=True)
+        raw = self._request_json(
+            "POST",
+            "/iserver/auth/ssodh/init",
+            body={"publish": True, "compete": bool(compete)},
+            timeout_s=timeout_s,
+        )
+        if not isinstance(raw, dict):
             return {"authenticated": False, "raw": raw}
-        return {
-            "authenticated": bool(raw.get("authenticated")),
-            "connected": bool(raw.get("connected")),
-            "competing": bool(raw.get("competing")),
-            "message": raw.get("message"),
-            "raw": raw,
-        }
+        return _auth_status_from_raw(raw)
+
+    def ensure_authenticated(self) -> dict[str, Any]:
+        """Ensure the brokerage session is authenticated or fail hard."""
+        repair_timeout_s = min(
+            120.0,
+            max(1.0, _env_float("IBKR_AUTH_REPAIR_TIMEOUT_S", 30.0)),
+        )
+        deadline = time.monotonic() + repair_timeout_s
+        status = self.auth_status(timeout_s=self._remaining_timeout(deadline))
+        if _auth_usable(status):
+            return {**status, "repaired": False, "repair_action": "none"}
+
+        if bool(status.get("requires_login")):
+            raise ClientPortalAuthError("IBKR Client Portal browser login is required")
+
+        tickle_status = self.tickle(timeout_s=self._remaining_timeout(deadline))
+        if _auth_usable(tickle_status):
+            return {**tickle_status, "repaired": False, "repair_action": "tickle"}
+
+        if bool(status.get("requires_login")) or bool(tickle_status.get("requires_login")):
+            raise ClientPortalAuthError("IBKR Client Portal browser login is required")
+
+        lock_timeout_s = min(
+            5.0,
+            max(0.0, _env_float("IBKR_AUTH_REPAIR_LOCK_TIMEOUT_S", 0.25)),
+            max(0.0, deadline - time.monotonic()),
+        )
+        if not self._auth_lock.acquire(timeout=lock_timeout_s):
+            raise ClientPortalAuthError("IBKR authentication repair is already in progress")
+        try:
+            status = self.auth_status(timeout_s=self._remaining_timeout(deadline))
+            if _auth_usable(status):
+                return {**status, "repaired": True, "repair_action": "already_repaired"}
+
+            init_status: dict[str, Any] = {}
+            last_status: dict[str, Any] = status
+            attempts = min(10, max(1, _env_int("IBKR_AUTH_INIT_ATTEMPTS", 8)))
+            delay_s = min(5.0, max(0.0, _env_float("IBKR_AUTH_INIT_RETRY_DELAY_S", 1.0)))
+            try:
+                init_status = self.initialize_brokerage_session(
+                    timeout_s=self._remaining_timeout(deadline)
+                )
+            except ClientPortalHttpError as exc:
+                if exc.status in {401, 403}:
+                    raise ClientPortalAuthError(
+                        "IBKR Client Portal browser login is required"
+                    ) from exc
+                raise
+
+            if _auth_usable(init_status):
+                return {**init_status, "repaired": True, "repair_action": "ssodh_init"}
+
+            for attempt in range(attempts):
+                if time.monotonic() >= deadline:
+                    break
+                last_status = self.auth_status(timeout_s=self._remaining_timeout(deadline))
+                if _auth_usable(last_status):
+                    return {**last_status, "repaired": True, "repair_action": "ssodh_init"}
+                if attempt < attempts - 1 and delay_s:
+                    time.sleep(min(delay_s, max(0.0, deadline - time.monotonic())))
+
+            fail = _auth_failure_message(last_status) or _auth_failure_message(init_status)
+            suffix = f": {fail}" if fail else ""
+            raise ClientPortalAuthError(
+                "IBKR brokerage session is not authenticated after /iserver/auth/ssodh/init"
+                + suffix
+            )
+        finally:
+            self._auth_lock.release()
+
+    def _ensure_authenticated_if_enabled(self) -> None:
+        if _env_bool("IBKR_AUTO_REPAIR_AUTH", default=True):
+            self.ensure_authenticated()
+
+    def _remaining_timeout(self, deadline: float) -> float:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ClientPortalAuthError("IBKR authentication repair timed out")
+        return min(self.timeout_s, remaining)
 
     def accounts(self) -> dict[str, Any]:
+        self._ensure_authenticated_if_enabled()
         raw = self._request_json("GET", "/portfolio/accounts")
         accounts = raw if isinstance(raw, list) else raw.get("accounts") if isinstance(raw, dict) else []
         if not isinstance(accounts, list):
@@ -145,7 +306,12 @@ class ClientPortalGateway:
         }
 
     def positions(self, account: str | None = None) -> dict[str, Any]:
-        resolved = account or self.default_account()
+        if account:
+            self._ensure_authenticated_if_enabled()
+            resolved = account
+        else:
+            # default_account() calls accounts(), which performs the auth guard.
+            resolved = self.default_account()
         if not resolved:
             return {
                 "provider": PUBLIC_DATA_SOURCE,
@@ -167,6 +333,7 @@ class ClientPortalGateway:
         }
 
     def orders(self, account: str | None = None) -> dict[str, Any]:
+        self._ensure_authenticated_if_enabled()
         raw = self._request_json("GET", "/iserver/account/orders")
         orders = raw.get("orders") if isinstance(raw, dict) else raw if isinstance(raw, list) else []
         if not isinstance(orders, list):
@@ -180,6 +347,7 @@ class ClientPortalGateway:
         }
 
     def quote(self, symbol: str, *, include_extended_hours: bool = False) -> dict[str, Any]:
+        self._ensure_authenticated_if_enabled()
         symbol = (symbol or "").strip().upper()
         if not symbol:
             raise ClientPortalError("symbol is required")
@@ -239,6 +407,7 @@ class ClientPortalGateway:
         }
 
     def history(self, symbol: str, *, period: str = "1d", bar: str = "5min") -> dict[str, Any]:
+        self._ensure_authenticated_if_enabled()
         symbol = (symbol or "").strip().upper()
         if not symbol:
             raise ClientPortalError("symbol is required")
@@ -315,6 +484,7 @@ class ClientPortalGateway:
         return None
 
     def news(self, ticker: str | None = None, *, limit: int = 10) -> dict[str, Any]:
+        self._ensure_authenticated_if_enabled()
         ticker = (ticker or "").strip().upper() or None
         path = "/iserver/news/briefing"
         if ticker:
@@ -336,6 +506,7 @@ class ClientPortalGateway:
         }
 
     def scanner(self, scan_type: str = "MOST_ACTIVE", *, limit: int = 25) -> dict[str, Any]:
+        self._ensure_authenticated_if_enabled()
         body = {
             "instrument": os.environ.get("IBKR_SCANNER_INSTRUMENT") or "STK",
             "type": (scan_type or "MOST_ACTIVE").strip().upper(),
@@ -433,7 +604,14 @@ class ClientPortalGateway:
                 return str(account_id)
         return None
 
-    def _request_json(self, method: str, path: str, *, body: dict[str, Any] | None = None) -> Any:
+    def _request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        body: dict[str, Any] | None = None,
+        timeout_s: float | None = None,
+    ) -> Any:
         url = path if urllib.parse.urlparse(path).scheme else f"{self.base_url}{path}"
         data = json.dumps(body).encode("utf-8") if body is not None else None
         req = urllib.request.Request(url, data=data, method=method)
@@ -442,19 +620,83 @@ class ClientPortalGateway:
         if body is not None:
             req.add_header("Content-Type", "application/json")
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout_s, context=self._ssl_context) as resp:
+            timeout = self.timeout_s if timeout_s is None else min(self.timeout_s, timeout_s)
+            with urllib.request.urlopen(req, timeout=timeout, context=self._ssl_context) as resp:
                 raw = resp.read()
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise ClientPortalHttpError(exc.code, detail) from exc
         except urllib.error.URLError as exc:
             raise ClientPortalError(f"market-data gateway unreachable: {exc.reason}") from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise ClientPortalError("market-data gateway timed out") from exc
         if not raw:
             return {}
         try:
             return json.loads(raw.decode("utf-8"))
         except json.JSONDecodeError as exc:
             raise ClientPortalError("market-data gateway returned invalid JSON") from exc
+
+
+def _auth_status_from_tickle(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {"authenticated": False, "connected": False}
+    iserver = raw.get("iserver")
+    if isinstance(iserver, dict):
+        auth_status = iserver.get("authStatus")
+        if isinstance(auth_status, dict):
+            return _auth_status_from_raw(auth_status)
+    return {"authenticated": False, "connected": False}
+
+
+def _auth_status_from_raw(raw: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "authenticated": bool(raw.get("authenticated")),
+        "connected": bool(raw.get("connected")),
+        "established": bool(raw.get("established")),
+        "competing": bool(raw.get("competing")),
+        "message": raw.get("message"),
+        "fail": raw.get("fail"),
+        "requires_login": False,
+    }
+
+
+def _auth_usable(status: dict[str, Any]) -> bool:
+    return bool(status.get("authenticated")) and bool(status.get("connected"))
+
+
+def public_auth_status(status: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "authenticated": bool(status.get("authenticated")),
+        "connected": bool(status.get("connected")),
+        "established": bool(status.get("established")),
+        "competing": bool(status.get("competing")),
+        "requires_login": bool(status.get("requires_login")),
+        **(
+            {"repaired": bool(status.get("repaired"))}
+            if "repaired" in status
+            else {}
+        ),
+        **(
+            {"repair_action": str(status.get("repair_action"))}
+            if status.get("repair_action")
+            else {}
+        ),
+    }
+
+
+def _auth_failure_message(status: dict[str, Any]) -> str | None:
+    raw = status.get("raw")
+    if isinstance(raw, dict):
+        for key in ("fail", "message", "error"):
+            value = raw.get(key)
+            if value:
+                return str(value)
+    for key in ("fail", "message", "error"):
+        value = status.get(key)
+        if value:
+            return str(value)
+    return None
 
 
 def _event_time(row: dict[str, Any]) -> str | None:
@@ -536,6 +778,9 @@ def _redact(item: Any) -> dict[str, Any]:
         "session_id",
         "ssotoken",
         "token",
+        "userid",
+        "user_id",
+        "unique_login_id",
         "account",
         "accountid",
         "account_id",

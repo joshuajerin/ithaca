@@ -67,7 +67,12 @@ from doomberg_platform import (
     UserStore,
     open_db,
 )
-from doomberg_runtime import default_adaptive_dashboard_spec, usage_signals_for_user
+from doomberg_runtime import (
+    default_adaptive_dashboard_spec,
+    object_storage_configured,
+    open_artifact,
+    usage_signals_for_user,
+)
 
 from .dashboard_readmodels import (
     dashboard_activity,
@@ -620,6 +625,32 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
     failed_jobs = sum(1 for job in jobs if job.get("state") in {"failed", "timed_out", "cancelled"})
     active_triggers = sum(1 for trigger in triggers if trigger.get("state") == "active")
 
+    now = datetime.now(timezone.utc)
+
+    def age_seconds(value: Any) -> float | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return max(0.0, (now - parsed).total_seconds())
+        except ValueError:
+            return None
+
+    backtest_jobs = [job for job in jobs if job.get("profile") == "backtest"]
+    queued_backtests = [job for job in backtest_jobs if job.get("state") == "queued"]
+    running_backtests = [job for job in backtest_jobs if job.get("state") in {"leased", "running"}]
+    failed_backtests = [job for job in backtest_jobs if job.get("state") in {"failed", "timed_out"}]
+    queue_ages = [age for job in queued_backtests if (age := age_seconds(job.get("created_at"))) is not None]
+    heartbeat_ages = [age for job in running_backtests if (age := age_seconds(job.get("heartbeat_at"))) is not None]
+    oldest_queued_s = max(queue_ages, default=None)
+    oldest_heartbeat_s = max(heartbeat_ages, default=None)
+    backtest_stalled = bool(
+        (oldest_queued_s is not None and oldest_queued_s > 120)
+        or (oldest_heartbeat_s is not None and oldest_heartbeat_s > 90)
+    )
+
     readiness = [
         {
             "name": "Platform store",
@@ -655,6 +686,24 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
             "state": "succeeded" if leases else "paused",
             "detail": f"{len(leases)} active lease row{'' if len(leases) == 1 else 's'}",
         },
+        {
+            "name": "Backtest workers",
+            "state": "warn" if backtest_stalled else "succeeded",
+            "detail": (
+                f"{len(queued_backtests)} queued, {len(running_backtests)} running, "
+                f"oldest queue {int(oldest_queued_s or 0)}s, "
+                f"heartbeat lag {int(oldest_heartbeat_s or 0)}s"
+            ),
+        },
+        {
+            "name": "Artifact storage",
+            "state": "succeeded" if object_storage_configured() else "warn",
+            "detail": (
+                "Private object storage configured"
+                if object_storage_configured()
+                else "Object storage unset; production bundles are not durable"
+            ),
+        },
     ]
 
     return {
@@ -685,6 +734,14 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
             "queued": queued_jobs,
             "leased_or_running": active_jobs,
             "terminal": failed_jobs,
+            "backtests": {
+                "queued": len(queued_backtests),
+                "leased_or_running": len(running_backtests),
+                "failed_or_timed_out": len(failed_backtests),
+                "oldest_queued_seconds": oldest_queued_s,
+                "oldest_heartbeat_seconds": oldest_heartbeat_s,
+                "stalled": backtest_stalled,
+            },
         },
         "leases": leases,
         "triggers": {
@@ -1302,6 +1359,50 @@ def create_app(db: Any | None = None) -> FastAPI:
         if artifact is None:
             raise HTTPException(status_code=404, detail="artifact not found")
         return artifact
+
+    @app.get("/api/artifacts/{artifact_id}/download")
+    def download_artifact(
+        artifact_id: str,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ):
+        """Download a tenant-owned artifact without exposing storage credentials."""
+        _require_scope(ctx, "artifacts:read")
+        artifact = stores.artifacts.get(ctx.tenant_id, artifact_id)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="artifact not found")
+        uri = str(artifact.get("uri") or "")
+        if uri.startswith("s3://"):
+            try:
+                body, content_length, content_type = open_artifact(uri)
+            except (RuntimeError, ValueError) as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            except Exception as exc:  # noqa: BLE001 - stable storage boundary
+                raise HTTPException(status_code=503, detail="artifact storage unavailable") from exc
+            filename = Path(
+                str((artifact.get("metadata") or {}).get("filename") or "artifact")
+            ).name.replace('"', "").replace("\r", "").replace("\n", "")
+            headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+            if content_length is not None:
+                headers["Content-Length"] = str(content_length)
+            return StreamingResponse(
+                body.iter_chunks(),
+                media_type=content_type or artifact.get("media_type") or "application/octet-stream",
+                headers=headers,
+            )
+        if uri.startswith("file://"):
+            path = Path(urllib.parse.unquote(urllib.parse.urlparse(uri).path))
+            if not path.is_file():
+                raise HTTPException(status_code=404, detail="artifact bytes not found")
+            return FileResponse(
+                path,
+                media_type=artifact.get("media_type") or "application/octet-stream",
+                filename=str((artifact.get("metadata") or {}).get("filename") or path.name),
+            )
+        raise HTTPException(
+            status_code=409,
+            detail="artifact bytes were not persisted; rerun after storage is configured",
+        )
 
     @app.get("/api/approvals")
     def list_approvals(
