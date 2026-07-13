@@ -8,7 +8,7 @@ import { DoombergMark } from "./auth/icons";
 const Dashboard = lazy(() => import("./pages/Dashboard").then((module) => ({ default: module.Dashboard })));
 const SessionsList = lazy(() => import("./pages/SessionsList").then((module) => ({ default: module.SessionsList })));
 const SessionDetail = lazy(() => import("./pages/SessionDetail").then((module) => ({ default: module.SessionDetail })));
-const Deployments = lazy(() => import("./pages/Deployments").then((module) => ({ default: module.Deployments })));
+const Backtests = lazy(() => import("./pages/Backtests").then((module) => ({ default: module.Backtests })));
 const DeploymentDetail = lazy(() => import("./pages/DeploymentDetail").then((module) => ({ default: module.DeploymentDetail })));
 const Settings = lazy(() => import("./pages/Settings").then((module) => ({ default: module.Settings })));
 const AgentLink = lazy(() => import("./pages/AgentLink").then((module) => ({ default: module.AgentLink })));
@@ -16,7 +16,7 @@ const AgentLink = lazy(() => import("./pages/AgentLink").then((module) => ({ def
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/sessions", label: "Sessions", icon: ScrollText },
-  { to: "/deployments", label: "Deployments", icon: Rocket },
+  { to: "/backtests", label: "Backtests", icon: Rocket },
 ] as const;
 
 function RouteLoading() {
@@ -79,7 +79,9 @@ export function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/sessions" element={<SessionsList />} />
             <Route path="/sessions/:id" element={<SessionsList />} />
-            <Route path="/deployments" element={<Deployments />} />
+            <Route path="/backtests" element={<Backtests />} />
+            <Route path="/backtests/:id" element={<DeploymentDetail />} />
+            <Route path="/deployments" element={<Navigate to="/backtests" replace />} />
             <Route path="/deployments/:id" element={<DeploymentDetail />} />
             <Route path="/settings" element={<Settings />} />
 

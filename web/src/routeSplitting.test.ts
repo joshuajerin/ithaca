@@ -11,7 +11,7 @@ describe("route-level code splitting", () => {
       "Dashboard",
       "SessionsList",
       "SessionDetail",
-      "Deployments",
+      "Backtests",
       "DeploymentDetail",
       "Settings",
       "AgentLink",

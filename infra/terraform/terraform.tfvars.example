@@ -39,6 +39,7 @@ lb_size_unit = 2
 enable_archive_load_job = true
 
 spaces_bucket_name = "doomberg-artifacts"
+manage_spaces      = true
 
 vpc_ip_range = "10.20.0.0/20"
 

@@ -35,7 +35,7 @@ class RunNotFound(KeyError):
 # Allowed transitions. Keys are source states; values are the set of legal targets.
 _TRANSITIONS: dict[str, set[str]] = {
     "draft": {"queued", "cancelled"},
-    "queued": {"running", "cancelled"},
+    "queued": {"running", "failed", "cancelled"},
     "running": {"succeeded", "failed", "timeout", "cancelled", "promoted"},
     # Terminal backtest states.
     "succeeded": {"promoted"},

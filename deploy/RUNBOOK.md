@@ -244,6 +244,13 @@ open https://ibkr.doomberg.me/
 kubectl -n doomberg-gateway exec deploy/ibkr-engine -c doomberg-ibkr-engine -- \
   sh -lc 'curl -fsS -H "Authorization: Bearer ${DOOMBERG_IBKR_ENGINE_TOKEN}" http://127.0.0.1:8090/auth/status'
 
+# Probe semantics are intentionally separate:
+# - /livez proves the wrapper process can answer.
+# - /readyz proves the private Client Portal gateway is reachable.
+# - /data/healthz proves the brokerage/data session is authenticated.
+kubectl -n doomberg-gateway exec deploy/ibkr-engine -c doomberg-ibkr-engine -- \
+  sh -lc 'curl -fsS http://127.0.0.1:8090/livez && curl -fsS http://127.0.0.1:8090/readyz && curl -fsS http://127.0.0.1:8090/data/healthz'
+
 # Close the public route. Doomberg keeps using the internal ClusterIP service.
 IBKR_SIGNIN_PUBLIC=0 IBKR_ENGINE_ENABLED=1 DEPLOY_ENV=prod IMAGE_TAG="${IMAGE_TAG}" ./deploy/deploy_services.sh
 curl -I https://ibkr.doomberg.me/ || true
@@ -252,6 +259,30 @@ curl -I https://ibkr.doomberg.me/ || true
 If `ibkr.doomberg.me` is not available in DNS, set `IBKR_SIGNIN_HOST` to a
 temporary hostname that already resolves to the Caddy LoadBalancer, for example
 `ibkr.129.212.135.120.sslip.io`, and remove it after authentication the same way.
+
+Read operations repair an expired `/iserver` session by default. The repair calls
+`/tickle`, then a serialized `/iserver/auth/ssodh/init` when browser login is still
+valid. Set `IBKR_AUTO_REPAIR_AUTH=false` only for diagnosis. Tune bounded polling
+with `IBKR_AUTH_INIT_ATTEMPTS`, `IBKR_AUTH_INIT_RETRY_DELAY_S`, and
+`IBKR_AUTH_REPAIR_TIMEOUT_S`. Concurrent repair waiters fail quickly instead of
+occupying the API worker pool. A browser-login expiry still fails closed and
+requires a new sign-in window.
+
+The wrapper's operational endpoints are:
+
+| Endpoint | Auth | Side effects | Meaning |
+| --- | --- | --- | --- |
+| `GET /livez` | none | none | Wrapper process is alive. |
+| `GET /readyz` | none | none | Private Client Portal gateway is reachable. |
+| `GET /data/healthz` | none | none | Brokerage/data session is authenticated and connected. This probe never repairs auth. |
+| `GET /healthz` | none | none | Compatibility route with `/readyz` success semantics and its legacy failure envelope. |
+| `GET /auth/status` | engine bearer token | none | Sanitized authentication and connection state. Raw IBKR payloads are intentionally omitted. |
+| `POST /auth/tickle` | engine bearer token | IBKR keepalive tickle | Refresh and report sanitized session state. |
+| `POST /auth/ensure` | engine bearer token | May initialize `/iserver` auth | Run the bounded, serialized repair flow. |
+
+Authenticated control endpoints return `401` for a missing token, `403` for a bad
+token, and `503` with a stable `detail.code`, `detail.message`, and optional
+`detail.details` object when the upstream operation cannot complete.
 
 If you must point Doomberg at an external engine instead, set:
 
