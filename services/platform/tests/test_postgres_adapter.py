@@ -12,6 +12,8 @@ from platform_helpers import new_uuid, trace_event
 
 from doomberg_platform import (
     AuthStore,
+    CompliancePolicyConflict,
+    CompliancePolicyStore,
     ExecutionControlConflict,
     ExecutionControlStore,
     ExecutionStore,
@@ -130,6 +132,16 @@ def test_postgres_execution_control_migration_is_forced_and_tenant_scoped() -> N
         assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY" in controls.sql
         assert f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY" in controls.sql
         assert f"CREATE POLICY doomberg_{table}_access ON {table}" in controls.sql
+
+
+def test_postgres_compliance_policy_migration_is_forced_and_tenant_scoped() -> None:
+    policies = MIGRATIONS[4]
+    assert policies.version == 5
+    for table in ("compliance_policies", "compliance_policy_events"):
+        assert f"CREATE TABLE IF NOT EXISTS {table}" in policies.sql
+        assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY" in policies.sql
+        assert f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY" in policies.sql
+        assert f"CREATE POLICY doomberg_{table}_access ON {table}" in policies.sql
 
 
 def test_postgres_migration_validation_fails_on_pending_schema() -> None:
@@ -285,6 +297,33 @@ def test_live_postgres_rls_fails_closed_and_scopes_tenant_rows(
         controls.set_tenant(
             tenant_b, enabled=False, reason=None, actor_id="owner", expect_version=0
         )
+        policies = CompliancePolicyStore(owner_db)
+        default_limits = {
+            "maxPositionPct": 15.0,
+            "maxNetPct": 120.0,
+            "maxLeverage": 2.0,
+            "maxConcentrationPct": 50.0,
+        }
+        policies.set(
+            tenant_a,
+            limits=default_limits,
+            limits_enforced=False,
+            restricted=["TSLA"],
+            watch=[],
+            action="tenant a policy",
+            actor_id="owner",
+            expect_version=0,
+        )
+        policies.set(
+            tenant_b,
+            limits=default_limits,
+            limits_enforced=True,
+            restricted=["GME"],
+            watch=[],
+            action="tenant b policy",
+            actor_id="owner",
+            expect_version=0,
+        )
 
         with psycopg.connect(url, autocommit=True) as admin:
             admin.execute(
@@ -317,6 +356,8 @@ def test_live_postgres_rls_fails_closed_and_scopes_tenant_rows(
         assert RunStore(app_db).get(tenant_b, run_a) is None
         assert ExecutionControlStore(app_db).get(tenant_a)["reason"] == "tenant-a"
         assert ExecutionControlStore(app_db).get(tenant_b)["reason"] is None
+        assert CompliancePolicyStore(app_db).get(tenant_a)["restricted"] == ["TSLA"]
+        assert CompliancePolicyStore(app_db).get(tenant_b)["restricted"] == ["GME"]
         assert {row["run_id"] for row in RunStore(app_db).list_by_state("draft")} == {
             run_a,
             run_b,
@@ -469,6 +510,64 @@ def test_live_postgres_platform_smoke() -> None:
                 time.sleep(0.05)
                 assert not global_halt.done()
             assert global_halt.result(timeout=2)["version"] == 1
+
+        policy_a = CompliancePolicyStore(db)
+        policy_b = CompliancePolicyStore(second_db)
+        limits = {
+            "maxPositionPct": 25.0,
+            "maxNetPct": 100.0,
+            "maxLeverage": 1.5,
+            "maxConcentrationPct": 100.0,
+        }
+        policy_a.set(
+            tenant_id,
+            limits=limits,
+            limits_enforced=True,
+            restricted=["TSLA"],
+            watch=[],
+            action="pg policy",
+            actor_id="pg-smoke-a",
+            expect_version=0,
+        )
+        policy_b.set(
+            tenant_id,
+            limits=limits,
+            limits_enforced=True,
+            restricted=["TSLA", "NVDA"],
+            watch=[],
+            action="pg policy update",
+            actor_id="pg-smoke-b",
+            expect_version=1,
+        )
+        with pytest.raises(CompliancePolicyConflict):
+            policy_a.set(
+                tenant_id,
+                limits=limits,
+                limits_enforced=True,
+                restricted=[],
+                watch=[],
+                action="stale pg policy",
+                actor_id="pg-smoke-a",
+                expect_version=1,
+            )
+        assert policy_a.get(tenant_id)["version"] == 2
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with controls_a.submission_guard(tenant_id):
+                policy_update = executor.submit(
+                    policy_b.set,
+                    tenant_id,
+                    limits=limits,
+                    limits_enforced=True,
+                    restricted=["TSLA", "NVDA", "AAPL"],
+                    watch=[],
+                    action="fenced pg policy",
+                    actor_id="pg-smoke-b",
+                    expect_version=2,
+                )
+                time.sleep(0.05)
+                assert not policy_update.done()
+            assert policy_update.result(timeout=2)["version"] == 3
     finally:
         second_db.close()
         db.close()

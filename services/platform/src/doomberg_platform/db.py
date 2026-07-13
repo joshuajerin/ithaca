@@ -528,6 +528,31 @@ CREATE TABLE IF NOT EXISTS execution_control_events (
 
 CREATE INDEX IF NOT EXISTS idx_execution_control_events_tenant
     ON execution_control_events (tenant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS compliance_policies (
+    tenant_id   TEXT PRIMARY KEY,
+    limits      TEXT NOT NULL,
+    limits_enforced INTEGER NOT NULL DEFAULT 0,
+    restricted  TEXT NOT NULL,
+    watch       TEXT NOT NULL,
+    updated_by  TEXT NOT NULL,
+    version     INTEGER NOT NULL DEFAULT 1,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS compliance_policy_events (
+    tenant_id   TEXT NOT NULL,
+    event_id    TEXT NOT NULL,
+    action      TEXT NOT NULL,
+    payload     TEXT NOT NULL,
+    actor_id    TEXT NOT NULL,
+    version     INTEGER NOT NULL,
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_compliance_policy_events_tenant
+    ON compliance_policy_events (tenant_id, version DESC);
 """
 
 

@@ -24,6 +24,8 @@ from .book_store import BookConflict, BookNotFound, BookStore
 from .control_store import (
     ApprovalStore,
     ArtifactStore,
+    CompliancePolicyConflict,
+    CompliancePolicyStore,
     DeliveryTargetStore,
     ExecutionControlConflict,
     ExecutionControlStore,
@@ -85,6 +87,8 @@ __all__ = [
     "ExecutionStore",
     "ExecutionControlStore",
     "ExecutionControlConflict",
+    "CompliancePolicyStore",
+    "CompliancePolicyConflict",
     "TriggerStore",
     "TriggerBaselineStore",
     "NotificationStore",

@@ -7,7 +7,12 @@ import uuid
 
 import pytest
 
-from doomberg_platform import ExecutionControlConflict, LeaseConflict, UnknownJobProfile
+from doomberg_platform import (
+    CompliancePolicyConflict,
+    ExecutionControlConflict,
+    LeaseConflict,
+    UnknownJobProfile,
+)
 
 
 def test_job_store_idempotent_enqueue_and_lease(platform):
@@ -230,6 +235,57 @@ def test_execution_controls_global_release_reveals_existing_tenant_halt(platform
     assert fallback["source"] == "tenant"
     assert fallback["reason"] == "tenant incident"
     assert fallback["tenant_version"] == tenant_halt["version"]
+
+
+def test_compliance_policies_are_versioned_audited_and_tenant_scoped(platform):
+    tenant_a = platform.auth.create_tenant("policy-a")
+    tenant_b = platform.auth.create_tenant("policy-b")
+    limits = {
+        "maxPositionPct": 20.0,
+        "maxNetPct": 100.0,
+        "maxLeverage": 1.5,
+        "maxConcentrationPct": 80.0,
+    }
+    first = platform.compliance_policies.set(
+        tenant_a,
+        limits=limits,
+        limits_enforced=True,
+        restricted=["GME", "TSLA"],
+        watch=["NVDA"],
+        action="Policy initialized",
+        actor_id="risk-officer",
+        expect_version=0,
+    )
+    assert first["version"] == 1
+    assert first["restricted"] == ["GME", "TSLA"]
+    assert platform.compliance_policies.get(tenant_b) is None
+
+    with pytest.raises(CompliancePolicyConflict, match="version is 1, expected 0"):
+        platform.compliance_policies.set(
+            tenant_a,
+            limits=limits,
+            limits_enforced=True,
+            restricted=["GME"],
+            watch=[],
+            action="Stale update",
+            actor_id="risk-officer",
+            expect_version=0,
+        )
+
+    second = platform.compliance_policies.set(
+        tenant_a,
+        limits=limits,
+        limits_enforced=True,
+        restricted=["GME"],
+        watch=["NVDA", "AMD"],
+        action="Lists updated",
+        actor_id="risk-officer",
+        expect_version=1,
+    )
+    assert second["version"] == 2
+    events = platform.compliance_policies.list_events(tenant_a)
+    assert [event["version"] for event in events] == [2, 1]
+    assert events[0]["payload"]["watch"] == ["NVDA", "AMD"]
 
 
 def test_artifacts_approvals_providers_and_execution(platform):
