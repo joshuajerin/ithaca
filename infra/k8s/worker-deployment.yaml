@@ -70,6 +70,8 @@ spec:
                 secretKeyRef:
                   name: doomberg-db
                   key: platform_url
+            - name: DOOMBERG_DB_MIGRATION_MODE
+              value: "apply"
           resources:
             requests: { cpu: "100m", memory: 128Mi }
             limits: { cpu: "500m", memory: 256Mi }
@@ -97,6 +99,8 @@ spec:
                 secretKeyRef:
                   name: doomberg-db
                   key: platform_url
+            - name: DOOMBERG_DB_MIGRATION_MODE
+              value: "validate"
             - name: DOOMBERG_BACKTEST_INTERVAL_S
               value: "2"
             - name: DOOMBERG_TRIGGER_JOB_INTERVAL_S
@@ -167,6 +171,8 @@ spec:
                 secretKeyRef:
                   name: doomberg-db
                   key: platform_url
+            - name: DOOMBERG_DB_MIGRATION_MODE
+              value: "validate"
             - name: DOOMBERG_TRIGGER_INTERVAL_S
               value: "5"
             - name: DOOMBERG_TRIGGER_LEASE_TTL_S

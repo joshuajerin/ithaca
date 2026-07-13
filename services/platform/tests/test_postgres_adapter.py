@@ -6,7 +6,43 @@ import pytest
 from platform_helpers import new_uuid, trace_event
 
 from doomberg_platform import AuthStore, ExecutionStore, JobStore, LeaseStore, TraceStore, open_db
-from doomberg_platform.pg_db import _convert_placeholders, is_postgres_dsn
+from doomberg_platform.migrations import (
+    MIGRATIONS,
+    Migration,
+    MigrationDrift,
+    MigrationRequired,
+    apply_migrations,
+    validate_migrations,
+)
+from doomberg_platform.pg_db import _convert_placeholders, is_postgres_dsn, migration_mode
+
+
+class _Rows:
+    def __init__(self, rows: list[dict[str, object]] | None = None) -> None:
+        self._rows = rows or []
+
+    def fetchall(self) -> list[dict[str, object]]:
+        return self._rows
+
+
+class _MigrationConnection:
+    def __init__(self) -> None:
+        self.applied: dict[int, tuple[str, str]] = {}
+        self.statements: list[tuple[str, tuple[object, ...]]] = []
+
+    def execute(self, sql: str, params: tuple[object, ...] = ()) -> _Rows:
+        self.statements.append((sql, params))
+        if sql.startswith("SELECT version, name, checksum"):
+            return _Rows(
+                [
+                    {"version": version, "name": name, "checksum": checksum}
+                    for version, (name, checksum) in sorted(self.applied.items())
+                ]
+            )
+        if sql.startswith("INSERT INTO doomberg_schema_migrations"):
+            version, name, checksum = params
+            self.applied[int(version)] = (str(name), str(checksum))
+        return _Rows()
 
 
 def test_postgres_dsn_detection() -> None:
@@ -22,6 +58,52 @@ def test_placeholder_conversion_ignores_sql_string_literals() -> None:
         _convert_placeholders(sql)
         == "SELECT '?' AS marker, * FROM jobs WHERE tenant_id = %s AND state IN (%s, %s)"
     )
+
+
+def test_postgres_migrations_are_ordered_idempotent_and_locked() -> None:
+    conn = _MigrationConnection()
+
+    first = apply_migrations(conn)
+    baseline_create_count = sum("CREATE TABLE IF NOT EXISTS runs" in sql for sql, _ in conn.statements)
+    second = apply_migrations(conn)
+
+    assert first.current_version == MIGRATIONS[-1].version
+    assert first.pending_versions == ()
+    assert second == first
+    assert baseline_create_count == 1
+    assert sum("CREATE TABLE IF NOT EXISTS runs" in sql for sql, _ in conn.statements) == 1
+    assert sum("pg_advisory_xact_lock" in sql for sql, _ in conn.statements) == 2
+    first_lock = next(i for i, (sql, _) in enumerate(conn.statements) if "pg_advisory" in sql)
+    first_ledger = next(
+        i for i, (sql, _) in enumerate(conn.statements) if "CREATE TABLE IF NOT EXISTS doomberg_schema" in sql
+    )
+    assert first_lock < first_ledger
+
+
+def test_postgres_migration_validation_fails_on_pending_schema() -> None:
+    conn = _MigrationConnection()
+
+    with pytest.raises(MigrationRequired, match="pending migrations: 1"):
+        validate_migrations(conn)
+
+
+def test_postgres_migration_validation_detects_definition_drift() -> None:
+    conn = _MigrationConnection()
+    migration = Migration(1, "one", "SELECT 1")
+    conn.applied[1] = (migration.name, "not-the-release-checksum")
+
+    with pytest.raises(MigrationDrift, match="migration 1 drifted"):
+        validate_migrations(conn, (migration,))
+
+
+def test_postgres_migration_mode_is_explicit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DOOMBERG_DB_MIGRATION_MODE", raising=False)
+    assert migration_mode() == "apply"
+    monkeypatch.setenv("DOOMBERG_DB_MIGRATION_MODE", "validate")
+    assert migration_mode() == "validate"
+    monkeypatch.setenv("DOOMBERG_DB_MIGRATION_MODE", "invalid")
+    with pytest.raises(ValueError, match="must be apply, validate, or off"):
+        migration_mode()
 
 
 @pytest.mark.skipif(

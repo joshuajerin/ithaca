@@ -22,7 +22,10 @@ from collections import defaultdict
 from collections.abc import Iterator
 from typing import Any
 
-_SCHEMA = """
+# Version 1 of the platform schema. This string is a migration artifact: do not
+# edit it in place. Add a new migration in ``migrations.py`` for every schema
+# change so existing Postgres installations have an ordered upgrade path.
+_BASELINE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
     tenant_id   TEXT NOT NULL,
     run_id      TEXT NOT NULL,
@@ -520,7 +523,7 @@ class Db:
         self._channels: dict[str, _RunChannel] = defaultdict(_RunChannel)
         self._channels_lock = threading.Lock()
         with self._conn:
-            self._conn.executescript(_SCHEMA)
+            self._conn.executescript(_BASELINE_SCHEMA)
 
     @property
     def conn(self) -> sqlite3.Connection:

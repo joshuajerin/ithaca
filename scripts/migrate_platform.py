@@ -1,9 +1,5 @@
 #!/usr/bin/env python
-"""Apply the platform system-of-record schema.
-
-The platform DB adapter applies idempotent DDL on open. Keeping this as a deploy role lets
-Kubernetes run the migration in an init container before the API/worker containers start.
-"""
+"""Apply the ordered platform system-of-record migrations."""
 
 from __future__ import annotations
 
@@ -16,9 +12,14 @@ def main() -> int:
     dsn = os.environ.get("DOOMBERG_DB", "")
     if not dsn:
         raise SystemExit("DOOMBERG_DB must be set")
+    os.environ["DOOMBERG_DB_MIGRATION_MODE"] = "apply"
     db = open_db(dsn)
+    status = getattr(db, "migration_status", None)
     db.close()
-    print("platform schema ready")
+    if status is None:
+        print("platform SQLite schema ready")
+    else:
+        print(f"platform schema ready at migration {status.current_version}")
     return 0
 
 

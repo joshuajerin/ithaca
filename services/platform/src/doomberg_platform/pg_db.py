@@ -9,7 +9,6 @@ SQLite ``Db`` implementation from :mod:`doomberg_platform.db`.
 from __future__ import annotations
 
 import json
-import os
 import threading
 from collections.abc import Iterator
 from typing import Any
@@ -17,7 +16,7 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
-from .db import _SCHEMA
+from .migrations import MigrationStatus, apply_migrations, validate_migrations
 
 TRACE_CHANNEL = "doomberg_trace_events"
 
@@ -50,17 +49,6 @@ def _convert_placeholders(sql: str) -> str:
             out.append(ch)
         i += 1
     return "".join(out)
-
-
-def _schema_statements(script: str) -> Iterator[str]:
-    lines = [
-        line for line in script.splitlines()
-        if not line.strip().startswith("--")
-    ]
-    for raw in "\n".join(lines).split(";"):
-        stmt = raw.strip()
-        if stmt:
-            yield stmt
 
 
 def _loads(raw: Any, default: Any) -> Any:
@@ -141,30 +129,24 @@ class PostgresDb:
         self.write_lock = threading.RLock()
         self._conn = psycopg.connect(dsn, row_factory=dict_row)
         self._facade = _PostgresConnection(self._conn)
-        self._migrate()
+        self._migration_status = self._migrate()
 
     @property
     def conn(self) -> _PostgresConnection:
         return self._facade
 
-    def _migrate(self) -> None:
-        with self.conn as conn:
-            for stmt in _schema_statements(_SCHEMA):
-                conn.execute(stmt)
-            if _env_flag("DOOMBERG_POSTGRES_ENABLE_RLS"):
-                self._enable_rls(conn)
+    @property
+    def migration_status(self) -> MigrationStatus:
+        return self._migration_status
 
-    def _enable_rls(self, conn: _PostgresConnection) -> None:
-        for table in _TENANT_TABLES:
-            conn.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
-            if _env_flag("DOOMBERG_POSTGRES_FORCE_RLS"):
-                conn.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
-            conn.execute(f"DROP POLICY IF EXISTS doomberg_tenant_isolation ON {table}")
-            conn.execute(
-                f"CREATE POLICY doomberg_tenant_isolation ON {table} "
-                "USING (tenant_id = current_setting('doomberg.tenant_id', true)) "
-                "WITH CHECK (tenant_id = current_setting('doomberg.tenant_id', true))"
-            )
+    def _migrate(self) -> MigrationStatus:
+        mode = migration_mode()
+        with self.conn as conn:
+            if mode == "apply":
+                return apply_migrations(conn)
+            if mode == "validate":
+                return validate_migrations(conn)
+        return MigrationStatus(current_version=0, latest_version=0, pending_versions=())
 
     def publish(self, run_id: str, event: dict[str, Any]) -> None:
         payload = json.dumps({"run_id": str(run_id), "seq": int(event["seq"])})
@@ -209,31 +191,10 @@ class PostgresDb:
             self._facade.close()
 
 
-def _env_flag(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+def migration_mode() -> str:
+    import os
 
-
-_TENANT_TABLES = (
-    "runs",
-    "strategies",
-    "trace_events",
-    "books",
-    "api_keys",
-    "users",
-    "sse_tickets",
-    "jobs",
-    "adaptive_dashboard_profiles",
-    "artifacts",
-    "approvals",
-    "provider_connections",
-    "dataset_snapshots",
-    "trigger_policies",
-    "trigger_firings",
-    "trigger_baselines",
-    "notification_outbox",
-    "delivery_targets",
-    "notification_attempts",
-    "order_intents",
-    "orders",
-    "fills",
-)
+    mode = os.environ.get("DOOMBERG_DB_MIGRATION_MODE", "apply").strip().lower()
+    if mode not in {"apply", "validate", "off"}:
+        raise ValueError("DOOMBERG_DB_MIGRATION_MODE must be apply, validate, or off")
+    return mode

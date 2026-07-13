@@ -164,13 +164,13 @@ kubectl -n doomberg-workers create secret generic doomberg-db \
 ## 5. Apply the platform schema
 
 `deploy/deploy_services.sh` runs the `platform-migrate` init container before
-the API/worker containers start. The same idempotent schema migration also runs
-when a platform process opens `DOOMBERG_DB`, so ordinary restarts self-heal.
-
-Optional RLS policies can be installed by setting `DOOMBERG_POSTGRES_ENABLE_RLS=1`
-for the migration role. Do not set `DOOMBERG_POSTGRES_FORCE_RLS=1` until the
-per-service DB role split is complete, because the conductor and auth resolver
-currently perform legitimate cross-tenant infrastructure reads.
+the API/worker containers start. It applies ordered migrations under a Postgres
+advisory lock and records their checksums in `doomberg_schema_migrations`.
+Application containers use `DOOMBERG_DB_MIGRATION_MODE=validate`, so they fail
+closed on a missing, pending, or drifted schema instead of changing DDL during
+normal request startup. Outside Kubernetes, Postgres keeps the backwards-
+compatible `apply` default; set the mode explicitly to `validate` for managed
+deployments and `off` only for schema administration tooling.
 
 ---
 
