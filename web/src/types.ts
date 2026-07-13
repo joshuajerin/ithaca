@@ -335,6 +335,54 @@ export type AdaptiveDashboardResponse =
       updated_at: string;
     };
 
+export type DashboardReadStatus = "ready" | "empty" | "stale" | "unavailable";
+
+export interface DashboardReadEnvelope<T> {
+  status: DashboardReadStatus;
+  as_of: string | null;
+  source: string;
+  entitlement_class: string | null;
+  freshness_ms: number | null;
+  data: T;
+  error: { code: string; message: string } | null;
+}
+
+export interface DashboardRunView {
+  run_id: string | null;
+  kind: string | null;
+  state: string | null;
+  strategy_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface DashboardBookView {
+  run_id: string | null;
+  capital: number | null;
+  gross: number | null;
+  cash: number | null;
+  weights: Record<string, number>;
+  updated_at: string | null;
+}
+
+export interface DashboardSummaryData {
+  run_counts: { total: number; active: number; by_state: Record<string, number> };
+  latest_run: DashboardRunView | null;
+  latest_backtest: (DashboardRunView & {
+    equity_curve: Array<{ d: string; v: number }>;
+    stats: Record<string, number>;
+  }) | null;
+  latest_paper: (DashboardRunView & { book: DashboardBookView | null }) | null;
+}
+
+export interface DashboardRiskData {
+  backtest: { run_id: string | null; metrics: Record<string, number> } | null;
+  paper_exposure: DashboardBookView | null;
+}
+
+export type DashboardSummaryResponse = DashboardReadEnvelope<DashboardSummaryData>;
+export type DashboardRiskResponse = DashboardReadEnvelope<DashboardRiskData>;
+
 // Backtest result `data` shape (from INTERFACES.md / doomberg_core).
 export interface BacktestResult {
   equityCurve: { d: string; v: number }[];
