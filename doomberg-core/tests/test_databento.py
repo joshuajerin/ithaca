@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,6 +13,7 @@ from doomberg_core.sources.databento import (
     _normalize_symbol,
     _resolve_dataset,
     _range_to_dates,
+    fetch_price_panel,
     fetch_price_history,
     fetch_daily_closes,
 )
@@ -70,7 +71,10 @@ class TestFetchPriceHistory:
     def _make_mock_df(self, rows):
         """Build a fake DataFrame-like object."""
         import pandas as pd
-        return pd.DataFrame(rows, columns=["ts_event", "open", "high", "low", "close", "volume"])
+        return pd.DataFrame(
+            rows,
+            columns=["ts_event", "open", "high", "low", "close", "volume"],
+        ).set_index("ts_event")
 
     def test_no_api_key_raises(self, monkeypatch):
         monkeypatch.delenv("DATABENTO_API_KEY", raising=False)
@@ -93,10 +97,22 @@ class TestFetchPriceHistory:
         mock_data = MagicMock()
         mock_data.to_df.return_value = df
         mock_client.timeseries.get_range.return_value = mock_data
+        mock_client.metadata.get_dataset_range.return_value = {
+            "schema": {
+                "ohlcv-1d": {
+                    "start": "2018-05-01T00:00:00Z",
+                    "end": "2026-01-17T00:00:00Z",
+                }
+            }
+        }
         mock_client_cls.return_value = mock_client
 
         result = fetch_price_history("AAPL", range_="6mo", interval="1d")
 
+        request = mock_client.timeseries.get_range.call_args.kwargs
+        assert request["schema"] == "ohlcv-1d"
+        assert request["end"] == datetime(2026, 1, 17, tzinfo=timezone.utc)
+        assert request["end"] - request["start"] == timedelta(days=180)
         assert "points" in result
         assert len(result["points"]) == 2
         assert result["points"][0]["d"] == "2024-01-15"
@@ -121,6 +137,36 @@ class TestFetchPriceHistory:
         with pytest.raises(DatabentoNoDataError):
             fetch_price_history("FAKE", range_="1mo")
 
+    @patch("doomberg_core.sources.databento._get_client")
+    def test_price_panel_batches_symbols(self, mock_client_cls, monkeypatch):
+        monkeypatch.setenv("DATABENTO_API_KEY", "test-key")
+
+        import pandas as pd
+        ts1 = datetime(2024, 1, 15, 21, 0, 0, tzinfo=timezone.utc)
+        ts2 = datetime(2024, 1, 16, 21, 0, 0, tzinfo=timezone.utc)
+        df = pd.DataFrame([
+            {"ts_event": ts1, "symbol": "SPY", "open": 470, "high": 472, "low": 469, "close": 471, "volume": 10},
+            {"ts_event": ts1, "symbol": "QQQ", "open": 410, "high": 412, "low": 409, "close": 411, "volume": 20},
+            {"ts_event": ts2, "symbol": "SPY", "open": 471, "high": 473, "low": 470, "close": 472, "volume": 11},
+            {"ts_event": ts2, "symbol": "QQQ", "open": 411, "high": 413, "low": 410, "close": 412, "volume": 21},
+        ]).set_index("ts_event")
+        mock_client = MagicMock()
+        mock_data = MagicMock()
+        mock_data.to_df.return_value = df
+        mock_client.timeseries.get_range.return_value = mock_data
+        mock_client.metadata.get_dataset_range.return_value = {
+            "schema": {"ohlcv-1d": {"start": "2018-05-01T00:00:00Z", "end": "2024-01-17T00:00:00Z"}}
+        }
+        mock_client_cls.return_value = mock_client
+
+        result = fetch_price_panel(["SPY", "QQQ"], range_="1y", interval="1d")
+
+        request = mock_client.timeseries.get_range.call_args.kwargs
+        assert request["symbols"] == ["SPY", "QQQ"]
+        assert set(result) == {"SPY", "QQQ"}
+        assert [point["c"] for point in result["SPY"]["points"]] == [471.0, 472.0]
+        assert [point["c"] for point in result["QQQ"]["points"]] == [411.0, 412.0]
+
 
 class TestFetchDailyCloses:
     @patch("doomberg_core.sources.databento._get_client")
@@ -133,16 +179,27 @@ class TestFetchDailyCloses:
         df = pd.DataFrame([
             {"ts_event": ts1, "open": 150.0, "high": 152.0, "low": 149.0, "close": 151.0, "volume": 1000000},
             {"ts_event": ts2, "open": 151.0, "high": 153.0, "low": 150.5, "close": 152.5, "volume": 1100000},
-        ])
+        ]).set_index("ts_event")
 
         mock_client = MagicMock()
         mock_data = MagicMock()
         mock_data.to_df.return_value = df
         mock_client.timeseries.get_range.return_value = mock_data
+        mock_client.metadata.get_dataset_range.return_value = {
+            "schema": {
+                "ohlcv-1d": {
+                    "start": "2018-05-01T00:00:00Z",
+                    "end": "2024-01-16T00:00:00Z",
+                }
+            }
+        }
         mock_client_cls.return_value = mock_client
 
         result = fetch_daily_closes("AAPL", "2024-01-15", "2024-01-16")
 
+        request = mock_client.timeseries.get_range.call_args.kwargs
+        assert request["schema"] == "ohlcv-1d"
+        assert request["end"] == datetime(2024, 1, 16, tzinfo=timezone.utc)
         assert isinstance(result, dict)
         assert result["2024-01-15"] == 151.0
         assert result["2024-01-16"] == 152.5
@@ -192,3 +249,35 @@ class TestDataGatewaySourceSelection:
         custom = lambda s, r, i: {"points": [], "quote": {}}
         gw = DataGateway(fetch_history=custom)
         assert gw._fetch is custom
+
+    def test_price_panel_uses_batch_fetch_when_available(self):
+        from doomberg_core.gateway.data_gateway import DataGateway
+
+        single_calls = []
+        batch_calls = []
+
+        def single(symbol, range_, interval):
+            single_calls.append(symbol)
+            raise AssertionError("batch-resolved symbols must not be fetched individually")
+
+        def batch(symbols, range_, interval):
+            batch_calls.append(list(symbols))
+            return {
+                symbol: {
+                    "points": [
+                        {"d": "2024-01-01", "c": 100},
+                        {"d": "2024-01-02", "c": 101},
+                        {"d": "2024-01-03", "c": 102},
+                    ],
+                    "quote": {"symbol": symbol, "price": 102},
+                }
+                for symbol in symbols
+            }
+
+        gateway = DataGateway(fetch_history=single, fetch_panel=batch)
+        panel, provenance = gateway.price_panel(["SPY", "QQQ"])
+
+        assert batch_calls == [["SPY", "QQQ"]]
+        assert single_calls == []
+        assert panel.closes.shape == (3, 2)
+        assert provenance["provenance"]["coverage"]["resolved"] == 2

@@ -53,18 +53,19 @@ _RANGE_DAYS = {
     "10y": 3650, "max": 3650,
 }
 
-# Interval mapping: our interval -> Databento stype + aggregation
-# Databento supports "o" (1-second), "m" (1-minute), "h" (1-hour), "d" (1-day), etc.
-_INTERVAL_MAP = {
-    "1d": "d",
-    "1h": "h",
-    "60m": "h",
-    "90m": "h",
-    "30m": "m",
-    "15m": "m",
-    "5m": "m",
-    "2m": "m",
-    "1m": "m",
+# Interval mapping: our interval -> Databento OHLCV schema.
+# Databento schema names include the aggregation quantity (for example,
+# ``ohlcv-1d`` rather than the legacy ``ohlcv-d`` spelling).
+_INTERVAL_SCHEMA_MAP = {
+    "1d": "ohlcv-1d",
+    "1h": "ohlcv-1h",
+    "60m": "ohlcv-1h",
+    "90m": "ohlcv-1h",
+    "30m": "ohlcv-1m",
+    "15m": "ohlcv-1m",
+    "5m": "ohlcv-1m",
+    "2m": "ohlcv-1m",
+    "1m": "ohlcv-1m",
 }
 
 
@@ -112,6 +113,43 @@ def _range_to_dates(range_: str) -> tuple[datetime, datetime]:
     return start, end
 
 
+def _available_schema_range(client, dataset: str, schema: str) -> tuple[datetime, datetime] | None:
+    """Return the entitled Databento window for a dataset/schema."""
+    dataset_range = client.metadata.get_dataset_range(dataset)
+    if not isinstance(dataset_range, dict):
+        return None
+    schemas = dataset_range.get("schema")
+    schema_range = schemas.get(schema) if isinstance(schemas, dict) else None
+    selected = schema_range if isinstance(schema_range, dict) else dataset_range
+    start = selected.get("start")
+    end = selected.get("end")
+    if not isinstance(start, str) or not isinstance(end, str):
+        return None
+    return (
+        datetime.fromisoformat(start.replace("Z", "+00:00")),
+        datetime.fromisoformat(end.replace("Z", "+00:00")),
+    )
+
+
+def _cap_range_to_available(
+    client,
+    dataset: str,
+    schema: str,
+    start: datetime,
+    end: datetime,
+    *,
+    preserve_duration: bool,
+) -> tuple[datetime, datetime]:
+    """Clamp a request to Databento's current schema-specific availability."""
+    available = _available_schema_range(client, dataset, schema)
+    if available is None:
+        return start, end
+    available_start, available_end = available
+    if preserve_duration and end > available_end:
+        start = available_end - (end - start)
+    return max(start, available_start), min(end, available_end)
+
+
 def _normalize_symbol(symbol: str) -> str:
     """Strip exchange prefixes for Databento (it expects bare tickers for most datasets)."""
     s = symbol.upper().strip()
@@ -126,6 +164,64 @@ def _round(v: Optional[float]) -> Optional[float]:
     return round(float(v), 2) if v is not None else None
 
 
+def _row_datetime(index, row) -> datetime:
+    ts = row.get("ts_event")
+    if ts is None:
+        ts = index
+    if hasattr(ts, "to_pydatetime"):
+        dt = ts.to_pydatetime()
+    elif isinstance(ts, (int, float)):
+        dt = datetime.fromtimestamp(ts / 1e9, tz=timezone.utc)
+    else:
+        dt = ts
+    if dt.tzinfo is None:
+        dt = dt.replace(tz=timezone.utc)
+    return dt
+
+
+def _points_from_frame(df, interval: str) -> List[dict]:
+    points: List[dict] = []
+    for index, row in df.iterrows():
+        dt = _row_datetime(index, row)
+        close = _round(float(row.get("close", 0)))
+        if close is None or close <= 0:
+            continue
+        point = {
+            "o": _round(float(row.get("open", close))),
+            "h": _round(float(row.get("high", close))),
+            "l": _round(float(row.get("low", close))),
+            "c": close,
+            "v": float(row.get("volume", 0) or 0),
+        }
+        if interval == "1d":
+            point["d"] = dt.strftime("%Y-%m-%d")
+        else:
+            point["t"] = dt.isoformat()
+        points.append(point)
+    return points
+
+
+def _history_result(sym: str, points: List[dict]) -> Dict:
+    if not points:
+        raise DatabentoNoDataError(f"no usable bars for {sym}")
+    last = points[-1]
+    price = last["c"]
+    prev_close = points[-2]["c"] if len(points) >= 2 else None
+    change_pct = None
+    if prev_close and prev_close > 0:
+        change_pct = round((price - prev_close) / prev_close * 100, 2)
+    return {
+        "points": points,
+        "quote": {
+            "symbol": sym,
+            "price": price,
+            "changePct": change_pct,
+            "volume": last.get("v"),
+            "asOf": (last.get("t") or last.get("d")),
+        },
+    }
+
+
 def fetch_price_history(
     symbol: str,
     range_: str = "6mo",
@@ -138,18 +234,26 @@ def fetch_price_history(
     """
     sym = _normalize_symbol(symbol)
     dataset = _resolve_dataset(symbol)
-    db_interval = _INTERVAL_MAP.get(interval, "d")
+    db_schema = _INTERVAL_SCHEMA_MAP.get(interval, "ohlcv-1d")
     start, end = _range_to_dates(range_)
 
     def _do_fetch():
         client = _get_client()
+        request_start, request_end = _cap_range_to_available(
+            client,
+            dataset,
+            db_schema,
+            start,
+            end,
+            preserve_duration=True,
+        )
         data = client.timeseries.get_range(
             dataset=dataset,
             symbols=[sym],
             stype_in="native",
-            start=start,
-            end=end,
-            schema="ohlcv-" + db_interval,
+            start=request_start,
+            end=request_end,
+            schema=db_schema,
         )
         df = data.to_df()
         if df is None or df.empty:
@@ -158,63 +262,62 @@ def fetch_price_history(
 
     df = guard(_SOURCE, _do_fetch)
 
-    points: List[dict] = []
-    for _, row in df.iterrows():
-        ts = row.get("ts_event")
-        if hasattr(ts, "to_pydatetime"):
-            dt = ts.to_pydatetime()
-        elif isinstance(ts, (int, float)):
-            dt = datetime.fromtimestamp(ts / 1e9, tz=timezone.utc)
-        else:
-            dt = ts
+    return _history_result(sym, _points_from_frame(df, interval))
 
-        if dt.tzinfo is None:
-            dt = dt.replace(tz=timezone.utc)
 
-        close = _round(float(row.get("close", 0)))
-        if close is None or close <= 0:
-            continue
+def fetch_price_panel(
+    symbols: List[str],
+    range_: str = "1y",
+    interval: str = "1d",
+) -> Dict[str, Dict]:
+    """Fetch a multi-symbol OHLCV panel in one Databento request."""
+    normalized = list(dict.fromkeys(_normalize_symbol(symbol) for symbol in symbols))
+    if not normalized:
+        return {}
+    datasets = {_resolve_dataset(symbol) for symbol in symbols}
+    if len(datasets) != 1:
+        raise DatabentoError("a batched price panel must use one Databento dataset")
+    dataset = datasets.pop()
+    db_schema = _INTERVAL_SCHEMA_MAP.get(interval, "ohlcv-1d")
+    start, end = _range_to_dates(range_)
 
-        if interval == "1d":
-            date_key = dt.strftime("%Y-%m-%d")
-            points.append({
-                "d": date_key,
-                "o": _round(float(row.get("open", close))),
-                "h": _round(float(row.get("high", close))),
-                "l": _round(float(row.get("low", close))),
-                "c": close,
-                "v": float(row.get("volume", 0) or 0),
-            })
-        else:
-            points.append({
-                "t": dt.isoformat(),
-                "o": _round(float(row.get("open", close))),
-                "h": _round(float(row.get("high", close))),
-                "l": _round(float(row.get("low", close))),
-                "c": close,
-                "v": float(row.get("volume", 0) or 0),
-            })
+    def _do_fetch():
+        client = _get_client()
+        request_start, request_end = _cap_range_to_available(
+            client,
+            dataset,
+            db_schema,
+            start,
+            end,
+            preserve_duration=True,
+        )
+        data = client.timeseries.get_range(
+            dataset=dataset,
+            symbols=normalized,
+            stype_in="native",
+            start=request_start,
+            end=request_end,
+            schema=db_schema,
+        )
+        return data.to_df()
 
-    if not points:
-        raise DatabentoNoDataError(f"no usable bars for {sym} in {dataset}")
+    df = guard(_SOURCE, _do_fetch)
+    if df is None or df.empty:
+        return {}
+    if "symbol" not in df.columns:
+        if len(normalized) != 1:
+            raise DatabentoError("Databento panel response did not include symbol mapping")
+        df = df.copy()
+        df["symbol"] = normalized[0]
 
-    last = points[-1]
-    price = last["c"]
-    prev_close = points[-2]["c"] if len(points) >= 2 else None
-    change_pct = None
-    if prev_close and prev_close > 0:
-        change_pct = round((price - prev_close) / prev_close * 100, 2)
-
-    return {
-        "points": points,
-        "quote": {
-            "symbol": sym,
-            "price": price,
-            "changePct": change_pct,
-            "volume": last.get("v"),
-            "asOf": (last.get("t") or last.get("d")),
-        },
-    }
+    out: Dict[str, Dict] = {}
+    response_symbols = df["symbol"].astype(str).str.upper()
+    for sym in normalized:
+        symbol_frame = df[response_symbols == sym]
+        points = _points_from_frame(symbol_frame, interval)
+        if points:
+            out[sym] = _history_result(sym, points)
+    return out
 
 
 def fetch_daily_closes(symbol: str, start: str, end: str) -> Dict[str, float]:
@@ -230,13 +333,21 @@ def fetch_daily_closes(symbol: str, start: str, end: str) -> Dict[str, float]:
 
     def _do_fetch():
         client = _get_client()
+        request_start, request_end = _cap_range_to_available(
+            client,
+            dataset,
+            "ohlcv-1d",
+            d0,
+            d1,
+            preserve_duration=False,
+        )
         data = client.timeseries.get_range(
             dataset=dataset,
             symbols=[sym],
             stype_in="native",
-            start=d0,
-            end=d1,
-            schema="ohlcv-d",
+            start=request_start,
+            end=request_end,
+            schema="ohlcv-1d",
         )
         df = data.to_df()
         if df is None or df.empty:
@@ -248,17 +359,8 @@ def fetch_daily_closes(symbol: str, start: str, end: str) -> Dict[str, float]:
         return {}
 
     out: Dict[str, float] = {}
-    for _, row in df.iterrows():
-        ts = row.get("ts_event")
-        if hasattr(ts, "to_pydatetime"):
-            dt = ts.to_pydatetime()
-        elif isinstance(ts, (int, float)):
-            dt = datetime.fromtimestamp(ts / 1e9, tz=timezone.utc)
-        else:
-            dt = ts
-
-        if dt.tzinfo is None:
-            dt = dt.replace(tz=timezone.utc)
+    for index, row in df.iterrows():
+        dt = _row_datetime(index, row)
 
         c = row.get("close")
         if c is None or float(c) <= 0:

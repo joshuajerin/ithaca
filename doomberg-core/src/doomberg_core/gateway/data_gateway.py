@@ -25,7 +25,7 @@ from ..sources import prices as _prices
 __all__ = ["DataGateway", "PricePanel"]
 
 
-def _resolve_source() -> tuple[str, str, bool, callable]:
+def _resolve_source() -> tuple[str, str, bool, callable, callable | None]:
     """Pick the active data source based on env config.
 
     Returns (source_name, pit, fetch_history_callable).
@@ -35,9 +35,9 @@ def _resolve_source() -> tuple[str, str, bool, callable]:
 
     if forced == "databento" or (forced == "auto" and has_db_key):
         from ..sources import databento as _db
-        return "databento", "true", True, _db.fetch_price_history
+        return "databento", "true", True, _db.fetch_price_history, _db.fetch_price_panel
     else:
-        return "yahoo-chart", "false", False, _prices.fetch_price_history
+        return "yahoo-chart", "false", False, _prices.fetch_price_history, None
 
 
 _SOURCE = "yahoo-chart"
@@ -167,14 +167,16 @@ class PricePanel:
 class DataGateway:
     """Stateless facade. ``fetch`` is injectable so tests run without network."""
 
-    def __init__(self, fetch_history=None):
+    def __init__(self, fetch_history=None, fetch_panel=None):
         if fetch_history is not None:
             self._fetch = fetch_history
+            self._fetch_panel = fetch_panel
             self._source = _SOURCE
             self._pit = _PIT
         else:
-            source, pit, is_pit, fetch = _resolve_source()
+            source, pit, is_pit, fetch, panel_fetch = _resolve_source()
             self._fetch = fetch
+            self._fetch_panel = panel_fetch
             self._source = source
             self._pit = pit
         self._ohlcv_cache: dict[tuple[str, str, str, str], dict] = {}
@@ -237,6 +239,32 @@ class DataGateway:
         cache_flags: list[bool] = []
         missing: list[str] = []
         warnings: list[dict] = []
+
+        # Databento can return the entire universe in one request. Prime the
+        # normal per-symbol cache from that response so large backtests do not
+        # spend one network round trip per symbol. If a batch request fails or
+        # omits a symbol, the existing per-symbol path below remains the honest
+        # fallback and preserves partial-coverage behavior.
+        if self._fetch_panel is not None and symbols:
+            uncached = [
+                symbol
+                for symbol in symbols
+                if (symbol.upper(), range_, interval, as_of or "") not in self._ohlcv_cache
+            ]
+            if uncached:
+                try:
+                    raw_by_symbol = self._fetch_panel(uncached, range_, interval)
+                except Exception:
+                    raw_by_symbol = {}
+                for symbol, raw in raw_by_symbol.items():
+                    su = symbol.upper()
+                    points, quality = _clean_ohlcv(raw.get("points") or [], as_of=as_of)
+                    self._ohlcv_cache[(su, range_, interval, as_of or "")] = {
+                        "points": points,
+                        "quality": quality,
+                        "quote": raw.get("quote") or {},
+                    }
+
         for sym in symbols:
             su = sym.upper()
             try:
