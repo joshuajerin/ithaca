@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { StrategySpec } from "@doomberg/contracts";
-import { buildStrategySpec, normalizeSymbols, type BacktestBuilderState } from "./pages/Backtests";
+import { buildBacktestCards, buildStrategySpec, normalizeSymbols, type BacktestBuilderState } from "./pages/Backtests";
 
 const base: BacktestBuilderState = {
   name: "Momentum research",
@@ -36,5 +36,14 @@ describe("backtest builder", () => {
       buildStrategySpec({ ...base, primitive: "ma_cross", fast: 10, slow: 40 }),
     );
     expect(spec.strategy.params).toEqual({ fast: 10, slow: 40 });
+  });
+
+  it("keeps agent-created runs that have no persisted strategy link", () => {
+    const cards = buildBacktestCards([], [{
+      id: "run-agent-1", tenant_id: "tenant", kind: "backtest", state: "succeeded", strategy_id: null,
+      spec: { name: "SPY momentum" },
+    }]);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({ strategy: null, displayName: "SPY momentum", runCount: 1 });
   });
 });
