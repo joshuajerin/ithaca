@@ -83,8 +83,6 @@ def main() -> int:
 
     stop = threading.Event()
     threads = [
-        threading.Thread(target=worker.run_forever, kwargs={"interval_s": backtest_interval, "stop": stop},
-                         name="backtest-worker", daemon=True),
         threading.Thread(target=trigger_worker.run_forever, kwargs={"interval_s": trigger_job_interval, "stop": stop},
                          name="trigger-job-worker", daemon=True),
         threading.Thread(
@@ -100,11 +98,22 @@ def main() -> int:
             daemon=True,
         ),
     ]
+    if os.environ.get("DOOMBERG_ENABLE_BACKTEST_LOOP", "1").strip().lower() in {"1", "true", "yes"}:
+        threads.insert(
+            0,
+            threading.Thread(
+                target=worker.run_forever,
+                kwargs={"interval_s": backtest_interval, "stop": stop},
+                name="backtest-worker",
+                daemon=True,
+            ),
+        )
 
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
 
-    print(f"doomberg conductor up — db={db}, backtest every {backtest_interval}s, "
+    backtest_mode = "embedded" if any(t.name == "backtest-worker" for t in threads) else "dedicated"
+    print(f"doomberg conductor up — db={db}, backtest={backtest_mode} every {backtest_interval}s, "
           f"trigger jobs every {trigger_job_interval}s, paper every {paper_interval}s, "
           f"notifications every {notification_interval}s, "
           f"adaptive dashboard every {adaptive_dashboard_interval}s, "

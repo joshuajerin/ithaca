@@ -45,7 +45,7 @@ from doomberg_control.actions import ActionError
 from doomberg_control.deps import HUMAN_ACTOR_KINDS, Ctx
 from doomberg_control.execution_gateway import ExecutionGateway
 from doomberg_core import Core
-from doomberg_core.providers import PUBLIC_DATA_SOURCE, PUBLIC_ENTITLEMENT_CLASS, IbkrEngineClient
+from doomberg_core.providers import PUBLIC_DATA_SOURCE, IbkrEngineClient
 from doomberg_mcp import Toolset
 from doomberg_platform import (
     AdaptiveDashboardProfileStore,
@@ -57,6 +57,7 @@ from doomberg_platform import (
     BookStore,
     DeliveryTargetStore,
     ExecutionStore,
+    FeedbackStore,
     JobStore,
     LeaseStore,
     NotificationStore,
@@ -70,8 +71,30 @@ from doomberg_platform import (
     build_agent_key_store,
     open_db,
 )
-from doomberg_runtime import default_adaptive_dashboard_spec, usage_signals_for_user
+from doomberg_runtime import (
+    default_adaptive_dashboard_spec,
+    object_storage_configured,
+    open_artifact,
+    usage_signals_for_user,
+)
 
+from .dashboard_readmodels import (
+    dashboard_activity,
+    dashboard_market,
+    dashboard_risk,
+    dashboard_summary,
+    provider_status,
+    public_provider_connection,
+)
+from .dashboard_models import (
+    DashboardActivityData,
+    DashboardEnvelope,
+    DashboardMarketData,
+    DashboardRiskData,
+    DashboardSummaryData,
+    ProviderStatusData,
+)
+from .dashboard_store import DashboardReadStore
 from .readmodel import shape_run, shape_run_row
 from .sse import event_stream, parse_last_event_id
 
@@ -100,10 +123,12 @@ class Stores:
         self.approvals = ApprovalStore(db)
         self.providers = ProviderStore(db)
         self.execution = ExecutionStore(db)
+        self.feedback = FeedbackStore(db)
         self.triggers = TriggerStore(db)
         self.baselines = TriggerBaselineStore(db)
         self.notifications = NotificationStore(db)
         self.delivery_targets = DeliveryTargetStore(db)
+        self.dashboard = DashboardReadStore(db)
         self.core = Core()
 
 
@@ -175,6 +200,13 @@ class MintKeyBody(BaseModel):
 
 class MintSseTicketBody(BaseModel):
     after_seq: int | None = None
+
+
+class FeedbackBody(BaseModel):
+    message: str
+
+
+MAX_FEEDBACK_LENGTH = 5000
 
 
 def _bearer_key(authorization: str | None) -> str | None:
@@ -418,39 +450,6 @@ def _has_capability(connection: dict[str, Any], names: set[str]) -> bool:
     return bool(caps.intersection(names))
 
 
-def _public_provider_connection(connection: dict[str, Any]) -> dict[str, Any]:
-    """Return a REST-safe provider connection view without credential references."""
-    provider = str(connection.get("provider") or "")
-    is_private_live = provider.strip().lower() in {
-        "ibkr",
-        "ibkr-engine",
-        "interactive_brokers",
-        "interactive-brokers",
-        PUBLIC_DATA_SOURCE,
-    }
-    return {
-        "tenant_id": connection.get("tenant_id"),
-        "connection_id": connection.get("connection_id"),
-        "provider": PUBLIC_DATA_SOURCE if is_private_live else provider,
-        "state": connection.get("state"),
-        "capabilities": [
-            cap
-            for cap in (connection.get("capabilities") or [])
-            if str(cap).strip().lower() not in {"orders", "trading", "execution"}
-        ],
-        "entitlements": [
-            {**ent, "entitlement_class": PUBLIC_ENTITLEMENT_CLASS}
-            if isinstance(ent, dict) and is_private_live
-            else ent
-            for ent in (connection.get("entitlements") or [])
-        ],
-        "retention_policy": connection.get("retention_policy"),
-        "credential_configured": bool(connection.get("credential_ref")),
-        "created_at": connection.get("created_at"),
-        "updated_at": connection.get("updated_at"),
-    }
-
-
 def _sse_ticket_ttl_seconds() -> int:
     raw = os.environ.get("DOOMBERG_SSE_TICKET_TTL_SECONDS", "60")
     try:
@@ -644,6 +643,32 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
     failed_jobs = sum(1 for job in jobs if job.get("state") in {"failed", "timed_out", "cancelled"})
     active_triggers = sum(1 for trigger in triggers if trigger.get("state") == "active")
 
+    now = datetime.now(timezone.utc)
+
+    def age_seconds(value: Any) -> float | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return max(0.0, (now - parsed).total_seconds())
+        except ValueError:
+            return None
+
+    backtest_jobs = [job for job in jobs if job.get("profile") == "backtest"]
+    queued_backtests = [job for job in backtest_jobs if job.get("state") == "queued"]
+    running_backtests = [job for job in backtest_jobs if job.get("state") in {"leased", "running"}]
+    failed_backtests = [job for job in backtest_jobs if job.get("state") in {"failed", "timed_out"}]
+    queue_ages = [age for job in queued_backtests if (age := age_seconds(job.get("created_at"))) is not None]
+    heartbeat_ages = [age for job in running_backtests if (age := age_seconds(job.get("heartbeat_at"))) is not None]
+    oldest_queued_s = max(queue_ages, default=None)
+    oldest_heartbeat_s = max(heartbeat_ages, default=None)
+    backtest_stalled = bool(
+        (oldest_queued_s is not None and oldest_queued_s > 120)
+        or (oldest_heartbeat_s is not None and oldest_heartbeat_s > 90)
+    )
+
     readiness = [
         {
             "name": "Platform store",
@@ -679,6 +704,24 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
             "state": "succeeded" if leases else "paused",
             "detail": f"{len(leases)} active lease row{'' if len(leases) == 1 else 's'}",
         },
+        {
+            "name": "Backtest workers",
+            "state": "warn" if backtest_stalled else "succeeded",
+            "detail": (
+                f"{len(queued_backtests)} queued, {len(running_backtests)} running, "
+                f"oldest queue {int(oldest_queued_s or 0)}s, "
+                f"heartbeat lag {int(oldest_heartbeat_s or 0)}s"
+            ),
+        },
+        {
+            "name": "Artifact storage",
+            "state": "succeeded" if object_storage_configured() else "warn",
+            "detail": (
+                "Private object storage configured"
+                if object_storage_configured()
+                else "Object storage unset; production bundles are not durable"
+            ),
+        },
     ]
 
     return {
@@ -709,6 +752,14 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
             "queued": queued_jobs,
             "leased_or_running": active_jobs,
             "terminal": failed_jobs,
+            "backtests": {
+                "queued": len(queued_backtests),
+                "leased_or_running": len(running_backtests),
+                "failed_or_timed_out": len(failed_backtests),
+                "oldest_queued_seconds": oldest_queued_s,
+                "oldest_heartbeat_seconds": oldest_heartbeat_s,
+                "stalled": backtest_stalled,
+            },
         },
         "leases": leases,
         "triggers": {
@@ -1199,6 +1250,29 @@ def create_app(db: Any | None = None) -> FastAPI:
         shaped["artifacts"] = stores.artifacts.list_by_run(resolved_tenant, run_id)
         return shaped
 
+    @app.post("/api/feedback", status_code=201)
+    def submit_feedback(
+        body: FeedbackBody,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> dict[str, Any]:
+        if ctx.actor_kind not in HUMAN_ACTOR_KINDS:
+            raise HTTPException(status_code=403, detail="feedback requires a signed-in user")
+        message = body.message.strip()
+        if not message:
+            raise HTTPException(status_code=422, detail="feedback message is required")
+        if len(message) > MAX_FEEDBACK_LENGTH:
+            raise HTTPException(
+                status_code=422,
+                detail=f"feedback message must be {MAX_FEEDBACK_LENGTH} characters or fewer",
+            )
+        saved = stores.feedback.create(ctx.tenant_id, ctx.actor_id, message)
+        return {
+            "feedback_id": saved["feedback_id"],
+            "status": "received",
+            "created_at": saved["created_at"],
+        }
+
     # ---- reads -------------------------------------------------------------------------
     @app.get("/api/runs")
     def list_runs(
@@ -1207,6 +1281,59 @@ def create_app(db: Any | None = None) -> FastAPI:
         stores: Stores = Depends(get_stores),
     ) -> dict[str, Any]:
         return {"runs": [shape_run_row(r) for r in stores.runs.list(tenant_id, kind=kind)]}
+
+    @app.get("/api/dashboard/summary")
+    def get_dashboard_summary(
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> DashboardEnvelope[DashboardSummaryData]:
+        _require_scope(ctx, "data:read")
+        return DashboardEnvelope[DashboardSummaryData].model_validate(
+            dashboard_summary(stores.dashboard, ctx.tenant_id)
+        )
+
+    @app.get("/api/dashboard/risk")
+    def get_dashboard_risk(
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> DashboardEnvelope[DashboardRiskData]:
+        _require_scope(ctx, "data:read")
+        return DashboardEnvelope[DashboardRiskData].model_validate(
+            dashboard_risk(stores.dashboard, ctx.tenant_id)
+        )
+
+    @app.get("/api/dashboard/activity")
+    def get_dashboard_activity(
+        limit: int = Query(default=20, ge=1, le=100),
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> DashboardEnvelope[DashboardActivityData]:
+        _require_scope(ctx, "data:read")
+        _require_scope(ctx, "triggers:read")
+        _require_scope(ctx, "alerts:read")
+        return DashboardEnvelope[DashboardActivityData].model_validate(
+            dashboard_activity(stores.dashboard, ctx.tenant_id, limit=limit)
+        )
+
+    @app.get("/api/dashboard/market")
+    def get_dashboard_market(
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> DashboardEnvelope[DashboardMarketData]:
+        _require_scope(ctx, "data:read")
+        return DashboardEnvelope[DashboardMarketData].model_validate(
+            dashboard_market(stores.dashboard, ctx.tenant_id)
+        )
+
+    @app.get("/api/providers/status")
+    def get_provider_status(
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> DashboardEnvelope[ProviderStatusData]:
+        _require_scope(ctx, "data:read")
+        return DashboardEnvelope[ProviderStatusData].model_validate(
+            provider_status(stores.dashboard, ctx.tenant_id)
+        )
 
     @app.get("/api/runs/{run_id}")
     def get_run(
@@ -1301,6 +1428,50 @@ def create_app(db: Any | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="artifact not found")
         return artifact
 
+    @app.get("/api/artifacts/{artifact_id}/download")
+    def download_artifact(
+        artifact_id: str,
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ):
+        """Download a tenant-owned artifact without exposing storage credentials."""
+        _require_scope(ctx, "artifacts:read")
+        artifact = stores.artifacts.get(ctx.tenant_id, artifact_id)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="artifact not found")
+        uri = str(artifact.get("uri") or "")
+        if uri.startswith("s3://"):
+            try:
+                body, content_length, content_type = open_artifact(uri)
+            except (RuntimeError, ValueError) as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            except Exception as exc:  # noqa: BLE001 - stable storage boundary
+                raise HTTPException(status_code=503, detail="artifact storage unavailable") from exc
+            filename = Path(
+                str((artifact.get("metadata") or {}).get("filename") or "artifact")
+            ).name.replace('"', "").replace("\r", "").replace("\n", "")
+            headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+            if content_length is not None:
+                headers["Content-Length"] = str(content_length)
+            return StreamingResponse(
+                body.iter_chunks(),
+                media_type=content_type or artifact.get("media_type") or "application/octet-stream",
+                headers=headers,
+            )
+        if uri.startswith("file://"):
+            path = Path(urllib.parse.unquote(urllib.parse.urlparse(uri).path))
+            if not path.is_file():
+                raise HTTPException(status_code=404, detail="artifact bytes not found")
+            return FileResponse(
+                path,
+                media_type=artifact.get("media_type") or "application/octet-stream",
+                filename=str((artifact.get("metadata") or {}).get("filename") or path.name),
+            )
+        raise HTTPException(
+            status_code=409,
+            detail="artifact bytes were not persisted; rerun after storage is configured",
+        )
+
     @app.get("/api/approvals")
     def list_approvals(
         run_id: str | None = None,
@@ -1365,7 +1536,7 @@ def create_app(db: Any | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         return {
             "connections": [
-                _public_provider_connection(connection)
+                public_provider_connection(connection)
                 for connection in stores.providers.list_connections(tenant_id)
             ],
             "snapshots": stores.providers.list_snapshots(tenant_id, limit=25),
@@ -1408,7 +1579,7 @@ def create_app(db: Any | None = None) -> FastAPI:
             credential_ref=credential_ref,
             retention_policy=body.retention_policy,
         )
-        return _public_provider_connection(connection)
+        return public_provider_connection(connection)
 
     @app.get("/api/dataset-snapshots")
     def list_dataset_snapshots(

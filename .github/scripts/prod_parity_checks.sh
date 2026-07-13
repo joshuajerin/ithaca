@@ -11,6 +11,7 @@ python_packages=(
   services/control-plane
   services/rest-gateway
   services/runtime
+  services/ibkr-engine
 )
 
 echo "::group::Python workspace sync"

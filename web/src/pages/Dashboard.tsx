@@ -1,25 +1,35 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useAsync } from "../hooks/useAsync";
 import { api } from "../api";
-import type { AdaptiveDashboardResponse, AdaptiveDashboardWidget, RunRow } from "../types";
+import type {
+  AdaptiveDashboardResponse,
+  AdaptiveDashboardWidget,
+  DashboardReadEnvelope,
+  DashboardActivityData,
+  DashboardMarketData,
+  DashboardProviderStatusData,
+  DashboardRunView,
+  DashboardRiskData,
+  DashboardSummaryData,
+  RunRow,
+} from "../types";
 import { DotWaveCanvas } from "../components/adaptive/DotWaveCanvas";
-import { PerformancePnlPanel } from "../dashboard/panels/PerformancePnlPanel";
-import { PortfolioRiskPanel } from "../dashboard/panels/PortfolioRiskPanel";
-import { TradeFlowPanel } from "../dashboard/panels/TradeFlowPanel";
-import { OrderBookPanel } from "../dashboard/panels/OrderBookPanel";
-import { CongressTradesPanel } from "../dashboard/panels/CongressTradesPanel";
-import { YieldCurvePanel } from "../dashboard/panels/YieldCurvePanel";
-import { SentimentPanel } from "../dashboard/panels/SentimentPanel";
 import {
-  getPerformance,
-  getPortfolioRisk,
-  getTradeFlow,
-  getOrderBook,
-  getCongressTrades,
-  getYieldCurve,
-  getSentiment,
+  performanceFromDashboard,
+  riskFromDashboard,
 } from "../dashboard/data";
 import type { ReactNode } from "react";
+
+const PerformancePnlPanel = lazy(() =>
+  import("../dashboard/panels/PerformancePnlPanel").then((module) => ({
+    default: module.PerformancePnlPanel,
+  })),
+);
+const PortfolioRiskPanel = lazy(() =>
+  import("../dashboard/panels/PortfolioRiskPanel").then((module) => ({
+    default: module.PortfolioRiskPanel,
+  })),
+);
 
 interface BandDef {
   id: string;
@@ -123,31 +133,54 @@ export function visibleAdaptiveWidgets(
     .sort((a, b) => a.priority - b.priority || a.layout.y - b.layout.y || a.layout.x - b.layout.x);
 }
 
-export function shouldShowAdaptiveEmptyState({
+export type AdaptiveDashboardView = "loading" | "empty" | "adaptive" | "fallback";
+
+export function resolveAdaptiveDashboardState({
   adaptive,
   adaptiveError,
+  adaptiveLoading,
+  runs,
+  runsError,
+  runsLoading,
 }: {
   adaptive: AdaptiveDashboardResponse | null;
   adaptiveError: string | null;
-}): boolean {
-  if (adaptive?.status === "empty") return true;
-  if (adaptive) return false;
-  return Boolean(adaptiveError);
+  adaptiveLoading: boolean;
+  runs: RunRow[] | null;
+  runsError: string | null;
+  runsLoading: boolean;
+}): AdaptiveDashboardView {
+  if (adaptiveLoading || runsLoading) return "loading";
+  if (adaptive && adaptive.status !== "empty") return "adaptive";
+  if (runs?.some((run) => run.kind === "research")) return "fallback";
+  if (adaptive?.status === "empty") return "empty";
+  if (adaptiveError && !runsError && runs !== null) return "empty";
+  return "fallback";
 }
 
-function UsageList({ rows }: { rows: RunRow[] }) {
-  const recent = rows
-    .filter((run) => run.kind === "research")
-    .slice()
-    .sort((a, b) => String(b.updated_at ?? b.created_at ?? "").localeCompare(String(a.updated_at ?? a.created_at ?? "")))
-    .slice(0, 5);
+export function recentResearchSessions(rows: DashboardRunView[]): DashboardRunView[] {
+  return rows.filter((run) => run.kind === "research").slice(0, 5);
+}
+
+export function warningCounts(activity: DashboardActivityData | null): {
+  failed: number;
+  alerts: number;
+} {
+  return {
+    failed: activity?.runs.filter((run) => /fail|timeout|cancel/i.test(run.state ?? "")).length ?? 0,
+    alerts: activity?.alerts.length ?? 0,
+  };
+}
+
+function UsageList({ rows }: { rows: DashboardRunView[] }) {
+  const recent = recentResearchSessions(rows);
   if (!recent.length) return <div className="empty">No recent sessions.</div>;
   return (
     <div className="adaptive-list">
       {recent.map((run) => (
-        <div key={run.id} className="adaptive-list-row">
+        <div key={run.run_id} className="adaptive-list-row">
           <span>{run.state}</span>
-          <strong>{run.id.slice(0, 8)}</strong>
+          <strong>{run.run_id?.slice(0, 8) ?? "—"}</strong>
           <small>{run.updated_at || run.created_at || ""}</small>
         </div>
       ))}
@@ -155,84 +188,152 @@ function UsageList({ rows }: { rows: RunRow[] }) {
   );
 }
 
-function ToolUsageSummary({ rows }: { rows: RunRow[] }) {
-  const total = rows.filter((run) => run.kind === "research").length;
+function ToolUsageSummary({ adaptive }: { adaptive: Exclude<AdaptiveDashboardResponse, { status: "empty" }> }) {
   return (
     <div className="adaptive-metric-stack">
-      <div><strong>{total}</strong><span>Sessions</span></div>
-      <div><strong>{rows.length}</strong><span>Total runs</span></div>
+      <div><strong>{adaptive.source_session_count}</strong><span>Your research sessions</span></div>
+      <div><strong>{adaptive.source_event_count}</strong><span>Your recorded events</span></div>
     </div>
   );
 }
 
-function WarningWatch({ rows }: { rows: RunRow[] }) {
-  const failed = rows.filter((run) => /fail|timeout|cancel/i.test(run.state)).length;
+function WarningWatch({ activity }: { activity: DashboardActivityData | null }) {
+  const counts = warningCounts(activity);
   return (
     <div className="adaptive-metric-stack">
-      <div><strong>{failed}</strong><span>Needs review</span></div>
-      <div><strong>{rows.length - failed}</strong><span>Normal</span></div>
+      <div><strong>{counts.alerts}</strong><span>Open alerts</span></div>
+      <div><strong>{counts.failed}</strong><span>Recent failed runs</span></div>
     </div>
   );
 }
 
-function LiveDataStatus() {
+function LiveDataStatus({
+  providers,
+  market,
+  marketLoading,
+  marketError,
+}: {
+  providers: DashboardReadEnvelope<DashboardProviderStatusData> | null;
+  market: DashboardReadEnvelope<DashboardMarketData> | null;
+  marketLoading: boolean;
+  marketError: string | null;
+}) {
+  if (!providers || providers.status === "empty" || providers.status === "unavailable") {
+    return <DataStatePanel response={providers} emptyMessage="No tenant data provider is connected." />;
+  }
   return (
     <div className="adaptive-metric-stack">
-      <div><strong>Live</strong><span>Data path</span></div>
-      <div><strong>Server</strong><span>Credential boundary</span></div>
+      <div><strong>{providers.data.counts.connected}</strong><span>Connected providers</span></div>
+      <div><strong>{marketLoading ? "loading" : marketError ? "unavailable" : market?.status ?? "empty"}</strong><span>Market observations</span></div>
+      <div><strong>{market?.freshness_ms != null ? `${Math.round(market.freshness_ms / 1000)}s` : "—"}</strong><span>Observation age</span></div>
     </div>
   );
+}
+
+function DataStatePanel({
+  loading,
+  error,
+  response,
+  emptyMessage,
+}: {
+  loading?: boolean;
+  error?: string | null;
+  response?: DashboardReadEnvelope<unknown> | null;
+  emptyMessage: string;
+}) {
+  const message = loading
+    ? "Loading your data…"
+    : error
+      ? "This data could not be loaded."
+      : response?.status === "unavailable"
+        ? response.error?.message ?? "This data source is unavailable."
+        : response?.status === "stale"
+          ? "The latest recorded data is stale."
+          : emptyMessage;
+  return (
+    <div className="empty" style={{ minHeight: 160, display: "grid", placeItems: "center", padding: 24, textAlign: "center" }}>
+      <span>{message}</span>
+    </div>
+  );
+}
+
+function UnsupportedPanel({ label }: { label: string }) {
+  return (
+    <DataStatePanel
+      emptyMessage={`${label} is not available from a connected tenant data source yet.`}
+    />
+  );
+}
+
+function PanelLoading() {
+  return <DataStatePanel loading emptyMessage="Loading panel…" />;
 }
 
 export function Dashboard() {
   const [query, setQuery] = useState("");
-  const { data: runs } = useAsync<RunRow[]>((s) => api.listRuns(undefined, s), []);
-  const { data: adaptive, error: adaptiveError } = useAsync<AdaptiveDashboardResponse>((s) => api.getAdaptiveDashboard(s), []);
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const performanceData = getPerformance(runs ?? []) as any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const portfolioRiskData = getPortfolioRisk() as any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tradeFlowData = getTradeFlow() as any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const orderBookData = getOrderBook() as any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const congressData = getCongressTrades() as any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const yieldCurveData = getYieldCurve() as any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sentimentData = getSentiment() as any;
+  const {
+    data: runs,
+    loading: runsLoading,
+    error: runsError,
+  } = useAsync<RunRow[]>((s) => api.listRuns(undefined, s), []);
+  const {
+    data: adaptive,
+    loading: adaptiveLoading,
+    error: adaptiveError,
+  } = useAsync<AdaptiveDashboardResponse>((s) => api.getAdaptiveDashboard(s), []);
+  const { data: summary, loading: summaryLoading, error: summaryError } =
+    useAsync<DashboardReadEnvelope<DashboardSummaryData>>((s) => api.getDashboardSummary(s), []);
+  const { data: risk, loading: riskLoading, error: riskError } =
+    useAsync<DashboardReadEnvelope<DashboardRiskData>>((s) => api.getDashboardRisk(s), []);
+  const { data: activity, loading: activityLoading, error: activityError } =
+    useAsync<DashboardReadEnvelope<DashboardActivityData>>((s) => api.getDashboardActivity(s), []);
+  const { data: providers, loading: providersLoading, error: providersError } =
+    useAsync<DashboardReadEnvelope<DashboardProviderStatusData>>((s) => api.getDashboardProviderStatus(s), []);
+  const { data: market, loading: marketLoading, error: marketError } =
+    useAsync<DashboardReadEnvelope<DashboardMarketData>>((s) => api.getDashboardMarket(s), []);
+  const performanceData = performanceFromDashboard(summary);
+  const portfolioRiskData = riskFromDashboard(risk);
 
   const q = query.toLowerCase().trim();
   const panelVisible = (title: string) => !q || title.toLowerCase().includes(q);
   const bandVisible = (band: BandDef) => !q || band.label.toLowerCase().includes(q) || band.panels.some((p) => panelVisible(p.title));
-  const rows = runs ?? [];
 
   const renderAdaptiveWidget = (widget: AdaptiveDashboardWidget): ReactNode => {
     switch (widget.id) {
       case "performance_pnl":
-        return <PerformancePnlPanel data={performanceData} />;
+        return performanceData
+          ? <Suspense fallback={<PanelLoading />}><PerformancePnlPanel data={performanceData} /></Suspense>
+          : <DataStatePanel loading={summaryLoading} error={summaryError} response={summary} emptyMessage="Run a completed backtest to see performance." />;
       case "portfolio_risk":
-        return <PortfolioRiskPanel data={portfolioRiskData} />;
+        return portfolioRiskData
+          ? <Suspense fallback={<PanelLoading />}><PortfolioRiskPanel data={portfolioRiskData} /></Suspense>
+          : <DataStatePanel loading={riskLoading} error={riskError} response={risk} emptyMessage="No recorded risk metrics or paper positions yet." />;
       case "trade_flow":
-        return <TradeFlowPanel data={tradeFlowData} />;
+        return <UnsupportedPanel label="Trade flow" />;
       case "order_book":
-        return <OrderBookPanel data={orderBookData} />;
+        return <UnsupportedPanel label="Order book depth" />;
       case "congress_trades":
-        return <CongressTradesPanel data={congressData} />;
+        return <UnsupportedPanel label="Congress trades" />;
       case "yield_curve":
-        return <YieldCurvePanel data={yieldCurveData} />;
+        return <UnsupportedPanel label="Yield curve" />;
       case "sentiment":
-        return <SentimentPanel data={sentimentData} />;
+        return <UnsupportedPanel label="Sentiment" />;
       case "recent_sessions":
-        return <UsageList rows={rows} />;
+        return activity?.data
+          ? <UsageList rows={activity.data.runs} />
+          : <DataStatePanel loading={activityLoading} error={activityError} response={activity} emptyMessage="No recent research sessions." />;
       case "tool_usage":
-        return <ToolUsageSummary rows={rows} />;
+        return adaptive && adaptive.status !== "empty"
+          ? <ToolUsageSummary adaptive={adaptive} />
+          : <DataStatePanel emptyMessage="No personal usage history yet." />;
       case "warning_watch":
-        return <WarningWatch rows={rows} />;
+        return activity?.data
+          ? <WarningWatch activity={activity.data} />
+          : <DataStatePanel loading={activityLoading} error={activityError} response={activity} emptyMessage="No warnings recorded." />;
       case "live_data_status":
-        return <LiveDataStatus />;
+        return providers
+          ? <LiveDataStatus providers={providers} market={market} marketLoading={marketLoading} marketError={marketError} />
+          : <DataStatePanel loading={providersLoading || marketLoading} error={providersError || marketError} response={providers} emptyMessage="No tenant data provider is connected." />;
       default:
         return null;
     }
@@ -242,7 +343,30 @@ export function Dashboard() {
     ? visibleAdaptiveWidgets(adaptive.spec.widgets, query)
     : [];
 
-  if (shouldShowAdaptiveEmptyState({ adaptive, adaptiveError })) {
+  const dashboardState = resolveAdaptiveDashboardState({
+    adaptive,
+    adaptiveError,
+    adaptiveLoading,
+    runs,
+    runsError,
+    runsLoading,
+  });
+
+  if (dashboardState === "loading") {
+    return (
+      <div className="page" style={{ padding: 0, overflow: "hidden" }}>
+        <div className="topbar">
+          <div className="topbar-left">
+            <div className="topbar-title">Dashboard</div>
+          </div>
+          <div className="topbar-right" />
+        </div>
+        <div className="empty" style={{ padding: 40 }}>Loading dashboard…</div>
+      </div>
+    );
+  }
+
+  if (dashboardState === "empty") {
     return (
       <div className="page" style={{ padding: 0, overflow: "hidden" }}>
         <div className="topbar">
@@ -256,7 +380,7 @@ export function Dashboard() {
     );
   }
 
-  if (adaptive) {
+  if (dashboardState === "adaptive" && adaptive && adaptive.status !== "empty") {
     return (
       <div className="page" style={{ padding: 0, overflow: "auto" }}>
         <div className="topbar">
@@ -318,12 +442,16 @@ export function Dashboard() {
             <div className="band-grid-2">
               {panelVisible("Performance & P&L") && (
                 <FCardPanel title="Performance & P&L" minHeight={340}>
-                  <PerformancePnlPanel data={performanceData} />
+                  {performanceData
+                    ? <Suspense fallback={<PanelLoading />}><PerformancePnlPanel data={performanceData} /></Suspense>
+                    : <DataStatePanel loading={summaryLoading} error={summaryError} response={summary} emptyMessage="Run a completed backtest to see performance." />}
                 </FCardPanel>
               )}
               {panelVisible("Portfolio Risk") && (
                 <FCardPanel title="Portfolio Risk" minHeight={340}>
-                  <PortfolioRiskPanel data={portfolioRiskData} />
+                  {portfolioRiskData
+                    ? <Suspense fallback={<PanelLoading />}><PortfolioRiskPanel data={portfolioRiskData} /></Suspense>
+                    : <DataStatePanel loading={riskLoading} error={riskError} response={risk} emptyMessage="No recorded risk metrics or paper positions yet." />}
                 </FCardPanel>
               )}
             </div>
@@ -336,17 +464,17 @@ export function Dashboard() {
             <div className="band-grid-3">
               {panelVisible("Trade Flow") && (
                 <FCardPanel title="Trade Flow" minHeight={300}>
-                  <TradeFlowPanel data={tradeFlowData} />
+                  <UnsupportedPanel label="Trade flow" />
                 </FCardPanel>
               )}
               {panelVisible("Order Book") && (
                 <FCardPanel title="Order Book" minHeight={300}>
-                  <OrderBookPanel data={orderBookData} />
+                  <UnsupportedPanel label="Order book depth" />
                 </FCardPanel>
               )}
               {panelVisible("Congress Trades") && (
                 <FCardPanel title="Congress Trades" minHeight={300}>
-                  <CongressTradesPanel data={congressData} />
+                  <UnsupportedPanel label="Congress trades" />
                 </FCardPanel>
               )}
             </div>
@@ -359,12 +487,12 @@ export function Dashboard() {
             <div className="band-grid-2">
               {panelVisible("Yield Curve") && (
                 <FCardPanel title="Yield Curve" minHeight={300}>
-                  <YieldCurvePanel data={yieldCurveData} />
+                  <UnsupportedPanel label="Yield curve" />
                 </FCardPanel>
               )}
               {panelVisible("Sentiment") && (
                 <FCardPanel title="Sentiment" minHeight={300}>
-                  <SentimentPanel data={sentimentData} />
+                  <UnsupportedPanel label="Sentiment" />
                 </FCardPanel>
               )}
             </div>

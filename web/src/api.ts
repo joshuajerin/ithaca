@@ -14,6 +14,11 @@ import type {
   TriggerDryRunResult,
   TriggerRow,
   AdaptiveDashboardResponse,
+  DashboardRiskResponse,
+  DashboardSummaryResponse,
+  DashboardActivityResponse,
+  DashboardMarketResponse,
+  DashboardProviderStatusResponse,
 } from "./types";
 
 export interface ProviderConnectionInput {
@@ -108,6 +113,15 @@ async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): P
     throw new Error(`POST ${path} -> ${res.status} ${res.statusText}${text ? `: ${text}` : ""}`);
   }
   return (await res.json()) as T;
+}
+
+async function getBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+  const res = await fetch(`${API_BASE}${path}`, { headers: await headers(), signal });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`GET ${path} -> ${res.status} ${res.statusText}${body ? `: ${body}` : ""}`);
+  }
+  return res.blob();
 }
 
 async function delJson<T>(path: string, signal?: AbortSignal): Promise<T> {
@@ -255,6 +269,14 @@ export const api = {
     return postJson<RunRow>(`/sessions`, { prompt, title }, signal);
   },
 
+  async submitFeedback(message: string, signal?: AbortSignal): Promise<{
+    feedback_id: string;
+    status: "received";
+    created_at: string;
+  }> {
+    return postJson(`/feedback`, { message }, signal);
+  },
+
   async listStrategies(signal?: AbortSignal): Promise<StrategyRow[]> {
     const raw = await getJson<unknown>(`/strategies`, signal);
     return unwrapList<StrategyRow>(raw, "strategies");
@@ -273,6 +295,25 @@ export const api = {
     return getJson<AdaptiveDashboardResponse>(`/dashboard/adaptive`, signal);
   },
 
+  async getDashboardSummary(signal?: AbortSignal): Promise<DashboardSummaryResponse> {
+    return getJson<DashboardSummaryResponse>(`/dashboard/summary`, signal);
+  },
+
+  async getDashboardRisk(signal?: AbortSignal): Promise<DashboardRiskResponse> {
+    return getJson<DashboardRiskResponse>(`/dashboard/risk`, signal);
+  },
+
+  async getDashboardActivity(signal?: AbortSignal): Promise<DashboardActivityResponse> {
+    return getJson<DashboardActivityResponse>(`/dashboard/activity`, signal);
+  },
+
+  async getDashboardMarket(signal?: AbortSignal): Promise<DashboardMarketResponse> {
+    return getJson<DashboardMarketResponse>(`/dashboard/market`, signal);
+  },
+
+  async getDashboardProviderStatus(signal?: AbortSignal): Promise<DashboardProviderStatusResponse> {
+    return getJson<DashboardProviderStatusResponse>(`/providers/status`, signal);
+  },
   async liveDataSmoke(symbol = "AAPL", signal?: AbortSignal): Promise<LiveDataSmokeStatus> {
     return getJson<LiveDataSmokeStatus>(`/ops/live-data-smoke?symbol=${encodeURIComponent(symbol)}`, signal);
   },
@@ -390,12 +431,22 @@ export const api = {
   },
 
   // Write actions: the UI is the human actor (the gateway defaults X-Actor-Kind to "user").
-  async proposeStrategy(spec: Record<string, unknown>, signal?: AbortSignal): Promise<RunRow> {
-    return postJson<RunRow>(`/strategies`, { spec }, signal);
+  async proposeStrategy(spec: Record<string, unknown>, signal?: AbortSignal): Promise<{ id: string; version: number; state: string }> {
+    return postJson<{ id: string; version: number; state: string }>(`/strategies`, { spec }, signal);
   },
 
-  async createRun(strategy_id: string, kind: "backtest" | "paper", range = "1y", signal?: AbortSignal): Promise<RunRow> {
-    return postJson<RunRow>(`/runs`, { strategy_id, kind, range }, signal);
+  async createRun(
+    strategy_id: string,
+    kind: "backtest" | "paper",
+    range = "1y",
+    signal?: AbortSignal,
+    idempotency_key?: string,
+  ): Promise<RunRow> {
+    return postJson<RunRow>(`/runs`, { strategy_id, kind, range, idempotency_key }, signal);
+  },
+
+  async downloadArtifact(id: string, signal?: AbortSignal): Promise<Blob> {
+    return getBlob(`/artifacts/${encodeURIComponent(id)}/download`, signal);
   },
 
   async runAction(

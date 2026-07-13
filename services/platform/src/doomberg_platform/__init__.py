@@ -40,6 +40,7 @@ from .control_store import (
     TriggerStore,
 )
 from .db import Db, open_db
+from .feedback_store import FeedbackStore
 from .job_store import JobConflict, JobNotFound, JobStore
 from .job_profiles import (
     JOB_PROFILES,
@@ -65,6 +66,7 @@ from .user_store import SessionError, UserStore
 __all__ = [
     "open_db",
     "Db",
+    "FeedbackStore",
     "Platform",
     "TraceStore",
     "RunStore",
