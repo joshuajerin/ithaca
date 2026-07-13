@@ -505,6 +505,29 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_broker_order
 CREATE UNIQUE INDEX IF NOT EXISTS idx_fills_broker_fill
     ON fills (tenant_id, broker_fill_id)
     WHERE broker_fill_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS execution_controls (
+    tenant_id   TEXT PRIMARY KEY,
+    enabled     INTEGER NOT NULL DEFAULT 0,
+    reason      TEXT,
+    updated_by  TEXT NOT NULL,
+    version     INTEGER NOT NULL DEFAULT 1,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS execution_control_events (
+    tenant_id   TEXT NOT NULL,
+    event_id    TEXT NOT NULL,
+    enabled     INTEGER NOT NULL,
+    reason      TEXT,
+    actor_id    TEXT NOT NULL,
+    version     INTEGER NOT NULL,
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_control_events_tenant
+    ON execution_control_events (tenant_id, created_at DESC);
 """
 
 
