@@ -30,6 +30,7 @@ IBKR_SIGNIN_HOST="${IBKR_SIGNIN_HOST:-ibkr.doomberg.me}"
 IBKR_SIGNIN_REMOTE_IPS="${IBKR_SIGNIN_REMOTE_IPS:-0.0.0.0/0}"
 APP_REPLICAS_EXPLICIT="${APP_REPLICAS+x}"
 WORKER_REPLICAS_EXPLICIT="${WORKER_REPLICAS+x}"
+BACKTEST_REPLICAS_EXPLICIT="${BACKTEST_REPLICAS+x}"
 DEPLOY_DRY_RUN="${DEPLOY_DRY_RUN:-0}"
 case "${DEPLOY_DRY_RUN}" in
   0|false|no|off|"")
@@ -59,6 +60,7 @@ case "${DEPLOY_ENV}" in
     WORKER_NODE_WORKLOAD="${WORKER_NODE_WORKLOAD:-paper}"
     APP_REPLICAS="${APP_REPLICAS:-}"
     WORKER_REPLICAS="${WORKER_REPLICAS:-}"
+    BACKTEST_REPLICAS="${BACKTEST_REPLICAS:-}"
     DOOMBERG_PLATFORM_DB_URL="${DOOMBERG_PLATFORM_DB_URL:-${DOOMBERG_PROD_URL:-}}"
     IBKR_ENGINE_ENABLED="${IBKR_ENGINE_ENABLED:-1}"
     ;;
@@ -73,6 +75,7 @@ case "${DEPLOY_ENV}" in
     WORKER_NODE_WORKLOAD="${WORKER_NODE_WORKLOAD:-backtest}"
     APP_REPLICAS="${APP_REPLICAS:-1}"
     WORKER_REPLICAS="${WORKER_REPLICAS:-1}"
+    BACKTEST_REPLICAS="${BACKTEST_REPLICAS:-1}"
     DOOMBERG_PLATFORM_DB_URL="${DOOMBERG_PLATFORM_DB_URL:-${DOOMBERG_DEV_URL:-}}"
     # Dev shares the single customer-authenticated IBKR engine by default.
     # Set IBKR_ENGINE_ENABLED=1 explicitly only when intentionally testing an
@@ -163,12 +166,23 @@ if [[ "${DEPLOY_ENV}" == "prod" ]]; then
   elif [[ -z "${WORKER_REPLICAS_EXPLICIT}" ]]; then
     echo "==> default WORKER_REPLICAS=${WORKER_REPLICAS}"
   fi
+  if [[ -z "${BACKTEST_REPLICAS}" ]]; then
+    BACKTEST_REPLICAS="$(default_replicas_for_workload backtest)"
+    echo "==> derived BACKTEST_REPLICAS=${BACKTEST_REPLICAS} from workload=backtest"
+  elif [[ -z "${BACKTEST_REPLICAS_EXPLICIT}" ]]; then
+    echo "==> default BACKTEST_REPLICAS=${BACKTEST_REPLICAS}"
+  fi
 fi
 
 APP_MAX_SURGE="${APP_MAX_SURGE:-1}"
 APP_MAX_UNAVAILABLE="${APP_MAX_UNAVAILABLE:-0}"
 WORKER_MAX_SURGE="${WORKER_MAX_SURGE:-1}"
 WORKER_MAX_UNAVAILABLE="${WORKER_MAX_UNAVAILABLE:-1}"
+BACKTEST_MIN_REPLICAS="${BACKTEST_MIN_REPLICAS:-${BACKTEST_REPLICAS}}"
+BACKTEST_MAX_REPLICAS="${BACKTEST_MAX_REPLICAS:-8}"
+APP_MIN_AVAILABLE="${APP_MIN_AVAILABLE:-$([[ "${APP_REPLICAS}" -gt 1 ]] && echo 1 || echo 0)}"
+WORKER_MIN_AVAILABLE="${WORKER_MIN_AVAILABLE:-$([[ "${WORKER_REPLICAS}" -gt 1 ]] && echo 1 || echo 0)}"
+BACKTEST_MIN_AVAILABLE="${BACKTEST_MIN_AVAILABLE:-$([[ "${BACKTEST_REPLICAS}" -gt 1 ]] && echo 1 || echo 0)}"
 if [[ "${APP_REPLICAS}" -le 1 ]]; then
   APP_MAX_SURGE="${APP_MAX_SURGE_SINGLE:-0}"
   APP_MAX_UNAVAILABLE="${APP_MAX_UNAVAILABLE_SINGLE:-1}"
@@ -222,6 +236,12 @@ fi
 : "${DOOMBERG_SESSION_SECRET:?DOOMBERG_SESSION_SECRET must be set for ${DEPLOY_ENV}}"
 : "${CLERK_ALLOWED_ORIGINS:?CLERK_ALLOWED_ORIGINS must be set for ${DEPLOY_ENV}}"
 : "${CLERK_ISSUER:?CLERK_ISSUER must be set for ${DEPLOY_ENV}}"
+if [[ "${DEPLOY_ENV}" == "prod" ]]; then
+  : "${DOOMBERG_ARTIFACT_BUCKET:?DOOMBERG_ARTIFACT_BUCKET must be set for production}"
+  : "${DOOMBERG_ARTIFACT_ENDPOINT_URL:?DOOMBERG_ARTIFACT_ENDPOINT_URL must be set for production}"
+  : "${DOOMBERG_ARTIFACT_ACCESS_KEY_ID:?DOOMBERG_ARTIFACT_ACCESS_KEY_ID must be set for production}"
+  : "${DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY:?DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY must be set for production}"
+fi
 if [[ -z "${CLERK_PEM_PUBLIC_KEY:-}" && -z "${CLERK_JWKS_URL:-}" ]]; then
   echo "ERROR: CLERK_PEM_PUBLIC_KEY or CLERK_JWKS_URL must be set for ${DEPLOY_ENV}" >&2
   exit 2
@@ -274,6 +294,12 @@ render_manifest() {
     -e "s|\${WORKER_NODE_WORKLOAD}|${WORKER_NODE_WORKLOAD}|g" \
     -e "s|\${APP_REPLICAS}|${APP_REPLICAS}|g" \
     -e "s|\${WORKER_REPLICAS}|${WORKER_REPLICAS}|g" \
+    -e "s|\${BACKTEST_REPLICAS}|${BACKTEST_REPLICAS}|g" \
+    -e "s|\${BACKTEST_MIN_REPLICAS}|${BACKTEST_MIN_REPLICAS}|g" \
+    -e "s|\${BACKTEST_MAX_REPLICAS}|${BACKTEST_MAX_REPLICAS}|g" \
+    -e "s|\${APP_MIN_AVAILABLE}|${APP_MIN_AVAILABLE}|g" \
+    -e "s|\${WORKER_MIN_AVAILABLE}|${WORKER_MIN_AVAILABLE}|g" \
+    -e "s|\${BACKTEST_MIN_AVAILABLE}|${BACKTEST_MIN_AVAILABLE}|g" \
     -e "s|\${APP_MAX_SURGE}|${APP_MAX_SURGE}|g" \
     -e "s|\${APP_MAX_UNAVAILABLE}|${APP_MAX_UNAVAILABLE}|g" \
     -e "s|\${WORKER_MAX_SURGE}|${WORKER_MAX_SURGE}|g" \
@@ -328,6 +354,11 @@ create_doomberg_secret() {
     --from-literal=execution_max_notional_usd="${DOOMBERG_EXECUTION_MAX_NOTIONAL_USD:-10000}" \
     --from-literal=execution_max_quantity="${DOOMBERG_EXECUTION_MAX_QUANTITY:-10000}" \
     --from-literal=execution_max_freshness_ms="${DOOMBERG_EXECUTION_MAX_FRESHNESS_MS:-10000}" \
+    --from-literal=artifact_bucket="${DOOMBERG_ARTIFACT_BUCKET:-}" \
+    --from-literal=artifact_endpoint_url="${DOOMBERG_ARTIFACT_ENDPOINT_URL:-}" \
+    --from-literal=artifact_region="${DOOMBERG_ARTIFACT_REGION:-nyc3}" \
+    --from-literal=artifact_access_key_id="${DOOMBERG_ARTIFACT_ACCESS_KEY_ID:-}" \
+    --from-literal=artifact_secret_access_key="${DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY:-}" \
     --dry-run=client -o yaml | apply_manifest
 }
 
@@ -341,6 +372,46 @@ create_adaptive_dashboard_secret() {
     --from-literal=model="${DOOMBERG_ADAPTIVE_DASHBOARD_MODEL}" \
     --from-literal=anthropic_api_key="${ANTHROPIC_API_KEY:-}" \
     --dry-run=client -o yaml | apply_manifest
+}
+
+ensure_metrics_server() {
+  if [[ "${DEPLOY_DRY_RUN_MODE:-off}" != "off" ]]; then
+    echo "==> deploy dry-run: skipping metrics-server installation"
+    return 0
+  fi
+  if kubectl get apiservice v1beta1.metrics.k8s.io >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ "${INSTALL_METRICS_SERVER:-1}" != "1" ]]; then
+    echo "ERROR: metrics-server is required by the backtest HPA" >&2
+    return 1
+  fi
+  command -v doctl >/dev/null 2>&1 || {
+    echo "ERROR: doctl is required to install the DOKS metrics-server add-on" >&2
+    return 1
+  }
+  local cluster_id="${DOKS_CLUSTER_ID:-}"
+  if [[ -z "${cluster_id}" ]]; then
+    local context cluster_name
+    context="$(kubectl config current-context)"
+    cluster_name="${context#do-*-}"
+    cluster_id="$(doctl kubernetes cluster list --format ID,Name --no-header | awk -v name="${cluster_name}" '$2 == name {print $1; exit}')"
+  fi
+  [[ -n "${cluster_id}" ]] || {
+    echo "ERROR: set DOKS_CLUSTER_ID so metrics-server can be installed" >&2
+    return 1
+  }
+  echo "==> installing DOKS metrics-server add-on"
+  doctl kubernetes 1-click install "${cluster_id}" --1-clicks metrics-server
+  local i
+  for i in $(seq 1 36); do
+    if kubectl get --raw /apis/metrics.k8s.io/v1beta1 >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 5
+  done
+  echo "ERROR: metrics-server did not become ready within 180 seconds" >&2
+  return 1
 }
 
 verify_deployment_images() {
@@ -365,11 +436,13 @@ if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
 elif [[ "${DEPLOY_ENV}" == "dev" ]]; then
   echo "==> ibkr shared namespace=${SHARED_IBKR_NAMESPACE} url=${DOOMBERG_IBKR_ENGINE_URL}"
 fi
-echo "==> replicas app=${APP_REPLICAS} workers=${WORKER_REPLICAS} node_workloads app=${APP_NODE_WORKLOAD} workers=${WORKER_NODE_WORKLOAD}"
+echo "==> replicas app=${APP_REPLICAS} workers=${WORKER_REPLICAS} backtest=${BACKTEST_REPLICAS} node_workloads app=${APP_NODE_WORKLOAD} workers=${WORKER_NODE_WORKLOAD} backtest=backtest"
 echo "==> rollout app=maxSurge:${APP_MAX_SURGE},maxUnavailable:${APP_MAX_UNAVAILABLE} workers=maxSurge:${WORKER_MAX_SURGE},maxUnavailable:${WORKER_MAX_UNAVAILABLE}"
 
 echo "==> namespaces"
 render_manifest infra/k8s/namespace.yaml | apply_manifest
+
+ensure_metrics_server
 
 echo "==> secret doomberg-db (${DEPLOY_ENV}; values redacted)"
 create_doomberg_secret "${K8S_GATEWAY_NAMESPACE}"
@@ -391,7 +464,7 @@ if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
 fi
 
 echo "==> app manifests"
-for file in infra/k8s/app-deployment.yaml infra/k8s/app-service.yaml infra/k8s/worker-deployment.yaml; do
+for file in infra/k8s/app-deployment.yaml infra/k8s/app-service.yaml infra/k8s/worker-deployment.yaml infra/k8s/backtest-worker-deployment.yaml infra/k8s/disruption-budgets.yaml; do
   render_manifest "${file}" | apply_manifest
 done
 
@@ -433,6 +506,7 @@ if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
 fi
 kubectl -n "${K8S_GATEWAY_NAMESPACE}" rollout status deployment/doomberg-app --timeout=300s
 kubectl -n "${K8S_WORKER_NAMESPACE}" rollout status deployment/doomberg-workers --timeout=300s
+kubectl -n "${K8S_WORKER_NAMESPACE}" rollout status deployment/doomberg-backtest-workers --timeout=300s
 
 echo "==> verifying image tag"
 if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
@@ -453,6 +527,7 @@ if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
 fi
 verify_deployment_images "${K8S_GATEWAY_NAMESPACE}" doomberg-app
 verify_deployment_images "${K8S_WORKER_NAMESPACE}" doomberg-workers
+verify_deployment_images "${K8S_WORKER_NAMESPACE}" doomberg-backtest-workers
 
 echo "==> pods"
 kubectl -n "${K8S_GATEWAY_NAMESPACE}" get pods -o wide

@@ -15,7 +15,9 @@ The platform system-of-record is now Postgres: every app container receives
 
 `app-deployment.yaml` runs only the stateless ingress/control roles:
 `rest-gateway`, `control-plane`, and `mcp-gateway`. `worker-deployment.yaml`
-runs the active loops: `conductor` and `trigger-engine`. Postgres removes the
+runs the singleton/interactive loops: `conductor` and `trigger-engine`.
+`backtest-worker-deployment.yaml` runs independently scalable backtest-only workers on
+the `workload=backtest` node pool. Postgres removes the
 old shared SQLite PVC requirement and lets the app replicas scale separately
 from queue polling, paper ticks, and trigger evaluation.
 
@@ -33,7 +35,9 @@ replicas and one dev worker replica.
 
 - `namespace.yaml` - gateway + worker namespaces for the selected env.
 - `app-deployment.yaml` - rest-gateway + control-plane + mcp-gateway.
-- `worker-deployment.yaml` - conductor + trigger-engine.
+- `worker-deployment.yaml` - conductor + trigger-engine; its embedded backtest loop is disabled.
+- `backtest-worker-deployment.yaml` - dedicated backtest workers, PDB, and CPU HPA.
+- `disruption-budgets.yaml` - availability budgets for app and singleton workers.
 - `app-service.yaml` - NodePort service with env-specific ports.
 - `worker-networkpolicy.yaml` - default-deny worker namespace plus DNS, gateway, Postgres, and provider egress.
 - `ibkr-engine.yaml` - split IBKR Client Portal Gateway and Doomberg wrapper services.
@@ -45,6 +49,13 @@ replicas and one dev worker replica.
 The `doomberg-db` Secret is created in both the gateway and worker namespaces by
 `deploy/deploy_services.sh`, along with the image tag and replica counts.
 Set `DOOMBERG_PLATFORM_DB_URL` for the platform store.
+
+Backtest bundles are durable only when private object storage is configured. Production
+deploys require `DOOMBERG_ARTIFACT_BUCKET`, `DOOMBERG_ARTIFACT_ENDPOINT_URL`,
+`DOOMBERG_ARTIFACT_REGION`, `DOOMBERG_ARTIFACT_ACCESS_KEY_ID`, and
+`DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY`. The worker uploads tenant/run-prefixed encrypted
+objects before succeeding; the REST gateway streams tenant-authorized downloads without
+exposing storage credentials.
 
 Set `IBKR_ENGINE_ENABLED=1` to deploy the managed in-cluster IBKR engine. The
 Client Portal Java process runs as the dedicated `ibkr-gateway` Deployment and
