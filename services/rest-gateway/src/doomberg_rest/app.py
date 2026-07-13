@@ -45,7 +45,7 @@ from doomberg_control.actions import ActionError
 from doomberg_control.deps import HUMAN_ACTOR_KINDS, Ctx
 from doomberg_control.execution_gateway import ExecutionGateway
 from doomberg_core import Core
-from doomberg_core.providers import PUBLIC_DATA_SOURCE, PUBLIC_ENTITLEMENT_CLASS, IbkrEngineClient
+from doomberg_core.providers import PUBLIC_DATA_SOURCE, IbkrEngineClient
 from doomberg_mcp import Toolset
 from doomberg_platform import (
     AdaptiveDashboardProfileStore,
@@ -75,6 +75,23 @@ from doomberg_runtime import (
     usage_signals_for_user,
 )
 
+from .dashboard_readmodels import (
+    dashboard_activity,
+    dashboard_market,
+    dashboard_risk,
+    dashboard_summary,
+    provider_status,
+    public_provider_connection,
+)
+from .dashboard_models import (
+    DashboardActivityData,
+    DashboardEnvelope,
+    DashboardMarketData,
+    DashboardRiskData,
+    DashboardSummaryData,
+    ProviderStatusData,
+)
+from .dashboard_store import DashboardReadStore
 from .readmodel import shape_run, shape_run_row
 from .sse import event_stream, parse_last_event_id
 
@@ -107,6 +124,7 @@ class Stores:
         self.baselines = TriggerBaselineStore(db)
         self.notifications = NotificationStore(db)
         self.delivery_targets = DeliveryTargetStore(db)
+        self.dashboard = DashboardReadStore(db)
         self.core = Core()
 
 
@@ -421,39 +439,6 @@ def _configured_host(url: str | None) -> str | None:
 def _has_capability(connection: dict[str, Any], names: set[str]) -> bool:
     caps = {str(cap).strip().lower() for cap in connection.get("capabilities") or []}
     return bool(caps.intersection(names))
-
-
-def _public_provider_connection(connection: dict[str, Any]) -> dict[str, Any]:
-    """Return a REST-safe provider connection view without credential references."""
-    provider = str(connection.get("provider") or "")
-    is_private_live = provider.strip().lower() in {
-        "ibkr",
-        "ibkr-engine",
-        "interactive_brokers",
-        "interactive-brokers",
-        PUBLIC_DATA_SOURCE,
-    }
-    return {
-        "tenant_id": connection.get("tenant_id"),
-        "connection_id": connection.get("connection_id"),
-        "provider": PUBLIC_DATA_SOURCE if is_private_live else provider,
-        "state": connection.get("state"),
-        "capabilities": [
-            cap
-            for cap in (connection.get("capabilities") or [])
-            if str(cap).strip().lower() not in {"orders", "trading", "execution"}
-        ],
-        "entitlements": [
-            {**ent, "entitlement_class": PUBLIC_ENTITLEMENT_CLASS}
-            if isinstance(ent, dict) and is_private_live
-            else ent
-            for ent in (connection.get("entitlements") or [])
-        ],
-        "retention_policy": connection.get("retention_policy"),
-        "credential_configured": bool(connection.get("credential_ref")),
-        "created_at": connection.get("created_at"),
-        "updated_at": connection.get("updated_at"),
-    }
 
 
 def _sse_ticket_ttl_seconds() -> int:
@@ -1261,6 +1246,59 @@ def create_app(db: Any | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         return {"runs": [shape_run_row(r) for r in stores.runs.list(tenant_id, kind=kind)]}
 
+    @app.get("/api/dashboard/summary")
+    def get_dashboard_summary(
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> DashboardEnvelope[DashboardSummaryData]:
+        _require_scope(ctx, "data:read")
+        return DashboardEnvelope[DashboardSummaryData].model_validate(
+            dashboard_summary(stores.dashboard, ctx.tenant_id)
+        )
+
+    @app.get("/api/dashboard/risk")
+    def get_dashboard_risk(
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> DashboardEnvelope[DashboardRiskData]:
+        _require_scope(ctx, "data:read")
+        return DashboardEnvelope[DashboardRiskData].model_validate(
+            dashboard_risk(stores.dashboard, ctx.tenant_id)
+        )
+
+    @app.get("/api/dashboard/activity")
+    def get_dashboard_activity(
+        limit: int = Query(default=20, ge=1, le=100),
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> DashboardEnvelope[DashboardActivityData]:
+        _require_scope(ctx, "data:read")
+        _require_scope(ctx, "triggers:read")
+        _require_scope(ctx, "alerts:read")
+        return DashboardEnvelope[DashboardActivityData].model_validate(
+            dashboard_activity(stores.dashboard, ctx.tenant_id, limit=limit)
+        )
+
+    @app.get("/api/dashboard/market")
+    def get_dashboard_market(
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> DashboardEnvelope[DashboardMarketData]:
+        _require_scope(ctx, "data:read")
+        return DashboardEnvelope[DashboardMarketData].model_validate(
+            dashboard_market(stores.dashboard, ctx.tenant_id)
+        )
+
+    @app.get("/api/providers/status")
+    def get_provider_status(
+        ctx: Ctx = Depends(_ctx),
+        stores: Stores = Depends(get_stores),
+    ) -> DashboardEnvelope[ProviderStatusData]:
+        _require_scope(ctx, "data:read")
+        return DashboardEnvelope[ProviderStatusData].model_validate(
+            provider_status(stores.dashboard, ctx.tenant_id)
+        )
+
     @app.get("/api/runs/{run_id}")
     def get_run(
         run_id: str,
@@ -1462,7 +1500,7 @@ def create_app(db: Any | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         return {
             "connections": [
-                _public_provider_connection(connection)
+                public_provider_connection(connection)
                 for connection in stores.providers.list_connections(tenant_id)
             ],
             "snapshots": stores.providers.list_snapshots(tenant_id, limit=25),
@@ -1505,7 +1543,7 @@ def create_app(db: Any | None = None) -> FastAPI:
             credential_ref=credential_ref,
             retention_policy=body.retention_policy,
         )
-        return _public_provider_connection(connection)
+        return public_provider_connection(connection)
 
     @app.get("/api/dataset-snapshots")
     def list_dataset_snapshots(
