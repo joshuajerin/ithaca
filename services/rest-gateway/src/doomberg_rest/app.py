@@ -931,16 +931,27 @@ def _web_dist_dir() -> Path | None:
 
 def _spa_file_response(dist: Path, full_path: str) -> FileResponse:
     """Serve built files when present, otherwise fall back to the SPA index."""
+    shell_headers = {"Cache-Control": "no-store, max-age=0"}
     if full_path == "":
-        return FileResponse(dist / "index.html")
+        return FileResponse(dist / "index.html", headers=shell_headers)
     if full_path == "api" or full_path.startswith("api/"):
         raise HTTPException(status_code=404, detail="Not Found")
 
     root = dist.resolve()
     target = (root / full_path).resolve()
     if target.is_file() and target.is_relative_to(root):
-        return FileResponse(target)
-    return FileResponse(root / "index.html")
+        headers = (
+            {"Cache-Control": "public, max-age=31536000, immutable"}
+            if full_path.startswith("assets/")
+            else {"Cache-Control": "no-cache"}
+        )
+        return FileResponse(target, headers=headers)
+    # Vite gives bundled assets content-hashed names. If an old SPA shell asks for an
+    # asset removed by a newer deployment, returning index.html as JavaScript produces
+    # a module MIME error and a blank page. Only client-side routes get the SPA fallback.
+    if full_path.startswith("assets/"):
+        raise HTTPException(status_code=404, detail="Not Found")
+    return FileResponse(root / "index.html", headers=shell_headers)
 
 
 def _repo_root() -> Path:
