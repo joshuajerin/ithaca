@@ -49,6 +49,8 @@ from doomberg_core.providers import PUBLIC_DATA_SOURCE, IbkrEngineClient
 from doomberg_mcp import Toolset
 from doomberg_platform import (
     AdaptiveDashboardProfileStore,
+    ClerkApiError,
+    ClerkApiUnavailable,
     AuthStore,
     ApprovalStore,
     ArtifactStore,
@@ -66,6 +68,7 @@ from doomberg_platform import (
     TriggerBaselineStore,
     TriggerStore,
     UserStore,
+    build_agent_key_store,
     open_db,
 )
 from doomberg_runtime import (
@@ -111,6 +114,7 @@ class Stores:
         self.trace = TraceStore(db)
         self.books = BookStore(db)
         self.auth = AuthStore(db)
+        self.agent_keys = build_agent_key_store(db)
         self.adaptive_dashboards = AdaptiveDashboardProfileStore(db)
         self.users = UserStore(db)
         self.jobs = JobStore(db)
@@ -376,11 +380,11 @@ def _user_from_human_token(stores: "Stores", token: str) -> dict[str, Any] | Non
     claims = _decode_clerk_token(token)
     if claims is None:
         return None
-    return _upsert_clerk_user(stores, claims)
+    return {**_upsert_clerk_user(stores, claims), "clerk_subject": str(claims["sub"])}
 
 
 def _verify_bearer(request: Request, authorization: str | None) -> dict[str, Any] | None:
-    """Verify a bearer token — either a session JWT (human) or a dmbg_ API key (agent).
+    """Verify a bearer token — either a session JWT (human) or an agent API key.
 
     Returns a principal dict with at least ``tenant_id``, or ``None`` if no bearer
     token was presented (dev / X-Tenant-Id path). Raises 401 on invalid tokens.
@@ -389,9 +393,14 @@ def _verify_bearer(request: Request, authorization: str | None) -> dict[str, Any
     if key is None:
         return None
     stores = request.app.state.stores
-    # API key (BYO agents).
-    if key.startswith("dmbg_"):
-        principal = stores.auth.verify(key)
+    # Clerk-managed ``ak_`` keys and legacy ``dmbg_`` keys for BYO agents.
+    if key.startswith(("ak_", "dmbg_")):
+        try:
+            principal = stores.agent_keys.verify(key)
+        except ClerkApiUnavailable as exc:
+            raise HTTPException(status_code=503, detail="API key verification unavailable") from exc
+        except ClerkApiError as exc:
+            raise HTTPException(status_code=401, detail="invalid or revoked token") from exc
         if principal is None:
             raise HTTPException(status_code=401, detail="invalid or revoked token")
         return {**principal, "actor_kind": "agent"}
@@ -971,8 +980,8 @@ def create_app(db: Any | None = None) -> FastAPI:
         key = _bearer_key(authorization)
         if not key:
             raise HTTPException(status_code=401, detail="not authenticated")
-        # Try session JWT first, fall back to API key.
-        user = _user_from_human_token(stores, key)
+        # Clerk API keys are opaque ``ak_`` values, not session JWTs.
+        user = None if key.startswith(("ak_", "dmbg_")) else _user_from_human_token(stores, key)
         if user is not None:
             return {
                 "id": user["id"],
@@ -981,8 +990,13 @@ def create_app(db: Any | None = None) -> FastAPI:
                 "avatarUrl": user.get("avatar_url"),
                 "tenantId": user["tenant_id"],
             }
-        # Try API key (BYO agents).
-        principal = stores.auth.verify(key)
+        # Try a Clerk-managed or legacy API key (BYO agents).
+        try:
+            principal = stores.agent_keys.verify(key)
+        except ClerkApiUnavailable as exc:
+            raise HTTPException(status_code=503, detail="API key verification unavailable") from exc
+        except ClerkApiError as exc:
+            raise HTTPException(status_code=401, detail="invalid token") from exc
         if principal:
             return {
                 "id": principal["tenant_id"],
@@ -998,7 +1012,7 @@ def create_app(db: Any | None = None) -> FastAPI:
     # CANNOT mint more keys (only a session/human can) — key issuance requires sign-in.
     def _session_user(authorization: str | None, stores: "Stores") -> dict[str, Any]:
         key = _bearer_key(authorization)
-        if key:
+        if key and not key.startswith(("ak_", "dmbg_")):
             user = _user_from_human_token(stores, key)
             if user is not None:
                 return user
@@ -1061,9 +1075,15 @@ def create_app(db: Any | None = None) -> FastAPI:
         user = _session_user(authorization, stores)
         scopes = body.scopes if body.scopes else list(_DEFAULT_KEY_SCOPES)
         try:
-            plaintext, key_id = stores.auth.mint_key(user["tenant_id"], scopes)
+            plaintext, key_id = stores.agent_keys.mint_key(
+                user["tenant_id"], scopes, subject=user.get("clerk_subject")
+            )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ClerkApiUnavailable as exc:
+            raise HTTPException(status_code=503, detail="Clerk API key service unavailable") from exc
+        except ClerkApiError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         return {
             "api_key": plaintext,
             "key_id": key_id,
@@ -1078,7 +1098,15 @@ def create_app(db: Any | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         """List the signed-in user's tenant's keys (metadata only — secrets are never stored)."""
         user = _session_user(authorization, stores)
-        return {"keys": stores.auth.list_keys(user["tenant_id"])}
+        try:
+            keys = stores.agent_keys.list_keys(
+                user["tenant_id"], subject=user.get("clerk_subject")
+            )
+        except ClerkApiUnavailable as exc:
+            raise HTTPException(status_code=503, detail="Clerk API key service unavailable") from exc
+        except ClerkApiError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"keys": keys}
 
     @app.delete("/api/auth/keys/{key_id}")
     def revoke_api_key(
@@ -1088,10 +1116,18 @@ def create_app(db: Any | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         """Revoke a key — only if it belongs to the signed-in user's tenant (no cross-tenant)."""
         user = _session_user(authorization, stores)
-        owned = {k["key_id"] for k in stores.auth.list_keys(user["tenant_id"])}
-        if key_id not in owned:
+        try:
+            revoked = stores.agent_keys.revoke_key(
+                key_id,
+                tenant_id=user["tenant_id"],
+                subject=user.get("clerk_subject"),
+            )
+        except ClerkApiUnavailable as exc:
+            raise HTTPException(status_code=503, detail="Clerk API key service unavailable") from exc
+        except ClerkApiError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if not revoked:
             raise HTTPException(status_code=404, detail="key not found")
-        stores.auth.revoke_key(key_id)
         return {"key_id": key_id, "revoked": True}
 
     @app.get("/api/agent/toolkits")

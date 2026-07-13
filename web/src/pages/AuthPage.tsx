@@ -1,6 +1,5 @@
-import { SignIn, SignUp } from "@clerk/react";
-import { useEffect, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { SignIn, SignUp, Waitlist } from "@clerk/react";
+import { Link, useLocation } from "react-router-dom";
 import { DoombergMark } from "../auth/icons";
 import { legalUrl } from "../lib/legal";
 
@@ -18,11 +17,8 @@ const embeddedClerkAppearance = {
 
 export function AuthPage() {
   const { pathname } = useLocation();
-  const [isSignUp, setIsSignUp] = useState(pathname === "/sign-up");
-
-  useEffect(() => {
-    setIsSignUp(pathname === "/sign-up");
-  }, [pathname]);
+  const isSignUp = pathname.startsWith("/sign-up");
+  const isWaitlist = pathname.startsWith("/waitlist");
 
   return (
     <div className="auth">
@@ -35,22 +31,25 @@ export function AuthPage() {
           </div>
         </div>
 
-        {isSignUp ? (
-          <SignUp appearance={embeddedClerkAppearance} path="/" routing="path" />
+        {isWaitlist ? (
+          <Waitlist appearance={embeddedClerkAppearance} />
+        ) : isSignUp ? (
+          <SignUp appearance={embeddedClerkAppearance} path="/sign-up" routing="path" />
         ) : (
           <SignIn appearance={embeddedClerkAppearance} path="/" routing="path" />
         )}
 
         <div className="auth-mode-row">
-          <span>{isSignUp ? "Already have an account?" : "Don't have an account?"}</span>
-          <button
+          <span>
+            {isWaitlist || isSignUp ? "Already approved?" : "New to Doomberg?"}
+          </span>
+          <Link
             className="link-btn auth-mode-link"
             data-auth-switch
-            type="button"
-            onClick={() => setIsSignUp((current) => !current)}
+            to={isWaitlist || isSignUp ? "/" : "/waitlist"}
           >
-            {isSignUp ? "Sign in" : "Sign up"}
-          </button>
+            {isWaitlist || isSignUp ? "Sign in" : "Join the waitlist"}
+          </Link>
         </div>
 
         <p className="auth-consent">

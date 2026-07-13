@@ -111,15 +111,17 @@ export function App() {
             {/* Default */}
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
-            {/* Primary screens */}
+             {/* Primary screens */}
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/sessions" element={<SessionsList />} />
             <Route path="/sessions/:id" element={<SessionsList />} />
             <Route path="/backtests" element={<Backtests />} />
             <Route path="/backtests/:id" element={<DeploymentDetail />} />
             <Route path="/deployments" element={<Navigate to="/backtests" replace />} />
-            <Route path="/deployments/:id" element={<DeploymentDetail />} />
-            <Route path="/settings" element={<Settings />} />
+             <Route path="/deployments/:id" element={<DeploymentDetail />} />
+             <Route path="/settings" element={<Settings />} />
+             <Route path="/sign-up" element={<Navigate to="/dashboard" replace />} />
+             <Route path="/waitlist" element={<Navigate to="/dashboard" replace />} />
 
             <Route path="/agent-link" element={<AgentLink />} />
             <Route path="/session-detail/:id" element={<SessionDetail />} />

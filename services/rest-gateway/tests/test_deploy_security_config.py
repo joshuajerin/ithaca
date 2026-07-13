@@ -25,6 +25,18 @@ def test_deploy_workflow_uses_platform_db_secret() -> None:
     assert "DOOMBERG_ARCHIVE_URL" not in workflow
 
 
+def test_deploy_requires_and_injects_clerk_secret_for_managed_api_keys() -> None:
+    deploy_script = (REPO_ROOT / "deploy" / "deploy_services.sh").read_text()
+    workflow = (REPO_ROOT / ".github" / "workflows" / "deploy-do.yml").read_text()
+    manifest = (REPO_ROOT / "infra" / "k8s" / "app-deployment.yaml").read_text()
+
+    assert "CLERK_SECRET_KEY must be set for Clerk-managed agent API keys" in deploy_script
+    assert '--from-literal=clerk_secret_key="${CLERK_SECRET_KEY}"' in deploy_script
+    assert "require_env CLERK_SECRET_KEY" in workflow
+    assert "CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}" in workflow
+    assert manifest.count("name: CLERK_SECRET_KEY") == 3
+
+
 def test_dedicated_backtest_workers_are_opt_in_for_production() -> None:
     deploy_script = (REPO_ROOT / "deploy" / "deploy_services.sh").read_text()
     workflow = (REPO_ROOT / ".github" / "workflows" / "deploy-do.yml").read_text()

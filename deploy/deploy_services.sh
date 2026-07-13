@@ -258,6 +258,7 @@ fi
 : "${DOOMBERG_SESSION_SECRET:?DOOMBERG_SESSION_SECRET must be set for ${DEPLOY_ENV}}"
 : "${CLERK_ALLOWED_ORIGINS:?CLERK_ALLOWED_ORIGINS must be set for ${DEPLOY_ENV}}"
 : "${CLERK_ISSUER:?CLERK_ISSUER must be set for ${DEPLOY_ENV}}"
+: "${CLERK_SECRET_KEY:?CLERK_SECRET_KEY must be set for Clerk-managed agent API keys}"
 if [[ "${DEPLOY_ENV}" == "prod" && "${BACKTEST_WORKER_ENABLED}" == "1" ]]; then
   : "${DOOMBERG_ARTIFACT_BUCKET:?DOOMBERG_ARTIFACT_BUCKET must be set for production}"
   : "${DOOMBERG_ARTIFACT_ENDPOINT_URL:?DOOMBERG_ARTIFACT_ENDPOINT_URL must be set for production}"
@@ -354,6 +355,7 @@ create_doomberg_secret() {
     --from-literal=db_url="${DOOMBERG_PLATFORM_DB_URL}" \
     --from-literal=platform_url="${DOOMBERG_PLATFORM_DB_URL}" \
     --from-literal=session_secret="${DOOMBERG_SESSION_SECRET}" \
+    --from-literal=clerk_secret_key="${CLERK_SECRET_KEY}" \
     --from-literal=clerk_pem_public_key="${CLERK_PEM_PUBLIC_KEY:-}" \
     --from-literal=clerk_jwks_url="${CLERK_JWKS_URL:-}" \
     --from-literal=clerk_allowed_origins="${CLERK_ALLOWED_ORIGINS:-}" \

@@ -107,6 +107,9 @@ spec:
             - name: DOOMBERG_SESSION_SECRET
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: session_secret, optional: true }
+            - name: CLERK_SECRET_KEY
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: clerk_secret_key }
             - name: CLERK_PEM_PUBLIC_KEY
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: clerk_pem_public_key, optional: true }
@@ -231,6 +234,9 @@ spec:
             - name: DOOMBERG_ADMIN_TOKEN
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: admin_token, optional: true }
+            - name: CLERK_SECRET_KEY
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: clerk_secret_key }
             - name: DOOMBERG_ENABLE_LIVE_EXECUTION
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: enable_live_execution, optional: true }
@@ -316,6 +322,9 @@ spec:
                 secretKeyRef:
                   name: doomberg-db
                   key: platform_url
+            - name: CLERK_SECRET_KEY
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: clerk_secret_key }
             - name: FMP_API_KEY
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: fmp_api_key, optional: true }
