@@ -132,10 +132,21 @@ _RLS_SQL = "\n".join(
     ]
 )
 
+_EXECUTION_IDEMPOTENCY_SQL = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_broker_order
+    ON orders (tenant_id, broker, broker_order_id)
+    WHERE broker_order_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fills_broker_fill
+    ON fills (tenant_id, broker_fill_id)
+    WHERE broker_fill_id IS NOT NULL;
+"""
+
 
 MIGRATIONS = (
     Migration(1, "platform baseline", _BASELINE_SCHEMA),
     Migration(2, "enforce tenant row security", _RLS_SQL),
+    Migration(3, "deduplicate broker execution records", _EXECUTION_IDEMPOTENCY_SQL),
 )
 
 

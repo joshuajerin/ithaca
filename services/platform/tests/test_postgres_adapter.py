@@ -100,7 +100,7 @@ def test_postgres_migrations_are_ordered_idempotent_and_locked() -> None:
 
 
 def test_postgres_rls_migration_forces_direct_and_indirect_tenant_policies() -> None:
-    rls = MIGRATIONS[-1]
+    rls = MIGRATIONS[1]
     assert rls.version == 2
     for table in ("runs", "api_keys", "trace_events", "order_intents", "run_seq"):
         assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY" in rls.sql
@@ -109,6 +109,15 @@ def test_postgres_rls_migration_forces_direct_and_indirect_tenant_policies() -> 
     assert "scoped_run.tenant_id = current_setting('doomberg.tenant_id', true)" in rls.sql
     assert "scoped_user.id = oauth_accounts.user_id" in rls.sql
     assert "scoped_user.id = user_sessions.user_id" in rls.sql
+
+
+def test_postgres_execution_migration_deduplicates_broker_records() -> None:
+    execution = MIGRATIONS[2]
+    assert execution.version == 3
+    assert "idx_orders_broker_order" in execution.sql
+    assert "WHERE broker_order_id IS NOT NULL" in execution.sql
+    assert "idx_fills_broker_fill" in execution.sql
+    assert "WHERE broker_fill_id IS NOT NULL" in execution.sql
 
 
 def test_postgres_migration_validation_fails_on_pending_schema() -> None:
@@ -355,9 +364,18 @@ def test_live_postgres_platform_smoke() -> None:
         fill = execution.create_fill(
             tenant_id,
             order["order_id"],
+            broker_fill_id="pg-smoke-fill",
             payload={"symbol": "AAPL", "quantity": 1, "price": 100},
             event_time="2026-06-24T00:00:00+00:00",
         )
+        same_fill = execution.create_fill(
+            tenant_id,
+            order["order_id"],
+            broker_fill_id="pg-smoke-fill",
+            payload={"symbol": "AAPL", "quantity": 1, "price": 100},
+            event_time="2026-06-24T00:00:00+00:00",
+        )
+        assert same_fill["fill_id"] == fill["fill_id"]
         record = execution.get_record(tenant_id, intent["intent_id"])
         assert record["orders"][0]["order_id"] == order["order_id"]
         assert record["fills"][0]["fill_id"] == fill["fill_id"]

@@ -209,6 +209,20 @@ transaction-local `doomberg.system_access` flag. RLS is a containment boundary
 for missing or incorrect tenant predicates, not a substitute for protecting
 database credentials or preventing arbitrary SQL execution.
 
+Migration 3 adds unique broker-order and broker-fill identities. Before applying
+it to an existing database, both queries below must return zero rows; duplicates
+require an operator-led broker audit rather than automatic deletion:
+
+```sql
+SELECT tenant_id, broker, broker_order_id, count(*)
+FROM orders WHERE broker_order_id IS NOT NULL
+GROUP BY tenant_id, broker, broker_order_id HAVING count(*) > 1;
+
+SELECT tenant_id, broker_fill_id, count(*)
+FROM fills WHERE broker_fill_id IS NOT NULL
+GROUP BY tenant_id, broker_fill_id HAVING count(*) > 1;
+```
+
 ---
 
 ## 6. Verify live-data wiring
@@ -230,7 +244,8 @@ runtime topology has two deployments:
 
 `doomberg-workers` in the worker namespace:
 
-- `conductor` (`BacktestWorker`, trigger-job worker, and paper scheduler)
+- `conductor` (backtest/trigger workers, paper scheduler, notifications, adaptive
+  dashboard recompute, and broker order reconciliation)
 - `trigger-engine` (active trigger policy polling)
 
 Both deployments intentionally share the managed Postgres platform store through
@@ -242,9 +257,10 @@ both `doomberg-db` Secrets, and replica counts are rendered/applied by
 
 Production defaults to `WORKER_REPLICAS=2`. Backtest and trigger-analysis jobs
 are claimed through durable job leases. The paper scheduler and trigger polling
-loops use the platform `worker_leases` table, so only one worker replica owns
-each singleton loop at a time; if the owner dies, another replica takes over
-after the lease TTL.
+loops use the platform `worker_leases` table, as does the execution reconciler,
+so only one worker replica owns each singleton loop at a time; if the owner dies,
+another replica takes over after the lease TTL. Order reconciliation defaults to
+five seconds and is tunable with `DOOMBERG_RECONCILIATION_INTERVAL_S`.
 
 For connected-account live trigger quotes, use the managed in-cluster IBKR engine
 by default:
@@ -372,8 +388,11 @@ DOOMBERG_API_KEY=dmbg_... \
 python scripts/launch_gate.py --mode http --require-postgres --require-ibkr --require-mcp --json
 ```
 
-For live broker submission through the deterministic execution gateway, set the
-same engine URL plus the explicit live-execution switch and limits:
+The repository's default IBKR engine is deliberately data-only: `GET /orders`
+supports state reconciliation, while `POST /orders` returns 403. Do not enable
+live submission against that deployment. A separately approved execution-capable
+engine must preserve `client_order_id` idempotency and expose the same read-back
+surface before using the deterministic execution gateway:
 
 ```bash
 export DOOMBERG_ENABLE_LIVE_EXECUTION=1
@@ -386,7 +405,12 @@ export DOOMBERG_EXECUTION_MAX_FRESHNESS_MS=10000
 If `DOOMBERG_ENABLE_LIVE_EXECUTION=1` is set without `DOOMBERG_IBKR_ENGINE_URL`,
 `deploy/deploy_services.sh` fails before applying manifests. The gateway still
 requires a connected provider row with order/trading capability for live broker
-intents, and human submission remains the only path from intent to order.
+intents, and human submission remains the only path from intent to order. The
+gateway persists a `pending_submission` order before contacting the broker; the
+conductor then reconciles `submitting`, submitted, and partially-filled orders
+from `GET /orders`, with cumulative fill deltas deduplicated by broker identity.
+Connection loss or a broker 5xx after send stays `submitting` and is never
+blindly retried because the broker outcome may already be real.
 
 If `IBKR_ENGINE_ENABLED=0` and `DOOMBERG_IBKR_ENGINE_URL` is unset, the trigger
 worker still deploys and idles, but active live-data policies will emit provider

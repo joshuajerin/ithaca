@@ -6,7 +6,18 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from control_helpers import agent_headers, human_headers
-from doomberg_control.execution_gateway import IBKREngineBrokerAdapter
+import pytest
+
+from doomberg_control.actions import ActionError
+from doomberg_control.deps import Ctx
+from doomberg_control.execution_gateway import (
+    BROKER_IBKR,
+    BROKER_PAPER,
+    ExecutionGateway,
+    ExecutionPolicy,
+    IBKREngineBrokerAdapter,
+    _SubmissionOutcomeUnknown,
+)
 
 
 def _run(platform, tenant_id: str) -> str:
@@ -112,12 +123,199 @@ def test_execution_gateway_policy_denies_oversized_order(client, platform, tenan
     assert platform.execution.get_intent(tenant_a, intent_id)["state"] == "policy_denied"
 
 
+class _RecoveringAdapter:
+    broker = BROKER_PAPER
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def submit(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs["client_order_id"])
+        if len(self.calls) == 1:
+            raise ActionError(503, "temporary broker outage")
+        return {
+            "broker_order_id": "paper-recovered-1",
+            "state": "filled",
+            "fills": [
+                {
+                    "broker_fill_id": "paper-recovered-fill-1",
+                    "payload": {"quantity": 2, "price": 100},
+                }
+            ],
+            "raw": {"recovered": True},
+        }
+
+
+def test_submit_persists_outbox_before_broker_call_and_retries_same_identity(
+    platform, tenant_a
+):
+    adapter = _RecoveringAdapter()
+    gateway = ExecutionGateway(platform, adapters={BROKER_PAPER: adapter})
+    ctx = Ctx(tenant_a, "human", "trader-1")
+    run_id = _run(platform, tenant_a)
+    intent = gateway.create_intent(
+        ctx,
+        run_id=run_id,
+        payload=_intent_payload(),
+        idempotency_key="durable-submit",
+    )
+
+    with pytest.raises(ActionError, match="temporary broker outage"):
+        gateway.submit(ctx, intent["intent_id"])
+
+    interrupted = platform.execution.get_record(tenant_a, intent["intent_id"])
+    assert len(interrupted["orders"]) == 1
+    assert interrupted["orders"][0]["state"] == "pending_submission"
+    client_order_id = interrupted["orders"][0]["client_order_id"]
+
+    recovered = gateway.submit(ctx, intent["intent_id"])
+    assert recovered["state"] == "filled"
+    assert len(recovered["orders"]) == 1
+    assert len(recovered["fills"]) == 1
+    assert adapter.calls == [client_order_id, client_order_id]
+
+
+class _UnknownOutcomeAdapter:
+    broker = BROKER_PAPER
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.snapshots: list[dict[str, Any]] = []
+
+    def submit(self, **_kwargs: Any) -> dict[str, Any]:
+        self.calls += 1
+        raise _SubmissionOutcomeUnknown("response was lost after send")
+
+    def snapshot(self, **_kwargs: Any) -> list[dict[str, Any]]:
+        return list(self.snapshots)
+
+
+def test_unknown_submission_outcome_never_blindly_retries(platform, tenant_a):
+    adapter = _UnknownOutcomeAdapter()
+    gateway = ExecutionGateway(platform, adapters={BROKER_PAPER: adapter})
+    ctx = Ctx(tenant_a, "human", "trader-1")
+    run_id = _run(platform, tenant_a)
+    intent = gateway.create_intent(ctx, run_id=run_id, payload=_intent_payload())
+
+    with pytest.raises(ActionError, match="outcome is unknown"):
+        gateway.submit(ctx, intent["intent_id"])
+    unknown = platform.execution.get_record(tenant_a, intent["intent_id"])
+    order = unknown["orders"][0]
+    assert order["state"] == "submitting"
+    assert order["payload"]["submission_outcome"] == "unknown"
+
+    # A normal retry returns durable state and never sends the same order again.
+    gateway.submit(ctx, intent["intent_id"])
+    assert adapter.calls == 1
+
+    adapter.snapshots = [
+        {
+            "broker_order_id": "paper-unknown-1",
+            "client_order_id": order["client_order_id"],
+            "state": "filled",
+            "filled_quantity": 2,
+            "avg_fill_price": 100,
+            "fills": [],
+            "raw": {"recovered": True},
+        }
+    ]
+    recovered = gateway.reconcile_intent(ctx, intent["intent_id"])
+    assert recovered["state"] == "filled"
+    assert recovered["orders"][0]["broker_order_id"] == "paper-unknown-1"
+    assert len(recovered["fills"]) == 1
+
+
+class _SnapshotAdapter:
+    broker = BROKER_IBKR
+
+    def __init__(self) -> None:
+        self.snapshots: list[dict[str, Any]] = []
+
+    def configured(self) -> bool:
+        return True
+
+    def submit(self, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "broker_order_id": "ibkr-live-1",
+            "state": "submitted",
+            "fills": [],
+            "raw": {"cOID": kwargs["client_order_id"]},
+        }
+
+    def snapshot(self, **_kwargs: Any) -> list[dict[str, Any]]:
+        return list(self.snapshots)
+
+
+def test_reconciliation_deduplicates_cumulative_broker_fills(platform, tenant_a):
+    adapter = _SnapshotAdapter()
+    gateway = ExecutionGateway(
+        platform,
+        policy=ExecutionPolicy(live_enabled=True, require_connected_provider_for_live=False),
+        adapters={BROKER_IBKR: adapter},
+    )
+    ctx = Ctx(tenant_a, "human", "trader-1")
+    run_id = _run(platform, tenant_a)
+    intent = gateway.create_intent(
+        ctx,
+        run_id=run_id,
+        payload={**_intent_payload(), "broker": BROKER_IBKR, "live": True},
+    )
+    submitted = gateway.submit(ctx, intent["intent_id"])
+    client_order_id = submitted["orders"][0]["client_order_id"]
+
+    adapter.snapshots = [
+        {
+            "broker_order_id": "ibkr-live-1",
+            "client_order_id": client_order_id,
+            "state": "partially_filled",
+            "filled_quantity": 1,
+            "avg_fill_price": 100,
+            "fills": [],
+            "raw": {"status": "PartiallyFilled"},
+        }
+    ]
+    first = gateway.reconcile_intent(ctx, intent["intent_id"])
+    again = gateway.reconcile_intent(ctx, intent["intent_id"])
+    assert first["state"] == "partially_filled"
+    assert len(again["fills"]) == 1
+
+    adapter.snapshots[0].update(state="filled", filled_quantity=2, avg_fill_price=110)
+    final = gateway.reconcile_intent(ctx, intent["intent_id"])
+    assert final["state"] == "filled"
+    assert len(final["fills"]) == 2
+    assert sum(fill["payload"]["quantity"] for fill in final["fills"]) == 2
+    assert [fill["payload"]["price"] for fill in final["fills"]] == [100, 120]
+    worker_result = gateway.reconcile_open_orders()
+    assert worker_result["open_orders"] == 0
+
+
 class _OrderServer:
     def __init__(self) -> None:
         self.requests: list[dict[str, Any]] = []
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                owner.requests.append({"path": self.path, "method": "GET"})
+                raw = json.dumps(
+                    {
+                        "orders": [
+                            {
+                                "orderId": "ibkr-order-1",
+                                "cOID": "client-1",
+                                "status": "Filled",
+                                "filledQuantity": 1,
+                                "avgPrice": 100,
+                            }
+                        ]
+                    }
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
             def do_POST(self) -> None:  # noqa: N802
                 length = int(self.headers.get("Content-Length") or "0")
                 body = json.loads(self.rfile.read(length) or b"{}")
@@ -166,9 +364,14 @@ def test_ibkr_adapter_uses_shared_engine_client_and_canonicalizes_state() -> Non
             client_order_id="client-1",
             order={"symbol": "AAPL", "side": "buy", "quantity": 1},
         )
+        snapshots = adapter.snapshot(tenant_id="tenant-1", account_ref="DU12345")
 
     assert out["broker_order_id"] == "ibkr-order-1"
     assert out["state"] == "partially_filled"
     assert out["fills"][0]["broker_fill_id"] == "fill-1"
+    assert snapshots[0]["broker_order_id"] == "ibkr-order-1"
+    assert snapshots[0]["client_order_id"] == "client-1"
+    assert snapshots[0]["state"] == "filled"
     assert server.requests[0]["path"] == "/v1/orders"
     assert server.requests[0]["body"]["client_order_id"] == "client-1"
+    assert server.requests[1]["path"] == "/orders?account=DU12345"

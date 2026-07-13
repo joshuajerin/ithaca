@@ -495,6 +495,18 @@ CREATE INDEX IF NOT EXISTS idx_fills_order
     ON fills (tenant_id, order_id, event_time);
 """
 
+# Portable post-baseline evolutions for SQLite local/dev. PostgreSQL applies the
+# equivalent statements through the ordered migration manifest.
+_LOCAL_SCHEMA_EVOLUTIONS = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_broker_order
+    ON orders (tenant_id, broker, broker_order_id)
+    WHERE broker_order_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fills_broker_fill
+    ON fills (tenant_id, broker_fill_id)
+    WHERE broker_fill_id IS NOT NULL;
+"""
+
 
 class _RunChannel:
     """Live tail buffer + condition for one run (in-proc pub/sub)."""
@@ -525,6 +537,7 @@ class Db:
         self._channels_lock = threading.Lock()
         with self._conn:
             self._conn.executescript(_BASELINE_SCHEMA)
+            self._conn.executescript(_LOCAL_SCHEMA_EVOLUTIONS)
 
     @property
     def conn(self) -> sqlite3.Connection:

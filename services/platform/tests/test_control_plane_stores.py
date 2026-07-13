@@ -233,6 +233,29 @@ def test_artifacts_approvals_providers_and_execution(platform):
         payload={"symbol": "AAPL", "quantity": 1, "price": 100},
         event_time="2026-06-24T00:00:00+00:00",
     )
+    same_fill = platform.execution.create_fill(
+        tenant,
+        order["order_id"],
+        broker_fill_id="fill-1",
+        payload={"symbol": "AAPL", "quantity": 1, "price": 100},
+        event_time="2026-06-24T00:00:00+00:00",
+    )
+    assert same_fill["fill_id"] == fill["fill_id"]
+    other_order = platform.execution.create_order(
+        tenant,
+        intent["intent_id"],
+        broker="paper",
+        client_order_id="dmbg-test-2",
+        payload={"symbol": "MSFT", "quantity": 1},
+    )
+    with pytest.raises(ValueError, match="another order"):
+        platform.execution.create_fill(
+            tenant,
+            other_order["order_id"],
+            broker_fill_id="fill-1",
+            payload={"symbol": "MSFT", "quantity": 1, "price": 50},
+            event_time="2026-06-24T00:01:00+00:00",
+        )
     record = platform.execution.get_record(tenant, intent["intent_id"])
     assert record["orders"][0]["order_id"] == order["order_id"]
     assert record["fills"][0]["fill_id"] == fill["fill_id"]
