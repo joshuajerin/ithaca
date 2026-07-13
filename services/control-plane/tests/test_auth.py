@@ -136,6 +136,40 @@ def test_admin_requires_matching_token(client, monkeypatch):
                        headers={"X-Admin-Token": "wrong"}).status_code == 401
 
 
+def test_admin_global_execution_kill_switch(client, platform, monkeypatch, tenant_a):
+    monkeypatch.setenv("DOOMBERG_ADMIN_TOKEN", "s3cret")
+    response = client.post(
+        "/admin/execution/kill-switch",
+        json={"enabled": True, "reason": "site incident", "expect_version": 0},
+        headers={"X-Admin-Token": "s3cret"},
+    )
+    assert response.status_code == 200, response.text
+    assert platform.execution_controls.get_effective(tenant_a)["source"] == "global"
+    status = client.get(
+        "/admin/execution/kill-switch",
+        headers={"X-Admin-Token": "s3cret"},
+    )
+    assert status.status_code == 200, status.text
+    assert status.json()["control"]["enabled"] is True
+    assert status.json()["audit"][0]["reason"] == "site incident"
+
+    stale = client.post(
+        "/admin/execution/kill-switch",
+        json={"enabled": False, "reason": "stale release", "expect_version": 0},
+        headers={"X-Admin-Token": "s3cret"},
+    )
+    assert stale.status_code == 409
+
+    released = client.post(
+        "/admin/execution/kill-switch",
+        json={"enabled": False, "reason": "site recovered", "expect_version": 1},
+        headers={"X-Admin-Token": "s3cret"},
+    )
+    assert released.status_code == 200
+    assert released.json()["enabled"] is False
+    assert released.json()["version"] == 2
+
+
 def test_admin_can_create_tenant_and_mint_key_end_to_end(client, platform, monkeypatch):
     monkeypatch.setenv("DOOMBERG_ADMIN_TOKEN", "s3cret")
     h = {"X-Admin-Token": "s3cret"}

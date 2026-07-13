@@ -41,7 +41,7 @@ def test_spa_served_and_api_precedence(tmp_path, db, monkeypatch):
         assert missing_asset.status_code == 404
         assert missing_asset.headers["content-type"].startswith("application/json")
         # /healthz still wins over the SPA mount.
-        assert c.get("/healthz").json() == {"status": "ok"}
+        assert c.get("/healthz").json()["ready"] is True
         # /api/* still wins (tenant required => 400, NOT the SPA's index.html).
         assert c.get("/api/runs").status_code == 400
         # Unknown API paths must not be swallowed by the SPA fallback.
@@ -55,6 +55,6 @@ def test_no_build_dir_means_no_mount(tmp_path, db, monkeypatch):
     monkeypatch.setenv("DOOMBERG_WEB_DIST", str(tmp_path / "does-not-exist"))
     app = create_app(db)
     with TestClient(app) as c:
-        assert c.get("/healthz").json() == {"status": "ok"}
+        assert c.get("/healthz").json()["ready"] is True
         # No SPA mount => the root path is a 404 (no catch-all).
         assert c.get("/").status_code == 404

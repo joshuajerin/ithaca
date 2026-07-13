@@ -24,6 +24,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from .db import Db
+from .db_scope import system_scoped_store
 
 __all__ = ["UserStore", "SessionError"]
 
@@ -91,6 +92,7 @@ def _verify_jwt(token: str) -> dict[str, Any]:
     return payload
 
 
+@system_scoped_store
 class UserStore:
     def __init__(self, db: Db) -> None:
         self._db = db

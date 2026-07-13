@@ -4,6 +4,8 @@ live deployments and routes proposed deltas to the injected single-writer applie
 from __future__ import annotations
 
 import datetime as dt
+import threading
+import time
 
 from doomberg_runtime import AlwaysOpen, BacktestWorker, PaperScheduler, RegularHoursCalendar
 
@@ -60,6 +62,27 @@ def test_backtest_worker_empty_queue_is_noop(platform, core):
     assert BacktestWorker(platform, core).poll_once() == {
         "claimed": 0, "succeeded": [], "skipped": []
     }
+
+
+def test_backtest_worker_reports_and_retires_process_heartbeat(durable_platform, core):
+    stop = threading.Event()
+    worker = BacktestWorker(durable_platform, core)
+    thread = threading.Thread(
+        target=worker.run_forever,
+        kwargs={"interval_s": 0.01, "stop": stop},
+    )
+    thread.start()
+    deadline = time.monotonic() + 2
+    while not durable_platform.worker_heartbeats.list() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    rows = durable_platform.worker_heartbeats.list()
+    assert rows[0]["role"] == "backtest-worker"
+    assert rows[0]["status"] in {"starting", "healthy"}
+
+    stop.set()
+    thread.join(timeout=2)
+    assert thread.is_alive() is False
+    assert durable_platform.worker_heartbeats.list()[0]["status"] == "stopped"
 
 
 def test_backtest_worker_fails_expired_job_after_retry_exhaustion(

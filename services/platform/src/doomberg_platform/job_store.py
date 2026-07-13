@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .db import Db
+from .db_scope import tenant_scoped_store
 from .job_profiles import admission_metadata, get_job_profile
 
 TERMINAL_STATES = {"succeeded", "failed", "cancelled", "timed_out"}
@@ -60,6 +61,7 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
     }
 
 
+@tenant_scoped_store(system_methods={"claim_available"})
 class JobStore:
     """Durable worker queue with leases and idempotent enqueue."""
 

@@ -15,6 +15,8 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any
 
+from .health import WorkerReporter
+
 __all__ = [
     "NotificationDispatcher",
     "PermanentDeliveryError",
@@ -285,6 +287,23 @@ class NotificationDispatcher:
 
     def run_forever(self, *, interval_s: float = 2.0, stop: threading.Event | None = None) -> None:
         stop = stop or threading.Event()
-        while not stop.is_set():
-            self.poll_once()
-            stop.wait(interval_s)
+        reporter = WorkerReporter(
+            self.platform,
+            worker_id=self.worker_id,
+            role="notification-dispatcher",
+            ttl_seconds=max(15.0, interval_s * 4.0),
+        )
+        reporter.pulse(status="starting")
+        try:
+            while not stop.is_set():
+                result = self.poll_once()
+                reporter.pulse(
+                    status="degraded" if result["failed"] else "healthy",
+                    detail=f"{len(result['failed'])} delivery batch(es) failed"
+                    if result["failed"]
+                    else None,
+                    metadata={"last_claimed": result["claimed"]},
+                )
+                stop.wait(interval_s)
+        finally:
+            reporter.stop()
