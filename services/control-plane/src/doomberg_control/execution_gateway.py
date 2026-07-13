@@ -7,6 +7,8 @@ orders/fills, and every path runs through the same policy, idempotency, and audi
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -17,6 +19,7 @@ from doomberg_core.providers import (
     IbkrEngineError,
     IbkrEngineHttpError,
 )
+from doomberg_platform import ExecutionControlConflict
 
 from .actions import ActionError
 from .deps import HUMAN_ACTOR_KINDS, Ctx
@@ -303,6 +306,33 @@ class ExecutionGateway:
             BROKER_IBKR: IBKREngineBrokerAdapter(),
         }
 
+    def get_kill_switch(self, ctx: Ctx) -> dict[str, Any]:
+        return self._execution_control(ctx.tenant_id)
+
+    def set_kill_switch(
+        self,
+        ctx: Ctx,
+        *,
+        enabled: bool,
+        expect_version: int,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        if ctx.actor_kind not in HUMAN_ACTOR_KINDS:
+            raise ActionError(403, "execution kill switch requires a human actor")
+        if not ctx.has_scope("deploy:paper"):
+            raise ActionError(403, "execution kill switch requires the deploy:paper scope")
+        try:
+            self.platform.execution_controls.set_tenant(
+                ctx.tenant_id,
+                enabled=bool(enabled),
+                reason=reason,
+                actor_id=ctx.actor_id,
+                expect_version=expect_version,
+            )
+        except ExecutionControlConflict as exc:
+            raise ActionError(409, str(exc)) from exc
+        return self._execution_control(ctx.tenant_id)
+
     def create_intent(
         self,
         ctx: Ctx,
@@ -415,13 +445,17 @@ class ExecutionGateway:
                 ctx.tenant_id, order["order_id"]
             ):
                 continue
+            response: dict[str, Any] | None = None
             try:
-                response = adapter.submit(
-                    tenant_id=ctx.tenant_id,
-                    intent_id=intent_id,
-                    client_order_id=client_order_id,
-                    order=normalized,
-                )
+                with self._submission_guard(ctx.tenant_id):
+                    execution_control = self._execution_control(ctx.tenant_id)
+                    if not execution_control["enabled"]:
+                        response = adapter.submit(
+                            tenant_id=ctx.tenant_id,
+                            intent_id=intent_id,
+                            client_order_id=client_order_id,
+                            order=normalized,
+                        )
             except _SubmissionOutcomeUnknown as exc:
                 self.platform.execution.set_order_state(
                     ctx.tenant_id,
@@ -443,6 +477,54 @@ class ExecutionGateway:
                     error=f"{type(exc).__name__}: {exc}",
                 )
                 raise
+            if execution_control["enabled"]:
+                denied = {
+                    **decision,
+                    "decision": "denied",
+                    "reasons": list(
+                        dict.fromkeys(
+                            [*decision["reasons"], "EXECUTION_KILL_SWITCH_ACTIVE"]
+                        )
+                    ),
+                    "execution_control": execution_control,
+                    "evaluated_at": _now_iso(),
+                }
+                self.platform.execution.set_order_state(
+                    ctx.tenant_id,
+                    order["order_id"],
+                    state="cancelled",
+                    payload={"cancel_reason": "execution kill switch activated before send"},
+                )
+                stopped_record = self.platform.execution.get_record(ctx.tenant_id, intent_id)
+                stopped_state = "policy_denied"
+                if stopped_record and any(
+                    existing_order["order_id"] != order["order_id"]
+                    and existing_order["state"] not in {"pending_submission", "cancelled"}
+                    for existing_order in stopped_record["orders"]
+                ):
+                    stopped_state = self._intent_state_after_submit(
+                        stopped_record["orders"], stopped_record["fills"]
+                    )
+                self.platform.execution.set_intent_state(
+                    ctx.tenant_id,
+                    intent_id,
+                    state=stopped_state,
+                    risk_decision=denied,
+                )
+                _emit(
+                    self.platform,
+                    ctx=ctx,
+                    run_id=intent["run_id"],
+                    event_type="denial",
+                    data={
+                        "action": "execution.submit",
+                        "intent_id": intent_id,
+                        "risk_decision": denied,
+                    },
+                )
+                raise ActionError(409, {"reason": "policy denied", "risk_decision": denied})
+            if response is None:
+                raise RuntimeError("broker submission produced no response")
             order = self.platform.execution.set_order_state(
                 ctx.tenant_id,
                 order["order_id"],
@@ -745,6 +827,9 @@ class ExecutionGateway:
 
         if live and not self.policy.live_enabled:
             errors.append("LIVE_EXECUTION_DISABLED")
+        execution_control = self._execution_control(ctx.tenant_id)
+        if execution_control["enabled"]:
+            errors.append("EXECUTION_KILL_SWITCH_ACTIVE")
         if live and "UNKNOWN_NOTIONAL" in warnings:
             errors.append("UNKNOWN_NOTIONAL")
         if broker == BROKER_IBKR and not self._ibkr_configured():
@@ -776,6 +861,7 @@ class ExecutionGateway:
                 "live_enabled": self.policy.live_enabled,
                 "require_connected_provider_for_live": self.policy.require_connected_provider_for_live,
             },
+            "execution_control": execution_control,
             "evaluated_at": _now_iso(),
         }
 
@@ -886,17 +972,50 @@ class ExecutionGateway:
         adapter = self.adapters.get(BROKER_IBKR)
         return bool(adapter and getattr(adapter, "configured", lambda: True)())
 
+    def _execution_control(self, tenant_id: str) -> dict[str, Any]:
+        if _env_flag("DOOMBERG_EXECUTION_KILL_SWITCH"):
+            return {
+                "enabled": True,
+                "source": "environment",
+                "reason": "DOOMBERG_EXECUTION_KILL_SWITCH is active",
+                "version": 0,
+                "tenant_version": 0,
+                "tenant_control": None,
+                "global_control": None,
+            }
+        controls = getattr(self.platform, "execution_controls", None)
+        if controls is None:
+            return {
+                "enabled": True,
+                "source": "missing_control_store",
+                "reason": "execution control store is unavailable",
+                "version": 0,
+                "tenant_version": 0,
+                "tenant_control": None,
+                "global_control": None,
+            }
+        return controls.get_effective(str(tenant_id))
+
+    @contextmanager
+    def _submission_guard(self, tenant_id: str) -> Iterator[None]:
+        controls = getattr(self.platform, "execution_controls", None)
+        if controls is None:
+            yield
+            return
+        with controls.submission_guard(str(tenant_id)):
+            yield
+
     def _client_order_id(self, intent_id: str, idx: int) -> str:
         return f"dmbg-{intent_id.replace('-', '')[:20]}-{idx:02d}"
 
     def _intent_state_after_submit(self, orders: list[dict[str, Any]], fills: list[dict[str, Any]]) -> str:
         if orders and all(order["state"] == "rejected" for order in orders):
             return "rejected"
-        if orders and all(order["state"] in TERMINAL_ORDER_STATES for order in orders):
-            if fills and all(order["state"] == "filled" for order in orders):
+        if any(order["state"] == "filled" for order in orders) or fills:
+            if orders and all(order["state"] == "filled" for order in orders):
                 return "filled"
+            return "partially_filled"
+        if orders and all(order["state"] in TERMINAL_ORDER_STATES for order in orders):
             if any(order["state"] == "cancelled" for order in orders):
                 return "cancelled"
-        if any(order["state"] == "filled" for order in orders) or fills:
-            return "partially_filled"
         return "submitted"

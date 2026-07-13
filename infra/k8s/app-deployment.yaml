@@ -138,6 +138,9 @@ spec:
             - name: DOOMBERG_ENABLE_LIVE_EXECUTION
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: enable_live_execution, optional: true }
+            - name: DOOMBERG_EXECUTION_KILL_SWITCH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: execution_kill_switch, optional: true }
             - name: DOOMBERG_EXECUTION_MAX_NOTIONAL_USD
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: execution_max_notional_usd, optional: true }
@@ -225,6 +228,9 @@ spec:
             - name: DOOMBERG_ENABLE_LIVE_EXECUTION
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: enable_live_execution, optional: true }
+            - name: DOOMBERG_EXECUTION_KILL_SWITCH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: execution_kill_switch, optional: true }
             - name: DOOMBERG_EXECUTION_MAX_NOTIONAL_USD
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: execution_max_notional_usd, optional: true }
@@ -324,6 +330,9 @@ spec:
             - name: DOOMBERG_ENABLE_LIVE_EXECUTION
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: enable_live_execution, optional: true }
+            - name: DOOMBERG_EXECUTION_KILL_SWITCH
+              valueFrom:
+                secretKeyRef: { name: doomberg-db, key: execution_kill_switch, optional: true }
             - name: DOOMBERG_EXECUTION_MAX_NOTIONAL_USD
               valueFrom:
                 secretKeyRef: { name: doomberg-db, key: execution_max_notional_usd, optional: true }

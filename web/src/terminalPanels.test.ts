@@ -196,4 +196,11 @@ describe("terminal dashboard panel renderers", () => {
 
     expect(generatedSources).not.toMatch(/new Function|eval\(|loadGeneratedComponent|sucrase|\/api\/generated-panels/);
   });
+
+  it("guards compliance kill-switch writes with the tenant version", () => {
+    const source = fs.readFileSync(path.join(panelsDir, "CompliancePanel.tsx"), "utf8");
+
+    expect(source).toContain("expect_version: state.killVersion ?? 0");
+    expect(source).toContain('state.killSource === "none" || state.killSource === "tenant"');
+  });
 });
