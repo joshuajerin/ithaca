@@ -59,6 +59,20 @@ def test_dashboard_summary_uses_only_tenant_backtest_evidence(client, stores, te
     assert body["data"]["latest_backtest"]["stats"]["sharpe"] != 99
 
 
+def test_dashboard_active_count_excludes_drafts_and_terminal_runs(client, stores, tenant_a):
+    seed_run(stores, tenant_a, kind="research")
+    queued_id = seed_run(stores, tenant_a, kind="backtest")
+    queued = stores.runs.get(tenant_a, queued_id)
+    stores.runs.transition(tenant_a, queued_id, "queued", expect=queued["version"])
+    succeeded_id = seed_run(stores, tenant_a, kind="backtest")
+    _succeed(stores, tenant_a, succeeded_id)
+
+    body = client.get("/api/dashboard/summary", headers=_headers(tenant_a)).json()
+
+    assert body["data"]["run_counts"]["total"] == 3
+    assert body["data"]["run_counts"]["active"] == 1
+
+
 def test_dashboard_summary_uses_latest_run_that_has_real_evidence(client, stores, tenant_a):
     evidence_id = seed_run(stores, tenant_a, kind="backtest")
     stores.runs.set_result(

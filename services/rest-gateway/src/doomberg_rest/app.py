@@ -1164,7 +1164,7 @@ def create_app(db: Any | None = None) -> FastAPI:
     ) -> DashboardEnvelope[DashboardSummaryData]:
         _require_scope(ctx, "data:read")
         return DashboardEnvelope[DashboardSummaryData].model_validate(
-            dashboard_summary(stores, ctx.tenant_id)
+            dashboard_summary(stores.dashboard, ctx.tenant_id)
         )
 
     @app.get("/api/dashboard/risk")
@@ -1174,7 +1174,7 @@ def create_app(db: Any | None = None) -> FastAPI:
     ) -> DashboardEnvelope[DashboardRiskData]:
         _require_scope(ctx, "data:read")
         return DashboardEnvelope[DashboardRiskData].model_validate(
-            dashboard_risk(stores, ctx.tenant_id)
+            dashboard_risk(stores.dashboard, ctx.tenant_id)
         )
 
     @app.get("/api/dashboard/activity")
@@ -1187,7 +1187,7 @@ def create_app(db: Any | None = None) -> FastAPI:
         _require_scope(ctx, "triggers:read")
         _require_scope(ctx, "alerts:read")
         return DashboardEnvelope[DashboardActivityData].model_validate(
-            dashboard_activity(stores, ctx.tenant_id, limit=limit)
+            dashboard_activity(stores.dashboard, ctx.tenant_id, limit=limit)
         )
 
     @app.get("/api/dashboard/market")
@@ -1197,7 +1197,7 @@ def create_app(db: Any | None = None) -> FastAPI:
     ) -> DashboardEnvelope[DashboardMarketData]:
         _require_scope(ctx, "data:read")
         return DashboardEnvelope[DashboardMarketData].model_validate(
-            dashboard_market(stores, ctx.tenant_id)
+            dashboard_market(stores.dashboard, ctx.tenant_id)
         )
 
     @app.get("/api/providers/status")
@@ -1207,7 +1207,7 @@ def create_app(db: Any | None = None) -> FastAPI:
     ) -> DashboardEnvelope[ProviderStatusData]:
         _require_scope(ctx, "data:read")
         return DashboardEnvelope[ProviderStatusData].model_validate(
-            provider_status(stores, ctx.tenant_id)
+            provider_status(stores.dashboard, ctx.tenant_id)
         )
 
     @app.get("/api/runs/{run_id}")

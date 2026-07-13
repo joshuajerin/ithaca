@@ -13,7 +13,9 @@ from typing import Any, Iterable
 
 from doomberg_core.providers import PUBLIC_DATA_SOURCE, PUBLIC_ENTITLEMENT_CLASS
 
-_TERMINAL_STATES = {"succeeded", "failed", "timeout", "cancelled", "retired"}
+from .dashboard_store import DashboardReadStore
+
+_ACTIVE_RUN_STATES = {"queued", "running", "promoted", "live", "paused"}
 _RISK_KEYS = {
     "alpha",
     "beta",
@@ -136,19 +138,6 @@ def _result_data(run: dict[str, Any]) -> dict[str, Any]:
     return nested if isinstance(nested, dict) else result
 
 
-def _latest(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
-    return max(
-        rows,
-        default=None,
-        key=lambda row: (
-            _timestamp(row.get("updated_at"))
-            or _timestamp(row.get("created_at"))
-            or datetime.min.replace(tzinfo=timezone.utc),
-            str(row.get("run_id") or ""),
-        ),
-    )
-
-
 def _public_run(run: dict[str, Any]) -> dict[str, Any]:
     return {
         "run_id": run.get("run_id"),
@@ -237,11 +226,11 @@ def _latest_backtest_evidence(
     return run, evidence
 
 
-def dashboard_summary(stores: Any, tenant_id: str) -> dict[str, Any]:
-    counts = stores.dashboard.run_counts(tenant_id)
-    recent = stores.dashboard.recent_runs(tenant_id, limit=1)
+def dashboard_summary(store: DashboardReadStore, tenant_id: str) -> dict[str, Any]:
+    counts = store.run_counts(tenant_id)
+    recent = store.recent_runs(tenant_id, limit=1)
     latest_run = recent[0] if recent else None
-    backtests = stores.dashboard.recent_runs(
+    backtests = store.recent_runs(
         tenant_id,
         kind="backtest",
         state="succeeded",
@@ -249,7 +238,7 @@ def dashboard_summary(stores: Any, tenant_id: str) -> dict[str, Any]:
         with_result=True,
     )
     latest_backtest, backtest_evidence = _latest_backtest_evidence(backtests)
-    paper_evidence = stores.dashboard.latest_paper_book(tenant_id)
+    paper_evidence = store.latest_paper_book(tenant_id)
     latest_paper = paper_evidence["run"] if paper_evidence else None
     book = paper_evidence["book"] if paper_evidence else None
     book_view = _public_book(book)
@@ -257,9 +246,7 @@ def dashboard_summary(stores: Any, tenant_id: str) -> dict[str, Any]:
     data = {
         "run_counts": {
             "total": total,
-            "active": sum(
-                count for state, count in counts.items() if state not in _TERMINAL_STATES
-            ),
+            "active": sum(count for state, count in counts.items() if state in _ACTIVE_RUN_STATES),
             "by_state": counts,
         },
         "latest_run": _public_run(latest_run) if latest_run else None,
@@ -283,8 +270,8 @@ def dashboard_summary(stores: Any, tenant_id: str) -> dict[str, Any]:
     )
 
 
-def dashboard_risk(stores: Any, tenant_id: str) -> dict[str, Any]:
-    runs = stores.dashboard.recent_runs(
+def dashboard_risk(store: DashboardReadStore, tenant_id: str) -> dict[str, Any]:
+    runs = store.recent_runs(
         tenant_id,
         kind="backtest",
         state="succeeded",
@@ -317,7 +304,7 @@ def dashboard_risk(stores: Any, tenant_id: str) -> dict[str, Any]:
         ),
     )
 
-    paper_evidence = stores.dashboard.latest_paper_book(tenant_id)
+    paper_evidence = store.latest_paper_book(tenant_id)
     book = paper_evidence["book"] if paper_evidence else None
     paper_exposure = _public_book(book)
     data = {
@@ -344,10 +331,12 @@ def dashboard_risk(stores: Any, tenant_id: str) -> dict[str, Any]:
     )
 
 
-def dashboard_activity(stores: Any, tenant_id: str, *, limit: int = 20) -> dict[str, Any]:
-    runs = stores.dashboard.recent_runs(tenant_id, limit=limit)
-    triggers = stores.dashboard.recent_triggers(tenant_id, limit=limit)
-    alerts = stores.dashboard.recent_alerts(tenant_id, limit=limit)
+def dashboard_activity(
+    store: DashboardReadStore, tenant_id: str, *, limit: int = 20
+) -> dict[str, Any]:
+    runs = store.recent_runs(tenant_id, limit=limit)
+    triggers = store.recent_triggers(tenant_id, limit=limit)
+    alerts = store.recent_alerts(tenant_id, limit=limit)
     data = {
         "runs": [_public_run(run) for run in runs],
         "triggers": [_public_trigger(trigger) for trigger in triggers],
@@ -513,9 +502,9 @@ def _public_alert(alert: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def provider_status(stores: Any, tenant_id: str) -> dict[str, Any]:
-    connections = stores.dashboard.provider_connections(tenant_id)
-    counts = stores.dashboard.provider_counts(tenant_id)
+def provider_status(store: DashboardReadStore, tenant_id: str) -> dict[str, Any]:
+    connections = store.provider_connections(tenant_id)
+    counts = store.provider_counts(tenant_id)
     public = [_dashboard_provider_connection(connection) for connection in connections]
     connected = [connection for connection in public if connection.get("state") == "connected"]
     entitlement_classes = {
@@ -539,10 +528,10 @@ def provider_status(stores: Any, tenant_id: str) -> dict[str, Any]:
     )
 
 
-def dashboard_market(stores: Any, tenant_id: str) -> dict[str, Any]:
-    snapshots = stores.dashboard.snapshots(tenant_id, limit=25)
+def dashboard_market(store: DashboardReadStore, tenant_id: str) -> dict[str, Any]:
+    snapshots = store.snapshots(tenant_id, limit=25)
     public_snapshots = [_public_snapshot(snapshot) for snapshot in snapshots]
-    connections = stores.dashboard.provider_connections(tenant_id)
+    connections = store.provider_connections(tenant_id)
     quote_connections = [
         connection
         for connection in connections
