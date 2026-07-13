@@ -93,10 +93,6 @@ export default function Hero() {
 
           <motion.div variants={item} className="mx-auto mt-7 max-w-[680px] lg:mx-0">
             <InstallCommand />
-            <p className="mt-3 text-[0.9rem] leading-relaxed text-muted">
-              Sign in, approve MCP access, run the init smoke, and generate{" "}
-              <code className="font-mono text-ink">~/.config/doomberg/TOOLS.md</code>.
-            </p>
           </motion.div>
         </motion.div>
 

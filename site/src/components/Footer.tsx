@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
+import { DOCS_URL } from "../lib/links";
 
-type FooterLink = { label: string; to?: string };
+type FooterLink = { label: string; to?: string; href?: string };
 
 const COLUMNS: { heading: string; links: FooterLink[] }[] = [
   {
@@ -16,7 +17,7 @@ const COLUMNS: { heading: string; links: FooterLink[] }[] = [
   {
     heading: "Build",
     links: [
-      { label: "Docs" },
+      { label: "Docs", href: DOCS_URL },
       { label: "StrategySpec" },
       { label: "API reference" },
       { label: "Status" },
@@ -94,6 +95,10 @@ export default function Footer() {
                       <Link to={l.to} className={linkClass}>
                         {l.label}
                       </Link>
+                    ) : l.href ? (
+                      <a href={l.href} className={linkClass}>
+                        {l.label}
+                      </a>
                     ) : (
                       <a href="#" className={linkClass}>
                         {l.label}
