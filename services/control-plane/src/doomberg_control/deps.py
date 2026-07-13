@@ -46,6 +46,7 @@ from doomberg_platform import (
     TraceStore,
     TriggerBaselineStore,
     TriggerStore,
+    WorkerHeartbeatStore,
     open_db,
 )
 
@@ -111,6 +112,7 @@ class Platform:
         self.auth = AuthStore(self.db)
         self.jobs = JobStore(self.db)
         self.leases = LeaseStore(self.db)
+        self.worker_heartbeats = WorkerHeartbeatStore(self.db)
         self.artifacts = ArtifactStore(self.db)
         self.approvals = ApprovalStore(self.db)
         self.providers = ProviderStore(self.db)

@@ -553,6 +553,22 @@ CREATE TABLE IF NOT EXISTS compliance_policy_events (
 
 CREATE INDEX IF NOT EXISTS idx_compliance_policy_events_tenant
     ON compliance_policy_events (tenant_id, version DESC);
+
+CREATE TABLE IF NOT EXISTS worker_heartbeats (
+    worker_id    TEXT NOT NULL,
+    role         TEXT NOT NULL,
+    status       TEXT NOT NULL,
+    detail       TEXT,
+    metadata     TEXT NOT NULL,
+    started_at   TEXT NOT NULL,
+    heartbeat_at TEXT NOT NULL,
+    expires_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    PRIMARY KEY (worker_id, role)
+);
+
+CREATE INDEX IF NOT EXISTS idx_worker_heartbeats_role_expiry
+    ON worker_heartbeats (role, expires_at DESC);
 """
 
 

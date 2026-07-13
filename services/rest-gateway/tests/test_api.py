@@ -121,4 +121,14 @@ def test_list_strategies_is_tenant_scoped(client, stores, tenant_a, tenant_b):
 
 
 def test_healthz(client):
-    assert client.get("/healthz").json() == {"status": "ok"}
+    response = client.get("/healthz")
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "ready": True,
+        "database": "sqlite",
+        "migrations": {"mode": "local-inline", "pending": []},
+        "pool": None,
+    }
+    assert client.get("/readyz").json() == response.json()
+    assert client.get("/livez").json() == {"status": "ok"}

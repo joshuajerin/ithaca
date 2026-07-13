@@ -448,3 +448,37 @@ def test_trigger_store_lifecycle(platform):
         "2026-06-24T00:00:00+00:00",
     ) == 1
     assert platform.triggers.list_firings(tenant)[0]["firing_id"] == firing["firing_id"]
+
+
+def test_worker_heartbeats_preserve_start_and_mark_stop(platform):
+    started = dt.datetime(2026, 7, 13, 12, 0, tzinfo=dt.timezone.utc)
+    first = platform.worker_heartbeats.heartbeat(
+        "worker-a",
+        "backtest-worker",
+        ttl_seconds=30,
+        status="starting",
+        metadata={"pid": 10},
+        now=started,
+    )
+    renewed = platform.worker_heartbeats.heartbeat(
+        "worker-a",
+        "backtest-worker",
+        ttl_seconds=60,
+        metadata={"last_claimed": 2},
+        now=started + dt.timedelta(seconds=10),
+    )
+
+    assert renewed["started_at"] == first["started_at"]
+    assert renewed["heartbeat_at"] != first["heartbeat_at"]
+    assert renewed["status"] == "healthy"
+    assert renewed["metadata"] == {"last_claimed": 2}
+    stopped = platform.worker_heartbeats.stop("worker-a", "backtest-worker")
+    assert stopped["status"] == "stopped"
+    assert len(platform.worker_heartbeats.list()) == 1
+
+
+def test_worker_heartbeat_validation(platform):
+    with pytest.raises(ValueError, match="worker_id and role"):
+        platform.worker_heartbeats.heartbeat("", "backtest-worker")
+    with pytest.raises(ValueError, match="invalid worker heartbeat status"):
+        platform.worker_heartbeats.heartbeat("worker-a", "backtest-worker", status="unknown")

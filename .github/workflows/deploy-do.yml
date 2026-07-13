@@ -585,7 +585,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          curl -fsS --retry 6 --retry-delay 5 "https://${APP_HOST}/livez"
           curl -fsS --retry 6 --retry-delay 5 "https://${APP_HOST}/healthz"
+          curl -fsS --retry 6 --retry-delay 5 "https://${APP_HOST}/readyz"
           code="$(curl -sS -o /tmp/doomberg-mcp-response.txt -w "%{http_code}" "https://${MCP_HOST}/mcp")"
           test "${code}" = "401"
 
@@ -618,7 +620,7 @@ jobs:
                 --base-url "https://${APP_HOST}" \
                 --mcp-url "https://${MCP_HOST}/mcp" \
                 --require-postgres \
-                --require-active-worker \
+                --require-workers-ready \
                 --require-mcp \
                 "${ibkr_args[@]}" \
                 --json

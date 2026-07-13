@@ -57,6 +57,7 @@ from .run_store import (
 from .strategy_store import StrategyStore
 from .trace_store import TraceStore
 from .user_store import SessionError, UserStore
+from .worker_store import WorkerHeartbeatStore
 
 __all__ = [
     "open_db",
@@ -105,4 +106,5 @@ __all__ = [
     "BookNotFound",
     "UserStore",
     "SessionError",
+    "WorkerHeartbeatStore",
 ]

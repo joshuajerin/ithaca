@@ -45,3 +45,13 @@ def test_deploy_restarts_consumers_when_doomberg_secret_changes() -> None:
     assert workflow.count(
         "DOOMBERG_EXECUTION_KILL_SWITCH: ${{ vars.DOOMBERG_EXECUTION_KILL_SWITCH }}"
     ) == 2
+
+
+def test_deploy_release_gate_checks_readiness_and_worker_heartbeats() -> None:
+    workflow = (REPO_ROOT / ".github" / "workflows" / "deploy-do.yml").read_text()
+
+    assert '"https://${APP_HOST}/livez"' in workflow
+    assert '"https://${APP_HOST}/healthz"' in workflow
+    assert '"https://${APP_HOST}/readyz"' in workflow
+    assert "--require-workers-ready" in workflow
+    assert "--require-active-worker" not in workflow

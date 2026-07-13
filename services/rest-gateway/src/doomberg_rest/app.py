@@ -36,7 +36,7 @@ from typing import Any
 import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from jwt import InvalidTokenError, PyJWKClient
 from pydantic import BaseModel, Field
 
@@ -75,8 +75,10 @@ from doomberg_platform import (
     TriggerBaselineStore,
     TriggerStore,
     UserStore,
+    WorkerHeartbeatStore,
     open_db,
 )
+from doomberg_platform.migrations import validate_migrations
 from doomberg_runtime import default_adaptive_dashboard_spec, usage_signals_for_user
 
 from .readmodel import shape_run, shape_run_row
@@ -102,6 +104,7 @@ class Stores:
         self.users = UserStore(db)
         self.jobs = JobStore(db)
         self.leases = LeaseStore(db)
+        self.worker_heartbeats = WorkerHeartbeatStore(db)
         self.artifacts = ArtifactStore(db)
         self.approvals = ApprovalStore(db)
         self.providers = ProviderStore(db)
@@ -647,12 +650,76 @@ async def _alert_event_stream(
             yield ": keepalive\n\n"
 
 
+def _parse_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _database_health(db: Any) -> dict[str, Any]:
+    try:
+        scope = db.system_scope() if hasattr(db, "system_scope") else None
+        if scope is None:
+            row = db.conn.execute("SELECT 1 AS ok").fetchone()
+            migration = None
+        else:
+            with scope:
+                row = db.conn.execute("SELECT 1 AS ok").fetchone()
+                migration = validate_migrations(db.conn) if getattr(db, "is_postgres", False) else None
+        if row is None or int(row["ok"]) != 1:
+            raise RuntimeError("database ping returned no row")
+    except Exception as exc:  # noqa: BLE001 - health response must retain a stable envelope.
+        return {
+            "status": "error",
+            "ready": False,
+            "database": "postgres" if getattr(db, "is_postgres", False) else "sqlite",
+            "error": f"{type(exc).__name__}: {exc}"[:500],
+        }
+
+    migration_body = {
+        "current": int(migration.current_version),
+        "latest": int(migration.latest_version),
+        "pending": list(migration.pending_versions),
+    } if migration is not None else {"mode": "local-inline", "pending": []}
+    ready = not migration_body["pending"]
+    return {
+        "status": "ok" if ready else "error",
+        "ready": ready,
+        "database": "postgres" if getattr(db, "is_postgres", False) else "sqlite",
+        "migrations": migration_body,
+        "pool": getattr(db, "pool_stats", None),
+    }
+
+
 def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
     connections = stores.providers.list_connections(tenant_id)
     snapshots = stores.providers.list_snapshots(tenant_id, limit=25)
     jobs = stores.jobs.list(tenant_id, limit=500)
     triggers = stores.triggers.list(tenant_id, limit=500)
-    leases = stores.leases.list()
+    now = datetime.now(timezone.utc)
+    lease_rows = stores.leases.list()
+    leases = []
+    stale_leases = []
+    for lease in lease_rows:
+        active = bool((expires := _parse_time(lease.get("lease_expires_at"))) and expires > now)
+        shaped = {**lease, "active": active}
+        (leases if active else stale_leases).append(shaped)
+    heartbeat_rows = stores.worker_heartbeats.list()
+    workers = []
+    for worker in heartbeat_rows:
+        heartbeat = _parse_time(worker.get("heartbeat_at"))
+        expires = _parse_time(worker.get("expires_at"))
+        expired = not expires or expires <= now
+        workers.append({
+            **worker,
+            "expired": expired,
+            "age_seconds": max(0.0, round((now - heartbeat).total_seconds(), 3))
+            if heartbeat
+            else None,
+        })
 
     connected = [c for c in connections if c.get("state") == "connected"]
     private_live_names = {
@@ -675,14 +742,35 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
     active_jobs = sum(1 for job in jobs if job.get("state") in {"leased", "running"})
     failed_jobs = sum(1 for job in jobs if job.get("state") in {"failed", "timed_out", "cancelled"})
     active_triggers = sum(1 for trigger in triggers if trigger.get("state") == "active")
+    required_roles = {
+        "adaptive-dashboard-worker",
+        "backtest-worker",
+        "execution-reconciler",
+        "notification-dispatcher",
+        "paper-scheduler",
+        "trigger-engine",
+        "trigger-job-worker",
+    }
+    healthy_roles = {
+        worker["role"]
+        for worker in workers
+        if not worker["expired"] and worker["status"] in {"healthy", "standby"}
+    }
+    degraded_roles = sorted({
+        worker["role"]
+        for worker in workers
+        if not worker["expired"] and worker["status"] == "degraded"
+    })
+    missing_roles = sorted(required_roles - healthy_roles)
+    db_health = _database_health(stores.db)
 
     readiness = [
         {
             "name": "Platform store",
-            "state": "succeeded" if getattr(stores.db, "is_postgres", False) else "paused",
-            "detail": "Postgres system-of-record"
-            if getattr(stores.db, "is_postgres", False)
-            else "Local SQLite system-of-record",
+            "state": "succeeded" if db_health["ready"] else "failed",
+            "detail": f"{db_health['database']} reachable; migrations current"
+            if db_health["ready"]
+            else db_health.get("error") or "database migrations are not current",
         },
         {
             "name": "Live market data",
@@ -709,7 +797,18 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
         {
             "name": "Worker leadership",
             "state": "succeeded" if leases else "paused",
-            "detail": f"{len(leases)} active lease row{'' if len(leases) == 1 else 's'}",
+            "detail": f"{len(leases)} active, {len(stale_leases)} expired lease row(s)",
+        },
+        {
+            "name": "Worker processes",
+            "state": "warn" if missing_roles or degraded_roles else "succeeded",
+            "detail": (
+                "missing: " + ", ".join(missing_roles)
+                if missing_roles
+                else "degraded: " + ", ".join(degraded_roles)
+                if degraded_roles
+                else f"{len(healthy_roles)} required worker role(s) healthy"
+            ),
         },
     ]
 
@@ -743,6 +842,14 @@ def _ops_status(stores: Stores, tenant_id: str) -> dict[str, Any]:
             "terminal": failed_jobs,
         },
         "leases": leases,
+        "stale_leases": stale_leases,
+        "workers": {
+            "required_roles": sorted(required_roles),
+            "healthy_roles": sorted(healthy_roles),
+            "missing_roles": missing_roles,
+            "degraded_roles": degraded_roles,
+            "rows": workers,
+        },
         "triggers": {
             "active": active_triggers,
             "total": len(triggers),
@@ -949,9 +1056,17 @@ def create_app(db: Any | None = None) -> FastAPI:
     def get_stores(request: Request) -> Stores:
         return request.app.state.stores
 
-    @app.get("/healthz")
-    def healthz() -> dict[str, str]:
+    @app.get("/livez")
+    def livez() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/healthz")
+    @app.get("/readyz")
+    def healthz() -> Any:
+        health = _database_health(stores.db)
+        if not health["ready"]:
+            return JSONResponse(status_code=503, content=health)
+        return health
 
     def compliance_state(ctx: Ctx, stores: Stores) -> dict[str, Any]:
         """Shape the compliance panel from durable execution state.

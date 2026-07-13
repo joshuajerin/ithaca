@@ -287,6 +287,20 @@ so only one worker replica owns each singleton loop at a time; if the owner dies
 another replica takes over after the lease TTL. Order reconciliation defaults to
 five seconds and is tunable with `DOOMBERG_RECONCILIATION_INTERVAL_S`.
 
+Migration 6 adds `worker_heartbeats`, a system-only durable process registry.
+Every conductor loop and the trigger engine records its role, instance id,
+status, last heartbeat, expiry, and bounded diagnostic metadata. Leadership
+leases still prevent duplicate singleton work; heartbeats answer the separate
+question of whether the responsible process is alive and making progress.
+`GET /api/ops/status` excludes expired leases from the active list and reports
+missing, degraded, expired, and healthy worker roles explicitly.
+
+Both gateways expose `GET /livez` for process liveness and `GET /healthz` plus
+`GET /readyz` for a live database ping, migration-ledger validation, and pool
+statistics. A database or migration failure returns 503; worker-role degradation
+remains visible through the authenticated ops status instead of ejecting a
+read-capable gateway from the load balancer.
+
 For connected-account live trigger quotes, use the managed in-cluster IBKR engine
 by default:
 
@@ -387,6 +401,8 @@ kubectl -n doomberg-workers run ibkr-smoke --rm -it --restart=Never \
 
 Run the full customer-handoff gate after rollout. This creates a synthetic
 launch-gate tenant/session/artifact, verifies REST auth rejection, ops status,
+gateway liveness plus database/migration readiness, current required worker
+heartbeats, the durable personalized compliance surface,
 SSE replay, artifact fetch, MCP unauthenticated rejection, authenticated MCP
 resource reads, real-time trigger-to-run readiness, MCP durable `run_skill`
 enqueue/read/cancel cleanup, MCP no-scope resource denial, and the IBKR quote
@@ -410,8 +426,18 @@ gate to prove resource reads are denied for a valid key without `data:read`.
 DOOMBERG_REST_URL=https://app.doomberg.me \
 DOOMBERG_MCP_URL=https://mcp.doomberg.me/mcp \
 DOOMBERG_API_KEY=dmbg_... \
-python scripts/launch_gate.py --mode http --require-postgres --require-ibkr --require-mcp --json
+python scripts/launch_gate.py --mode http --require-postgres --require-workers-ready --require-ibkr --require-mcp --json
 ```
+
+`--require-workers-ready` gates on the complete production role set returned by
+ops status, not on the mere presence of a lease row: backtest, trigger engine,
+trigger jobs, paper, notification, adaptive-dashboard, and execution
+reconciliation. Expired and degraded heartbeats fail the gate even when the
+corresponding queue happens to be empty.
+
+Use [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the exact preflight,
+evidence capture, rollback boundary, and handoff record for each production
+release.
 
 The repository's default IBKR engine is deliberately data-only: `GET /orders`
 supports state reconciliation, while `POST /orders` returns 403. Do not enable
