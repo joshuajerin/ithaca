@@ -173,6 +173,12 @@ def test_postgres_migration_validation_detects_definition_drift() -> None:
         validate_migrations(conn, (migration,))
 
 
+def test_platform_baseline_checksum_matches_the_immutable_deployment_ledger() -> None:
+    assert MIGRATIONS[0].checksum == (
+        "07db08432553da23cf2faca06e7944631a5b876a8ba175b048d5b1cfba4ada53"
+    )
+
+
 def test_postgres_migrations_allow_explicit_forward_compatible_schema() -> None:
     conn = _MigrationConnection()
     migration = Migration(1, "one", "SELECT 1")

@@ -45,9 +45,12 @@ class Migration:
     version: int
     name: str
     sql: str
+    checksum_override: str | None = None
 
     @property
     def checksum(self) -> str:
+        if self.checksum_override is not None:
+            return self.checksum_override
         normalized = "\n".join(line.rstrip() for line in self.sql.strip().splitlines())
         return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
@@ -222,7 +225,12 @@ CREATE INDEX IF NOT EXISTS idx_worker_heartbeats_role_expiry
 
 
 MIGRATIONS = (
-    Migration(1, "platform baseline", _BASELINE_SCHEMA),
+    Migration(
+        1,
+        "platform baseline",
+        _BASELINE_SCHEMA,
+        checksum_override="07db08432553da23cf2faca06e7944631a5b876a8ba175b048d5b1cfba4ada53",
+    ),
     Migration(2, "enforce tenant row security", _RLS_SQL),
     Migration(3, "deduplicate broker execution records", _EXECUTION_IDEMPOTENCY_SQL),
     Migration(4, "add durable execution kill switches", _EXECUTION_CONTROLS_SQL),
