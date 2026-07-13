@@ -172,6 +172,16 @@ normal request startup. Outside Kubernetes, Postgres keeps the backwards-
 compatible `apply` default; set the mode explicitly to `validate` for managed
 deployments and `off` only for schema administration tooling.
 
+Each process uses a bounded psycopg connection pool. Defaults are one warm
+connection and four maximum connections per process, with a ten-second
+checkout/startup timeout and connection health checks before use. Tune with
+`DOOMBERG_POSTGRES_POOL_MIN`, `DOOMBERG_POSTGRES_POOL_MAX`,
+`DOOMBERG_POSTGRES_POOL_TIMEOUT_S`, `DOOMBERG_POSTGRES_POOL_MAX_LIFETIME_S`,
+`DOOMBERG_POSTGRES_POOL_MAX_IDLE_S`, and
+`DOOMBERG_POSTGRES_RECONNECT_TIMEOUT_S`. Size the per-process maximum against
+the managed Postgres connection budget multiplied by the total replica and
+container count.
+
 ---
 
 ## 6. Verify live-data wiring

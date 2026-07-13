@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 
+import psycopg
 import pytest
 from platform_helpers import new_uuid, trace_event
 
@@ -14,7 +17,13 @@ from doomberg_platform.migrations import (
     apply_migrations,
     validate_migrations,
 )
-from doomberg_platform.pg_db import _convert_placeholders, is_postgres_dsn, migration_mode
+from doomberg_platform.pg_db import (
+    PostgresDb,
+    PostgresPoolConfig,
+    _convert_placeholders,
+    is_postgres_dsn,
+    migration_mode,
+)
 
 
 class _Rows:
@@ -104,6 +113,106 @@ def test_postgres_migration_mode_is_explicit(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("DOOMBERG_DB_MIGRATION_MODE", "invalid")
     with pytest.raises(ValueError, match="must be apply, validate, or off"):
         migration_mode()
+
+
+def test_postgres_pool_config_is_bounded_and_validated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DOOMBERG_POSTGRES_POOL_MIN", "2")
+    monkeypatch.setenv("DOOMBERG_POSTGRES_POOL_MAX", "6")
+    monkeypatch.setenv("DOOMBERG_POSTGRES_POOL_TIMEOUT_S", "4.5")
+    config = PostgresPoolConfig.from_env()
+    assert (config.min_size, config.max_size, config.timeout_seconds) == (2, 6, 4.5)
+
+    monkeypatch.setenv("DOOMBERG_POSTGRES_POOL_MIN", "7")
+    with pytest.raises(ValueError, match="POOL_MIN cannot exceed POOL_MAX"):
+        PostgresPoolConfig.from_env()
+
+    monkeypatch.setenv("DOOMBERG_POSTGRES_POOL_MIN", "1")
+    monkeypatch.setenv("DOOMBERG_POSTGRES_POOL_TIMEOUT_S", "nan")
+    with pytest.raises(ValueError, match="must be greater than 0"):
+        PostgresPoolConfig.from_env()
+
+
+@pytest.mark.skipif(
+    not os.environ.get("DOOMBERG_PLATFORM_PG_URL"),
+    reason="set DOOMBERG_PLATFORM_PG_URL to run the live Postgres pool test",
+)
+def test_live_postgres_pool_parallelism_transaction_pinning_and_recovery() -> None:
+    url = os.environ["DOOMBERG_PLATFORM_PG_URL"]
+    db = PostgresDb(url, pool_config=PostgresPoolConfig(min_size=1, max_size=4))
+    try:
+        with db.conn as conn:
+            first_pid = conn.execute("SELECT pg_backend_pid() AS pid").fetchone()["pid"]
+            second_pid = conn.execute("SELECT pg_backend_pid() AS pid").fetchone()["pid"]
+        assert first_pid == second_pid
+
+        def sleeping_backend(_: int) -> int:
+            row = db.conn.execute(
+                "SELECT pg_backend_pid() AS pid FROM (SELECT pg_sleep(0.1)) AS wait"
+            ).fetchone()
+            return int(row["pid"])
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            backend_ids = set(executor.map(sleeping_backend, range(4)))
+        assert len(backend_ids) >= 2
+
+        victim = int(db.conn.execute("SELECT pg_backend_pid() AS pid").fetchone()["pid"])
+        with psycopg.connect(url, autocommit=True) as killer:
+            assert killer.execute("SELECT pg_terminate_backend(%s)", (victim,)).fetchone()[0]
+        assert db.conn.execute("SELECT 1 AS healthy").fetchone()["healthy"] == 1
+        assert db.pool_stats["pool_max"] == 4
+
+        tenant_id = AuthStore(db).create_tenant("pool listener recovery")
+        run_ids = (new_uuid(), new_uuid())
+
+        def next_event(run_id: str) -> dict[str, object]:
+            stream = db.subscribe(run_id)
+            try:
+                return next(stream)
+            finally:
+                stream.close()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(next_event, run_id) for run_id in run_ids]
+            listener_pid = None
+            deadline = time.monotonic() + 3
+            with psycopg.connect(url, autocommit=True) as admin:
+                while listener_pid is None and time.monotonic() < deadline:
+                    row = admin.execute(
+                        "SELECT pid FROM pg_stat_activity "
+                        "WHERE application_name = 'doomberg-listener' LIMIT 1"
+                    ).fetchone()
+                    listener_pid = None if row is None else int(row[0])
+                    if listener_pid is None:
+                        time.sleep(0.02)
+                assert listener_pid is not None
+                listener_count = admin.execute(
+                    "SELECT count(*) FROM pg_stat_activity "
+                    "WHERE application_name = 'doomberg-listener'"
+                ).fetchone()[0]
+                assert listener_count == 1
+                assert admin.execute(
+                    "SELECT pg_terminate_backend(%s)", (listener_pid,)
+                ).fetchone()[0]
+                replacement_pid = None
+                deadline = time.monotonic() + 4
+                while replacement_pid is None and time.monotonic() < deadline:
+                    row = admin.execute(
+                        "SELECT pid FROM pg_stat_activity "
+                        "WHERE application_name = 'doomberg-listener' AND pid <> %s LIMIT 1",
+                        (listener_pid,),
+                    ).fetchone()
+                    replacement_pid = None if row is None else int(row[0])
+                    if replacement_pid is None:
+                        time.sleep(0.02)
+                assert replacement_pid is not None
+            for run_id in run_ids:
+                TraceStore(db).append(trace_event(tenant_id, run_id))
+            recovered = [future.result(timeout=5) for future in futures]
+        assert [event["run_id"] for event in recovered] == list(run_ids)
+    finally:
+        db.close()
 
 
 @pytest.mark.skipif(
