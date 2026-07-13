@@ -3,7 +3,7 @@ import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { Dashboard } from "./pages/Dashboard";
 import { SessionsList } from "./pages/SessionsList";
 import { SessionDetail } from "./pages/SessionDetail";
-import { Deployments } from "./pages/Deployments";
+import { Backtests } from "./pages/Backtests";
 import { DeploymentDetail } from "./pages/DeploymentDetail";
 import { Settings } from "./pages/Settings";
 import { AuthPage } from "./pages/AuthPage";
@@ -14,7 +14,7 @@ import { DoombergMark } from "./auth/icons";
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/sessions", label: "Sessions", icon: ScrollText },
-  { to: "/deployments", label: "Deployments", icon: Rocket },
+  { to: "/backtests", label: "Backtests", icon: Rocket },
 ] as const;
 
 export function App() {
@@ -70,7 +70,9 @@ export function App() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/sessions" element={<SessionsList />} />
           <Route path="/sessions/:id" element={<SessionsList />} />
-          <Route path="/deployments" element={<Deployments />} />
+          <Route path="/backtests" element={<Backtests />} />
+          <Route path="/backtests/:id" element={<DeploymentDetail />} />
+          <Route path="/deployments" element={<Navigate to="/backtests" replace />} />
           <Route path="/deployments/:id" element={<DeploymentDetail />} />
           <Route path="/settings" element={<Settings />} />
 
