@@ -20,6 +20,7 @@ import sqlite3
 import threading
 from collections import defaultdict
 from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 # Version 1 of the platform schema. This string is a migration artifact: do not
@@ -529,6 +530,17 @@ class Db:
     def conn(self) -> sqlite3.Connection:
         return self._conn
 
+    @contextmanager
+    def tenant_scope(self, tenant_id: str) -> Iterator[None]:
+        """SQLite compatibility shim for the Postgres RLS access scope."""
+        del tenant_id
+        yield
+
+    @contextmanager
+    def system_scope(self) -> Iterator[None]:
+        """SQLite compatibility shim for trusted cross-tenant operations."""
+        yield
+
     def _channel(self, run_id: str) -> _RunChannel:
         with self._channels_lock:
             return self._channels[run_id]
@@ -540,12 +552,15 @@ class Db:
             ch.events.append(event)
             ch.cond.notify_all()
 
-    def subscribe(self, run_id: str, after_seq: int = -1) -> Iterator[dict[str, Any]]:
+    def subscribe(
+        self, tenant_id: str, run_id: str, after_seq: int = -1
+    ) -> Iterator[dict[str, Any]]:
         """Yield live events for `run_id` with seq > after_seq, blocking for new ones.
 
         Local in-process stand-in for Postgres LISTEN/NOTIFY. Replay-from-seq for
         historical events is the store's job; this only tails what is published live.
         """
+        tenant_id = str(tenant_id)
         ch = self._channel(run_id)
         cursor = 0
         last_seq = after_seq
@@ -556,7 +571,7 @@ class Db:
                 pending = ch.events[cursor:]
                 cursor = len(ch.events)
             for ev in pending:
-                if int(ev["seq"]) > last_seq:
+                if ev.get("tenant_id") == tenant_id and int(ev["seq"]) > last_seq:
                     last_seq = int(ev["seq"])
                     yield ev
 

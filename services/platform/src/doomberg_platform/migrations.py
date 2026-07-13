@@ -59,8 +59,83 @@ class MigrationStatus:
     pending_versions: tuple[int, ...]
 
 
+_TENANT_TABLES = (
+    "api_keys",
+    "users",
+    "sse_tickets",
+    "runs",
+    "strategies",
+    "trace_events",
+    "books",
+    "jobs",
+    "adaptive_dashboard_profiles",
+    "artifacts",
+    "approvals",
+    "provider_connections",
+    "dataset_snapshots",
+    "trigger_policies",
+    "trigger_firings",
+    "trigger_baselines",
+    "notification_outbox",
+    "delivery_targets",
+    "notification_attempts",
+    "order_intents",
+    "orders",
+    "fills",
+)
+
+
+def _policy_sql(table: str, expression: str) -> str:
+    policy = f"doomberg_{table}_access"
+    return f"""
+ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;
+ALTER TABLE {table} FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS {policy} ON {table};
+CREATE POLICY {policy} ON {table}
+    FOR ALL
+    USING ({expression})
+    WITH CHECK ({expression});
+"""
+
+
+_SYSTEM_ACCESS = "current_setting('doomberg.system_access', true) = 'on'"
+_TENANT_ACCESS = "tenant_id = current_setting('doomberg.tenant_id', true)"
+_RLS_SQL = "\n".join(
+    [
+        _policy_sql("tenants", f"{_SYSTEM_ACCESS} OR id = current_setting('doomberg.tenant_id', true)"),
+        *(
+            _policy_sql(table, f"{_SYSTEM_ACCESS} OR {_TENANT_ACCESS}")
+            for table in _TENANT_TABLES
+        ),
+        _policy_sql(
+            "run_seq",
+            f"{_SYSTEM_ACCESS} OR EXISTS ("
+            "SELECT 1 FROM runs AS scoped_run "
+            "WHERE scoped_run.run_id = run_seq.run_id "
+            "AND scoped_run.tenant_id = current_setting('doomberg.tenant_id', true))",
+        ),
+        _policy_sql(
+            "oauth_accounts",
+            f"{_SYSTEM_ACCESS} OR EXISTS ("
+            "SELECT 1 FROM users AS scoped_user "
+            "WHERE scoped_user.id = oauth_accounts.user_id "
+            "AND scoped_user.tenant_id = current_setting('doomberg.tenant_id', true))",
+        ),
+        _policy_sql(
+            "user_sessions",
+            f"{_SYSTEM_ACCESS} OR EXISTS ("
+            "SELECT 1 FROM users AS scoped_user "
+            "WHERE scoped_user.id = user_sessions.user_id "
+            "AND scoped_user.tenant_id = current_setting('doomberg.tenant_id', true))",
+        ),
+        _policy_sql("worker_leases", _SYSTEM_ACCESS),
+    ]
+)
+
+
 MIGRATIONS = (
     Migration(1, "platform baseline", _BASELINE_SCHEMA),
+    Migration(2, "enforce tenant row security", _RLS_SQL),
 )
 
 

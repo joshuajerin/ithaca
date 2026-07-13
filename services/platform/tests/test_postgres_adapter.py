@@ -6,9 +6,19 @@ from concurrent.futures import ThreadPoolExecutor
 
 import psycopg
 import pytest
+from psycopg import sql
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from platform_helpers import new_uuid, trace_event
 
-from doomberg_platform import AuthStore, ExecutionStore, JobStore, LeaseStore, TraceStore, open_db
+from doomberg_platform import (
+    AuthStore,
+    ExecutionStore,
+    JobStore,
+    LeaseStore,
+    RunStore,
+    TraceStore,
+    open_db,
+)
 from doomberg_platform.migrations import (
     MIGRATIONS,
     Migration,
@@ -89,6 +99,18 @@ def test_postgres_migrations_are_ordered_idempotent_and_locked() -> None:
     assert first_lock < first_ledger
 
 
+def test_postgres_rls_migration_forces_direct_and_indirect_tenant_policies() -> None:
+    rls = MIGRATIONS[-1]
+    assert rls.version == 2
+    for table in ("runs", "api_keys", "trace_events", "order_intents", "run_seq"):
+        assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY" in rls.sql
+        assert f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY" in rls.sql
+        assert f"CREATE POLICY doomberg_{table}_access ON {table}" in rls.sql
+    assert "scoped_run.tenant_id = current_setting('doomberg.tenant_id', true)" in rls.sql
+    assert "scoped_user.id = oauth_accounts.user_id" in rls.sql
+    assert "scoped_user.id = user_sessions.user_id" in rls.sql
+
+
 def test_postgres_migration_validation_fails_on_pending_schema() -> None:
     conn = _MigrationConnection()
 
@@ -167,7 +189,7 @@ def test_live_postgres_pool_parallelism_transaction_pinning_and_recovery() -> No
         run_ids = (new_uuid(), new_uuid())
 
         def next_event(run_id: str) -> dict[str, object]:
-            stream = db.subscribe(run_id)
+            stream = db.subscribe(tenant_id, run_id)
             try:
                 return next(stream)
             finally:
@@ -213,6 +235,77 @@ def test_live_postgres_pool_parallelism_transaction_pinning_and_recovery() -> No
         assert [event["run_id"] for event in recovered] == list(run_ids)
     finally:
         db.close()
+
+
+@pytest.mark.skipif(
+    not os.environ.get("DOOMBERG_PLATFORM_PG_URL"),
+    reason="set DOOMBERG_PLATFORM_PG_URL to run the live Postgres RLS test",
+)
+def test_live_postgres_rls_fails_closed_and_scopes_tenant_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = os.environ["DOOMBERG_PLATFORM_PG_URL"]
+    owner_db = PostgresDb(url, pool_config=PostgresPoolConfig(min_size=1, max_size=2))
+    role = f"doomberg_rls_{new_uuid().replace('-', '')[:16]}"
+    password = new_uuid()
+    app_db: PostgresDb | None = None
+    role_created = False
+    try:
+        tenant_a = AuthStore(owner_db).create_tenant("RLS tenant A")
+        tenant_b = AuthStore(owner_db).create_tenant("RLS tenant B")
+        run_a = RunStore(owner_db).create(tenant_a, "research", None, {"name": "A"})
+        run_b = RunStore(owner_db).create(tenant_b, "research", None, {"name": "B"})
+        TraceStore(owner_db).append(trace_event(tenant_a, run_a))
+        TraceStore(owner_db).append(trace_event(tenant_b, run_b))
+
+        with psycopg.connect(url, autocommit=True) as admin:
+            admin.execute(
+                sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(
+                    sql.Identifier(role), sql.Literal(password)
+                )
+            )
+            role_created = True
+            admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
+                sql.Identifier(conninfo_to_dict(url).get("dbname") or admin.info.dbname),
+                sql.Identifier(role),
+            ))
+            admin.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(
+                sql.Identifier(role)
+            ))
+            admin.execute(sql.SQL(
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {}"
+            ).format(sql.Identifier(role)))
+
+        app_url = make_conninfo(url, user=role, password=password)
+        with psycopg.connect(app_url) as raw_app:
+            assert raw_app.execute("SELECT run_id FROM runs").fetchall() == []
+            raw_app.execute("SELECT set_config('doomberg.tenant_id', %s, true)", (tenant_a,))
+            assert raw_app.execute("SELECT run_id FROM runs").fetchall() == [(run_a,)]
+            assert raw_app.execute("SELECT run_id FROM run_seq").fetchall() == [(run_a,)]
+
+        monkeypatch.setenv("DOOMBERG_DB_MIGRATION_MODE", "validate")
+        app_db = PostgresDb(app_url, pool_config=PostgresPoolConfig(min_size=1, max_size=2))
+        assert RunStore(app_db).get(tenant_a, run_a) is not None
+        assert RunStore(app_db).get(tenant_b, run_a) is None
+        assert {row["run_id"] for row in RunStore(app_db).list_by_state("draft")} == {
+            run_a,
+            run_b,
+        }
+        with app_db.tenant_scope(tenant_a):
+            with pytest.raises(RuntimeError, match="cannot switch tenant"):
+                with app_db.tenant_scope(tenant_b):
+                    pass
+            with pytest.raises(RuntimeError, match="cannot elevate"):
+                with app_db.system_scope():
+                    pass
+    finally:
+        if app_db is not None:
+            app_db.close()
+        owner_db.close()
+        if role_created:
+            with psycopg.connect(url, autocommit=True) as admin:
+                admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
+                admin.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
 
 
 @pytest.mark.skipif(

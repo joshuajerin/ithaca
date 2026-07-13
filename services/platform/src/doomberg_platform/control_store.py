@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .db import Db
+from .db_scope import tenant_scoped_store
 
 
 def _now() -> str:
@@ -77,6 +78,7 @@ def _fill_row_to_dict(row: Any) -> dict[str, Any]:
     }
 
 
+@tenant_scoped_store()
 class ArtifactStore:
     def __init__(self, db: Db) -> None:
         self._db = db
@@ -169,6 +171,7 @@ class ArtifactStore:
         return [a for r in rows if (a := self.get(str(tenant_id), r["artifact_id"])) is not None]
 
 
+@tenant_scoped_store()
 class ApprovalStore:
     def __init__(self, db: Db) -> None:
         self._db = db
@@ -292,6 +295,7 @@ class ApprovalStore:
         return self.get(tenant_id, approval_id)
 
 
+@tenant_scoped_store()
 class ProviderStore:
     def __init__(self, db: Db) -> None:
         self._db = db
@@ -446,6 +450,7 @@ class ProviderStore:
         return [s for r in rows if (s := self.get_snapshot(str(tenant_id), r["snapshot_id"])) is not None]
 
 
+@tenant_scoped_store()
 class ExecutionStore:
     def __init__(self, db: Db) -> None:
         self._db = db
@@ -764,6 +769,7 @@ class ExecutionStore:
         return [_fill_row_to_dict(row) for row in rows]
 
 
+@tenant_scoped_store(system_methods={"list_active_all"})
 class TriggerStore:
     def __init__(self, db: Db) -> None:
         self._db = db
@@ -956,6 +962,7 @@ class TriggerStore:
         return [f for r in rows if (f := self.get_firing(str(tenant_id), r["firing_id"])) is not None]
 
 
+@tenant_scoped_store()
 class TriggerBaselineStore:
     def __init__(self, db: Db) -> None:
         self._db = db
@@ -1024,6 +1031,7 @@ class TriggerBaselineStore:
         return self.get(tenant_id, trigger_id, baseline_key)
 
 
+@tenant_scoped_store()
 class DeliveryTargetStore:
     def __init__(self, db: Db) -> None:
         self._db = db
@@ -1112,6 +1120,7 @@ class DeliveryTargetStore:
         return [t for r in rows if (t := self.get(str(tenant_id), r["target_id"])) is not None]
 
 
+@tenant_scoped_store(system_methods={"claim_available"})
 class NotificationStore:
     def __init__(self, db: Db) -> None:
         self._db = db

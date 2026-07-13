@@ -96,14 +96,15 @@ def _session_actor(events: list[dict[str, Any]]) -> tuple[str, str] | None:
 
 
 def _events_by_research_run(platform: Any) -> dict[tuple[str, str], list[dict[str, Any]]]:
-    rows = platform.db.conn.execute(
-        "SELECT r.tenant_id, r.run_id, r.created_at AS run_created_at, "
-        "t.seq, t.ts, t.type, t.actor, t.data "
-        "FROM runs r LEFT JOIN trace_events t "
-        "ON r.tenant_id = t.tenant_id AND r.run_id = t.run_id "
-        "WHERE r.kind = 'research' "
-        "ORDER BY r.created_at ASC, r.run_id ASC, t.seq ASC"
-    ).fetchall()
+    with platform.db.system_scope():
+        rows = platform.db.conn.execute(
+            "SELECT r.tenant_id, r.run_id, r.created_at AS run_created_at, "
+            "t.seq, t.ts, t.type, t.actor, t.data "
+            "FROM runs r LEFT JOIN trace_events t "
+            "ON r.tenant_id = t.tenant_id AND r.run_id = t.run_id "
+            "WHERE r.kind = 'research' "
+            "ORDER BY r.created_at ASC, r.run_id ASC, t.seq ASC"
+        ).fetchall()
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         key = (str(row["tenant_id"]), str(row["run_id"]))

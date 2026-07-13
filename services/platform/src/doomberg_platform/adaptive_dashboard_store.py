@@ -7,6 +7,7 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 from .db import Db
+from .db_scope import tenant_scoped_store
 
 ADAPTIVE_WIDGET_IDS = (
     "performance_pnl",
@@ -187,6 +188,7 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
     }
 
 
+@tenant_scoped_store()
 class AdaptiveDashboardProfileStore:
     """Tenant- and user-scoped adaptive dashboard profiles."""
 

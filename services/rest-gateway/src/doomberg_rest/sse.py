@@ -4,7 +4,8 @@ The web UI subscribes to a run's trace over SSE. The lifecycle is:
 
   1. Replay: read durable events with ``seq > last_seq`` via ``TraceStore.events`` (honoring
      the ``Last-Event-ID`` header the browser resends on reconnect).
-  2. Live tail: ``TraceStore.subscribe(run_id, after_seq=last_seq)`` for events that land
+  2. Live tail: ``TraceStore.subscribe(tenant_id, run_id, after_seq=last_seq)`` for events
+     that land
      after the replay snapshot.
   3. Heartbeat: emit ``: keepalive`` comment lines periodically so idle proxies don't kill
      the stream (the v1 idle-kill lesson).
@@ -101,7 +102,7 @@ async def event_stream(
 
     def _pump() -> None:
         try:
-            for ev in trace_store.subscribe(run_id, after_seq=last_seq):
+            for ev in trace_store.subscribe(tenant_id, run_id, after_seq=last_seq):
                 if stop.is_set():
                     break
                 loop.call_soon_threadsafe(queue.put_nowait, ev)

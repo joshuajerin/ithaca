@@ -182,6 +182,33 @@ checkout/startup timeout and connection health checks before use. Tune with
 the managed Postgres connection budget multiplied by the total replica and
 container count.
 
+Postgres migration 2 enables and forces row-level security on every tenant
+table, including indirect ownership through `run_seq`, `oauth_accounts`, and
+`user_sessions`. Platform stores establish a transaction-local tenant scope
+automatically; trusted authentication and worker queue operations use an
+explicit system scope. A direct application query with no scope sees no tenant
+rows. Do not bypass the store layer for tenant data.
+
+The production database login must be `NOSUPERUSER NOBYPASSRLS`; PostgreSQL
+superusers bypass RLS even when a table uses `FORCE ROW LEVEL SECURITY`. Verify
+the deployed role and policy state before admitting traffic:
+
+```sql
+SELECT rolname, rolsuper, rolbypassrls
+FROM pg_roles
+WHERE rolname = current_user;
+
+SELECT relname, relrowsecurity, relforcerowsecurity
+FROM pg_class
+WHERE relname IN ('runs', 'trace_events', 'jobs', 'order_intents')
+ORDER BY relname;
+```
+
+The application credential remains trusted: internal system operations set a
+transaction-local `doomberg.system_access` flag. RLS is a containment boundary
+for missing or incorrect tenant predicates, not a substitute for protecting
+database credentials or preventing arbitrary SQL execution.
+
 ---
 
 ## 6. Verify live-data wiring

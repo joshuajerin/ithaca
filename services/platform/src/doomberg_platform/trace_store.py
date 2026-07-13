@@ -15,6 +15,7 @@ from typing import Any
 from doomberg_contracts import TraceEvent
 
 from .db import Db
+from .db_scope import event_tenant_scoped, tenant_scoped_store
 
 
 def _uuid_str(value: Any) -> str:
@@ -38,12 +39,14 @@ def _row_to_event(row: Any) -> dict[str, Any]:
     }
 
 
+@tenant_scoped_store(skip_methods={"append", "subscribe"})
 class TraceStore:
     """Append-only, gap-free-seq-per-run trace event log."""
 
     def __init__(self, db: Db) -> None:
         self._db = db
 
+    @event_tenant_scoped
     def append(self, event: dict[str, Any]) -> int:
         """Validate `event`, assign a gap-free seq for its run_id, persist, return seq.
 
@@ -144,15 +147,18 @@ class TraceStore:
         )
         return [_row_to_event(r) for r in cur.fetchall()]
 
-    def subscribe(self, run_id: str, after_seq: int = -1) -> Iterator[dict[str, Any]]:
+    def subscribe(
+        self, tenant_id: str, run_id: str, after_seq: int = -1
+    ) -> Iterator[dict[str, Any]]:
         """Live tail for SSE: yields events as they are appended (seq > after_seq).
 
         In-process pub/sub locally; Postgres LISTEN/NOTIFY swaps in for prod without a
         signature change. Pair with :meth:`events` for replay-then-tail (the rest-gateway
         reads `events(..., after_seq)` first, then subscribes for the live continuation).
         """
+        tenant_id = _uuid_str(tenant_id)
         run_id = _uuid_str(run_id)
-        return self._db.subscribe(run_id, after_seq=after_seq)
+        return self._db.subscribe(tenant_id, run_id, after_seq=after_seq)
 
 
 def _row_to_event_from_values(**kw: Any) -> dict[str, Any]:

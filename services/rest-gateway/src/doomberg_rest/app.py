@@ -289,27 +289,30 @@ def _upsert_clerk_user(stores: "Stores", claims: dict[str, Any]) -> dict[str, An
     )
     avatar_url = claims.get("picture") or claims.get("image_url")
 
-    existing_link = stores.db.conn.execute(
-        "SELECT user_id FROM oauth_accounts WHERE provider=? AND provider_id=?",
-        ("clerk", sub),
-    ).fetchone()
-    if existing_link:
-        existing_user = stores.users.get_by_id(existing_link["user_id"])
-        tenant_id = (
-            existing_user["tenant_id"] if existing_user else stores.auth.create_tenant(str(name))
-        )
-    else:
-        existing_by_email = stores.db.conn.execute(
-            "SELECT id, tenant_id FROM users WHERE email=?",
-            (email,),
+    with stores.db.system_scope():
+        existing_link = stores.db.conn.execute(
+            "SELECT user_id FROM oauth_accounts WHERE provider=? AND provider_id=?",
+            ("clerk", sub),
         ).fetchone()
-        tenant_id = (
-            existing_by_email["tenant_id"]
-            if existing_by_email
-            else stores.auth.create_tenant(str(name or email))
-        )
+        if existing_link:
+            existing_user = stores.users.get_by_id(existing_link["user_id"])
+            tenant_id = (
+                existing_user["tenant_id"]
+                if existing_user
+                else stores.auth.create_tenant(str(name))
+            )
+        else:
+            existing_by_email = stores.db.conn.execute(
+                "SELECT id, tenant_id FROM users WHERE email=?",
+                (email,),
+            ).fetchone()
+            tenant_id = (
+                existing_by_email["tenant_id"]
+                if existing_by_email
+                else stores.auth.create_tenant(str(name or email))
+            )
 
-    return stores.users.oauth_upsert("clerk", sub, email, str(name), avatar_url, tenant_id)
+        return stores.users.oauth_upsert("clerk", sub, email, str(name), avatar_url, tenant_id)
 
 
 def _human_scopes() -> list[str]:
@@ -464,26 +467,27 @@ def _mint_sse_ticket(stores: Stores, ctx: Ctx, run_id: str) -> dict[str, Any]:
     ticket_id = uuid.uuid4().hex
     secret = secrets.token_urlsafe(32)
     token = f"{ticket_id}.{secret}"
-    with stores.db.write_lock:
-        with stores.db.conn as conn:
-            conn.execute(
-                "DELETE FROM sse_tickets WHERE expires_at < ? OR used_at IS NOT NULL",
-                (now.isoformat(),),
-            )
-            conn.execute(
-                "INSERT INTO sse_tickets "
-                "(ticket_id, tenant_id, run_id, principal_id, secret_hash, created_at, expires_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    ticket_id,
-                    ctx.tenant_id,
-                    run_id,
-                    str(ctx.actor_id),
-                    _hash_sse_secret(secret),
-                    now.isoformat(),
-                    expires.isoformat(),
-                ),
-            )
+    with stores.db.tenant_scope(ctx.tenant_id):
+        with stores.db.write_lock:
+            with stores.db.conn as conn:
+                conn.execute(
+                    "DELETE FROM sse_tickets WHERE expires_at < ? OR used_at IS NOT NULL",
+                    (now.isoformat(),),
+                )
+                conn.execute(
+                    "INSERT INTO sse_tickets "
+                    "(ticket_id, tenant_id, run_id, principal_id, secret_hash, created_at, expires_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        ticket_id,
+                        ctx.tenant_id,
+                        run_id,
+                        str(ctx.actor_id),
+                        _hash_sse_secret(secret),
+                        now.isoformat(),
+                        expires.isoformat(),
+                    ),
+                )
     return {
         "sse_ticket": token,
         "run_id": run_id,
@@ -502,7 +506,7 @@ def _redeem_sse_ticket(stores: Stores, ticket: str, run_id: str) -> str:
         raise HTTPException(status_code=401, detail="invalid sse ticket")
 
     now = datetime.now(timezone.utc)
-    with stores.db.write_lock:
+    with stores.db.system_scope(), stores.db.write_lock:
         with stores.db.conn as conn:
             row = conn.execute(
                 "SELECT * FROM sse_tickets WHERE ticket_id = ? AND used_at IS NULL",
@@ -532,26 +536,27 @@ def _mint_alerts_sse_ticket(stores: Stores, ctx: Ctx) -> dict[str, Any]:
     ticket_id = uuid.uuid4().hex
     secret = secrets.token_urlsafe(32)
     token = f"{ticket_id}.{secret}"
-    with stores.db.write_lock:
-        with stores.db.conn as conn:
-            conn.execute(
-                "DELETE FROM sse_tickets WHERE expires_at < ? OR used_at IS NOT NULL",
-                (now.isoformat(),),
-            )
-            conn.execute(
-                "INSERT INTO sse_tickets "
-                "(ticket_id, tenant_id, run_id, principal_id, secret_hash, created_at, expires_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    ticket_id,
-                    ctx.tenant_id,
-                    "__alerts__",
-                    str(ctx.actor_id),
-                    _hash_sse_secret(secret),
-                    now.isoformat(),
-                    expires.isoformat(),
-                ),
-            )
+    with stores.db.tenant_scope(ctx.tenant_id):
+        with stores.db.write_lock:
+            with stores.db.conn as conn:
+                conn.execute(
+                    "DELETE FROM sse_tickets WHERE expires_at < ? OR used_at IS NOT NULL",
+                    (now.isoformat(),),
+                )
+                conn.execute(
+                    "INSERT INTO sse_tickets "
+                    "(ticket_id, tenant_id, run_id, principal_id, secret_hash, created_at, expires_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        ticket_id,
+                        ctx.tenant_id,
+                        "__alerts__",
+                        str(ctx.actor_id),
+                        _hash_sse_secret(secret),
+                        now.isoformat(),
+                        expires.isoformat(),
+                    ),
+                )
     return {
         "sse_ticket": token,
         "tenant_id": ctx.tenant_id,

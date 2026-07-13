@@ -13,6 +13,8 @@ import math
 import os
 import threading
 from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
@@ -157,6 +159,13 @@ class _TransactionState:
     context: Any
     connection: psycopg.Connection[Any]
     depth: int = 1
+    configured_scope: tuple[str, str] | None = None
+
+
+@dataclass(frozen=True)
+class _AccessScope:
+    mode: str
+    tenant_id: str = ""
 
 
 @dataclass
@@ -169,9 +178,16 @@ class _RunSignal:
 class _PostgresConnection:
     """sqlite3-compatible facade over a thread-safe psycopg connection pool."""
 
-    def __init__(self, pool: ConnectionPool[Any], *, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        pool: ConnectionPool[Any],
+        *,
+        timeout_seconds: float,
+        access_scope: ContextVar[_AccessScope | None],
+    ) -> None:
         self._pool = pool
         self._timeout_seconds = timeout_seconds
+        self._access_scope = access_scope
         self._local = threading.local()
 
     def __enter__(self) -> "_PostgresConnection":
@@ -199,14 +215,35 @@ class _PostgresConnection:
         bind = tuple(params or ())
         state = self._state()
         if state is not None:
+            self._configure(state.connection, state)
             return state.connection.execute(converted, bind)
         with self._pool.connection(timeout=self._timeout_seconds) as connection:
+            self._configure(connection)
             cursor = connection.execute(converted, bind)
             rows = cursor.fetchall() if cursor.description is not None else []
             return _DetachedResult(rows, cursor.rowcount)
 
     def _state(self) -> _TransactionState | None:
         return getattr(self._local, "state", None)
+
+    def _configure(
+        self,
+        connection: psycopg.Connection[Any], state: _TransactionState | None = None
+    ) -> None:
+        access = self._access_scope.get()
+        scope = (
+            access.tenant_id if access and access.mode == "tenant" else "",
+            "on" if access and access.mode == "system" else "off",
+        )
+        if state is not None and state.configured_scope == scope:
+            return
+        connection.execute(
+            "SELECT set_config('doomberg.tenant_id', %s, true), "
+            "set_config('doomberg.system_access', %s, true)",
+            scope,
+        )
+        if state is not None:
+            state.configured_scope = scope
 
 
 class PostgresDb:
@@ -223,6 +260,9 @@ class PostgresDb:
         self._signals: dict[str, _RunSignal] = {}
         self._listener_lock = threading.Lock()
         self._listener_thread: threading.Thread | None = None
+        self._access_scope: ContextVar[_AccessScope | None] = ContextVar(
+            f"doomberg_database_access_scope_{id(self)}", default=None
+        )
         self.pool_config = pool_config or PostgresPoolConfig.from_env()
         self._pool = ConnectionPool(
             conninfo=dsn,
@@ -244,7 +284,9 @@ class PostgresDb:
         try:
             self._pool.wait(timeout=self.pool_config.timeout_seconds)
             self._facade = _PostgresConnection(
-                self._pool, timeout_seconds=self.pool_config.timeout_seconds
+                self._pool,
+                timeout_seconds=self.pool_config.timeout_seconds,
+                access_scope=self._access_scope,
             )
             self._migration_status = self._migrate()
         except Exception:
@@ -263,9 +305,34 @@ class PostgresDb:
     def pool_stats(self) -> dict[str, int]:
         return dict(self._pool.get_stats())
 
+    @contextmanager
+    def tenant_scope(self, tenant_id: str) -> Iterator[None]:
+        tenant_id = str(tenant_id).strip()
+        if not tenant_id:
+            raise ValueError("tenant database scope requires a tenant id")
+        current = self._access_scope.get()
+        if current is not None and current.mode == "tenant" and current.tenant_id != tenant_id:
+            raise RuntimeError("cannot switch tenant inside an active tenant database scope")
+        token = self._access_scope.set(_AccessScope("tenant", tenant_id))
+        try:
+            yield
+        finally:
+            self._access_scope.reset(token)
+
+    @contextmanager
+    def system_scope(self) -> Iterator[None]:
+        current = self._access_scope.get()
+        if current is not None and current.mode == "tenant":
+            raise RuntimeError("cannot elevate a tenant database scope to system access")
+        token = self._access_scope.set(_AccessScope("system"))
+        try:
+            yield
+        finally:
+            self._access_scope.reset(token)
+
     def _migrate(self) -> MigrationStatus:
         mode = migration_mode()
-        with self.conn as conn:
+        with self.system_scope(), self.conn as conn:
             if mode == "apply":
                 return apply_migrations(conn)
             if mode == "validate":
@@ -282,7 +349,10 @@ class PostgresDb:
             pass
         self._wake_subscribers(str(run_id))
 
-    def subscribe(self, run_id: str, after_seq: int = -1) -> Iterator[dict[str, Any]]:
+    def subscribe(
+        self, tenant_id: str, run_id: str, after_seq: int = -1
+    ) -> Iterator[dict[str, Any]]:
+        tenant_id = str(tenant_id)
         run_id = str(run_id)
         last_seq = int(after_seq)
         signal = self._acquire_signal(run_id)
@@ -291,7 +361,7 @@ class PostgresDb:
             while not self._closed.is_set():
                 with signal.condition:
                     observed_version = signal.version
-                for event in self._events_after_run(run_id, last_seq):
+                for event in self._events_after_run(tenant_id, run_id, last_seq):
                     last_seq = int(event["seq"])
                     yield event
                 with signal.condition:
@@ -366,11 +436,15 @@ class PostgresDb:
             signal.version += 1
             signal.condition.notify_all()
 
-    def _events_after_run(self, run_id: str, after_seq: int) -> list[dict[str, Any]]:
-        rows = self.conn.execute(
-            "SELECT * FROM trace_events WHERE run_id = ? AND seq > ? ORDER BY seq ASC",
-            (run_id, int(after_seq)),
-        ).fetchall()
+    def _events_after_run(
+        self, tenant_id: str, run_id: str, after_seq: int
+    ) -> list[dict[str, Any]]:
+        with self.tenant_scope(tenant_id):
+            rows = self.conn.execute(
+                "SELECT * FROM trace_events "
+                "WHERE tenant_id = ? AND run_id = ? AND seq > ? ORDER BY seq ASC",
+                (tenant_id, run_id, int(after_seq)),
+            ).fetchall()
         return [_trace_row_to_event(row) for row in rows]
 
     def close(self) -> None:
