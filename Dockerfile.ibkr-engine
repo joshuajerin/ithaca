@@ -1,7 +1,7 @@
 # Dedicated IBKR engine image. It contains:
 # - the official IBKR Client Portal Gateway zip downloaded at build time
 # - the Doomberg FastAPI wrapper that normalizes gateway responses for the app/MCP/workers
-FROM python:3.12-slim AS builder
+FROM python:3.12-slim-bookworm AS builder
 
 RUN pip install --no-cache-dir uv==0.7.13
 
@@ -49,10 +49,10 @@ RUN curl -fsSL "${IBKR_GATEWAY_ZIP_URL}" -o /tmp/clientportal.gw.zip \
     && chmod +x /opt/clientportal/bin/run.sh \
     && cp -a /opt/clientportal/root /opt/clientportal-root-template
 
-FROM python:3.12-slim AS runtime
+FROM python:3.12-slim-bookworm AS runtime
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates default-jre-headless \
+    && apt-get install -y --no-install-recommends ca-certificates openjdk-17-jre-headless \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 doomberg \
     && useradd --system --uid 10001 --gid doomberg --home-dir /app --no-create-home doomberg

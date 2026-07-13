@@ -1,0 +1,19 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: doomberg-app
+  namespace: ${K8S_GATEWAY_NAMESPACE}
+spec:
+  minAvailable: ${APP_MIN_AVAILABLE}
+  selector:
+    matchLabels: { doomberg/component: app }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: doomberg-workers
+  namespace: ${K8S_WORKER_NAMESPACE}
+spec:
+  minAvailable: ${WORKER_MIN_AVAILABLE}
+  selector:
+    matchLabels: { doomberg/component: worker }

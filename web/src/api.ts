@@ -112,6 +112,15 @@ async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): P
   return (await res.json()) as T;
 }
 
+async function getBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+  const res = await fetch(`${API_BASE}${path}`, { headers: await headers(), signal });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`GET ${path} -> ${res.status} ${res.statusText}${body ? `: ${body}` : ""}`);
+  }
+  return res.blob();
+}
+
 async function delJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { method: "DELETE", headers: await headers(), signal });
   if (!res.ok) {
@@ -400,12 +409,22 @@ export const api = {
   },
 
   // Write actions: the UI is the human actor (the gateway defaults X-Actor-Kind to "user").
-  async proposeStrategy(spec: Record<string, unknown>, signal?: AbortSignal): Promise<RunRow> {
-    return postJson<RunRow>(`/strategies`, { spec }, signal);
+  async proposeStrategy(spec: Record<string, unknown>, signal?: AbortSignal): Promise<{ id: string; version: number; state: string }> {
+    return postJson<{ id: string; version: number; state: string }>(`/strategies`, { spec }, signal);
   },
 
-  async createRun(strategy_id: string, kind: "backtest" | "paper", range = "1y", signal?: AbortSignal): Promise<RunRow> {
-    return postJson<RunRow>(`/runs`, { strategy_id, kind, range }, signal);
+  async createRun(
+    strategy_id: string,
+    kind: "backtest" | "paper",
+    range = "1y",
+    signal?: AbortSignal,
+    idempotency_key?: string,
+  ): Promise<RunRow> {
+    return postJson<RunRow>(`/runs`, { strategy_id, kind, range, idempotency_key }, signal);
+  },
+
+  async downloadArtifact(id: string, signal?: AbortSignal): Promise<Blob> {
+    return getBlob(`/artifacts/${encodeURIComponent(id)}/download`, signal);
   },
 
   async runAction(
