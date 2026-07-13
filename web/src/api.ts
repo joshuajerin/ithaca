@@ -16,6 +16,9 @@ import type {
   AdaptiveDashboardResponse,
   DashboardRiskResponse,
   DashboardSummaryResponse,
+  DashboardActivityResponse,
+  DashboardMarketResponse,
+  DashboardProviderStatusResponse,
 } from "./types";
 
 export interface ProviderConnectionInput {
@@ -292,6 +295,17 @@ export const api = {
     return getJson<DashboardRiskResponse>(`/dashboard/risk`, signal);
   },
 
+  async getDashboardActivity(signal?: AbortSignal): Promise<DashboardActivityResponse> {
+    return getJson<DashboardActivityResponse>(`/dashboard/activity`, signal);
+  },
+
+  async getDashboardMarket(signal?: AbortSignal): Promise<DashboardMarketResponse> {
+    return getJson<DashboardMarketResponse>(`/dashboard/market`, signal);
+  },
+
+  async getDashboardProviderStatus(signal?: AbortSignal): Promise<DashboardProviderStatusResponse> {
+    return getJson<DashboardProviderStatusResponse>(`/providers/status`, signal);
+  },
   async liveDataSmoke(symbol = "AAPL", signal?: AbortSignal): Promise<LiveDataSmokeStatus> {
     return getJson<LiveDataSmokeStatus>(`/ops/live-data-smoke?symbol=${encodeURIComponent(symbol)}`, signal);
   },

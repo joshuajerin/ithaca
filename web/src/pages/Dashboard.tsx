@@ -5,9 +5,12 @@ import type {
   AdaptiveDashboardResponse,
   AdaptiveDashboardWidget,
   DashboardReadEnvelope,
+  DashboardActivityData,
+  DashboardMarketData,
+  DashboardProviderStatusData,
+  DashboardRunView,
   DashboardRiskData,
   DashboardSummaryData,
-  RunRow,
 } from "../types";
 import { DotWaveCanvas } from "../components/adaptive/DotWaveCanvas";
 import { PerformancePnlPanel } from "../dashboard/panels/PerformancePnlPanel";
@@ -132,19 +135,29 @@ export function shouldShowAdaptiveEmptyState({
   return Boolean(adaptiveError);
 }
 
-function UsageList({ rows }: { rows: RunRow[] }) {
-  const recent = rows
-    .filter((run) => run.kind === "research")
-    .slice()
-    .sort((a, b) => String(b.updated_at ?? b.created_at ?? "").localeCompare(String(a.updated_at ?? a.created_at ?? "")))
-    .slice(0, 5);
+export function recentResearchSessions(rows: DashboardRunView[]): DashboardRunView[] {
+  return rows.filter((run) => run.kind === "research").slice(0, 5);
+}
+
+export function warningCounts(activity: DashboardActivityData | null): {
+  failed: number;
+  alerts: number;
+} {
+  return {
+    failed: activity?.runs.filter((run) => /fail|timeout|cancel/i.test(run.state ?? "")).length ?? 0,
+    alerts: activity?.alerts.length ?? 0,
+  };
+}
+
+function UsageList({ rows }: { rows: DashboardRunView[] }) {
+  const recent = recentResearchSessions(rows);
   if (!recent.length) return <div className="empty">No recent sessions.</div>;
   return (
     <div className="adaptive-list">
       {recent.map((run) => (
-        <div key={run.id} className="adaptive-list-row">
+        <div key={run.run_id} className="adaptive-list-row">
           <span>{run.state}</span>
-          <strong>{run.id.slice(0, 8)}</strong>
+          <strong>{run.run_id?.slice(0, 8) ?? "—"}</strong>
           <small>{run.updated_at || run.created_at || ""}</small>
         </div>
       ))}
@@ -152,22 +165,44 @@ function UsageList({ rows }: { rows: RunRow[] }) {
   );
 }
 
-function ToolUsageSummary({ rows }: { rows: RunRow[] }) {
-  const total = rows.filter((run) => run.kind === "research").length;
+function ToolUsageSummary({ adaptive }: { adaptive: Exclude<AdaptiveDashboardResponse, { status: "empty" }> }) {
   return (
     <div className="adaptive-metric-stack">
-      <div><strong>{total}</strong><span>Sessions</span></div>
-      <div><strong>{rows.length}</strong><span>Total runs</span></div>
+      <div><strong>{adaptive.source_session_count}</strong><span>Your research sessions</span></div>
+      <div><strong>{adaptive.source_event_count}</strong><span>Your recorded events</span></div>
     </div>
   );
 }
 
-function WarningWatch({ rows }: { rows: RunRow[] }) {
-  const failed = rows.filter((run) => /fail|timeout|cancel/i.test(run.state)).length;
+function WarningWatch({ activity }: { activity: DashboardActivityData | null }) {
+  const counts = warningCounts(activity);
   return (
     <div className="adaptive-metric-stack">
-      <div><strong>{failed}</strong><span>Needs review</span></div>
-      <div><strong>{rows.length - failed}</strong><span>Normal</span></div>
+      <div><strong>{counts.alerts}</strong><span>Open alerts</span></div>
+      <div><strong>{counts.failed}</strong><span>Recent failed runs</span></div>
+    </div>
+  );
+}
+
+function LiveDataStatus({
+  providers,
+  market,
+  marketLoading,
+  marketError,
+}: {
+  providers: DashboardReadEnvelope<DashboardProviderStatusData> | null;
+  market: DashboardReadEnvelope<DashboardMarketData> | null;
+  marketLoading: boolean;
+  marketError: string | null;
+}) {
+  if (!providers || providers.status === "empty" || providers.status === "unavailable") {
+    return <DataStatePanel response={providers} emptyMessage="No tenant data provider is connected." />;
+  }
+  return (
+    <div className="adaptive-metric-stack">
+      <div><strong>{providers.data.counts.connected}</strong><span>Connected providers</span></div>
+      <div><strong>{marketLoading ? "loading" : marketError ? "unavailable" : market?.status ?? "empty"}</strong><span>Market observations</span></div>
+      <div><strong>{market?.freshness_ms != null ? `${Math.round(market.freshness_ms / 1000)}s` : "—"}</strong><span>Observation age</span></div>
     </div>
   );
 }
@@ -209,19 +244,23 @@ function UnsupportedPanel({ label }: { label: string }) {
 
 export function Dashboard() {
   const [query, setQuery] = useState("");
-  const { data: runs } = useAsync<RunRow[]>((s) => api.listRuns(undefined, s), []);
   const { data: adaptive, error: adaptiveError } = useAsync<AdaptiveDashboardResponse>((s) => api.getAdaptiveDashboard(s), []);
   const { data: summary, loading: summaryLoading, error: summaryError } =
     useAsync<DashboardReadEnvelope<DashboardSummaryData>>((s) => api.getDashboardSummary(s), []);
   const { data: risk, loading: riskLoading, error: riskError } =
     useAsync<DashboardReadEnvelope<DashboardRiskData>>((s) => api.getDashboardRisk(s), []);
+  const { data: activity, loading: activityLoading, error: activityError } =
+    useAsync<DashboardReadEnvelope<DashboardActivityData>>((s) => api.getDashboardActivity(s), []);
+  const { data: providers, loading: providersLoading, error: providersError } =
+    useAsync<DashboardReadEnvelope<DashboardProviderStatusData>>((s) => api.getDashboardProviderStatus(s), []);
+  const { data: market, loading: marketLoading, error: marketError } =
+    useAsync<DashboardReadEnvelope<DashboardMarketData>>((s) => api.getDashboardMarket(s), []);
   const performanceData = performanceFromDashboard(summary);
   const portfolioRiskData = riskFromDashboard(risk);
 
   const q = query.toLowerCase().trim();
   const panelVisible = (title: string) => !q || title.toLowerCase().includes(q);
   const bandVisible = (band: BandDef) => !q || band.label.toLowerCase().includes(q) || band.panels.some((p) => panelVisible(p.title));
-  const rows = runs ?? [];
 
   const renderAdaptiveWidget = (widget: AdaptiveDashboardWidget): ReactNode => {
     switch (widget.id) {
@@ -244,13 +283,21 @@ export function Dashboard() {
       case "sentiment":
         return <UnsupportedPanel label="Sentiment" />;
       case "recent_sessions":
-        return <UsageList rows={rows} />;
+        return activity?.data
+          ? <UsageList rows={activity.data.runs} />
+          : <DataStatePanel loading={activityLoading} error={activityError} response={activity} emptyMessage="No recent research sessions." />;
       case "tool_usage":
-        return <ToolUsageSummary rows={rows} />;
+        return adaptive && adaptive.status !== "empty"
+          ? <ToolUsageSummary adaptive={adaptive} />
+          : <DataStatePanel emptyMessage="No personal usage history yet." />;
       case "warning_watch":
-        return <WarningWatch rows={rows} />;
+        return activity?.data
+          ? <WarningWatch activity={activity.data} />
+          : <DataStatePanel loading={activityLoading} error={activityError} response={activity} emptyMessage="No warnings recorded." />;
       case "live_data_status":
-        return <UnsupportedPanel label="Live-data status" />;
+        return providers
+          ? <LiveDataStatus providers={providers} market={market} marketLoading={marketLoading} marketError={marketError} />
+          : <DataStatePanel loading={providersLoading || marketLoading} error={providersError || marketError} response={providers} emptyMessage="No tenant data provider is connected." />;
       default:
         return null;
     }
