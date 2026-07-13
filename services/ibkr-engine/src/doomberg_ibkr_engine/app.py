@@ -7,7 +7,7 @@ from typing import Any
 from doomberg_core.providers import PUBLIC_DATA_SOURCE, IbkrQuoteInvariantError, normalize_quote, public_quote
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 
-from .client_portal import ClientPortalError, ClientPortalGateway
+from .client_portal import ClientPortalError, ClientPortalGateway, public_auth_status
 
 
 def _env_flag(name: str) -> bool:
@@ -16,6 +16,13 @@ def _env_flag(name: str) -> bool:
 
 def _gateway() -> ClientPortalGateway:
     return ClientPortalGateway()
+
+
+def _unavailable(code: str, message: str, details: dict[str, Any] | None = None) -> None:
+    payload: dict[str, Any] = {"code": code, "message": message}
+    if details:
+        payload["details"] = details
+    raise HTTPException(status_code=503, detail=payload)
 
 
 def _allow_unauthenticated_local_engine() -> bool:
@@ -44,15 +51,48 @@ def create_app() -> FastAPI:
     def healthz() -> dict[str, Any]:
         health = _gateway().health()
         if not health.get("ok"):
+            # Preserve the legacy failure payload for existing health consumers.
             raise HTTPException(status_code=503, detail=health)
+        return {"ok": True, "service": "doomberg-live-data-engine", "gateway": health}
+
+    @service.get("/readyz")
+    def readyz() -> dict[str, Any]:
+        health = _gateway().health()
+        if not health.get("ok"):
+            _unavailable("IBKR_GATEWAY_UNAVAILABLE", "IBKR gateway is unavailable", health)
+        return {"ok": True, "service": "doomberg-live-data-engine", "gateway": health}
+
+    @service.get("/livez")
+    def livez() -> dict[str, Any]:
+        return {"ok": True, "service": "doomberg-live-data-engine"}
+
+    @service.get("/data/healthz")
+    def data_healthz() -> dict[str, Any]:
+        health = _gateway().data_health(repair=False)
+        if not health.get("ok"):
+            _unavailable("IBKR_DATA_UNAVAILABLE", "IBKR data session is unavailable", health)
         return {"ok": True, "service": "doomberg-live-data-engine", "gateway": health}
 
     @service.get("/auth/status", dependencies=[Depends(_require_engine_token)])
     def auth_status() -> dict[str, Any]:
         try:
-            return _gateway().auth_status()
+            return public_auth_status(_gateway().auth_status())
         except ClientPortalError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            _unavailable("IBKR_AUTH_STATUS_FAILED", str(exc))
+
+    @service.post("/auth/tickle", dependencies=[Depends(_require_engine_token)])
+    def auth_tickle() -> dict[str, Any]:
+        try:
+            return public_auth_status(_gateway().tickle())
+        except ClientPortalError as exc:
+            _unavailable("IBKR_AUTH_TICKLE_FAILED", str(exc))
+
+    @service.post("/auth/ensure", dependencies=[Depends(_require_engine_token)])
+    def auth_ensure() -> dict[str, Any]:
+        try:
+            return public_auth_status(_gateway().ensure_authenticated())
+        except ClientPortalError as exc:
+            _unavailable("IBKR_AUTH_REPAIR_FAILED", str(exc))
 
     @service.get("/quote", dependencies=[Depends(_require_engine_token)])
     def quote(
