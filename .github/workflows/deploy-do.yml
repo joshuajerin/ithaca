@@ -241,6 +241,7 @@ jobs:
           DOOMBERG_ARTIFACT_ENDPOINT_URL: ${{ vars.DOOMBERG_ARTIFACT_ENDPOINT_URL }}
           DOOMBERG_ARTIFACT_ACCESS_KEY_ID: ${{ secrets.DOOMBERG_ARTIFACT_ACCESS_KEY_ID }}
           DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY: ${{ secrets.DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY }}
+          BACKTEST_WORKER_ENABLED: ${{ vars.BACKTEST_WORKER_ENABLED }}
           DO_CLUSTER_NAME: ${{ vars.DO_CLUSTER_NAME }}
           K8S_GATEWAY_NAMESPACE: ${{ vars.K8S_GATEWAY_NAMESPACE }}
           K8S_WORKER_NAMESPACE: ${{ vars.K8S_WORKER_NAMESPACE }}
@@ -305,10 +306,12 @@ jobs:
             require_env DOOMBERG_ADMIN_TOKEN
             require_env DOOMBERG_SMOKE_API_KEY
             require_env DOOMBERG_SMOKE_NO_SCOPE_API_KEY
-            require_env DOOMBERG_ARTIFACT_BUCKET
-            require_env DOOMBERG_ARTIFACT_ENDPOINT_URL
-            require_env DOOMBERG_ARTIFACT_ACCESS_KEY_ID
-            require_env DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY
+            if [[ "${BACKTEST_WORKER_ENABLED:-0}" == "1" ]]; then
+              require_env DOOMBERG_ARTIFACT_BUCKET
+              require_env DOOMBERG_ARTIFACT_ENDPOINT_URL
+              require_env DOOMBERG_ARTIFACT_ACCESS_KEY_ID
+              require_env DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY
+            fi
           fi
 
           if [[ "${missing}" != "0" ]]; then
@@ -553,6 +556,7 @@ jobs:
           WORKER_REPLICAS: ${{ vars.WORKER_REPLICAS }}
           BACKTEST_REPLICAS: ${{ vars.BACKTEST_REPLICAS }}
           BACKTEST_MAX_REPLICAS: ${{ vars.BACKTEST_MAX_REPLICAS }}
+          BACKTEST_WORKER_ENABLED: ${{ vars.BACKTEST_WORKER_ENABLED }}
           DOOMBERG_PLATFORM_DB_URL: ${{ secrets.DOOMBERG_PLATFORM_DB_URL }}
           DOOMBERG_SESSION_SECRET: ${{ secrets.DOOMBERG_SESSION_SECRET }}
           CLERK_PEM_PUBLIC_KEY: ${{ secrets.CLERK_PEM_PUBLIC_KEY }}

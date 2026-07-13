@@ -100,7 +100,7 @@ spec:
             - name: DOOMBERG_BACKTEST_INTERVAL_S
               value: "2"
             - name: DOOMBERG_ENABLE_BACKTEST_LOOP
-              value: "0"
+              value: "${DOOMBERG_ENABLE_BACKTEST_LOOP}"
             - name: DOOMBERG_TRIGGER_JOB_INTERVAL_S
               value: "2"
             - name: DOOMBERG_NOTIFICATION_INTERVAL_S

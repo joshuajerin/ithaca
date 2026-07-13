@@ -48,6 +48,26 @@ case "${DEPLOY_DRY_RUN}" in
     ;;
 esac
 
+if [[ -z "${BACKTEST_WORKER_ENABLED:-}" ]]; then
+  if [[ "${DEPLOY_ENV}" == "dev" ]]; then
+    BACKTEST_WORKER_ENABLED="1"
+  else
+    BACKTEST_WORKER_ENABLED="0"
+  fi
+fi
+case "${BACKTEST_WORKER_ENABLED}" in
+  0|1) ;;
+  *)
+    echo "ERROR: BACKTEST_WORKER_ENABLED must be 0 or 1; got ${BACKTEST_WORKER_ENABLED}" >&2
+    exit 2
+    ;;
+esac
+if [[ "${BACKTEST_WORKER_ENABLED}" == "1" ]]; then
+  DOOMBERG_ENABLE_BACKTEST_LOOP="0"
+else
+  DOOMBERG_ENABLE_BACKTEST_LOOP="1"
+fi
+
 case "${DEPLOY_ENV}" in
   prod)
     K8S_GATEWAY_NAMESPACE="${K8S_GATEWAY_NAMESPACE:-doomberg-gateway}"
@@ -166,7 +186,9 @@ if [[ "${DEPLOY_ENV}" == "prod" ]]; then
   elif [[ -z "${WORKER_REPLICAS_EXPLICIT}" ]]; then
     echo "==> default WORKER_REPLICAS=${WORKER_REPLICAS}"
   fi
-  if [[ -z "${BACKTEST_REPLICAS}" ]]; then
+  if [[ "${BACKTEST_WORKER_ENABLED}" != "1" ]]; then
+    BACKTEST_REPLICAS="0"
+  elif [[ -z "${BACKTEST_REPLICAS}" ]]; then
     BACKTEST_REPLICAS="$(default_replicas_for_workload backtest)"
     echo "==> derived BACKTEST_REPLICAS=${BACKTEST_REPLICAS} from workload=backtest"
   elif [[ -z "${BACKTEST_REPLICAS_EXPLICIT}" ]]; then
@@ -236,7 +258,7 @@ fi
 : "${DOOMBERG_SESSION_SECRET:?DOOMBERG_SESSION_SECRET must be set for ${DEPLOY_ENV}}"
 : "${CLERK_ALLOWED_ORIGINS:?CLERK_ALLOWED_ORIGINS must be set for ${DEPLOY_ENV}}"
 : "${CLERK_ISSUER:?CLERK_ISSUER must be set for ${DEPLOY_ENV}}"
-if [[ "${DEPLOY_ENV}" == "prod" ]]; then
+if [[ "${DEPLOY_ENV}" == "prod" && "${BACKTEST_WORKER_ENABLED}" == "1" ]]; then
   : "${DOOMBERG_ARTIFACT_BUCKET:?DOOMBERG_ARTIFACT_BUCKET must be set for production}"
   : "${DOOMBERG_ARTIFACT_ENDPOINT_URL:?DOOMBERG_ARTIFACT_ENDPOINT_URL must be set for production}"
   : "${DOOMBERG_ARTIFACT_ACCESS_KEY_ID:?DOOMBERG_ARTIFACT_ACCESS_KEY_ID must be set for production}"
@@ -300,6 +322,7 @@ render_manifest() {
     -e "s|\${APP_MIN_AVAILABLE}|${APP_MIN_AVAILABLE}|g" \
     -e "s|\${WORKER_MIN_AVAILABLE}|${WORKER_MIN_AVAILABLE}|g" \
     -e "s|\${BACKTEST_MIN_AVAILABLE}|${BACKTEST_MIN_AVAILABLE}|g" \
+    -e "s|\${DOOMBERG_ENABLE_BACKTEST_LOOP}|${DOOMBERG_ENABLE_BACKTEST_LOOP}|g" \
     -e "s|\${APP_MAX_SURGE}|${APP_MAX_SURGE}|g" \
     -e "s|\${APP_MAX_UNAVAILABLE}|${APP_MAX_UNAVAILABLE}|g" \
     -e "s|\${WORKER_MAX_SURGE}|${WORKER_MAX_SURGE}|g" \
@@ -442,7 +465,11 @@ echo "==> rollout app=maxSurge:${APP_MAX_SURGE},maxUnavailable:${APP_MAX_UNAVAIL
 echo "==> namespaces"
 render_manifest infra/k8s/namespace.yaml | apply_manifest
 
-ensure_metrics_server
+if [[ "${BACKTEST_WORKER_ENABLED}" == "1" ]]; then
+  ensure_metrics_server
+else
+  echo "==> dedicated backtest workers disabled; keeping embedded backtest loop enabled"
+fi
 
 echo "==> secret doomberg-db (${DEPLOY_ENV}; values redacted)"
 create_doomberg_secret "${K8S_GATEWAY_NAMESPACE}"
@@ -464,9 +491,12 @@ if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
 fi
 
 echo "==> app manifests"
-for file in infra/k8s/app-deployment.yaml infra/k8s/app-service.yaml infra/k8s/worker-deployment.yaml infra/k8s/backtest-worker-deployment.yaml infra/k8s/disruption-budgets.yaml; do
+for file in infra/k8s/app-deployment.yaml infra/k8s/app-service.yaml infra/k8s/worker-deployment.yaml infra/k8s/disruption-budgets.yaml; do
   render_manifest "${file}" | apply_manifest
 done
+if [[ "${BACKTEST_WORKER_ENABLED}" == "1" ]]; then
+  render_manifest infra/k8s/backtest-worker-deployment.yaml | apply_manifest
+fi
 
 caddy_checksum() {
   kubectl -n "${CADDY_NAMESPACE}" get configmap caddy-config \
@@ -506,7 +536,9 @@ if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
 fi
 kubectl -n "${K8S_GATEWAY_NAMESPACE}" rollout status deployment/doomberg-app --timeout=300s
 kubectl -n "${K8S_WORKER_NAMESPACE}" rollout status deployment/doomberg-workers --timeout=300s
-kubectl -n "${K8S_WORKER_NAMESPACE}" rollout status deployment/doomberg-backtest-workers --timeout=300s
+if [[ "${BACKTEST_WORKER_ENABLED}" == "1" ]]; then
+  kubectl -n "${K8S_WORKER_NAMESPACE}" rollout status deployment/doomberg-backtest-workers --timeout=300s
+fi
 
 echo "==> verifying image tag"
 if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
@@ -527,7 +559,9 @@ if [[ "${IBKR_ENGINE_ENABLED}" == "1" ]]; then
 fi
 verify_deployment_images "${K8S_GATEWAY_NAMESPACE}" doomberg-app
 verify_deployment_images "${K8S_WORKER_NAMESPACE}" doomberg-workers
-verify_deployment_images "${K8S_WORKER_NAMESPACE}" doomberg-backtest-workers
+if [[ "${BACKTEST_WORKER_ENABLED}" == "1" ]]; then
+  verify_deployment_images "${K8S_WORKER_NAMESPACE}" doomberg-backtest-workers
+fi
 
 echo "==> pods"
 kubectl -n "${K8S_GATEWAY_NAMESPACE}" get pods -o wide
