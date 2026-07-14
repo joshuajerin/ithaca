@@ -303,7 +303,7 @@ def _mcp_initialize(send, *, token: str) -> tuple[str | None, GateResult | None]
         params={
             "protocolVersion": "2025-06-18",
             "capabilities": {},
-            "clientInfo": {"name": "doomberg-launch-gate", "version": "1"},
+            "clientInfo": {"name": "ithaca-launch-gate", "version": "1"},
         },
         token=token,
         mid=1,
@@ -479,7 +479,7 @@ def _check_mcp_durable_run(send, *, token: str, session_id: str) -> list[GateRes
         send,
         token=token,
         session_id=session_id,
-        uri=f"doomberg://runs/{run_id}",
+        uri=f"ithaca://runs/{run_id}",
         gate_name="mcp durable run resource",
         mid=7,
     )
@@ -508,7 +508,7 @@ def _check_mcp_durable_run(send, *, token: str, session_id: str) -> list[GateRes
                 results.append(
                     _pass(
                         "mcp durable run resource",
-                        "doomberg://runs/{run_id} exposed the queued/running run, job, and trace",
+                        "ithaca://runs/{run_id} exposed the queued/running run, job, and trace",
                         run_id=run_id,
                         job_id=job_id,
                         state=run_state,
@@ -545,7 +545,7 @@ def _check_mcp_durable_run(send, *, token: str, session_id: str) -> list[GateRes
         send,
         token=token,
         session_id=session_id,
-        uri=f"doomberg://runs/{run_id}",
+        uri=f"ithaca://runs/{run_id}",
         gate_name="mcp durable run cleanup",
         mid=9,
     )
@@ -587,10 +587,10 @@ def _check_mcp_resources(send, *, token: str, no_scope_token: str | None = None)
     resources = ((body or {}).get("result") or {}).get("resources") or []
     resource_uris = {item.get("uri") for item in resources if isinstance(item, dict)}
     required = {
-        "doomberg://skills/catalog",
-        "doomberg://policies/current",
-        "doomberg://accounts",
-        "doomberg://data/providers",
+        "ithaca://skills/catalog",
+        "ithaca://policies/current",
+        "ithaca://accounts",
+        "ithaca://data/providers",
     }
     missing = sorted(required - resource_uris)
     if response.status_code != 200:
@@ -605,8 +605,8 @@ def _check_mcp_resources(send, *, token: str, no_scope_token: str | None = None)
     templates = ((body or {}).get("result") or {}).get("resourceTemplates") or []
     template_uris = {item.get("uriTemplate") for item in templates if isinstance(item, dict)}
     required_templates = {
-        "doomberg://skills/{skill_id}/{version}",
-        "doomberg://runs/{run_id}",
+        "ithaca://skills/{skill_id}/{version}",
+        "ithaca://runs/{run_id}",
     }
     missing_templates = sorted(required_templates - template_uris)
     if response.status_code != 200:
@@ -622,7 +622,7 @@ def _check_mcp_resources(send, *, token: str, no_scope_token: str | None = None)
 
     response = send(
         method="resources/read",
-        params={"uri": "doomberg://skills/catalog"},
+        params={"uri": "ithaca://skills/catalog"},
         token=token,
         session_id=session_id,
         mid=4,
@@ -648,7 +648,7 @@ def _check_mcp_resources(send, *, token: str, no_scope_token: str | None = None)
     if no_scope_token:
         response = send(
             method="resources/read",
-            params={"uri": "doomberg://skills/catalog"},
+            params={"uri": "ithaca://skills/catalog"},
             token=no_scope_token,
             mid=20,
         )
@@ -668,7 +668,7 @@ def _check_mcp_resources(send, *, token: str, no_scope_token: str | None = None)
 
 
 def _check_unauthorized_rest(rest: RestClient) -> GateResult:
-    response = rest.request("GET", "/api/runs", token="dmbg_test_notareal_secret")
+    response = rest.request("GET", "/api/runs", token="ith_test_notareal_secret")
     if response.status_code == 401:
         return _pass("rest unauthorized rejection", "invalid bearer key rejected", status=401)
     return _fail(
@@ -954,8 +954,8 @@ def _check_backtest_artifact_bundle(
     tenant_id: str,
     local_stores: Any,
 ) -> list[GateResult]:
-    from doomberg_core import Core, DataGateway
-    from doomberg_runtime import run_backtest_job
+    from ithaca_core import Core, DataGateway
+    from ithaca_runtime import run_backtest_job
 
     run_id = local_stores.runs.create(tenant_id, "backtest", None, _LAUNCH_GATE_BACKTEST_SPEC)
     local_stores.runs.transition(tenant_id, run_id, "queued", expect=0)
@@ -1098,7 +1098,7 @@ def _check_realtime_trigger(
     symbol: str,
     require_live_ibkr: bool,
 ) -> list[GateResult]:
-    from doomberg_runtime import HttpQuoteClient, NotificationDispatcher, StaticQuoteClient, TriggerEngine
+    from ithaca_runtime import HttpQuoteClient, NotificationDispatcher, StaticQuoteClient, TriggerEngine
 
     symbol = (symbol or "AAPL").upper()
     results: list[GateResult] = []
@@ -1108,14 +1108,14 @@ def _check_realtime_trigger(
         "/api/providers",
         {
             "connection_id": connection_id,
-            "provider": "doomberg-live-data",
-            "credential_ref": "env:DOOMBERG_IBKR_ENGINE_TOKEN",
+            "provider": "ithaca-live-data",
+            "credential_ref": "env:ITHACA_IBKR_ENGINE_TOKEN",
             "state": "connected",
             "capabilities": ["quote"],
             "entitlements": [
                 {
                     "dataset": "equities.quotes",
-                    "entitlement_class": "doomberg_live",
+                    "entitlement_class": "ithaca_live",
                     "permitted_use": "agent_processing",
                 }
             ],
@@ -1167,8 +1167,8 @@ def _check_realtime_trigger(
                 "ask": 212.46,
                 "event_time": now.isoformat(),
                 "received_time": now.isoformat(),
-                "source": "doomberg-live-data",
-                "entitlement_class": "doomberg_live",
+                "source": "ithaca-live-data",
+                "entitlement_class": "ithaca_live",
             },
         },
         token=token,
@@ -1231,7 +1231,7 @@ def _check_realtime_trigger(
     )
 
     use_live_ibkr = require_live_ibkr
-    if use_live_ibkr and not os.environ.get("DOOMBERG_IBKR_ENGINE_URL"):
+    if use_live_ibkr and not os.environ.get("ITHACA_IBKR_ENGINE_URL"):
         results.append(
             _fail(
                 "trigger realtime fire",
@@ -1253,8 +1253,8 @@ def _check_realtime_trigger(
                         "ask": 212.46,
                         "event_time": now.isoformat(),
                         "received_time": now.isoformat(),
-                        "source": "doomberg-live-data",
-                        "entitlement_class": "doomberg_live",
+                        "source": "ithaca-live-data",
+                        "entitlement_class": "ithaca_live",
                     }
                 }
             )
@@ -1325,7 +1325,7 @@ def _check_realtime_trigger(
                                 event_types=event_types,
                             )
                         )
-                    elif provenance.get("entitlement_class") != "doomberg_live":
+                    elif provenance.get("entitlement_class") != "ithaca_live":
                         results.append(
                             _fail(
                                 "trigger realtime run fetch",
@@ -1488,9 +1488,9 @@ def _check_mcp_unauthorized_url(mcp_url: str) -> GateResult:
 def _check_mcp_unauthorized_local(db: Any) -> GateResult:
     from fastapi.testclient import TestClient
 
-    from doomberg_core import Core
-    from doomberg_mcp import PlatformTraceSink, Toolset, build_http_app
-    from doomberg_platform import Platform
+    from ithaca_core import Core
+    from ithaca_mcp import PlatformTraceSink, Toolset, build_http_app
+    from ithaca_platform import Platform
 
     platform = Platform(db)
     toolset = Toolset(core=Core(), sink=PlatformTraceSink(platform.trace), runs=platform.runs, platform=platform)
@@ -1525,9 +1525,9 @@ def _check_mcp_resources_url(
 
 
 def _check_mcp_resources_local(db: Any, *, token: str, no_scope_token: str) -> list[GateResult]:
-    from doomberg_core import Core
-    from doomberg_mcp import PlatformTraceSink, Toolset
-    from doomberg_platform import Platform
+    from ithaca_core import Core
+    from ithaca_mcp import PlatformTraceSink, Toolset
+    from ithaca_platform import Platform
 
     platform = Platform(db)
     toolset = Toolset(core=Core(), sink=PlatformTraceSink(platform.trace), runs=platform.runs, platform=platform)
@@ -1619,7 +1619,7 @@ def _check_mcp_resources_local(db: Any, *, token: str, no_scope_token: str) -> l
                 results.append(
                     _pass(
                         "mcp durable run resource",
-                        "doomberg://runs/{run_id} exposed the queued/running run, job, and trace",
+                        "ithaca://runs/{run_id} exposed the queued/running run, job, and trace",
                         run_id=run_id,
                         job_id=job_id,
                         state=run_state,
@@ -1675,10 +1675,10 @@ def _check_mcp_resources_local(db: Any, *, token: str, no_scope_token: str) -> l
 def _run_local(args: argparse.Namespace) -> list[GateResult]:
     from fastapi.testclient import TestClient
 
-    from doomberg_platform import open_db
-    from doomberg_rest import create_app
+    from ithaca_platform import open_db
+    from ithaca_rest import create_app
 
-    dsn = args.db or os.environ.get("DOOMBERG_DB") or ":memory:"
+    dsn = args.db or os.environ.get("ITHACA_DB") or ":memory:"
     db = open_db(dsn)
     app = create_app(db)
     stores = app.state.stores
@@ -1777,8 +1777,8 @@ def _run_local(args: argparse.Namespace) -> list[GateResult]:
 
 def _run_http(args: argparse.Namespace) -> list[GateResult]:
     if not args.base_url:
-        return [_fail("configuration", "--base-url or DOOMBERG_REST_URL is required for HTTP mode")]
-    token = args.api_key or os.environ.get("DOOMBERG_API_KEY")
+        return [_fail("configuration", "--base-url or ITHACA_REST_URL is required for HTTP mode")]
+    token = args.api_key or os.environ.get("ITHACA_API_KEY")
     tenant_id = args.tenant_id or str(uuid.uuid4())
     rest = RemoteRestClient(args.base_url)
     auth_tenant = None if token else tenant_id
@@ -1818,7 +1818,7 @@ def _run_http(args: argparse.Namespace) -> list[GateResult]:
             require=args.require_ibkr,
         )
     )
-    mcp_url = args.mcp_url or os.environ.get("DOOMBERG_MCP_URL")
+    mcp_url = args.mcp_url or os.environ.get("ITHACA_MCP_URL")
     if mcp_url:
         results.append(_check_mcp_unauthorized_url(mcp_url))
         mcp_token = args.mcp_api_key or token
@@ -1835,7 +1835,7 @@ def _run_http(args: argparse.Namespace) -> list[GateResult]:
         else:
             results.append(_skip("mcp initialize", "no MCP API key configured for resource checks"))
     elif args.require_mcp:
-        results.append(_fail("mcp unauthorized rejection", "--mcp-url or DOOMBERG_MCP_URL is required"))
+        results.append(_fail("mcp unauthorized rejection", "--mcp-url or ITHACA_MCP_URL is required"))
     else:
         results.append(_skip("mcp unauthorized rejection", "no MCP URL configured"))
     return results
@@ -1865,25 +1865,25 @@ def _print_results(results: list[GateResult], *, as_json: bool) -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run Doomberg customer-handoff launch gates.")
+    parser = argparse.ArgumentParser(description="Run Ithaca customer-handoff launch gates.")
     parser.add_argument(
         "--mode",
         choices=["local", "http"],
-        default="http" if os.environ.get("DOOMBERG_REST_URL") else "local",
-        help="local drives the in-process app against DOOMBERG_DB; http drives a deployed REST URL.",
+        default="http" if os.environ.get("ITHACA_REST_URL") else "local",
+        help="local drives the in-process app against ITHACA_DB; http drives a deployed REST URL.",
     )
-    parser.add_argument("--db", default=None, help="Platform DB DSN for local mode. Defaults to DOOMBERG_DB.")
-    parser.add_argument("--base-url", default=os.environ.get("DOOMBERG_REST_URL"), help="REST base URL for HTTP mode.")
-    parser.add_argument("--mcp-url", default=os.environ.get("DOOMBERG_MCP_URL"), help="MCP endpoint URL for HTTP mode.")
-    parser.add_argument("--api-key", default=os.environ.get("DOOMBERG_API_KEY"), help="Bearer key for deployed REST.")
+    parser.add_argument("--db", default=None, help="Platform DB DSN for local mode. Defaults to ITHACA_DB.")
+    parser.add_argument("--base-url", default=os.environ.get("ITHACA_REST_URL"), help="REST base URL for HTTP mode.")
+    parser.add_argument("--mcp-url", default=os.environ.get("ITHACA_MCP_URL"), help="MCP endpoint URL for HTTP mode.")
+    parser.add_argument("--api-key", default=os.environ.get("ITHACA_API_KEY"), help="Bearer key for deployed REST.")
     parser.add_argument(
         "--mcp-api-key",
-        default=os.environ.get("DOOMBERG_MCP_API_KEY"),
+        default=os.environ.get("ITHACA_MCP_API_KEY"),
         help="Bearer key for deployed MCP resource checks. Defaults to --api-key when unset.",
     )
     parser.add_argument(
         "--mcp-no-scope-api-key",
-        default=os.environ.get("DOOMBERG_MCP_NO_SCOPE_API_KEY"),
+        default=os.environ.get("ITHACA_MCP_NO_SCOPE_API_KEY"),
         help="Optional no-scope MCP bearer key used to prove resource reads are denied.",
     )
     parser.add_argument("--tenant-id", default=None, help="Tenant id for dev-header HTTP mode or local synthetic tenant.")

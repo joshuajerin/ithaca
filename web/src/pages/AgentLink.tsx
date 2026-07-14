@@ -52,7 +52,7 @@ export function AgentLink() {
     const callback = param("callback");
     const state = param("state");
     const mcpUrl = param("mcp_url") || MCP_BASE;
-    const name = param("name") || "doomberg";
+    const name = param("name") || "ithaca";
     const client = param("client") || "codex";
     return { callback, state, mcpUrl, name, client };
   }, []);
@@ -99,7 +99,7 @@ export function AgentLink() {
           body: JSON.stringify({
             state: config.state,
             denied: true,
-            error: "User denied Doomberg MCP access.",
+            error: "User denied Ithaca MCP access.",
             mcp_url: config.mcpUrl,
           }),
         }).catch(() => undefined);
@@ -118,7 +118,7 @@ export function AgentLink() {
       <main className="agent-consent-card" aria-labelledby="agent-consent-title">
         <header className="agent-consent-header">
           <h1 id="agent-consent-title">
-            Your agent wants access to Doomberg MCP
+            Your agent wants access to Ithaca MCP
           </h1>
           <p>
             Approving creates a scoped key for <strong>{config.name}</strong>.
@@ -148,12 +148,12 @@ export function AgentLink() {
         {error && <div className="agent-consent-message err">{error}</div>}
         {status === "done" && (
           <div className="agent-consent-message ok">
-            Doomberg MCP is installed. You can close this tab and return to the coding agent.
+            Ithaca MCP is installed. You can close this tab and return to the coding agent.
           </div>
         )}
         {status === "denied" && (
           <div className="agent-consent-message">
-            Access denied. No Doomberg MCP key was created for this agent.
+            Access denied. No Ithaca MCP key was created for this agent.
           </div>
         )}
 

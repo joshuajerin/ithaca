@@ -13,9 +13,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import numpy as np
 import pytest
 
-from doomberg_contracts import SkillManifest
-from doomberg_core import ALL_SKILL_MANIFESTS, Core
-from doomberg_mcp import InMemoryTrace, Toolset
+from ithaca_contracts import SkillManifest
+from ithaca_core import ALL_SKILL_MANIFESTS, Core
+from ithaca_mcp import InMemoryTrace, Toolset
 
 R = "11111111-1111-1111-1111-111111111111"
 AGENT = "agent_x"
@@ -195,9 +195,9 @@ def test_market_news_does_not_fall_back_to_archive_when_live_news_is_configured(
             "asOf": "2026-06-29T20:00:00+00:00",
         },
     }) as server:
-        monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
-        monkeypatch.setenv("DOOMBERG_IBKR_NEWS_PATH", "/news")
-        monkeypatch.setenv("DOOMBERG_IBKR_SCANNER_PATH", "/scanner")
+        monkeypatch.setenv("ITHACA_IBKR_ENGINE_URL", server.url)
+        monkeypatch.setenv("ITHACA_IBKR_NEWS_PATH", "/news")
+        monkeypatch.setenv("ITHACA_IBKR_SCANNER_PATH", "/scanner")
 
         out = archive_toolset.call_skill(
             "market.news",
@@ -205,9 +205,9 @@ def test_market_news_does_not_fall_back_to_archive_when_live_news_is_configured(
             _ctx={"run_id": R, "tenant_id": R, "agent_id": AGENT},
         )
 
-    assert out["data"]["items"][0]["headline"] == "NVDA active in Doomberg live market scan"
+    assert out["data"]["items"][0]["headline"] == "NVDA active in Ithaca live market scan"
     assert out["data"]["items"][0]["kind"] == "market_activity"
-    assert out["provenance"]["source"] == "doomberg-live-data"
+    assert out["provenance"]["source"] == "ithaca-live-data"
     assert out["warnings"] == []
     assert '"headline": "h"' not in json.dumps(out)
     assert server.requests == [
@@ -243,7 +243,7 @@ def test_unknown_skill_raises(archive_toolset):
 
 
 async def test_server_advertises_all_skill_tools(archive_toolset):
-    from doomberg_mcp import create_server
+    from ithaca_mcp import create_server
 
     mcp, _ = create_server(archive_toolset)
     names = {t.name for t in await mcp.list_tools()}

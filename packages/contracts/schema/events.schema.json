@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://doomberg.dev/contracts/events.schema.json",
+  "$id": "https://ithaca.dev/contracts/events.schema.json",
   "title": "TraceEvent",
   "description": "One append-only event in a run's trace. Single 'type' enum (the v1 kind/type split is reconciled to 'type'). seq is gap-free PER run_id, owned by a single writer per run; runs are stitched into a lineage by origin_session_id + parent_span. This is both the observability stream and the audit trail.",
   "type": "object",

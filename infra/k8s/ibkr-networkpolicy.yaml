@@ -4,19 +4,19 @@ metadata:
   name: ibkr-engine-ingress-egress
   namespace: ${K8S_GATEWAY_NAMESPACE}
   labels:
-    doomberg/component: ibkr-engine
-    doomberg/environment: ${DOOMBERG_ENV}
+    ithaca/component: ibkr-engine
+    ithaca/environment: ${ITHACA_ENV}
 spec:
   podSelector:
     matchLabels:
-      doomberg/component: ibkr-engine
+      ithaca/component: ibkr-engine
   policyTypes: ["Ingress", "Egress"]
   ingress:
-    # Doomberg app/MCP/control-plane may call the normalized wrapper API.
+    # Ithaca app/MCP/control-plane may call the normalized wrapper API.
     - from:
         - podSelector:
             matchLabels:
-              doomberg/component: app
+              ithaca/component: app
       ports:
         - protocol: TCP
           port: ${IBKR_ENGINE_PORT}
@@ -24,11 +24,11 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              doomberg/role: workers
-              doomberg/environment: ${DOOMBERG_ENV}
+              ithaca/role: workers
+              ithaca/environment: ${ITHACA_ENV}
           podSelector:
             matchLabels:
-              doomberg/component: worker
+              ithaca/component: worker
       ports:
         - protocol: TCP
           port: ${IBKR_ENGINE_PORT}
@@ -37,18 +37,18 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              doomberg/role: data-gateway
-              doomberg/environment: dev
+              ithaca/role: data-gateway
+              ithaca/environment: dev
           podSelector:
             matchLabels:
-              doomberg/component: app
+              ithaca/component: app
         - namespaceSelector:
             matchLabels:
-              doomberg/role: workers
-              doomberg/environment: dev
+              ithaca/role: workers
+              ithaca/environment: dev
           podSelector:
             matchLabels:
-              doomberg/component: worker
+              ithaca/component: worker
       ports:
         - protocol: TCP
           port: ${IBKR_ENGINE_PORT}
@@ -65,7 +65,7 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              doomberg/component: ibkr-gateway
+              ithaca/component: ibkr-gateway
       ports:
         - protocol: TCP
           port: 5000
@@ -76,22 +76,22 @@ metadata:
   name: ibkr-gateway-ingress-egress
   namespace: ${K8S_GATEWAY_NAMESPACE}
   labels:
-    doomberg/component: ibkr-gateway
-    doomberg/environment: ${DOOMBERG_ENV}
+    ithaca/component: ibkr-gateway
+    ithaca/environment: ${ITHACA_ENV}
 spec:
   podSelector:
     matchLabels:
-      doomberg/component: ibkr-gateway
+      ithaca/component: ibkr-gateway
   policyTypes: ["Ingress", "Egress"]
   ingress:
-    # Only the Doomberg wrapper can call the private Client Portal API.
+    # Only the Ithaca wrapper can call the private Client Portal API.
     - from:
         - podSelector:
             matchLabels:
-              doomberg/component: ibkr-engine
+              ithaca/component: ibkr-engine
         - podSelector:
             matchLabels:
-              doomberg/component: ibkr-engine-keepalive
+              ithaca/component: ibkr-engine-keepalive
       ports:
         - protocol: TCP
           port: 5000
@@ -100,10 +100,10 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: doomberg-gateway
+              kubernetes.io/metadata.name: ithaca-gateway
           podSelector:
             matchLabels:
-              doomberg/component: caddy
+              ithaca/component: caddy
       ports:
         - protocol: TCP
           port: 5000

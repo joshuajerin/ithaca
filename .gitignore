@@ -52,7 +52,7 @@ __pycache__/
 
 # Local runtime/state artifacts
 data/
-doomberg.db
-doomberg.db-shm
-doomberg.db-wal
+ithaca.db
+ithaca.db-shm
+ithaca.db-wal
 infra/terraform/tfplan

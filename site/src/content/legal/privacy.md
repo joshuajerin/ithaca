@@ -1,6 +1,6 @@
 # Privacy Policy
 
-This Privacy Policy explains how **Ithaca, Inc., a Delaware corporation** ("Ithaca", "we", "our", or "us") collects, uses, and shares personal information when you use the Doomberg platform and related services (the "Service"). For privacy or data-protection inquiries, contact [joshuaxjerin@gmail.com](mailto:joshuaxjerin@gmail.com).
+This Privacy Policy explains how **Ithaca, Inc., a Delaware corporation** ("Ithaca", "we", "our", or "us") collects, uses, and shares personal information when you use the Ithaca platform and related services (the "Service"). For privacy or data-protection inquiries, contact [joshuaxjerin@gmail.com](mailto:joshuaxjerin@gmail.com).
 
 ## 1. Information we collect
 

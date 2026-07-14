@@ -9,17 +9,17 @@
 #   - concurrencyPolicy: Forbid  (never overlap ticks for one book)
 #   - activeDeadlineSeconds on the Job template = per-tick aggregate deadline
 #   - restartPolicy: Never, backoffLimit: 0
-#   - doomberg/component=worker -> default-deny egress; only the Data Gateway allowed
+#   - ithaca/component=worker -> default-deny egress; only the Data Gateway allowed
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: paper-tick-${DEPLOYMENT_ID}
-  namespace: doomberg-workers
+  namespace: ithaca-workers
   labels:
-    doomberg/component: worker
-    doomberg/kind: paper
-    doomberg/deployment-id: "${DEPLOYMENT_ID}"
-    doomberg/tenant-id: "${TENANT_ID}"
+    ithaca/component: worker
+    ithaca/kind: paper
+    ithaca/deployment-id: "${DEPLOYMENT_ID}"
+    ithaca/tenant-id: "${TENANT_ID}"
 spec:
   schedule: "${PAPER_TICK_SCHEDULE}"
   concurrencyPolicy: Forbid
@@ -29,8 +29,8 @@ spec:
   jobTemplate:
     metadata:
       labels:
-        doomberg/component: worker
-        doomberg/kind: paper
+        ithaca/component: worker
+        ithaca/kind: paper
     spec:
       activeDeadlineSeconds: ${PAPER_TICK_ACTIVE_DEADLINE_SECONDS}
       backoffLimit: 0
@@ -38,9 +38,9 @@ spec:
       template:
         metadata:
           labels:
-            doomberg/component: worker
-            doomberg/kind: paper
-            doomberg/deployment-id: "${DEPLOYMENT_ID}"
+            ithaca/component: worker
+            ithaca/kind: paper
+            ithaca/deployment-id: "${DEPLOYMENT_ID}"
         spec:
           restartPolicy: Never
           automountServiceAccountToken: false
@@ -59,16 +59,16 @@ spec:
             - name: paper-tick
               image: ${WORKER_IMAGE}
               imagePullPolicy: IfNotPresent
-              command: ["python", "-m", "doomberg_runtime.live_runner"]
+              command: ["python", "-m", "ithaca_runtime.live_runner"]
               env:
-                - name: DOOMBERG_MODE
+                - name: ITHACA_MODE
                   value: "paper"
-                - name: DOOMBERG_DEPLOYMENT_ID
+                - name: ITHACA_DEPLOYMENT_ID
                   value: "${DEPLOYMENT_ID}"
-                - name: DOOMBERG_TENANT_ID
+                - name: ITHACA_TENANT_ID
                   value: "${TENANT_ID}"
                 - name: DATA_GATEWAY_URL
-                  value: "http://data-gateway.doomberg-gateway.svc.cluster.local:8080"
+                  value: "http://data-gateway.ithaca-gateway.svc.cluster.local:8080"
               resources:
                 requests:
                   cpu: 250m

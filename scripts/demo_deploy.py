@@ -21,12 +21,12 @@ import uuid
 
 import numpy as np
 
-from doomberg_control import actions
-from doomberg_control.deps import Ctx
-from doomberg_control.money import make_applier
-from doomberg_core import Core, DataGateway
-from doomberg_platform import Platform
-from doomberg_runtime import AlwaysOpen, BacktestWorker, PaperScheduler
+from ithaca_control import actions
+from ithaca_control.deps import Ctx
+from ithaca_control.money import make_applier
+from ithaca_core import Core, DataGateway
+from ithaca_platform import Platform
+from ithaca_runtime import AlwaysOpen, BacktestWorker, PaperScheduler
 
 
 def _recent_trading_days(n: int) -> list[str]:
@@ -81,7 +81,7 @@ def main() -> int:
     core = Core(DataGateway(fetch_history=_make_fetch(dates, series)))
     human = Ctx(tenant_id=tenant, actor_kind="user", actor_id="trader-1")
 
-    print("Doomberg v2 — deploy-layer demo (conductor drives the loops)\n")
+    print("Ithaca v2 — deploy-layer demo (conductor drives the loops)\n")
 
     # === 1) BACKTEST ORCHESTRATION =====================================================
     sid = actions.propose_strategy(platform, human, core, SPEC)["id"]

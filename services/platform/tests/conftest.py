@@ -1,6 +1,6 @@
 """Test fixtures + import-path fallback.
 
-In the integrated workspace, ``doomberg_contracts`` and ``doomberg_platform`` are installed
+In the integrated workspace, ``ithaca_contracts`` and ``ithaca_platform`` are installed
 editable into the shared venv, so the path-insertion below is a no-op. When running the
 suite in isolation (no editable install), we add the package source roots so imports resolve.
 """
@@ -30,7 +30,7 @@ def _ensure_importable() -> None:
 
 _ensure_importable()
 
-from doomberg_platform import (  # noqa: E402
+from ithaca_platform import (  # noqa: E402
     JobStore,
     Platform,
     RunStore,

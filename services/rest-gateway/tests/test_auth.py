@@ -14,8 +14,8 @@ import jwt
 from fastapi.testclient import TestClient
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from doomberg_platform import open_db
-from doomberg_rest import create_app
+from ithaca_platform import open_db
+from ithaca_rest import create_app
 
 
 def _spec(name="UI Auth Momentum"):
@@ -100,7 +100,7 @@ def test_bearer_key_binds_tenant_authoritatively(client, stores):
 
 
 def test_bad_bearer_key_is_401(client):
-    r = client.get("/api/runs", headers={"Authorization": "Bearer dmbg_test_nope_bogus"})
+    r = client.get("/api/runs", headers={"Authorization": "Bearer ith_test_nope_bogus"})
     assert r.status_code == 401
 
 
@@ -124,7 +124,7 @@ def test_x_tenant_id_dev_fallback_still_works(client):
 
 
 def test_x_tenant_id_fallback_disabled_in_prod(client, monkeypatch):
-    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.setenv("ITHACA_ENV", "prod")
     tid = str(uuid.uuid4())
     resp = client.get("/api/runs", headers={"X-Tenant-Id": tid})
     assert resp.status_code == 401
@@ -132,7 +132,7 @@ def test_x_tenant_id_fallback_disabled_in_prod(client, monkeypatch):
 
 
 def test_x_tenant_id_fallback_disabled_when_env_missing(client, monkeypatch):
-    monkeypatch.delenv("DOOMBERG_ENV", raising=False)
+    monkeypatch.delenv("ITHACA_ENV", raising=False)
     tid = str(uuid.uuid4())
     resp = client.get("/api/runs", headers={"X-Tenant-Id": tid})
     assert resp.status_code == 401
@@ -140,7 +140,7 @@ def test_x_tenant_id_fallback_disabled_when_env_missing(client, monkeypatch):
 
 
 def test_query_access_token_is_not_a_rest_auth_path(client, stores, monkeypatch):
-    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.setenv("ITHACA_ENV", "prod")
     tid = stores.auth.create_tenant("Acme")
     key, _ = stores.auth.mint_key(tid, ["data:read"])
 
@@ -153,7 +153,7 @@ def test_query_access_token_is_not_a_rest_auth_path(client, stores, monkeypatch)
 def test_clerk_session_token_binds_tenant(client, stores, monkeypatch):
     private_pem, public_pem = _clerk_keypair()
     monkeypatch.setenv("CLERK_PEM_PUBLIC_KEY", public_pem)
-    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "http://localhost:5174,https://app.doomberg.me")
+    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "http://localhost:5174,https://app.tradeithaca.com")
 
     token = _clerk_token(private_pem)
     resp = client.get("/api/runs", headers=_bearer(token))
@@ -178,14 +178,14 @@ def test_clerk_session_can_mint_agent_key(client, monkeypatch):
 
     assert resp.status_code == 201
     body = resp.json()
-    assert body["api_key"].startswith("dmbg_")
+    assert body["api_key"].startswith("ith_")
     assert "data:read" in body["scopes"]
 
 
 def test_clerk_session_rejects_unapproved_origin(client, monkeypatch):
     private_pem, public_pem = _clerk_keypair()
     monkeypatch.setenv("CLERK_PEM_PUBLIC_KEY", public_pem)
-    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "https://app.doomberg.me")
+    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "https://app.tradeithaca.com")
 
     token = _clerk_token(private_pem, azp="http://localhost:5174")
     resp = client.get("/api/runs", headers=_bearer(token))
@@ -196,14 +196,14 @@ def test_clerk_session_rejects_unapproved_origin(client, monkeypatch):
 
 def test_prod_clerk_requires_configured_issuer(client, monkeypatch):
     private_pem, public_pem = _clerk_keypair()
-    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.setenv("ITHACA_ENV", "prod")
     monkeypatch.setenv("CLERK_PEM_PUBLIC_KEY", public_pem)
-    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "https://app.doomberg.me")
+    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "https://app.tradeithaca.com")
     monkeypatch.delenv("CLERK_ISSUER", raising=False)
 
     resp = client.get(
         "/api/runs",
-        headers=_bearer(_clerk_token(private_pem, azp="https://app.doomberg.me")),
+        headers=_bearer(_clerk_token(private_pem, azp="https://app.tradeithaca.com")),
     )
 
     assert resp.status_code == 503
@@ -211,16 +211,16 @@ def test_prod_clerk_requires_configured_issuer(client, monkeypatch):
 
 
 def test_prod_clerk_requires_configured_authorized_origins(client, monkeypatch):
-    issuer = "https://clerk.doomberg.me"
+    issuer = "https://clerk.tradeithaca.com"
     private_pem, public_pem = _clerk_keypair()
-    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.setenv("ITHACA_ENV", "prod")
     monkeypatch.setenv("CLERK_PEM_PUBLIC_KEY", public_pem)
     monkeypatch.setenv("CLERK_ISSUER", issuer)
     monkeypatch.delenv("CLERK_ALLOWED_ORIGINS", raising=False)
 
     resp = client.get(
         "/api/runs",
-        headers=_bearer(_clerk_token(private_pem, azp="https://app.doomberg.me", issuer=issuer)),
+        headers=_bearer(_clerk_token(private_pem, azp="https://app.tradeithaca.com", issuer=issuer)),
     )
 
     assert resp.status_code == 503
@@ -229,17 +229,17 @@ def test_prod_clerk_requires_configured_authorized_origins(client, monkeypatch):
 
 def test_prod_clerk_requires_matching_issuer(client, monkeypatch):
     private_pem, public_pem = _clerk_keypair()
-    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.setenv("ITHACA_ENV", "prod")
     monkeypatch.setenv("CLERK_PEM_PUBLIC_KEY", public_pem)
-    monkeypatch.setenv("CLERK_ISSUER", "https://clerk.doomberg.me")
-    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "https://app.doomberg.me")
+    monkeypatch.setenv("CLERK_ISSUER", "https://clerk.tradeithaca.com")
+    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "https://app.tradeithaca.com")
 
     resp = client.get(
         "/api/runs",
         headers=_bearer(
             _clerk_token(
                 private_pem,
-                azp="https://app.doomberg.me",
+                azp="https://app.tradeithaca.com",
                 issuer="https://attacker.example",
             )
         ),
@@ -250,26 +250,26 @@ def test_prod_clerk_requires_matching_issuer(client, monkeypatch):
 
 
 def test_prod_cors_uses_configured_origins(monkeypatch):
-    monkeypatch.setenv("DOOMBERG_ENV", "prod")
-    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "https://app.doomberg.me")
+    monkeypatch.setenv("ITHACA_ENV", "prod")
+    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "https://app.tradeithaca.com")
     db, prod_client = _fresh_client_for_env()
 
     resp = prod_client.options(
         "/api/runs",
         headers={
-            "Origin": "https://app.doomberg.me",
+            "Origin": "https://app.tradeithaca.com",
             "Access-Control-Request-Method": "GET",
         },
     )
 
-    assert resp.headers["access-control-allow-origin"] == "https://app.doomberg.me"
+    assert resp.headers["access-control-allow-origin"] == "https://app.tradeithaca.com"
     prod_client.close()
     db.close()
 
 
 def test_prod_cors_rejects_unconfigured_origin(monkeypatch):
-    monkeypatch.setenv("DOOMBERG_ENV", "prod")
-    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "https://app.doomberg.me")
+    monkeypatch.setenv("ITHACA_ENV", "prod")
+    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "https://app.tradeithaca.com")
     db, prod_client = _fresh_client_for_env()
 
     resp = prod_client.options(

@@ -2,7 +2,7 @@
 """Local IBKR OAuth 1.0a setup helper.
 
 This is intentionally a client-side setup utility. It does not persist tokens
-unless --out is supplied, and it never reads Doomberg service env files.
+unless --out is supplied, and it never reads Ithaca service env files.
 """
 
 from __future__ import annotations
@@ -125,7 +125,7 @@ def _post_json(url: str, authorization: str) -> dict[str, Any]:
             "Authorization": authorization,
             "Connection": "keep-alive",
             "Content-Length": "0",
-            "User-Agent": "doomberg-ibkr-oauth/1.0",
+            "User-Agent": "ithaca-ibkr-oauth/1.0",
         },
     )
     try:

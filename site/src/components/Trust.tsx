@@ -5,7 +5,7 @@ const PILLARS = [
   {
     k: "01",
     t: "Never runs your agent",
-    b: "Doomberg exposes tools and executes declarative specs. It never runs the agent loop and never executes agent-authored code — the exact path that produced v1's two critical RCEs is gone.",
+    b: "Ithaca exposes tools and executes declarative specs. It never runs the agent loop and never executes agent-authored code — the exact path that produced v1's two critical RCEs is gone.",
   },
   {
     k: "02",

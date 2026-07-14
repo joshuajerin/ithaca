@@ -30,7 +30,7 @@ def test_signed_in_user_mints_lists_and_uses_key(client, stores, clerk_auth):
     assert minted["tenant_id"] == tenant_id
     assert minted["scopes"] == ["data:read"]
     api_key = minted["api_key"]
-    assert api_key.startswith("dmbg_")
+    assert api_key.startswith("ith_")
 
     # The minted key resolves to the same tenant on the data path.
     assert client.get("/api/runs", headers=_bearer(api_key)).status_code == 200

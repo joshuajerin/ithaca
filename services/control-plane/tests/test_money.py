@@ -9,7 +9,7 @@ import pytest
 
 from control_helpers import valid_spec
 
-from doomberg_control.money import apply_paper_delta, make_applier
+from ithaca_control.money import apply_paper_delta, make_applier
 
 
 def _live_paper(platform, tenant, spec=None) -> str:

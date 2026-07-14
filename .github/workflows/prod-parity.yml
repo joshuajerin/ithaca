@@ -46,7 +46,7 @@ jobs:
           platforms: linux/amd64
           push: false
           load: true
-          tags: doomberg:ci
+          tags: ithaca:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
 
@@ -58,25 +58,25 @@ jobs:
           platforms: linux/amd64
           push: false
           load: true
-          tags: doomberg-ibkr-engine:ci
+          tags: ithaca-ibkr-engine:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
 
       - name: Service role smoke
         run: |
           set -euo pipefail
-          docker run --rm doomberg:ci shell -c \
-            'python -c "import doomberg_core, doomberg_platform, doomberg_runtime, doomberg_rest, doomberg_control, doomberg_mcp; print(\"imports OK\")"'
-          cid="$(docker run -d -e DOOMBERG_DB=:memory: doomberg:ci conductor)"
+          docker run --rm ithaca:ci shell -c \
+            'python -c "import ithaca_core, ithaca_platform, ithaca_runtime, ithaca_rest, ithaca_control, ithaca_mcp; print(\"imports OK\")"'
+          cid="$(docker run -d -e ITHACA_DB=:memory: ithaca:ci conductor)"
           sleep 5
-          docker logs "$cid" | grep -q "doomberg conductor up"
+          docker logs "$cid" | grep -q "ithaca conductor up"
           docker rm -f "$cid"
-          cid="$(docker run -d -e DOOMBERG_DB=:memory: doomberg:ci trigger-engine)"
+          cid="$(docker run -d -e ITHACA_DB=:memory: ithaca:ci trigger-engine)"
           sleep 5
-          docker logs "$cid" | grep -q "doomberg trigger engine up"
+          docker logs "$cid" | grep -q "ithaca trigger engine up"
           docker rm -f "$cid"
-          docker run --rm doomberg-ibkr-engine:ci python -c \
-            'import doomberg_ibkr_engine; print("ibkr engine imports OK")'
+          docker run --rm ithaca-ibkr-engine:ci python -c \
+            'import ithaca_ibkr_engine; print("ibkr engine imports OK")'
 
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
         with:

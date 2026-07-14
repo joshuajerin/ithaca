@@ -2,8 +2,8 @@
 """End-to-end demo: research -> propose -> backtest -> observe, fully in-process.
 
 Exercises the REAL components wired together over ONE shared system-of-record:
-  doomberg_platform (stores) + doomberg_core (validate/backtest) + doomberg_runtime
-  (the worker job) + doomberg_rest (the UI read-model).
+  ithaca_platform (stores) + ithaca_core (validate/backtest) + ithaca_runtime
+  (the worker job) + ithaca_rest (the UI read-model).
 
 Network-free + deterministic (synthetic price source), so it can gate in CI.
 Run:  uv run python scripts/demo_e2e.py
@@ -17,10 +17,10 @@ import uuid
 
 import numpy as np
 
-from doomberg_core import Core, DataGateway
-from doomberg_platform import Platform
-from doomberg_rest import shape_run
-from doomberg_runtime import run_backtest_job
+from ithaca_core import Core, DataGateway
+from ithaca_platform import Platform
+from ithaca_rest import shape_run
+from ithaca_runtime import run_backtest_job
 
 
 # ---- synthetic, deterministic, offline price source ------------------------------------
@@ -76,7 +76,7 @@ def main() -> int:
     platform = Platform(db_path)                       # one shared system-of-record (real SQLite)
     core = Core(DataGateway(fetch_history=_make_fetch(dates, series)))  # offline core
 
-    print("Doomberg v2 — end-to-end demo (research → propose → backtest → observe)\n")
+    print("Ithaca v2 — end-to-end demo (research → propose → backtest → observe)\n")
 
     # 1) PROPOSE (control-plane logic): validate the declarative spec, persist a draft.
     validated = core.validate_spec(SPEC)               # raises on any closed-schema violation

@@ -8,15 +8,15 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: doomberg-app
+  name: ithaca-app
   namespace: ${K8S_GATEWAY_NAMESPACE}
   labels:
-    doomberg/component: app
-    doomberg/environment: ${DOOMBERG_ENV}
+    ithaca/component: app
+    ithaca/environment: ${ITHACA_ENV}
 spec:
   type: NodePort
   selector:
-    doomberg/component: app
+    ithaca/component: app
   ports:
     - name: rest
       port: 8000

@@ -1,7 +1,7 @@
 """The rest-gateway serves the built web UI from the same backend (one LB for UI + API).
 
 The SPA is mounted at ``/`` but LAST, so ``/api/*`` and ``/healthz`` always take precedence.
-We point ``DOOMBERG_WEB_DIST`` at a throwaway build so the test is deterministic regardless
+We point ``ITHACA_WEB_DIST`` at a throwaway build so the test is deterministic regardless
 of whether ``web/dist`` has actually been compiled.
 """
 
@@ -9,27 +9,27 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from doomberg_rest import create_app
+from ithaca_rest import create_app
 
 
 def test_spa_served_and_api_precedence(tmp_path, db, monkeypatch):
     # A throwaway "build".
-    (tmp_path / "index.html").write_text("<!doctype html><title>doomberg</title>")
+    (tmp_path / "index.html").write_text("<!doctype html><title>ithaca</title>")
     (tmp_path / "assets").mkdir()
     (tmp_path / "assets" / "app.js").write_text("console.log('hi')")
-    monkeypatch.setenv("DOOMBERG_WEB_DIST", str(tmp_path))
+    monkeypatch.setenv("ITHACA_WEB_DIST", str(tmp_path))
 
     app = create_app(db)
     with TestClient(app) as c:
         # SPA index at root.
         root = c.get("/")
         assert root.status_code == 200
-        assert "doomberg" in root.text
+        assert "ithaca" in root.text
         assert root.headers["cache-control"] == "no-store, max-age=0"
         # BrowserRouter deep links fall back to the SPA shell.
         sessions = c.get("/sessions")
         assert sessions.status_code == 200
-        assert "doomberg" in sessions.text
+        assert "ithaca" in sessions.text
         assert sessions.headers["cache-control"] == "no-store, max-age=0"
         # A built asset is served.
         asset = c.get("/assets/app.js")
@@ -52,7 +52,7 @@ def test_spa_served_and_api_precedence(tmp_path, db, monkeypatch):
 
 def test_no_build_dir_means_no_mount(tmp_path, db, monkeypatch):
     # A non-existent dist dir => the mount is skipped, the API still works.
-    monkeypatch.setenv("DOOMBERG_WEB_DIST", str(tmp_path / "does-not-exist"))
+    monkeypatch.setenv("ITHACA_WEB_DIST", str(tmp_path / "does-not-exist"))
     app = create_app(db)
     with TestClient(app) as c:
         assert c.get("/healthz").json()["ready"] is True

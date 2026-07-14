@@ -11,14 +11,14 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from doomberg_ibkr_engine.app import app
-from doomberg_ibkr_engine.client_portal import (
+from ithaca_ibkr_engine.app import app
+from ithaca_ibkr_engine.client_portal import (
     ClientPortalAuthError,
     ClientPortalGateway,
     ClientPortalHttpError,
 )
 
-app_module = importlib.import_module("doomberg_ibkr_engine.app")
+app_module = importlib.import_module("ithaca_ibkr_engine.app")
 
 
 class _Gateway:
@@ -300,7 +300,7 @@ class _AfterHoursGateway:
 
 
 def test_quote_and_read_models(monkeypatch) -> None:
-    monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_TOKEN", "engine-token")
+    monkeypatch.setenv("ITHACA_IBKR_ENGINE_TOKEN", "engine-token")
     with _Gateway() as gateway:
         monkeypatch.setenv("IBKR_CLIENT_PORTAL_URL", gateway.url)
         client = TestClient(app)
@@ -336,8 +336,8 @@ def test_quote_and_read_models(monkeypatch) -> None:
     assert quote.status_code == 200
     assert quote.json()["data"]["quote"]["symbol"] == "AAPL"
     assert quote.json()["data"]["quote"]["price"] == 212.45
-    assert quote.json()["data"]["quote"]["source"] == "doomberg-live-data"
-    assert quote.json()["data"]["quote"]["entitlement_class"] == "doomberg_live"
+    assert quote.json()["data"]["quote"]["source"] == "ithaca-live-data"
+    assert quote.json()["data"]["quote"]["entitlement_class"] == "ithaca_live"
     assert extended_quote.status_code == 200
     assert extended_quote.json()["data"]["quote"]["extended_hours_requested"] is True
     assert any("outsideRth=true" in request["path"] for request in gateway.requests)
@@ -355,7 +355,7 @@ def test_quote_and_read_models(monkeypatch) -> None:
 
 
 def test_expired_iserver_is_repaired_before_quote(monkeypatch) -> None:
-    monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_TOKEN", "engine-token")
+    monkeypatch.setenv("ITHACA_IBKR_ENGINE_TOKEN", "engine-token")
     monkeypatch.setenv("IBKR_AUTH_INIT_ATTEMPTS", "1")
     with _ExpiredIserverGateway() as gateway:
         monkeypatch.setenv("IBKR_CLIENT_PORTAL_URL", gateway.url)
@@ -368,7 +368,7 @@ def test_expired_iserver_is_repaired_before_quote(monkeypatch) -> None:
 
 
 def test_data_health_fails_when_iserver_is_not_authenticated(monkeypatch) -> None:
-    monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_TOKEN", "engine-token")
+    monkeypatch.setenv("ITHACA_IBKR_ENGINE_TOKEN", "engine-token")
     monkeypatch.delenv("IBKR_DATA_HEALTH_AUTO_REPAIR", raising=False)
     with _ExpiredIserverGateway() as gateway:
         monkeypatch.setenv("IBKR_CLIENT_PORTAL_URL", gateway.url)
@@ -667,7 +667,7 @@ def test_auth_control_endpoint_error_contract(
         def ensure_authenticated(self) -> dict[str, Any]:
             raise ClientPortalHttpError(500, "token=must-not-leak")
 
-    monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_TOKEN", "engine-token")
+    monkeypatch.setenv("ITHACA_IBKR_ENGINE_TOKEN", "engine-token")
     monkeypatch.setattr(app_module, "_gateway", lambda: FailingGateway())
     client = TestClient(app_module.app)
 
@@ -683,7 +683,7 @@ def test_auth_control_endpoint_error_contract(
 
 
 def test_quote_can_use_extended_hours_history_when_snapshot_has_no_last(monkeypatch) -> None:
-    monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_TOKEN", "engine-token")
+    monkeypatch.setenv("ITHACA_IBKR_ENGINE_TOKEN", "engine-token")
     with _AfterHoursGateway() as gateway:
         monkeypatch.setenv("IBKR_CLIENT_PORTAL_URL", gateway.url)
         client = TestClient(app)
@@ -700,7 +700,7 @@ def test_quote_can_use_extended_hours_history_when_snapshot_has_no_last(monkeypa
 
 
 def test_bearer_token_is_required(monkeypatch) -> None:
-    monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_TOKEN", "engine-token")
+    monkeypatch.setenv("ITHACA_IBKR_ENGINE_TOKEN", "engine-token")
     client = TestClient(app)
 
     assert client.get("/accounts").status_code == 401
@@ -710,8 +710,8 @@ def test_bearer_token_is_required(monkeypatch) -> None:
 
 
 def test_missing_engine_token_fails_closed_outside_local(monkeypatch) -> None:
-    monkeypatch.setenv("DOOMBERG_ENV", "prod")
-    monkeypatch.delenv("DOOMBERG_IBKR_ENGINE_TOKEN", raising=False)
+    monkeypatch.setenv("ITHACA_ENV", "prod")
+    monkeypatch.delenv("ITHACA_IBKR_ENGINE_TOKEN", raising=False)
     client = TestClient(app)
 
     resp = client.get("/accounts")
@@ -721,7 +721,7 @@ def test_missing_engine_token_fails_closed_outside_local(monkeypatch) -> None:
 
 
 def test_pre_login_gateway_is_reachable_but_requires_auth(monkeypatch) -> None:
-    monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_TOKEN", "engine-token")
+    monkeypatch.setenv("ITHACA_IBKR_ENGINE_TOKEN", "engine-token")
     with _PreLoginGateway() as gateway:
         monkeypatch.setenv("IBKR_CLIENT_PORTAL_URL", gateway.url)
         client = TestClient(app)
@@ -737,8 +737,8 @@ def test_pre_login_gateway_is_reachable_but_requires_auth(monkeypatch) -> None:
 
 
 def test_order_submission_disabled_by_default(monkeypatch) -> None:
-    monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_TOKEN", "engine-token")
-    monkeypatch.delenv("DOOMBERG_ENABLE_LIVE_EXECUTION", raising=False)
+    monkeypatch.setenv("ITHACA_IBKR_ENGINE_TOKEN", "engine-token")
+    monkeypatch.delenv("ITHACA_ENABLE_LIVE_EXECUTION", raising=False)
     client = TestClient(app)
 
     response = client.post(

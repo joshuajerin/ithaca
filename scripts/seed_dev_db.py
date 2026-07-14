@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parents[1] / "doomberg.db"
+DB_PATH = Path(__file__).resolve().parents[1] / "ithaca.db"
 TENANT_ID = "00000000-0000-0000-0000-000000000001"
 USER_ID = "usr_joshua_dev_001"
 EMAIL = "joshuaj6195@gmail.com"

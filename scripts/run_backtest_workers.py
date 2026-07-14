@@ -7,16 +7,16 @@ import os
 import signal
 import threading
 
-from doomberg_core import Core
-from doomberg_platform import Platform
-from doomberg_runtime import BacktestWorker, object_storage_configured
+from ithaca_core import Core
+from ithaca_platform import Platform
+from ithaca_runtime import BacktestWorker, object_storage_configured
 
 
 def main() -> int:
-    db = os.environ.get("DOOMBERG_DB", ":memory:")
+    db = os.environ.get("ITHACA_DB", ":memory:")
     if db == ":memory:":
-        raise RuntimeError("dedicated backtest workers require a shared DOOMBERG_DB")
-    if os.environ.get("DOOMBERG_ENV", "").lower() in {"prod", "production"}:
+        raise RuntimeError("dedicated backtest workers require a shared ITHACA_DB")
+    if os.environ.get("ITHACA_ENV", "").lower() in {"prod", "production"}:
         if not object_storage_configured():
             raise RuntimeError("production backtest workers require durable artifact storage")
 
@@ -28,9 +28,9 @@ def main() -> int:
     worker = BacktestWorker(
         platform,
         Core(),
-        batch=int(os.environ.get("DOOMBERG_BACKTEST_BATCH", "4")),
+        batch=int(os.environ.get("ITHACA_BACKTEST_BATCH", "4")),
     )
-    interval = float(os.environ.get("DOOMBERG_BACKTEST_INTERVAL_S", "2"))
+    interval = float(os.environ.get("ITHACA_BACKTEST_INTERVAL_S", "2"))
     print(
         f"dedicated backtest worker up — id={worker.worker_id}, interval={interval}s, "
         f"batch={worker.batch}, durable_artifacts={object_storage_configured()}"

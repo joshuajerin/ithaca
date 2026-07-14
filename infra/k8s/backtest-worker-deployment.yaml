@@ -2,24 +2,24 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: doomberg-backtest-workers
+  name: ithaca-backtest-workers
   namespace: ${K8S_WORKER_NAMESPACE}
   labels:
-    doomberg/component: backtest-worker
-    doomberg/environment: ${DOOMBERG_ENV}
+    ithaca/component: backtest-worker
+    ithaca/environment: ${ITHACA_ENV}
 spec:
   replicas: ${BACKTEST_REPLICAS}
   strategy:
     type: RollingUpdate
     rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
   selector:
-    matchLabels: { doomberg/component: backtest-worker }
+    matchLabels: { ithaca/component: backtest-worker }
   template:
     metadata:
       labels:
-        doomberg/component: backtest-worker
-        doomberg/worker-role: backtest
-        doomberg/environment: ${DOOMBERG_ENV}
+        ithaca/component: backtest-worker
+        ithaca/worker-role: backtest
+        ithaca/environment: ${ITHACA_ENV}
     spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 45
@@ -32,7 +32,7 @@ spec:
             - weight: 100
               podAffinityTerm:
                 labelSelector:
-                  matchLabels: { doomberg/component: backtest-worker }
+                  matchLabels: { ithaca/component: backtest-worker }
                 topologyKey: kubernetes.io/hostname
       securityContext:
         runAsNonRoot: true
@@ -46,10 +46,10 @@ spec:
           imagePullPolicy: IfNotPresent
           args: ["platform-migrate"]
           env:
-            - { name: DOOMBERG_ENV, value: "${DOOMBERG_ENV}" }
-            - name: DOOMBERG_DB
+            - { name: ITHACA_ENV, value: "${ITHACA_ENV}" }
+            - name: ITHACA_DB
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: platform_url }
+                secretKeyRef: { name: ithaca-db, key: platform_url }
           resources:
             requests: { cpu: "100m", memory: 128Mi }
             limits: { cpu: "500m", memory: 256Mi }
@@ -64,45 +64,45 @@ spec:
           imagePullPolicy: IfNotPresent
           args: ["backtest-worker"]
           env:
-            - { name: DOOMBERG_ENV, value: "${DOOMBERG_ENV}" }
-            - name: DOOMBERG_DB
+            - { name: ITHACA_ENV, value: "${ITHACA_ENV}" }
+            - name: ITHACA_DB
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: platform_url }
-            - { name: DOOMBERG_BACKTEST_INTERVAL_S, value: "2" }
-            - { name: DOOMBERG_BACKTEST_BATCH, value: "4" }
-            - name: DOOMBERG_ARTIFACT_BUCKET
+                secretKeyRef: { name: ithaca-db, key: platform_url }
+            - { name: ITHACA_BACKTEST_INTERVAL_S, value: "2" }
+            - { name: ITHACA_BACKTEST_BATCH, value: "4" }
+            - name: ITHACA_ARTIFACT_BUCKET
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: artifact_bucket }
-            - name: DOOMBERG_ARTIFACT_ENDPOINT_URL
+                secretKeyRef: { name: ithaca-db, key: artifact_bucket }
+            - name: ITHACA_ARTIFACT_ENDPOINT_URL
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: artifact_endpoint_url }
-            - name: DOOMBERG_ARTIFACT_REGION
+                secretKeyRef: { name: ithaca-db, key: artifact_endpoint_url }
+            - name: ITHACA_ARTIFACT_REGION
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: artifact_region }
-            - name: DOOMBERG_ARTIFACT_ACCESS_KEY_ID
+                secretKeyRef: { name: ithaca-db, key: artifact_region }
+            - name: ITHACA_ARTIFACT_ACCESS_KEY_ID
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: artifact_access_key_id }
-            - name: DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY
+                secretKeyRef: { name: ithaca-db, key: artifact_access_key_id }
+            - name: ITHACA_ARTIFACT_SECRET_ACCESS_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: artifact_secret_access_key }
+                secretKeyRef: { name: ithaca-db, key: artifact_secret_access_key }
             - name: FMP_API_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: fmp_api_key, optional: true }
+                secretKeyRef: { name: ithaca-db, key: fmp_api_key, optional: true }
             - name: DATABENTO_API_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: databento_api_key, optional: true }
+                secretKeyRef: { name: ithaca-db, key: databento_api_key, optional: true }
             - name: DATABENTO_DATASET
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: databento_dataset, optional: true }
-            - name: DOOMBERG_DATA_SOURCE
+                secretKeyRef: { name: ithaca-db, key: databento_dataset, optional: true }
+            - name: ITHACA_DATA_SOURCE
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: data_source, optional: true }
+                secretKeyRef: { name: ithaca-db, key: data_source, optional: true }
           resources:
             requests: { cpu: "500m", memory: 512Mi }
             limits: { cpu: "2", memory: 2Gi }
           readinessProbe:
             exec:
-              command: ["python", "-m", "doomberg_runtime.worker_health"]
+              command: ["python", "-m", "ithaca_runtime.worker_health"]
             initialDelaySeconds: 5
             periodSeconds: 15
             timeoutSeconds: 5
@@ -126,23 +126,23 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: doomberg-backtest-workers
+  name: ithaca-backtest-workers
   namespace: ${K8S_WORKER_NAMESPACE}
 spec:
   minAvailable: ${BACKTEST_MIN_AVAILABLE}
   selector:
-    matchLabels: { doomberg/component: backtest-worker }
+    matchLabels: { ithaca/component: backtest-worker }
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: doomberg-backtest-workers
+  name: ithaca-backtest-workers
   namespace: ${K8S_WORKER_NAMESPACE}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: doomberg-backtest-workers
+    name: ithaca-backtest-workers
   minReplicas: ${BACKTEST_MIN_REPLICAS}
   maxReplicas: ${BACKTEST_MAX_REPLICAS}
   behavior:

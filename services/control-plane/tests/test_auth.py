@@ -34,7 +34,7 @@ def test_valid_key_resolves_ctx_and_proposes(client, platform):
 
 def test_bad_key_is_401(client):
     resp = client.post("/strategies", json={"spec": valid_spec()},
-                       headers={"Authorization": "Bearer dmbg_test_nope_bogus"})
+                       headers={"Authorization": "Bearer ith_test_nope_bogus"})
     assert resp.status_code == 401
 
 
@@ -100,7 +100,7 @@ def test_x_tenant_id_dev_fallback_still_works(client):
 
 
 def test_x_tenant_id_fallback_disabled_in_prod(client, monkeypatch):
-    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.setenv("ITHACA_ENV", "prod")
     tid = str(uuid.uuid4())
     resp = client.post("/strategies", json={"spec": valid_spec()},
                        headers={"X-Tenant-Id": tid, "X-Actor-Kind": "human"})
@@ -109,7 +109,7 @@ def test_x_tenant_id_fallback_disabled_in_prod(client, monkeypatch):
 
 
 def test_x_tenant_id_fallback_disabled_when_env_missing(client, monkeypatch):
-    monkeypatch.delenv("DOOMBERG_ENV", raising=False)
+    monkeypatch.delenv("ITHACA_ENV", raising=False)
     tid = str(uuid.uuid4())
     resp = client.post("/strategies", json={"spec": valid_spec()},
                        headers={"X-Tenant-Id": tid, "X-Actor-Kind": "human"})
@@ -121,23 +121,23 @@ def test_no_credentials_at_all_is_401(client):
     assert client.post("/strategies", json={"spec": valid_spec()}).status_code == 401
 
 
-# ---- admin endpoints: inert unless DOOMBERG_ADMIN_TOKEN is set -------------------------
+# ---- admin endpoints: inert unless ITHACA_ADMIN_TOKEN is set -------------------------
 def test_admin_endpoints_404_when_token_unset(client, monkeypatch):
-    monkeypatch.delenv("DOOMBERG_ADMIN_TOKEN", raising=False)
+    monkeypatch.delenv("ITHACA_ADMIN_TOKEN", raising=False)
     assert client.post("/admin/tenants", json={"name": "x"}).status_code == 404
     assert client.post(f"/admin/tenants/{uuid.uuid4()}/keys",
                        json={"scopes": ["data:read"]}).status_code == 404
 
 
 def test_admin_requires_matching_token(client, monkeypatch):
-    monkeypatch.setenv("DOOMBERG_ADMIN_TOKEN", "s3cret")
+    monkeypatch.setenv("ITHACA_ADMIN_TOKEN", "s3cret")
     assert client.post("/admin/tenants", json={"name": "x"}).status_code == 401
     assert client.post("/admin/tenants", json={"name": "x"},
                        headers={"X-Admin-Token": "wrong"}).status_code == 401
 
 
 def test_admin_global_execution_kill_switch(client, platform, monkeypatch, tenant_a):
-    monkeypatch.setenv("DOOMBERG_ADMIN_TOKEN", "s3cret")
+    monkeypatch.setenv("ITHACA_ADMIN_TOKEN", "s3cret")
     response = client.post(
         "/admin/execution/kill-switch",
         json={"enabled": True, "reason": "site incident", "expect_version": 0},
@@ -171,7 +171,7 @@ def test_admin_global_execution_kill_switch(client, platform, monkeypatch, tenan
 
 
 def test_admin_can_create_tenant_and_mint_key_end_to_end(client, platform, monkeypatch):
-    monkeypatch.setenv("DOOMBERG_ADMIN_TOKEN", "s3cret")
+    monkeypatch.setenv("ITHACA_ADMIN_TOKEN", "s3cret")
     h = {"X-Admin-Token": "s3cret"}
     created = client.post("/admin/tenants", json={"name": "Acme"}, headers=h)
     assert created.status_code == 201
@@ -187,7 +187,7 @@ def test_admin_can_create_tenant_and_mint_key_end_to_end(client, platform, monke
 
 
 def test_admin_mint_rejects_deploy_live_scope(client, monkeypatch):
-    monkeypatch.setenv("DOOMBERG_ADMIN_TOKEN", "s3cret")
+    monkeypatch.setenv("ITHACA_ADMIN_TOKEN", "s3cret")
     h = {"X-Admin-Token": "s3cret"}
     tid = client.post("/admin/tenants", json={"name": "Acme"}, headers=h).json()["tenant_id"]
     resp = client.post(f"/admin/tenants/{tid}/keys",

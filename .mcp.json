@@ -1,10 +1,10 @@
 {
   "mcpServers": {
-    "doomberg": {
+    "ithaca": {
       "type": "http",
-      "url": "https://mcp.doomberg.me/mcp",
+      "url": "https://mcp.tradeithaca.com/mcp",
       "headers": {
-        "Authorization": "Bearer ${DOOMBERG_MCP_API_KEY}"
+        "Authorization": "Bearer ${ITHACA_MCP_API_KEY}"
       }
     }
   }

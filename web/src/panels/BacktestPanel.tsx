@@ -2,7 +2,7 @@ import type { BacktestResult } from "../types";
 import { EquityCurve } from "./EquityCurve";
 import { RiskBadge } from "./RiskBadge";
 
-// Display-only renderer for a backtest result payload (doomberg_core backtest.run `data`).
+// Display-only renderer for a backtest result payload (ithaca_core backtest.run `data`).
 // Tolerant of partial data — it renders whatever subset of the shape is present.
 export function BacktestPanel({ data }: { data: unknown }) {
   const d = (data ?? {}) as Partial<BacktestResult>;

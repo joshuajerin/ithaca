@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the single multi-service doomberg image and push it to DigitalOcean
+# Build the single multi-service ithaca image and push it to DigitalOcean
 # Container Registry (DOCR). CI passes explicit immutable tags; local use can
 # still default to the current git short SHA.
 #
@@ -15,9 +15,9 @@ if [[ "${LOAD_LOCAL_ENV:-1}" != "0" && -f infra/terraform/.env ]]; then
   set -a; source infra/terraform/.env; set +a
 fi
 
-REGISTRY_NAME="${REGISTRY_NAME:-doomberg}"
+REGISTRY_NAME="${REGISTRY_NAME:-ithaca}"
 REGISTRY_HOST="registry.digitalocean.com/${REGISTRY_NAME}"
-IMAGE_NAME="${IMAGE_NAME:-doomberg}"
+IMAGE_NAME="${IMAGE_NAME:-ithaca}"
 
 IMAGE_TAG="${IMAGE_TAG:-${1:-}}"
 if [[ -z "${IMAGE_TAG}" ]]; then

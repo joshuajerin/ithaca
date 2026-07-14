@@ -1,6 +1,6 @@
 # Cookie Policy
 
-This Cookie Policy explains how **Ithaca, Inc., a Delaware corporation** ("we") uses cookies and similar technologies (local storage, pixels) on the Doomberg websites and application (the "Service"). It supplements our [Privacy Policy](/privacy).
+This Cookie Policy explains how **Ithaca, Inc., a Delaware corporation** ("we") uses cookies and similar technologies (local storage, pixels) on the Ithaca websites and application (the "Service"). It supplements our [Privacy Policy](/privacy).
 
 ## 1. What are cookies?
 

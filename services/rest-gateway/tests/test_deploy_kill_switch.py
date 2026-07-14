@@ -27,9 +27,9 @@ def _resolve(tmp_path: Path, mode: str, *, requested: str | None = None) -> subp
         "FAKE_KUBECTL_MODE": mode,
     }
     if requested is None:
-        env.pop("DOOMBERG_EXECUTION_KILL_SWITCH", None)
+        env.pop("ITHACA_EXECUTION_KILL_SWITCH", None)
     else:
-        env["DOOMBERG_EXECUTION_KILL_SWITCH"] = requested
+        env["ITHACA_EXECUTION_KILL_SWITCH"] = requested
     return subprocess.run(
         [
             "bash",

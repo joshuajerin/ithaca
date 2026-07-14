@@ -6,7 +6,7 @@
   "source_classes": null,
   "runtime": {
     "profile": "interactive",
-    "image": "registry.digitalocean.com/doomberg/doomberg:latest",
+    "image": "registry.digitalocean.com/ithaca/ithaca:latest",
     "timeout_seconds": 30
   },
   "permissions": {},

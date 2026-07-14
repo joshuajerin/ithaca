@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://doomberg.dev/contracts/platform_run.schema.json",
+  "$id": "https://ithaca.dev/contracts/platform_run.schema.json",
   "title": "PlatformRun",
   "type": "object",
   "additionalProperties": false,

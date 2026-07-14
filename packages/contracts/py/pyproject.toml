@@ -1,7 +1,7 @@
 [project]
-name = "doomberg-contracts"
+name = "ithaca-contracts"
 version = "0.0.0"
-description = "Doomberg v2 shared contracts (generated pydantic models). Single source of truth: ../schema/*.schema.json"
+description = "Ithaca v2 shared contracts (generated pydantic models). Single source of truth: ../schema/*.schema.json"
 requires-python = ">=3.11"
 dependencies = ["pydantic>=2.7"]
 
@@ -13,7 +13,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["doomberg_contracts"]
+packages = ["ithaca_contracts"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

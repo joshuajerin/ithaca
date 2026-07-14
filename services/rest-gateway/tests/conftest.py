@@ -1,7 +1,7 @@
 """Test fixtures + import-path fallback.
 
-In the integrated workspace, ``doomberg_contracts``, ``doomberg_platform``, and
-``doomberg_rest`` are installed editable into the shared venv, so the path-insertion below
+In the integrated workspace, ``ithaca_contracts``, ``ithaca_platform``, and
+``ithaca_rest`` are installed editable into the shared venv, so the path-insertion below
 is a no-op. When running the suite in isolation, we add the source roots so imports resolve.
 """
 
@@ -25,7 +25,7 @@ def _ensure_importable() -> None:
     candidates = [
         _TEST_ROOT,
         _REPO_ROOT / "packages" / "contracts" / "py",
-        _REPO_ROOT / "doomberg-core" / "src",
+        _REPO_ROOT / "ithaca-core" / "src",
         _REPO_ROOT / "services" / "platform" / "src",
         _REPO_ROOT / "services" / "control-plane" / "src",
         _REPO_ROOT / "services" / "runtime" / "src",
@@ -39,14 +39,14 @@ def _ensure_importable() -> None:
 
 _ensure_importable()
 
-from doomberg_platform import open_db  # noqa: E402
+from ithaca_platform import open_db  # noqa: E402
 
-from doomberg_rest import create_app  # noqa: E402
+from ithaca_rest import create_app  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
 def _local_env(monkeypatch):
-    monkeypatch.setenv("DOOMBERG_ENV", "test")
+    monkeypatch.setenv("ITHACA_ENV", "test")
 
 
 @pytest.fixture()
@@ -97,7 +97,7 @@ def clerk_auth(monkeypatch):
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     ).decode()
     monkeypatch.setenv("CLERK_PEM_PUBLIC_KEY", public_pem)
-    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "http://localhost:5174,https://app.doomberg.me")
+    monkeypatch.setenv("CLERK_ALLOWED_ORIGINS", "http://localhost:5174,https://app.tradeithaca.com")
 
     def mint(
         *,

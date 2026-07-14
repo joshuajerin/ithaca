@@ -4,7 +4,7 @@ Status: proposed, awaiting approval. No implementation has been done yet.
 
 ## Goal
 
-Redesign the authenticated app around a warm, light Doomberg dashboard while preserving the dense terminal/observability feel.
+Redesign the authenticated app around a warm, light Ithaca dashboard while preserving the dense terminal/observability feel.
 
 The left nav should become:
 
@@ -18,22 +18,22 @@ After login, `/` should open `/dashboard`. The Sessions area should show MCP wor
 
 ## Current State Found
 
-- [web/src/App.tsx](/Users/joshuajerin/Desktop/jarvis/doomberg/web/src/App.tsx) currently defines the nav as `Runs`, `Deploys`, `Trades`, `Ideas`, `Settings`, and redirects `/` to `/runs`.
-- [web/src/index.css](/Users/joshuajerin/Desktop/jarvis/doomberg/web/src/index.css) is explicitly a black terminal theme: black background, mono labels, sharp borders, white foreground, compact tables, and a three-column run layout.
-- [web/src/pages/RunDetail.tsx](/Users/joshuajerin/Desktop/jarvis/doomberg/web/src/pages/RunDetail.tsx) already has the core session detail shape: reasoning column, tool timeline column, evidence column, live EventSource updates, and a replay scrubber.
-- [web/src/pages/RunsList.tsx](/Users/joshuajerin/Desktop/jarvis/doomberg/web/src/pages/RunsList.tsx) lists all runs together. It does not filter to `kind=research`, so research sessions, backtests, and paper deployments are not separated for the user.
-- [web/src/timeline.ts](/Users/joshuajerin/Desktop/jarvis/doomberg/web/src/timeline.ts) folds `tool_call` and `tool_result` by `span_id`, but renders a flat list. It preserves `parent_span_id`, so a connected workflow tree can be derived without changing the existing event contract.
-- [web/src/hooks/useRunEvents.ts](/Users/joshuajerin/Desktop/jarvis/doomberg/web/src/hooks/useRunEvents.ts) subscribes to `/api/runs/:id/events` over SSE and keeps the ordered raw `TraceEvent[]`. This is the right source of truth for real-time session visualization.
-- [web/src/panels/registry.tsx](/Users/joshuajerin/Desktop/jarvis/doomberg/web/src/panels/registry.tsx) is already a fixed renderer registry with JSON fallback. This matches the security model: no dynamic/eval panel code.
-- [services/platform/src/doomberg_platform/run_store.py](/Users/joshuajerin/Desktop/jarvis/doomberg/services/platform/src/doomberg_platform/run_store.py) has `create_research`, which creates `kind="research"` rows for MCP activity.
-- [services/mcp-gateway/src/doomberg_mcp/server.py](/Users/joshuajerin/Desktop/jarvis/doomberg/services/mcp-gateway/src/doomberg_mcp/server.py) opens a research run on first traced tool call and emits `session_open`, then `tool_call` / `tool_result` for MCP tools.
-- [services/mcp-gateway/src/doomberg_mcp/trace.py](/Users/joshuajerin/Desktop/jarvis/doomberg/services/mcp-gateway/src/doomberg_mcp/trace.py) puts `session_id`, `origin_session_id`, `span_id`, and `parent_span_id` on events. `tool_result` currently stores compact summaries, not always full raw tool payloads.
-- [services/mcp-gateway/src/doomberg_mcp/http.py](/Users/joshuajerin/Desktop/jarvis/doomberg/services/mcp-gateway/src/doomberg_mcp/http.py) only passes `tenant_id` and `agent_id` into the tool context. Hosted HTTP MCP does not currently propagate a per-conversation session id, so session grouping may be too broad.
-- [services/rest-gateway/src/doomberg_rest/app.py](/Users/joshuajerin/Desktop/jarvis/doomberg/services/rest-gateway/src/doomberg_rest/app.py) exposes `GET /api/runs`, `GET /api/runs/:id`, and `GET /api/runs/:id/events`, but not first-class `/api/sessions` aliases yet.
-- [services/rest-gateway/src/doomberg_rest/readmodel.py](/Users/joshuajerin/Desktop/jarvis/doomberg/services/rest-gateway/src/doomberg_rest/readmodel.py) shapes run trace lanes for non-web consumers and keeps raw `events` for the web reducer.
-- [packages/contracts/schema/events.schema.json](/Users/joshuajerin/Desktop/jarvis/doomberg/packages/contracts/schema/events.schema.json) allows `session_open`, `reasoning`, `tool_call`, `tool_result`, `strategy_proposed`, lifecycle events, marks, fills, denials, errors, and arbitrary object data. This can carry prompt metadata inside `session_open.data` without a schema migration.
-- [site/src/index.css](/Users/joshuajerin/Desktop/jarvis/doomberg/site/src/index.css) already defines the warm public-site palette: cream, paper, sand, ink, olive, amber, blueprint blue, and line colors.
-- [docs/plans/doomberg-v2/designs/webui.md](/Users/joshuajerin/Desktop/jarvis/doomberg/docs/plans/doomberg-v2/designs/webui.md) already describes the intended v2 observability model: external agents call MCP, the browser reads REST/SSE, and the run trace is the audit surface.
+- [web/src/App.tsx](/Users/joshuajerin/Desktop/jarvis/ithaca/web/src/App.tsx) currently defines the nav as `Runs`, `Deploys`, `Trades`, `Ideas`, `Settings`, and redirects `/` to `/runs`.
+- [web/src/index.css](/Users/joshuajerin/Desktop/jarvis/ithaca/web/src/index.css) is explicitly a black terminal theme: black background, mono labels, sharp borders, white foreground, compact tables, and a three-column run layout.
+- [web/src/pages/RunDetail.tsx](/Users/joshuajerin/Desktop/jarvis/ithaca/web/src/pages/RunDetail.tsx) already has the core session detail shape: reasoning column, tool timeline column, evidence column, live EventSource updates, and a replay scrubber.
+- [web/src/pages/RunsList.tsx](/Users/joshuajerin/Desktop/jarvis/ithaca/web/src/pages/RunsList.tsx) lists all runs together. It does not filter to `kind=research`, so research sessions, backtests, and paper deployments are not separated for the user.
+- [web/src/timeline.ts](/Users/joshuajerin/Desktop/jarvis/ithaca/web/src/timeline.ts) folds `tool_call` and `tool_result` by `span_id`, but renders a flat list. It preserves `parent_span_id`, so a connected workflow tree can be derived without changing the existing event contract.
+- [web/src/hooks/useRunEvents.ts](/Users/joshuajerin/Desktop/jarvis/ithaca/web/src/hooks/useRunEvents.ts) subscribes to `/api/runs/:id/events` over SSE and keeps the ordered raw `TraceEvent[]`. This is the right source of truth for real-time session visualization.
+- [web/src/panels/registry.tsx](/Users/joshuajerin/Desktop/jarvis/ithaca/web/src/panels/registry.tsx) is already a fixed renderer registry with JSON fallback. This matches the security model: no dynamic/eval panel code.
+- [services/platform/src/ithaca_platform/run_store.py](/Users/joshuajerin/Desktop/jarvis/ithaca/services/platform/src/ithaca_platform/run_store.py) has `create_research`, which creates `kind="research"` rows for MCP activity.
+- [services/mcp-gateway/src/ithaca_mcp/server.py](/Users/joshuajerin/Desktop/jarvis/ithaca/services/mcp-gateway/src/ithaca_mcp/server.py) opens a research run on first traced tool call and emits `session_open`, then `tool_call` / `tool_result` for MCP tools.
+- [services/mcp-gateway/src/ithaca_mcp/trace.py](/Users/joshuajerin/Desktop/jarvis/ithaca/services/mcp-gateway/src/ithaca_mcp/trace.py) puts `session_id`, `origin_session_id`, `span_id`, and `parent_span_id` on events. `tool_result` currently stores compact summaries, not always full raw tool payloads.
+- [services/mcp-gateway/src/ithaca_mcp/http.py](/Users/joshuajerin/Desktop/jarvis/ithaca/services/mcp-gateway/src/ithaca_mcp/http.py) only passes `tenant_id` and `agent_id` into the tool context. Hosted HTTP MCP does not currently propagate a per-conversation session id, so session grouping may be too broad.
+- [services/rest-gateway/src/ithaca_rest/app.py](/Users/joshuajerin/Desktop/jarvis/ithaca/services/rest-gateway/src/ithaca_rest/app.py) exposes `GET /api/runs`, `GET /api/runs/:id`, and `GET /api/runs/:id/events`, but not first-class `/api/sessions` aliases yet.
+- [services/rest-gateway/src/ithaca_rest/readmodel.py](/Users/joshuajerin/Desktop/jarvis/ithaca/services/rest-gateway/src/ithaca_rest/readmodel.py) shapes run trace lanes for non-web consumers and keeps raw `events` for the web reducer.
+- [packages/contracts/schema/events.schema.json](/Users/joshuajerin/Desktop/jarvis/ithaca/packages/contracts/schema/events.schema.json) allows `session_open`, `reasoning`, `tool_call`, `tool_result`, `strategy_proposed`, lifecycle events, marks, fills, denials, errors, and arbitrary object data. This can carry prompt metadata inside `session_open.data` without a schema migration.
+- [site/src/index.css](/Users/joshuajerin/Desktop/jarvis/ithaca/site/src/index.css) already defines the warm public-site palette: cream, paper, sand, ink, olive, amber, blueprint blue, and line colors.
+- [docs/plans/ithaca-v2/designs/webui.md](/Users/joshuajerin/Desktop/jarvis/ithaca/docs/plans/ithaca-v2/designs/webui.md) already describes the intended v2 observability model: external agents call MCP, the browser reads REST/SSE, and the run trace is the audit surface.
 - The old v1 terminal archive has been removed from this repo. New dashboard work should use the current `web/src/components/terminal/panels` renderers or add explicit v2-local components.
 
 ## Product Shape
@@ -73,7 +73,7 @@ Create or refactor to `web/src/pages/SessionsList.tsx`:
 - Fetch `api.listRuns("research")`.
 - Show research session rows with `Session`, `Prompt`, `Agent`, `State`, `Calls`, `Last event`, `Warnings`, and `Created`.
 - Derive prompt/title from `session_open.data.prompt`, `session_open.data.userPrompt`, `run.spec.prompt`, or first user/reasoning event when present.
-- Show a clear `Prompt not captured` state for older/current MCP traces where Doomberg did not receive the prompt.
+- Show a clear `Prompt not captured` state for older/current MCP traces where Ithaca did not receive the prompt.
 - Link rows to `/sessions/:id`.
 
 Keep old `/runs` and `/runs/:id` as redirects to `/sessions` and `/sessions/:id` for compatibility.
@@ -106,7 +106,7 @@ Important wording: for existing traces, most MCP `tool_result` events currently 
 
 ### Prompt Capture
 
-Doomberg can observe MCP tool calls, but it cannot know the human's original prompt unless the UI or the agent sends it.
+Ithaca can observe MCP tool calls, but it cannot know the human's original prompt unless the UI or the agent sends it.
 
 Add one first-class prompt capture path:
 
@@ -230,7 +230,7 @@ Possible later upgrade:
 
    - `web/src/pages/NewSession.tsx`
    - `web/src/api.ts`
-   - Backend files if approved: `services/rest-gateway/src/doomberg_rest/app.py`, platform/control helpers as needed.
+   - Backend files if approved: `services/rest-gateway/src/ithaca_rest/app.py`, platform/control helpers as needed.
 
    First-pass UX:
 
@@ -294,7 +294,7 @@ Possible later upgrade:
 
    Files:
 
-   - `services/rest-gateway/src/doomberg_rest/app.py`
+   - `services/rest-gateway/src/ithaca_rest/app.py`
    - Maybe `services/rest-gateway/tests/test_sessions.py`
 
    Endpoint:
@@ -308,7 +308,7 @@ Possible later upgrade:
 
    Files:
 
-   - `services/mcp-gateway/src/doomberg_mcp/server.py`
+   - `services/mcp-gateway/src/ithaca_mcp/server.py`
    - `services/mcp-gateway/tests/test_research_session.py`
 
    Tool:
@@ -321,8 +321,8 @@ Possible later upgrade:
 
    Files:
 
-   - `services/mcp-gateway/src/doomberg_mcp/http.py`
-   - `services/mcp-gateway/src/doomberg_mcp/server.py`
+   - `services/mcp-gateway/src/ithaca_mcp/http.py`
+   - `services/mcp-gateway/src/ithaca_mcp/server.py`
 
    Direction:
 
@@ -332,7 +332,7 @@ Possible later upgrade:
 
 ## Styling Acceptance Criteria
 
-- The app feels like a warm Doomberg terminal: light paper shell, ink text, olive/amber/blue accents, dense workflow UI.
+- The app feels like a warm Ithaca terminal: light paper shell, ink text, olive/amber/blue accents, dense workflow UI.
 - Dashboard is the first screen after login.
 - No oversized marketing hero, no explanatory in-app feature copy, no decorative blobs.
 - Text fits on narrow widths; workflow nodes and nav labels do not resize layout on hover.
@@ -342,9 +342,9 @@ Possible later upgrade:
 
 Frontend:
 
-- `pnpm --filter @doomberg/web test`
-- `pnpm --filter @doomberg/web typecheck`
-- `pnpm --filter @doomberg/web build`
+- `pnpm --filter @ithaca/web test`
+- `pnpm --filter @ithaca/web typecheck`
+- `pnpm --filter @ithaca/web build`
 
 Contracts:
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://doomberg.dev/contracts/platform_error.schema.json",
+  "$id": "https://ithaca.dev/contracts/platform_error.schema.json",
   "title": "PlatformError",
   "type": "object",
   "additionalProperties": false,

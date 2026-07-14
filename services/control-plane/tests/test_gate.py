@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from control_helpers import valid_spec
 
-from doomberg_control.gate import DEFAULT_RESTRICTED, evaluate_spec_gate
+from ithaca_control.gate import DEFAULT_RESTRICTED, evaluate_spec_gate
 
 
 def test_feasible_spec_passes():

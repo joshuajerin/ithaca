@@ -14,7 +14,7 @@ function envelope<T>(data: T): {
   return {
     status: "ready",
     as_of: "2026-07-12T00:00:00Z",
-    source: "doomberg-platform",
+    source: "ithaca-platform",
     entitlement_class: null,
     freshness_ms: 100,
     data,

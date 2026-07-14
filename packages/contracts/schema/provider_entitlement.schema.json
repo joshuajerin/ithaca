@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://doomberg.dev/contracts/provider_entitlement.schema.json",
+  "$id": "https://ithaca.dev/contracts/provider_entitlement.schema.json",
   "title": "ProviderEntitlement",
   "type": "object",
   "additionalProperties": false,
@@ -11,7 +11,7 @@
     "provider": { "type": "string" },
     "source_account": { "type": ["string", "null"] },
     "dataset": { "type": "string" },
-    "entitlement_class": { "type": "string", "enum": ["public_delayed", "connected_account", "doomberg_licensed", "internal_dev"] },
+    "entitlement_class": { "type": "string", "enum": ["public_delayed", "connected_account", "ithaca_licensed", "internal_dev"] },
     "permitted_use": {
       "type": "array",
       "items": { "type": "string", "enum": ["display", "non_display", "derived", "backtest", "redistribution"] },

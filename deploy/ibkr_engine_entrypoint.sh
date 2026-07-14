@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Entrypoint for the dedicated Doomberg IBKR engine image.
+# Entrypoint for the dedicated Ithaca IBKR engine image.
 set -euo pipefail
 
 ROLE="${1:-ibkr-engine}"
@@ -14,7 +14,7 @@ ensure_client_portal_state() {
   if [[ ! -f "${CLIENT_PORTAL_STATE}/conf.yaml" ]]; then
     cp -a "${CLIENT_PORTAL_TEMPLATE}/." "${CLIENT_PORTAL_STATE}/"
   fi
-  cp /usr/local/share/doomberg/ibkr-conf.yaml "${CLIENT_PORTAL_STATE}/conf.yaml"
+  cp /usr/local/share/ithaca/ibkr-conf.yaml "${CLIENT_PORTAL_STATE}/conf.yaml"
 }
 
 case "${ROLE}" in
@@ -24,7 +24,7 @@ case "${ROLE}" in
     exec ./bin/run.sh root/conf.yaml "$@"
     ;;
   ibkr-engine)
-    exec python -m doomberg_ibkr_engine "$@"
+    exec python -m ithaca_ibkr_engine "$@"
     ;;
   shell)
     exec /bin/bash "$@"

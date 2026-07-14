@@ -16,7 +16,7 @@ Rebuild `/dashboard` into a generic, warm, live operational board that shows wha
 
 - `/dashboard` becomes a high-level live MCP/platform board.
 - It derives content from sessions, the latest selected session detail, live SSE events, deployment runs, and strategies.
-- It keeps the current warm visual palette and uses old Doomberg interaction ideas: compact panels, hover border changes, dense metadata, subtle pop-in animation, and clickable module rows.
+- It keeps the current warm visual palette and uses old Ithaca interaction ideas: compact panels, hover border changes, dense metadata, subtle pop-in animation, and clickable module rows.
 - It does not import unsafe v1 dynamic/generated panel execution.
 
 ## Implementation
@@ -38,9 +38,9 @@ Rebuild `/dashboard` into a generic, warm, live operational board that shows wha
 Run:
 
 ```bash
-pnpm --filter @doomberg/web typecheck
-pnpm --filter @doomberg/web build
-pnpm --filter @doomberg/web test
+pnpm --filter @ithaca/web typecheck
+pnpm --filter @ithaca/web build
+pnpm --filter @ithaca/web test
 ```
 
 Manual checks:

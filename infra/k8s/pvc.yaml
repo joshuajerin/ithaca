@@ -1,15 +1,15 @@
 # Legacy durable storage for the old SQLite system-of-record.
 #
 # The current deploy script no longer applies this PVC because platform state is in
-# managed Postgres (`DOOMBERG_DB=doomberg-db.platform_url`). Keep this manifest only for
+# managed Postgres (`ITHACA_DB=ithaca-db.platform_url`). Keep this manifest only for
 # rollback/dev experiments that explicitly choose a SQLite file.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: doomberg-state
+  name: ithaca-state
   namespace: ${K8S_GATEWAY_NAMESPACE}
   labels:
-    doomberg/environment: ${DOOMBERG_ENV}
+    ithaca/environment: ${ITHACA_ENV}
 spec:
   accessModes:
     - ReadWriteOnce

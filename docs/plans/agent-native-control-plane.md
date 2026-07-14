@@ -4,9 +4,9 @@ Status: Proposed
 
 ## Goal
 
-Implement the Doomberg plan as an agent-native trading control plane, not as a bigger synchronous MCP tool bundle. The target boundary is:
+Implement the Ithaca plan as an agent-native trading control plane, not as a bigger synchronous MCP tool bundle. The target boundary is:
 
-> MCP creates, observes, and controls durable Doomberg runs. Doomberg owns data entitlements, compute, triggers, policy, execution, artifacts, and traceability.
+> MCP creates, observes, and controls durable Ithaca runs. Ithaca owns data entitlements, compute, triggers, policy, execution, artifacts, and traceability.
 
 This plan intentionally starts from the current repo rather than replacing it wholesale. The repo already has useful pieces: a typed contract package, MCP and REST gateways, a control-plane service, a runtime worker loop, trace storage, a paper-only money path, a React session UI, deployment manifests, and archive-backed financial skills. The implementation should harden those pieces into a durable platform.
 
@@ -14,23 +14,23 @@ This plan intentionally starts from the current repo rather than replacing it wh
 
 ### What Already Aligns
 
-- `README.md` frames v2 as a financial tool-platform for external agents, with `packages/contracts`, `doomberg-core`, `services/mcp-gateway`, `services/rest-gateway`, `services/control-plane`, `services/runtime`, `web`, and `infra`.
+- `README.md` frames v2 as a financial tool-platform for external agents, with `packages/contracts`, `ithaca-core`, `services/mcp-gateway`, `services/rest-gateway`, `services/control-plane`, `services/runtime`, `web`, and `infra`.
 - `packages/contracts/schema/provenance.schema.json` already defines a real provenance envelope with `source`, `as_of`, `freshness`, `pit`, coverage, warnings, and cost fields.
 - `packages/contracts/schema/strategy_spec.schema.json` keeps strategy specs declarative and closed to arbitrary agent-authored code.
-- `services/control-plane/src/doomberg_control/actions.py` is already the single transport-agnostic write path for strategies and paper deployment actions.
-- `services/runtime/src/doomberg_runtime/orchestrator.py` and `backtest_runner.py` already poll persisted runs and execute backtests outside request/response paths.
-- `services/platform/src/doomberg_platform/trace_store.py` already stores append-only run events and streams them through REST/SSE.
-- `services/control-plane/src/doomberg_control/money.py` keeps broker-like writes paper-only and behind risk rechecks.
+- `services/control-plane/src/ithaca_control/actions.py` is already the single transport-agnostic write path for strategies and paper deployment actions.
+- `services/runtime/src/ithaca_runtime/orchestrator.py` and `backtest_runner.py` already poll persisted runs and execute backtests outside request/response paths.
+- `services/platform/src/ithaca_platform/trace_store.py` already stores append-only run events and streams them through REST/SSE.
+- `services/control-plane/src/ithaca_control/money.py` keeps broker-like writes paper-only and behind risk rechecks.
 - `infra/k8s/worker-networkpolicy.yaml` already starts separating worker egress from app services.
 
 ### Gaps Against The Target
 
-- MCP still exposes a large top-level tool catalog. `services/mcp-gateway/src/doomberg_mcp/server.py` runs `market_get_ohlcv`, `backtest_run`, `propose_strategy`, and archive skills inline, while many skills are advertised as separate MCP tools. This conflicts with the target small progressive-discovery surface.
+- MCP still exposes a large top-level tool catalog. `services/mcp-gateway/src/ithaca_mcp/server.py` runs `market_get_ohlcv`, `backtest_run`, `propose_strategy`, and archive skills inline, while many skills are advertised as separate MCP tools. This conflicts with the target small progressive-discovery surface.
 - Durable runs exist through REST/control-plane, but not as the primary MCP behavior. MCP calls do not generally return `{run_id, status, status_url, estimated_profile}`.
-- Platform state is SQLite with an in-process pub/sub. `services/platform/src/doomberg_platform/db.py` lacks provider connections, dataset snapshots, entitlements, jobs, leases, run attempts, spans, artifacts, triggers, approvals, order intents, orders, fills, costs, and provider health tables.
+- Platform state is SQLite with an in-process pub/sub. `services/platform/src/ithaca_platform/db.py` lacks provider connections, dataset snapshots, entitlements, jobs, leases, run attempts, spans, artifacts, triggers, approvals, order intents, orders, fills, costs, and provider health tables.
 - Queueing is not yet production-grade. `RunStore.claim_queued` is effectively optimistic state transition without leases, visibility timeouts, heartbeat recovery, checkpoint awareness, or cancellation.
-- The data layer is not entitlement-aware. `doomberg-core/src/doomberg_core/gateway/data_gateway.py` and archive skills do not route by tenant/provider entitlement. Several skill implementations call public/live APIs directly instead of centralizing through the gateway.
-- Provenance envelopes diverge. `DataGateway` mostly follows the contract, but `doomberg-core/src/doomberg_core/skills/envelope.py` emits a lighter shape that omits required contract fields.
+- The data layer is not entitlement-aware. `ithaca-core/src/ithaca_core/gateway/data_gateway.py` and archive skills do not route by tenant/provider entitlement. Several skill implementations call public/live APIs directly instead of centralizing through the gateway.
+- Provenance envelopes diverge. `DataGateway` mostly follows the contract, but `ithaca-core/src/ithaca_core/skills/envelope.py` emits a lighter shape that omits required contract fields.
 - The dashboard is still sample-driven. `web/src/pages/Dashboard.tsx` builds local panels from prompt presets and stamps them with `source: "sample"`.
 - Session UI exists but does not yet make provider provenance, artifacts, approvals, order intents, costs, or replay bundles first-class.
 - Execution remains paper-only and lacks first-class `order_intent`, `approval`, `order`, `fill`, and reconciliation state machines.
@@ -63,7 +63,7 @@ The existing services can be extended before directories are split:
 - `services/mcp-gateway`: thin discovery, run creation, run observation, approvals, artifacts, and compatibility wrappers.
 - `services/control-plane`: authoritative state transitions, admission control, policy checks, approvals, strategy lifecycle, and execution-intent lifecycle.
 - `services/runtime`: durable worker leases, job execution, checkpoints, artifacts, cancellation, retries, and profile enforcement.
-- `doomberg-core`: pure financial primitives, canonical data contracts, strategy validation, risk math, and no broker writes.
+- `ithaca-core`: pure financial primitives, canonical data contracts, strategy validation, risk math, and no broker writes.
 - live-data provider layer: connected-account providers, entitlement routing, dataset snapshots, and normalized payloads.
 - `web`: live control-plane dashboard, sessions trace UI, provider/entitlement UI, trigger UI, approval/execution UI, artifacts and replay.
 - `infra`: Managed Postgres platform state, Spaces artifacts, split services, worker pools, secrets boundaries, and autoscaling.
@@ -86,7 +86,7 @@ Edits:
   - `order_intent`, `order`, `fill`, `position_snapshot`
   - typed platform errors
 - Update generated TS/Python contracts and drift checks.
-- Align `doomberg-core/src/doomberg_core/skills/envelope.py` with `provenance.schema.json`.
+- Align `ithaca-core/src/ithaca_core/skills/envelope.py` with `provenance.schema.json`.
 - Add platform migrations/tables while preserving the existing SQLite implementation for local dev.
 - Introduce a store interface that can support Postgres as production state and SQLite as local/dev fallback.
 
@@ -118,12 +118,12 @@ get_artifact(artifact_id)
 Resources:
 
 ```text
-doomberg://skills/catalog
-doomberg://skills/{skill_id}/{version}
-doomberg://runs/{run_id}
-doomberg://policies/current
-doomberg://accounts
-doomberg://data/providers
+ithaca://skills/catalog
+ithaca://skills/{skill_id}/{version}
+ithaca://runs/{run_id}
+ithaca://policies/current
+ithaca://accounts
+ithaca://data/providers
 ```
 
 Implementation notes:
@@ -213,7 +213,7 @@ normalize(response)
 - Implement initial modes:
   - Community/public-delayed data with visible source/freshness.
   - Connected-account data for the first broker/provider.
-  - A placeholder adapter interface for future Doomberg-licensed data.
+  - A placeholder adapter interface for future Ithaca-licensed data.
 
 Acceptance:
 
@@ -347,14 +347,14 @@ Baseline verification:
 
 ```bash
 uv sync --all-packages --extra dev
-for pkg in packages/contracts/py doomberg-core services/platform services/mcp-gateway services/control-plane services/rest-gateway services/runtime; do
+for pkg in packages/contracts/py ithaca-core services/platform services/mcp-gateway services/control-plane services/rest-gateway services/runtime; do
   (cd "$pkg" && PYTHONDONTWRITEBYTECODE=1 uv run --extra dev pytest -q -p no:cacheprovider)
 done
 pnpm run contracts:check
-pnpm --filter @doomberg/contracts run test
-pnpm --filter @doomberg/web run test
-pnpm --filter @doomberg/web run build
-pnpm --filter @doomberg/site run build
+pnpm --filter @ithaca/contracts run test
+pnpm --filter @ithaca/web run test
+pnpm --filter @ithaca/web run build
+pnpm --filter @ithaca/site run build
 uv run python scripts/demo_e2e.py
 uv run python scripts/demo_deploy.py
 ```
@@ -363,9 +363,9 @@ Infra verification:
 
 ```bash
 (cd infra/terraform && terraform fmt -check -recursive && terraform init -backend=false -input=false && terraform validate -no-color)
-docker build -t doomberg:control-plane-test .
-rg -n "count = 0|python -m doomberg_runtime" infra/terraform/jobs.tf
-rg -n "if __name__|def main" services/runtime/src/doomberg_runtime scripts/run_workers.py
+docker build -t ithaca:control-plane-test .
+rg -n "count = 0|python -m ithaca_runtime" infra/terraform/jobs.tf
+rg -n "if __name__|def main" services/runtime/src/ithaca_runtime scripts/run_workers.py
 ```
 
 New required tests:

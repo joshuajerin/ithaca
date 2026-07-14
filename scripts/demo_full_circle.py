@@ -31,13 +31,13 @@ import tempfile
 
 import numpy as np
 
-from doomberg_control import actions
-from doomberg_control.actions import ActionError
-from doomberg_control.deps import Ctx, resolve_ctx
-from doomberg_control.money import make_applier
-from doomberg_core import Core, DataGateway
-from doomberg_platform import Platform
-from doomberg_runtime import AlwaysOpen, BacktestWorker, PaperScheduler
+from ithaca_control import actions
+from ithaca_control.actions import ActionError
+from ithaca_control.deps import Ctx, resolve_ctx
+from ithaca_control.money import make_applier
+from ithaca_core import Core, DataGateway
+from ithaca_platform import Platform
+from ithaca_runtime import AlwaysOpen, BacktestWorker, PaperScheduler
 
 
 def _recent_trading_days(n: int) -> list[str]:
@@ -103,15 +103,15 @@ def main() -> int:
     platform = Platform(tempfile.mktemp(suffix=".db"))
     core = Core(DataGateway(fetch_history=_make_fetch(dates, series)))
 
-    print("Doomberg v2 — full-circle demo (authed front door, whole loop)\n")
+    print("Ithaca v2 — full-circle demo (authed front door, whole loop)\n")
 
     # === 1) ONBOARD: tenant + API key ===================================================
     tenant = platform.auth.create_tenant("Acme Capital")
     key, key_id = platform.auth.mint_key(tenant, AGENT_SCOPES)
     parts = key.split("_", 3)
-    if not (parts[0] == "dmbg" and len(parts) == 4 and parts[2] == key_id):
-        _fail(f"minted key not in dmbg_<env>_<keyid>_<secret> format: {key!r}")
-    print(f"  ✓ onboarded tenant {tenant[:8]}… + minted key dmbg_…_{key_id[:8]}… "
+    if not (parts[0] == "ith" and len(parts) == 4 and parts[2] == key_id):
+        _fail(f"minted key not in ith_<env>_<keyid>_<secret> format: {key!r}")
+    print(f"  ✓ onboarded tenant {tenant[:8]}… + minted key ith_…_{key_id[:8]}… "
           f"(scopes={AGENT_SCOPES})")
 
     # === 2) AUTHED CTX: verify the key, resolve a principal =============================

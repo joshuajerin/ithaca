@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { StrategySpec } from "@doomberg/contracts";
+import { StrategySpec } from "@ithaca/contracts";
 import { buildBacktestCards, buildStrategySpec, normalizeSymbols, type BacktestBuilderState } from "./pages/Backtests";
 
 const base: BacktestBuilderState = {

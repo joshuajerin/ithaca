@@ -7,7 +7,7 @@ metadata:
   name: default-deny-all
   namespace: ${K8S_WORKER_NAMESPACE}
   labels:
-    doomberg/environment: ${DOOMBERG_ENV}
+    ithaca/environment: ${ITHACA_ENV}
 spec:
   podSelector: {}
   policyTypes: ["Ingress", "Egress"]
@@ -18,11 +18,11 @@ metadata:
   name: allow-egress-runtime-dependencies
   namespace: ${K8S_WORKER_NAMESPACE}
   labels:
-    doomberg/environment: ${DOOMBERG_ENV}
+    ithaca/environment: ${ITHACA_ENV}
 spec:
   podSelector:
     matchExpressions:
-      - key: doomberg/component
+      - key: ithaca/component
         operator: In
         values: ["worker", "backtest-worker"]
   policyTypes: ["Egress"]
@@ -30,11 +30,11 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              doomberg/role: data-gateway
-              doomberg/environment: ${DOOMBERG_ENV}
+              ithaca/role: data-gateway
+              ithaca/environment: ${ITHACA_ENV}
           podSelector:
             matchLabels:
-              doomberg/component: app
+              ithaca/component: app
       ports:
         - protocol: TCP
           port: 8000
@@ -45,11 +45,11 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              doomberg/role: data-gateway
-              doomberg/environment: ${DOOMBERG_ENV}
+              ithaca/role: data-gateway
+              ithaca/environment: ${ITHACA_ENV}
           podSelector:
             matchLabels:
-              doomberg/component: ibkr-engine
+              ithaca/component: ibkr-engine
       ports:
         - protocol: TCP
           port: ${IBKR_ENGINE_PORT}
@@ -57,11 +57,11 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              doomberg/role: data-gateway
-              doomberg/environment: prod
+              ithaca/role: data-gateway
+              ithaca/environment: prod
           podSelector:
             matchLabels:
-              doomberg/component: ibkr-engine
+              ithaca/component: ibkr-engine
       ports:
         - protocol: TCP
           port: ${IBKR_ENGINE_PORT}

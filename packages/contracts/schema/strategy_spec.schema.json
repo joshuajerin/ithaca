@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://doomberg.dev/contracts/strategy_spec.schema.json",
+  "$id": "https://ithaca.dev/contracts/strategy_spec.schema.json",
   "title": "StrategySpec",
   "description": "The ONE canonical, CLOSED, declarative strategy spec. CRITICAL SECURITY INVARIANT: there is NO free-form code field anywhere (no CustomPythonNode, no scripted escape hatch at launch). The agent proposes DATA we validate, never code we run. v2.0 ships parameterized primitives, not the operator-DAG. id/tenant_id are always server-stamped. additionalProperties:false everywhere enforces the closed schema.",
   "type": "object",

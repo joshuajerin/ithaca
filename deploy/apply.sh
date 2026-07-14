@@ -90,6 +90,6 @@ rm -f tfplan
 
 echo ""
 echo "==> Applied. Next steps (see deploy/RUNBOOK.md):"
-echo "    terraform output -raw kubeconfig > /tmp/doomberg.kubeconfig"
-echo "    # create the doomberg-db Secret from the postgres_app_uri output"
+echo "    terraform output -raw kubeconfig > /tmp/ithaca.kubeconfig"
+echo "    # create the ithaca-db Secret from the postgres_app_uri output"
 echo "    # deploy the gateway/worker manifests"

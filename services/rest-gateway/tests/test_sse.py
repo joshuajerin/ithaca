@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from doomberg_rest.sse import (
+from ithaca_rest.sse import (
     event_stream,
     format_event,
     keepalive_comment,
@@ -90,7 +90,7 @@ def test_event_stream_live_tail_then_deadline(db):
     import uuid
     from datetime import datetime, timezone
 
-    from doomberg_platform import RunStore, TraceStore
+    from ithaca_platform import RunStore, TraceStore
 
     tenant = str(uuid.uuid4())
     runs = RunStore(db)

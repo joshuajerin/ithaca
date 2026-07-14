@@ -1,4 +1,4 @@
-"""Patch datamodel-code-generator's optional-field nullability for Doomberg contracts.
+"""Patch datamodel-code-generator's optional-field nullability for Ithaca contracts.
 
 JSON Schema distinguishes "field may be omitted" from "field may be null". The Python
 generator currently emits ``T | None = default`` for several optional non-null properties,
@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1] / "py" / "doomberg_contracts" / "generated"
+ROOT = Path(__file__).resolve().parents[1] / "py" / "ithaca_contracts" / "generated"
 
 REPLACEMENTS: dict[str, list[tuple[str, str]]] = {
     "platform_run.py": [

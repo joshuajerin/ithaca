@@ -30,7 +30,7 @@ wheels = [
 ]
 
 [[package]]
-name = "doomberg-contracts"
+name = "ithaca-contracts"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [

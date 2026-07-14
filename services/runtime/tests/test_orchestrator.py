@@ -7,7 +7,7 @@ import datetime as dt
 import threading
 import time
 
-from doomberg_runtime import AlwaysOpen, BacktestWorker, PaperScheduler, RegularHoursCalendar
+from ithaca_runtime import AlwaysOpen, BacktestWorker, PaperScheduler, RegularHoursCalendar
 
 from runtime_helpers import seed_queued_run
 

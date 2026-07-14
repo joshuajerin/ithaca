@@ -1,6 +1,6 @@
 # Acceptable Use Policy
 
-This Acceptable Use Policy ("AUP") describes conduct that is prohibited on the Doomberg platform and related services (the "Service") operated by **Ithaca, Inc., a Delaware corporation**. It is incorporated into our [Terms of Service](/terms). We may update it from time to time.
+This Acceptable Use Policy ("AUP") describes conduct that is prohibited on the Ithaca platform and related services (the "Service") operated by **Ithaca, Inc., a Delaware corporation**. It is incorporated into our [Terms of Service](/terms). We may update it from time to time.
 
 ## 1. No unlawful or manipulative market activity
 

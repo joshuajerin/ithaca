@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://doomberg.dev/contracts/execution.schema.json",
+  "$id": "https://ithaca.dev/contracts/execution.schema.json",
   "title": "ExecutionRecord",
   "type": "object",
   "additionalProperties": false,

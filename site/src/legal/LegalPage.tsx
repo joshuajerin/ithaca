@@ -66,9 +66,9 @@ export default function LegalPage({ slug, authMode }: { slug: string; authMode: 
 
   // Keep the document title in sync for sharing / SEO.
   useEffect(() => {
-    document.title = doc ? `${doc.title} · Doomberg` : "Not found · Doomberg";
+    document.title = doc ? `${doc.title} · Ithaca` : "Not found · Ithaca";
     return () => {
-      document.title = "Doomberg";
+      document.title = "Ithaca";
     };
   }, [doc]);
 
@@ -79,7 +79,7 @@ export default function LegalPage({ slug, authMode }: { slug: string; authMode: 
         {/* breadcrumb — reliable home/legal navigation regardless of Nav anchors */}
         <nav className="mb-8 font-mono text-[0.72rem] uppercase tracking-[0.14em] text-faint">
           <Link to="/" className="hover:text-olive">
-            Doomberg
+            Ithaca
           </Link>
           <span className="px-2">/</span>
           <span className="text-muted">Legal</span>

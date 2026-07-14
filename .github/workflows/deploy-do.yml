@@ -91,9 +91,9 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          # When triggered by workflow_run, the SHA comes from the workflow_run event
-          # When triggered by pull_request, deploy the merge SHA to dev with the
-          # same build-push/deploy jobs that prod uses after merge.
+          # When triggered by workflow_run, the SHA comes from the workflow_run event.
+          # Pull requests render and validate the dev manifests only. A PR must never
+          # mutate a shared environment or point a dev process at production state.
           # When triggered by workflow_dispatch, use GITHUB_SHA and the selected mode
           if [[ "${EVENT_NAME}" == "workflow_run" && -n "${EVENT_HEAD_SHA}" ]]; then
             short="${EVENT_HEAD_SHA}"
@@ -105,7 +105,7 @@ jobs:
             short="${GITHUB_SHA}"
             short="${short:0:7}"
             deploy_env="dev"
-            deploy_mode="deploy"
+            deploy_mode="dry-run"
             image_tag="pr-${PULL_REQUEST_NUMBER}-${short}"
           else
             short="${GITHUB_SHA::7}"
@@ -159,7 +159,7 @@ jobs:
           platforms: linux/amd64
           push: false
           load: true
-          tags: doomberg:ci
+          tags: ithaca:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
 
@@ -171,25 +171,25 @@ jobs:
           platforms: linux/amd64
           push: false
           load: true
-          tags: doomberg-ibkr-engine:ci
+          tags: ithaca-ibkr-engine:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
 
       - name: Service role smoke
         run: |
           set -euo pipefail
-          docker run --rm doomberg:ci shell -c \
-            'python -c "import doomberg_core, doomberg_platform, doomberg_runtime, doomberg_rest, doomberg_control, doomberg_mcp; print(\"imports OK\")"'
-          cid="$(docker run -d -e DOOMBERG_DB=:memory: doomberg:ci conductor)"
+          docker run --rm ithaca:ci shell -c \
+            'python -c "import ithaca_core, ithaca_platform, ithaca_runtime, ithaca_rest, ithaca_control, ithaca_mcp; print(\"imports OK\")"'
+          cid="$(docker run -d -e ITHACA_DB=:memory: ithaca:ci conductor)"
           sleep 5
-          docker logs "$cid" | grep -q "doomberg conductor up"
+          docker logs "$cid" | grep -q "ithaca conductor up"
           docker rm -f "$cid"
-          cid="$(docker run -d -e DOOMBERG_DB=:memory: doomberg:ci trigger-engine)"
+          cid="$(docker run -d -e ITHACA_DB=:memory: ithaca:ci trigger-engine)"
           sleep 5
-          docker logs "$cid" | grep -q "doomberg trigger engine up"
+          docker logs "$cid" | grep -q "ithaca trigger engine up"
           docker rm -f "$cid"
-          docker run --rm doomberg-ibkr-engine:ci python -c \
-            'import doomberg_ibkr_engine; print("ibkr engine imports OK")'
+          docker run --rm ithaca-ibkr-engine:ci python -c \
+            'import ithaca_ibkr_engine; print("ibkr engine imports OK")'
 
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
         with:
@@ -220,8 +220,8 @@ jobs:
         env:
           DEPLOY_ENV: ${{ needs.classify.outputs.deploy_env }}
           DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-          DOOMBERG_PLATFORM_DB_URL: ${{ secrets.DOOMBERG_PLATFORM_DB_URL }}
-          DOOMBERG_SESSION_SECRET: ${{ secrets.DOOMBERG_SESSION_SECRET }}
+          ITHACA_PLATFORM_DB_URL: ${{ secrets.ITHACA_PLATFORM_DB_URL }}
+          ITHACA_SESSION_SECRET: ${{ secrets.ITHACA_SESSION_SECRET }}
           CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
           CLERK_PEM_PUBLIC_KEY: ${{ secrets.CLERK_PEM_PUBLIC_KEY }}
@@ -229,19 +229,19 @@ jobs:
           CLERK_ALLOWED_ORIGINS: ${{ vars.CLERK_ALLOWED_ORIGINS }}
           CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER || 'modal' }}
-          DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL }}
-          DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY }}
-          DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY }}
-          DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET }}
-          DOOMBERG_ADAPTIVE_DASHBOARD_MODEL: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_MODEL || 'google/gemma-4-E4B-it' }}
-          DOOMBERG_ADMIN_TOKEN: ${{ secrets.DOOMBERG_ADMIN_TOKEN }}
-          DOOMBERG_SMOKE_API_KEY: ${{ secrets.DOOMBERG_SMOKE_API_KEY }}
-          DOOMBERG_SMOKE_NO_SCOPE_API_KEY: ${{ secrets.DOOMBERG_SMOKE_NO_SCOPE_API_KEY }}
-          DOOMBERG_ARTIFACT_BUCKET: ${{ vars.DOOMBERG_ARTIFACT_BUCKET }}
-          DOOMBERG_ARTIFACT_ENDPOINT_URL: ${{ vars.DOOMBERG_ARTIFACT_ENDPOINT_URL }}
-          DOOMBERG_ARTIFACT_ACCESS_KEY_ID: ${{ secrets.DOOMBERG_ARTIFACT_ACCESS_KEY_ID }}
-          DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY: ${{ secrets.DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY }}
+          ITHACA_ADAPTIVE_DASHBOARD_PROVIDER: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_PROVIDER || 'modal' }}
+          ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL }}
+          ITHACA_ADAPTIVE_DASHBOARD_API_KEY: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_API_KEY }}
+          ITHACA_ADAPTIVE_DASHBOARD_MODAL_KEY: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_MODAL_KEY }}
+          ITHACA_ADAPTIVE_DASHBOARD_MODAL_SECRET: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_MODAL_SECRET }}
+          ITHACA_ADAPTIVE_DASHBOARD_MODEL: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_MODEL || 'google/gemma-4-E4B-it' }}
+          ITHACA_ADMIN_TOKEN: ${{ secrets.ITHACA_ADMIN_TOKEN }}
+          ITHACA_SMOKE_API_KEY: ${{ secrets.ITHACA_SMOKE_API_KEY }}
+          ITHACA_SMOKE_NO_SCOPE_API_KEY: ${{ secrets.ITHACA_SMOKE_NO_SCOPE_API_KEY }}
+          ITHACA_ARTIFACT_BUCKET: ${{ vars.ITHACA_ARTIFACT_BUCKET }}
+          ITHACA_ARTIFACT_ENDPOINT_URL: ${{ vars.ITHACA_ARTIFACT_ENDPOINT_URL }}
+          ITHACA_ARTIFACT_ACCESS_KEY_ID: ${{ secrets.ITHACA_ARTIFACT_ACCESS_KEY_ID }}
+          ITHACA_ARTIFACT_SECRET_ACCESS_KEY: ${{ secrets.ITHACA_ARTIFACT_SECRET_ACCESS_KEY }}
           BACKTEST_WORKER_ENABLED: ${{ vars.BACKTEST_WORKER_ENABLED }}
           DO_CLUSTER_NAME: ${{ vars.DO_CLUSTER_NAME }}
           K8S_GATEWAY_NAMESPACE: ${{ vars.K8S_GATEWAY_NAMESPACE }}
@@ -267,8 +267,8 @@ jobs:
             require_env DO_CLUSTER_NAME
           else
             require_env DIGITALOCEAN_ACCESS_TOKEN
-            require_env DOOMBERG_PLATFORM_DB_URL
-            require_env DOOMBERG_SESSION_SECRET
+            require_env ITHACA_PLATFORM_DB_URL
+            require_env ITHACA_SESSION_SECRET
             require_env CLERK_PUBLISHABLE_KEY
             require_env CLERK_SECRET_KEY
             require_env CLERK_ALLOWED_ORIGINS
@@ -278,23 +278,23 @@ jobs:
             require_env K8S_WORKER_NAMESPACE
             require_env APP_HOST
             require_env MCP_HOST
-            require_env DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER
-            require_env DOOMBERG_ADAPTIVE_DASHBOARD_MODEL
-            case "${DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER}" in
+            require_env ITHACA_ADAPTIVE_DASHBOARD_PROVIDER
+            require_env ITHACA_ADAPTIVE_DASHBOARD_MODEL
+            case "${ITHACA_ADAPTIVE_DASHBOARD_PROVIDER}" in
               modal|modal-openai)
-                require_env DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL
-                require_env DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY
-                require_env DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET
+                require_env ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL
+                require_env ITHACA_ADAPTIVE_DASHBOARD_MODAL_KEY
+                require_env ITHACA_ADAPTIVE_DASHBOARD_MODAL_SECRET
                 ;;
               openai|openai-compatible)
-                require_env DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL
-                require_env DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY
+                require_env ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL
+                require_env ITHACA_ADAPTIVE_DASHBOARD_API_KEY
                 ;;
               anthropic)
                 require_env ANTHROPIC_API_KEY
                 ;;
               *)
-                echo "ERROR: unsupported DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER=${DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER}" >&2
+                echo "ERROR: unsupported ITHACA_ADAPTIVE_DASHBOARD_PROVIDER=${ITHACA_ADAPTIVE_DASHBOARD_PROVIDER}" >&2
                 missing=1
                 ;;
             esac
@@ -305,14 +305,14 @@ jobs:
           fi
 
           if [[ "${DEPLOY_ENV}" == "prod" && "${DEPLOY_MODE}" != "dry-run" ]]; then
-            require_env DOOMBERG_ADMIN_TOKEN
-            require_env DOOMBERG_SMOKE_API_KEY
-            require_env DOOMBERG_SMOKE_NO_SCOPE_API_KEY
+            require_env ITHACA_ADMIN_TOKEN
+            require_env ITHACA_SMOKE_API_KEY
+            require_env ITHACA_SMOKE_NO_SCOPE_API_KEY
             if [[ "${BACKTEST_WORKER_ENABLED:-0}" == "1" ]]; then
-              require_env DOOMBERG_ARTIFACT_BUCKET
-              require_env DOOMBERG_ARTIFACT_ENDPOINT_URL
-              require_env DOOMBERG_ARTIFACT_ACCESS_KEY_ID
-              require_env DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY
+              require_env ITHACA_ARTIFACT_BUCKET
+              require_env ITHACA_ARTIFACT_ENDPOINT_URL
+              require_env ITHACA_ARTIFACT_ACCESS_KEY_ID
+              require_env ITHACA_ARTIFACT_SECRET_ACCESS_KEY
             fi
           fi
 
@@ -348,7 +348,7 @@ jobs:
         shell: bash
         env:
           REGISTRY_NAME: ${{ vars.REGISTRY_NAME }}
-        run: echo "REGISTRY_NAME=${REGISTRY_NAME:-doomberg}" >> "${GITHUB_ENV}"
+        run: echo "REGISTRY_NAME=${REGISTRY_NAME:-ithaca}" >> "${GITHUB_ENV}"
 
       - name: Login to DOCR
         run: doctl registry login --expiry-seconds 1200
@@ -360,7 +360,7 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64
           push: true
-          tags: registry.digitalocean.com/${{ env.REGISTRY_NAME }}/doomberg:${{ needs.classify.outputs.image_tag }}
+          tags: registry.digitalocean.com/${{ env.REGISTRY_NAME }}/ithaca:${{ needs.classify.outputs.image_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
           build-args: |
@@ -371,7 +371,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/doomberg:${{ needs.classify.outputs.image_tag }}" >/dev/null
+          docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/ithaca:${{ needs.classify.outputs.image_tag }}" >/dev/null
 
       - name: Build and push immutable IBKR engine image
         if: needs.classify.outputs.deploy_env == 'prod' && vars.IBKR_ENGINE_ENABLED != '0'
@@ -381,7 +381,7 @@ jobs:
           file: ./Dockerfile.ibkr-engine
           platforms: linux/amd64
           push: true
-          tags: registry.digitalocean.com/${{ env.REGISTRY_NAME }}/doomberg-ibkr-engine:${{ needs.classify.outputs.image_tag }}
+          tags: registry.digitalocean.com/${{ env.REGISTRY_NAME }}/ithaca-ibkr-engine:${{ needs.classify.outputs.image_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
 
@@ -390,7 +390,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:${{ needs.classify.outputs.image_tag }}" >/dev/null
+          docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/ithaca-ibkr-engine:${{ needs.classify.outputs.image_tag }}" >/dev/null
 
   deploy-dry-run:
     name: 4/6 • deploy dry-run to ${{ needs.classify.outputs.deploy_env }}
@@ -433,14 +433,14 @@ jobs:
           {
             echo "DEPLOY_ENV=${DEPLOY_ENV}"
             echo "IMAGE_TAG=${IMAGE_TAG}"
-            echo "REGISTRY_NAME=${REGISTRY_NAME:-doomberg}"
+            echo "REGISTRY_NAME=${REGISTRY_NAME:-ithaca}"
             echo "DO_CLUSTER_NAME=${DO_CLUSTER_NAME}"
             echo "K8S_GATEWAY_NAMESPACE=${K8S_GATEWAY_NAMESPACE}"
             echo "K8S_WORKER_NAMESPACE=${K8S_WORKER_NAMESPACE}"
             echo "APP_HOST=${APP_HOST}"
             echo "MCP_HOST=${MCP_HOST}"
-            echo "WORKER_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-doomberg}/doomberg:${IMAGE_TAG}"
-            echo "IBKR_ENGINE_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-doomberg}/doomberg-ibkr-engine:${IMAGE_TAG}"
+            echo "WORKER_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-ithaca}/ithaca:${IMAGE_TAG}"
+            echo "IBKR_ENGINE_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-ithaca}/ithaca-ibkr-engine:${IMAGE_TAG}"
           } >> "${GITHUB_ENV}"
 
       - name: Render and validate deploy manifests without applying
@@ -451,42 +451,42 @@ jobs:
           WORKER_NODE_WORKLOAD: ${{ vars.WORKER_NODE_WORKLOAD }}
           APP_REPLICAS: ${{ vars.APP_REPLICAS }}
           WORKER_REPLICAS: ${{ vars.WORKER_REPLICAS }}
-          DOOMBERG_PLATFORM_DB_URL: ${{ secrets.DOOMBERG_PLATFORM_DB_URL || 'postgresql://dry-run.invalid/doomberg' }}
-          DOOMBERG_SESSION_SECRET: ${{ secrets.DOOMBERG_SESSION_SECRET || 'dry-run-session-secret' }}
+          ITHACA_PLATFORM_DB_URL: ${{ secrets.ITHACA_PLATFORM_DB_URL || 'postgresql://dry-run.invalid/ithaca' }}
+          ITHACA_SESSION_SECRET: ${{ secrets.ITHACA_SESSION_SECRET || 'dry-run-session-secret' }}
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY || 'sk_test_dry-run' }}
           CLERK_PEM_PUBLIC_KEY: ${{ secrets.CLERK_PEM_PUBLIC_KEY }}
           CLERK_JWKS_URL: ${{ vars.CLERK_JWKS_URL || 'https://clerk.example.invalid/.well-known/jwks.json' }}
-          CLERK_ALLOWED_ORIGINS: ${{ vars.CLERK_ALLOWED_ORIGINS || 'https://dev-app.doomberg.me' }}
+          CLERK_ALLOWED_ORIGINS: ${{ vars.CLERK_ALLOWED_ORIGINS || 'https://dev-app.tradeithaca.com' }}
           CLERK_ISSUER: ${{ vars.CLERK_ISSUER || 'https://clerk.example.invalid' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER || 'modal' }}
-          DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL || 'https://dry-run.invalid/v1' }}
-          DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY || 'dry-run-modal-key' }}
-          DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY || 'wk-dry-run' }}
-          DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET || 'ws-dry-run' }}
-          DOOMBERG_ADAPTIVE_DASHBOARD_MODEL: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_MODEL || 'google/gemma-4-E4B-it' }}
-          DOOMBERG_ADMIN_TOKEN: ${{ secrets.DOOMBERG_ADMIN_TOKEN }}
+          ITHACA_ADAPTIVE_DASHBOARD_PROVIDER: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_PROVIDER || 'modal' }}
+          ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL || 'https://dry-run.invalid/v1' }}
+          ITHACA_ADAPTIVE_DASHBOARD_API_KEY: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_API_KEY || 'dry-run-modal-key' }}
+          ITHACA_ADAPTIVE_DASHBOARD_MODAL_KEY: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_MODAL_KEY || 'wk-dry-run' }}
+          ITHACA_ADAPTIVE_DASHBOARD_MODAL_SECRET: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_MODAL_SECRET || 'ws-dry-run' }}
+          ITHACA_ADAPTIVE_DASHBOARD_MODEL: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_MODEL || 'google/gemma-4-E4B-it' }}
+          ITHACA_ADMIN_TOKEN: ${{ secrets.ITHACA_ADMIN_TOKEN }}
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
           DATABENTO_API_KEY: ${{ secrets.DATABENTO_API_KEY }}
           IBKR_ENGINE_ENABLED: ${{ vars.IBKR_ENGINE_ENABLED }}
           SHARED_IBKR_NAMESPACE: ${{ vars.SHARED_IBKR_NAMESPACE }}
-          DOOMBERG_IBKR_ENGINE_URL: ${{ vars.DOOMBERG_IBKR_ENGINE_URL }}
-          DOOMBERG_IBKR_ENGINE_TOKEN: ${{ secrets.DOOMBERG_IBKR_ENGINE_TOKEN }}
-          DOOMBERG_IBKR_QUOTE_PATH: ${{ vars.DOOMBERG_IBKR_QUOTE_PATH }}
-          DOOMBERG_IBKR_ACCOUNTS_PATH: ${{ vars.DOOMBERG_IBKR_ACCOUNTS_PATH }}
-          DOOMBERG_IBKR_POSITIONS_PATH: ${{ vars.DOOMBERG_IBKR_POSITIONS_PATH }}
-          DOOMBERG_IBKR_ORDERS_PATH: ${{ vars.DOOMBERG_IBKR_ORDERS_PATH }}
-          DOOMBERG_IBKR_ORDER_PATH: ${{ vars.DOOMBERG_IBKR_ORDER_PATH }}
+          ITHACA_IBKR_ENGINE_URL: ${{ vars.ITHACA_IBKR_ENGINE_URL }}
+          ITHACA_IBKR_ENGINE_TOKEN: ${{ secrets.ITHACA_IBKR_ENGINE_TOKEN }}
+          ITHACA_IBKR_QUOTE_PATH: ${{ vars.ITHACA_IBKR_QUOTE_PATH }}
+          ITHACA_IBKR_ACCOUNTS_PATH: ${{ vars.ITHACA_IBKR_ACCOUNTS_PATH }}
+          ITHACA_IBKR_POSITIONS_PATH: ${{ vars.ITHACA_IBKR_POSITIONS_PATH }}
+          ITHACA_IBKR_ORDERS_PATH: ${{ vars.ITHACA_IBKR_ORDERS_PATH }}
+          ITHACA_IBKR_ORDER_PATH: ${{ vars.ITHACA_IBKR_ORDER_PATH }}
           IBKR_SIGNIN_PUBLIC: ${{ vars.IBKR_SIGNIN_PUBLIC }}
           IBKR_SIGNIN_HOST: ${{ vars.IBKR_SIGNIN_HOST }}
           IBKR_SIGNIN_REMOTE_IPS: ${{ vars.IBKR_SIGNIN_REMOTE_IPS }}
           APPLY_CADDY: "0"
           CADDY_APPLY_ENV: ${{ vars.CADDY_APPLY_ENV }}
-          DOOMBERG_ENABLE_LIVE_EXECUTION: ${{ vars.DOOMBERG_ENABLE_LIVE_EXECUTION }}
-          DOOMBERG_EXECUTION_KILL_SWITCH: ${{ vars.DOOMBERG_EXECUTION_KILL_SWITCH }}
-          DOOMBERG_EXECUTION_MAX_NOTIONAL_USD: ${{ vars.DOOMBERG_EXECUTION_MAX_NOTIONAL_USD }}
-          DOOMBERG_EXECUTION_MAX_QUANTITY: ${{ vars.DOOMBERG_EXECUTION_MAX_QUANTITY }}
-          DOOMBERG_EXECUTION_MAX_FRESHNESS_MS: ${{ vars.DOOMBERG_EXECUTION_MAX_FRESHNESS_MS }}
+          ITHACA_ENABLE_LIVE_EXECUTION: ${{ vars.ITHACA_ENABLE_LIVE_EXECUTION }}
+          ITHACA_EXECUTION_KILL_SWITCH: ${{ vars.ITHACA_EXECUTION_KILL_SWITCH }}
+          ITHACA_EXECUTION_MAX_NOTIONAL_USD: ${{ vars.ITHACA_EXECUTION_MAX_NOTIONAL_USD }}
+          ITHACA_EXECUTION_MAX_QUANTITY: ${{ vars.ITHACA_EXECUTION_MAX_QUANTITY }}
+          ITHACA_EXECUTION_MAX_FRESHNESS_MS: ${{ vars.ITHACA_EXECUTION_MAX_FRESHNESS_MS }}
         run: bash deploy/deploy_services.sh
 
   deploy:
@@ -529,14 +529,14 @@ jobs:
           {
             echo "DEPLOY_ENV=${DEPLOY_ENV}"
             echo "IMAGE_TAG=${IMAGE_TAG}"
-            echo "REGISTRY_NAME=${REGISTRY_NAME:-doomberg}"
+            echo "REGISTRY_NAME=${REGISTRY_NAME:-ithaca}"
             echo "DO_CLUSTER_NAME=${DO_CLUSTER_NAME}"
             echo "K8S_GATEWAY_NAMESPACE=${K8S_GATEWAY_NAMESPACE}"
             echo "K8S_WORKER_NAMESPACE=${K8S_WORKER_NAMESPACE}"
             echo "APP_HOST=${APP_HOST}"
             echo "MCP_HOST=${MCP_HOST}"
-            echo "WORKER_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-doomberg}/doomberg:${IMAGE_TAG}"
-            echo "IBKR_ENGINE_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-doomberg}/doomberg-ibkr-engine:${IMAGE_TAG}"
+            echo "WORKER_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-ithaca}/ithaca:${IMAGE_TAG}"
+            echo "IBKR_ENGINE_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-ithaca}/ithaca-ibkr-engine:${IMAGE_TAG}"
           } >> "${GITHUB_ENV}"
 
       - name: Ref freshness guard
@@ -561,47 +561,50 @@ jobs:
           BACKTEST_REPLICAS: ${{ vars.BACKTEST_REPLICAS }}
           BACKTEST_MAX_REPLICAS: ${{ vars.BACKTEST_MAX_REPLICAS }}
           BACKTEST_WORKER_ENABLED: ${{ vars.BACKTEST_WORKER_ENABLED }}
-          DOOMBERG_PLATFORM_DB_URL: ${{ secrets.DOOMBERG_PLATFORM_DB_URL }}
-          DOOMBERG_SESSION_SECRET: ${{ secrets.DOOMBERG_SESSION_SECRET }}
+          ITHACA_PLATFORM_DB_URL: ${{ secrets.ITHACA_PLATFORM_DB_URL }}
+          ITHACA_SESSION_SECRET: ${{ secrets.ITHACA_SESSION_SECRET }}
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
           CLERK_PEM_PUBLIC_KEY: ${{ secrets.CLERK_PEM_PUBLIC_KEY }}
           CLERK_JWKS_URL: ${{ vars.CLERK_JWKS_URL }}
           CLERK_ALLOWED_ORIGINS: ${{ vars.CLERK_ALLOWED_ORIGINS }}
           CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER || 'modal' }}
-          DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL }}
-          DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY }}
-          DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY }}
-          DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET: ${{ secrets.DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET }}
-          DOOMBERG_ADAPTIVE_DASHBOARD_MODEL: ${{ vars.DOOMBERG_ADAPTIVE_DASHBOARD_MODEL || 'google/gemma-4-E4B-it' }}
-          DOOMBERG_ADMIN_TOKEN: ${{ secrets.DOOMBERG_ADMIN_TOKEN }}
+          ITHACA_ADAPTIVE_DASHBOARD_PROVIDER: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_PROVIDER || 'modal' }}
+          ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL }}
+          ITHACA_ADAPTIVE_DASHBOARD_API_KEY: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_API_KEY }}
+          ITHACA_ADAPTIVE_DASHBOARD_MODAL_KEY: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_MODAL_KEY }}
+          ITHACA_ADAPTIVE_DASHBOARD_MODAL_SECRET: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_MODAL_SECRET }}
+          ITHACA_ADAPTIVE_DASHBOARD_MODEL: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_MODEL || 'google/gemma-4-E4B-it' }}
+          ITHACA_ADMIN_TOKEN: ${{ secrets.ITHACA_ADMIN_TOKEN }}
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
           DATABENTO_API_KEY: ${{ secrets.DATABENTO_API_KEY }}
-          DOOMBERG_ARTIFACT_BUCKET: ${{ vars.DOOMBERG_ARTIFACT_BUCKET }}
-          DOOMBERG_ARTIFACT_ENDPOINT_URL: ${{ vars.DOOMBERG_ARTIFACT_ENDPOINT_URL }}
-          DOOMBERG_ARTIFACT_REGION: ${{ vars.DOOMBERG_ARTIFACT_REGION }}
-          DOOMBERG_ARTIFACT_ACCESS_KEY_ID: ${{ secrets.DOOMBERG_ARTIFACT_ACCESS_KEY_ID }}
-          DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY: ${{ secrets.DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY }}
+          ITHACA_ARTIFACT_BUCKET: ${{ vars.ITHACA_ARTIFACT_BUCKET }}
+          ITHACA_ARTIFACT_ENDPOINT_URL: ${{ vars.ITHACA_ARTIFACT_ENDPOINT_URL }}
+          ITHACA_ARTIFACT_REGION: ${{ vars.ITHACA_ARTIFACT_REGION }}
+          ITHACA_ARTIFACT_ACCESS_KEY_ID: ${{ secrets.ITHACA_ARTIFACT_ACCESS_KEY_ID }}
+          ITHACA_ARTIFACT_SECRET_ACCESS_KEY: ${{ secrets.ITHACA_ARTIFACT_SECRET_ACCESS_KEY }}
           IBKR_ENGINE_ENABLED: ${{ vars.IBKR_ENGINE_ENABLED }}
           SHARED_IBKR_NAMESPACE: ${{ vars.SHARED_IBKR_NAMESPACE }}
-          DOOMBERG_IBKR_ENGINE_URL: ${{ vars.DOOMBERG_IBKR_ENGINE_URL }}
-          DOOMBERG_IBKR_ENGINE_TOKEN: ${{ secrets.DOOMBERG_IBKR_ENGINE_TOKEN }}
-          DOOMBERG_IBKR_QUOTE_PATH: ${{ vars.DOOMBERG_IBKR_QUOTE_PATH }}
-          DOOMBERG_IBKR_ACCOUNTS_PATH: ${{ vars.DOOMBERG_IBKR_ACCOUNTS_PATH }}
-          DOOMBERG_IBKR_POSITIONS_PATH: ${{ vars.DOOMBERG_IBKR_POSITIONS_PATH }}
-          DOOMBERG_IBKR_ORDERS_PATH: ${{ vars.DOOMBERG_IBKR_ORDERS_PATH }}
-          DOOMBERG_IBKR_ORDER_PATH: ${{ vars.DOOMBERG_IBKR_ORDER_PATH }}
+          ITHACA_IBKR_ENGINE_URL: ${{ vars.ITHACA_IBKR_ENGINE_URL }}
+          ITHACA_IBKR_ENGINE_TOKEN: ${{ secrets.ITHACA_IBKR_ENGINE_TOKEN }}
+          ITHACA_IBKR_QUOTE_PATH: ${{ vars.ITHACA_IBKR_QUOTE_PATH }}
+          ITHACA_IBKR_ACCOUNTS_PATH: ${{ vars.ITHACA_IBKR_ACCOUNTS_PATH }}
+          ITHACA_IBKR_POSITIONS_PATH: ${{ vars.ITHACA_IBKR_POSITIONS_PATH }}
+          ITHACA_IBKR_ORDERS_PATH: ${{ vars.ITHACA_IBKR_ORDERS_PATH }}
+          ITHACA_IBKR_ORDER_PATH: ${{ vars.ITHACA_IBKR_ORDER_PATH }}
           IBKR_SIGNIN_PUBLIC: ${{ vars.IBKR_SIGNIN_PUBLIC }}
           IBKR_SIGNIN_HOST: ${{ vars.IBKR_SIGNIN_HOST }}
           IBKR_SIGNIN_REMOTE_IPS: ${{ vars.IBKR_SIGNIN_REMOTE_IPS }}
           APPLY_CADDY: ${{ vars.APPLY_CADDY }}
           CADDY_APPLY_ENV: ${{ vars.CADDY_APPLY_ENV }}
-          DOOMBERG_ENABLE_LIVE_EXECUTION: ${{ vars.DOOMBERG_ENABLE_LIVE_EXECUTION }}
-          DOOMBERG_EXECUTION_KILL_SWITCH: ${{ vars.DOOMBERG_EXECUTION_KILL_SWITCH }}
-          DOOMBERG_EXECUTION_MAX_NOTIONAL_USD: ${{ vars.DOOMBERG_EXECUTION_MAX_NOTIONAL_USD }}
-          DOOMBERG_EXECUTION_MAX_QUANTITY: ${{ vars.DOOMBERG_EXECUTION_MAX_QUANTITY }}
-          DOOMBERG_EXECUTION_MAX_FRESHNESS_MS: ${{ vars.DOOMBERG_EXECUTION_MAX_FRESHNESS_MS }}
+          CADDY_NAMESPACE: ${{ vars.CADDY_NAMESPACE }}
+          ITHACA_LEGACY_ROOT_DOMAIN: ${{ vars.ITHACA_LEGACY_ROOT_DOMAIN }}
+          ITHACA_LEGACY_KEY_PREFIX: ${{ vars.ITHACA_LEGACY_KEY_PREFIX }}
+          ITHACA_ENABLE_LIVE_EXECUTION: ${{ vars.ITHACA_ENABLE_LIVE_EXECUTION }}
+          ITHACA_EXECUTION_KILL_SWITCH: ${{ vars.ITHACA_EXECUTION_KILL_SWITCH }}
+          ITHACA_EXECUTION_MAX_NOTIONAL_USD: ${{ vars.ITHACA_EXECUTION_MAX_NOTIONAL_USD }}
+          ITHACA_EXECUTION_MAX_QUANTITY: ${{ vars.ITHACA_EXECUTION_MAX_QUANTITY }}
+          ITHACA_EXECUTION_MAX_FRESHNESS_MS: ${{ vars.ITHACA_EXECUTION_MAX_FRESHNESS_MS }}
         run: bash deploy/deploy_services.sh
 
       - name: HTTP health checks
@@ -611,33 +614,33 @@ jobs:
           curl -fsS --retry 6 --retry-delay 5 "https://${APP_HOST}/livez"
           curl -fsS --retry 6 --retry-delay 5 "https://${APP_HOST}/healthz"
           curl -fsS --retry 6 --retry-delay 5 "https://${APP_HOST}/readyz"
-          code="$(curl -sS -o /tmp/doomberg-mcp-response.txt -w "%{http_code}" "https://${MCP_HOST}/mcp")"
+          code="$(curl -sS -o /tmp/ithaca-mcp-response.txt -w "%{http_code}" "https://${MCP_HOST}/mcp")"
           test "${code}" = "401"
 
       - name: Customer launch gate
         shell: bash
         env:
-          DOOMBERG_SMOKE_API_KEY: ${{ secrets.DOOMBERG_SMOKE_API_KEY }}
-          DOOMBERG_SMOKE_NO_SCOPE_API_KEY: ${{ secrets.DOOMBERG_SMOKE_NO_SCOPE_API_KEY }}
+          ITHACA_SMOKE_API_KEY: ${{ secrets.ITHACA_SMOKE_API_KEY }}
+          ITHACA_SMOKE_NO_SCOPE_API_KEY: ${{ secrets.ITHACA_SMOKE_NO_SCOPE_API_KEY }}
           LAUNCH_GATE_REQUIRE_IBKR: ${{ vars.LAUNCH_GATE_REQUIRE_IBKR }}
         run: |
           set -euo pipefail
-          if [[ -z "${DOOMBERG_SMOKE_API_KEY}" ]]; then
+          if [[ -z "${ITHACA_SMOKE_API_KEY}" ]]; then
             if [[ "${DEPLOY_ENV}" == "prod" ]]; then
-              echo "ERROR: prod requires DOOMBERG_SMOKE_API_KEY for authenticated launch-gate checks" >&2
+              echo "ERROR: prod requires ITHACA_SMOKE_API_KEY for authenticated launch-gate checks" >&2
               exit 1
             fi
-            echo "WARN: skipping authenticated launch gate; DOOMBERG_SMOKE_API_KEY is unset" >&2
+            echo "WARN: skipping authenticated launch gate; ITHACA_SMOKE_API_KEY is unset" >&2
             exit 0
           fi
           ibkr_args=()
           if [[ "${LAUNCH_GATE_REQUIRE_IBKR:-0}" == "1" ]]; then
             ibkr_args+=(--require-ibkr)
           fi
-          kubectl -n "${K8S_GATEWAY_NAMESPACE}" exec deploy/doomberg-app -c mcp-gateway -- \
+          kubectl -n "${K8S_GATEWAY_NAMESPACE}" exec deploy/ithaca-app -c mcp-gateway -- \
             env \
-              DOOMBERG_API_KEY="${DOOMBERG_SMOKE_API_KEY}" \
-              DOOMBERG_MCP_NO_SCOPE_API_KEY="${DOOMBERG_SMOKE_NO_SCOPE_API_KEY}" \
+              ITHACA_API_KEY="${ITHACA_SMOKE_API_KEY}" \
+              ITHACA_MCP_NO_SCOPE_API_KEY="${ITHACA_SMOKE_NO_SCOPE_API_KEY}" \
               /opt/venv/bin/python scripts/launch_gate.py \
                 --mode http \
                 --base-url "https://${APP_HOST}" \
@@ -665,7 +668,7 @@ jobs:
         shell: bash
         env:
           REGISTRY_NAME: ${{ vars.REGISTRY_NAME }}
-        run: echo "REGISTRY_NAME=${REGISTRY_NAME:-doomberg}" >> "${GITHUB_ENV}"
+        run: echo "REGISTRY_NAME=${REGISTRY_NAME:-ithaca}" >> "${GITHUB_ENV}"
 
       - name: Login to DOCR
         run: doctl registry login --expiry-seconds 1200
@@ -676,12 +679,12 @@ jobs:
         run: |
           set -euo pipefail
           docker buildx imagetools create \
-            -t "registry.digitalocean.com/${REGISTRY_NAME}/doomberg:latest" \
-            "registry.digitalocean.com/${REGISTRY_NAME}/doomberg:${{ needs.classify.outputs.image_tag }}"
-          docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/doomberg:latest" >/dev/null
+            -t "registry.digitalocean.com/${REGISTRY_NAME}/ithaca:latest" \
+            "registry.digitalocean.com/${REGISTRY_NAME}/ithaca:${{ needs.classify.outputs.image_tag }}"
+          docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/ithaca:latest" >/dev/null
           if [[ "${IBKR_ENGINE_ENABLED:-1}" != "0" ]]; then
             docker buildx imagetools create \
-              -t "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:latest" \
-              "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:${{ needs.classify.outputs.image_tag }}"
-            docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/doomberg-ibkr-engine:latest" >/dev/null
+              -t "registry.digitalocean.com/${REGISTRY_NAME}/ithaca-ibkr-engine:latest" \
+              "registry.digitalocean.com/${REGISTRY_NAME}/ithaca-ibkr-engine:${{ needs.classify.outputs.image_tag }}"
+            docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/ithaca-ibkr-engine:latest" >/dev/null
           fi

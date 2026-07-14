@@ -1,6 +1,6 @@
 # Subprocessors
 
-To provide the Doomberg platform (the "Service"), **Ithaca, Inc., a Delaware corporation**, engages the third-party subprocessors listed below. Each is bound by data-protection obligations consistent with our [Privacy Policy](/privacy). We update this list when subprocessors change.
+To provide the Ithaca platform (the "Service"), **Ithaca, Inc., a Delaware corporation**, engages the third-party subprocessors listed below. Each is bound by data-protection obligations consistent with our [Privacy Policy](/privacy). We update this list when subprocessors change.
 
 ## Current subprocessors
 

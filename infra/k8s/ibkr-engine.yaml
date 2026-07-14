@@ -1,6 +1,6 @@
 # Dedicated IBKR stack.
 #
-# Keep the official Client Portal Gateway in its own Deployment so Doomberg
+# Keep the official Client Portal Gateway in its own Deployment so Ithaca
 # wrapper/app deploys can roll without restarting Java and losing the IBKR
 # authenticated brokerage session.
 apiVersion: v1
@@ -9,8 +9,8 @@ metadata:
   name: ibkr-client-portal-state
   namespace: ${K8S_GATEWAY_NAMESPACE}
   labels:
-    doomberg/component: ibkr-gateway
-    doomberg/environment: ${DOOMBERG_ENV}
+    ithaca/component: ibkr-gateway
+    ithaca/environment: ${ITHACA_ENV}
 spec:
   accessModes: [ReadWriteOnce]
   storageClassName: do-block-storage
@@ -24,20 +24,20 @@ metadata:
   name: ibkr-gateway
   namespace: ${K8S_GATEWAY_NAMESPACE}
   labels:
-    doomberg/component: ibkr-gateway
-    doomberg/environment: ${DOOMBERG_ENV}
+    ithaca/component: ibkr-gateway
+    ithaca/environment: ${ITHACA_ENV}
 spec:
   replicas: 1
   strategy:
     type: Recreate
   selector:
     matchLabels:
-      doomberg/component: ibkr-gateway
+      ithaca/component: ibkr-gateway
   template:
     metadata:
       labels:
-        doomberg/component: ibkr-gateway
-        doomberg/environment: ${DOOMBERG_ENV}
+        ithaca/component: ibkr-gateway
+        ithaca/environment: ${ITHACA_ENV}
     spec:
       terminationGracePeriodSeconds: 60
       automountServiceAccountToken: false
@@ -105,13 +105,13 @@ metadata:
   name: ibkr-gateway
   namespace: ${K8S_GATEWAY_NAMESPACE}
   labels:
-    doomberg/component: ibkr-gateway
-    doomberg/environment: ${DOOMBERG_ENV}
+    ithaca/component: ibkr-gateway
+    ithaca/environment: ${ITHACA_ENV}
 spec:
   minAvailable: 1
   selector:
     matchLabels:
-      doomberg/component: ibkr-gateway
+      ithaca/component: ibkr-gateway
 ---
 apiVersion: v1
 kind: Service
@@ -119,12 +119,12 @@ metadata:
   name: ibkr-client-portal
   namespace: ${K8S_GATEWAY_NAMESPACE}
   labels:
-    doomberg/component: ibkr-gateway
-    doomberg/environment: ${DOOMBERG_ENV}
+    ithaca/component: ibkr-gateway
+    ithaca/environment: ${ITHACA_ENV}
 spec:
   type: ClusterIP
   selector:
-    doomberg/component: ibkr-gateway
+    ithaca/component: ibkr-gateway
   ports:
     - name: gateway
       port: 5000
@@ -137,18 +137,18 @@ metadata:
   name: ibkr-engine
   namespace: ${K8S_GATEWAY_NAMESPACE}
   labels:
-    doomberg/component: ibkr-engine
-    doomberg/environment: ${DOOMBERG_ENV}
+    ithaca/component: ibkr-engine
+    ithaca/environment: ${ITHACA_ENV}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      doomberg/component: ibkr-engine
+      ithaca/component: ibkr-engine
   template:
     metadata:
       labels:
-        doomberg/component: ibkr-engine
-        doomberg/environment: ${DOOMBERG_ENV}
+        ithaca/component: ibkr-engine
+        ithaca/environment: ${ITHACA_ENV}
     spec:
       automountServiceAccountToken: false
       nodeSelector:
@@ -169,7 +169,7 @@ spec:
         - name: tmp
           emptyDir: {}
       containers:
-        - name: doomberg-ibkr-engine
+        - name: ithaca-ibkr-engine
           image: ${IBKR_ENGINE_IMAGE}
           imagePullPolicy: IfNotPresent
           args: ["ibkr-engine"]
@@ -177,13 +177,13 @@ spec:
             - name: wrapper
               containerPort: ${IBKR_ENGINE_PORT}
           env:
-            - name: DOOMBERG_IBKR_ENGINE_PORT
+            - name: ITHACA_IBKR_ENGINE_PORT
               value: "${IBKR_ENGINE_PORT}"
             - name: IBKR_CLIENT_PORTAL_URL
               value: https://ibkr-client-portal.${K8S_GATEWAY_NAMESPACE}.svc.cluster.local:5000/v1/api
             - name: IBKR_CLIENT_PORTAL_VERIFY_SSL
               value: "false"
-            - name: DOOMBERG_IBKR_ENGINE_TOKEN
+            - name: ITHACA_IBKR_ENGINE_TOKEN
               valueFrom:
                 secretKeyRef: { name: ibkr-engine, key: engine_token }
             - name: IBKR_AUTO_REPAIR_AUTH
@@ -194,7 +194,7 @@ spec:
               value: "10"
             - name: IBKR_AUTH_INIT_RETRY_DELAY_S
               value: "1"
-            - name: DOOMBERG_ENABLE_LIVE_EXECUTION
+            - name: ITHACA_ENABLE_LIVE_EXECUTION
               valueFrom:
                 secretKeyRef: { name: ibkr-engine, key: enable_live_execution }
           readinessProbe:
@@ -226,12 +226,12 @@ metadata:
   name: ibkr-engine
   namespace: ${K8S_GATEWAY_NAMESPACE}
   labels:
-    doomberg/component: ibkr-engine
-    doomberg/environment: ${DOOMBERG_ENV}
+    ithaca/component: ibkr-engine
+    ithaca/environment: ${ITHACA_ENV}
 spec:
   type: ClusterIP
   selector:
-    doomberg/component: ibkr-engine
+    ithaca/component: ibkr-engine
   ports:
     - name: wrapper
       port: ${IBKR_ENGINE_PORT}
@@ -244,8 +244,8 @@ metadata:
   name: ibkr-engine-keepalive
   namespace: ${K8S_GATEWAY_NAMESPACE}
   labels:
-    doomberg/component: ibkr-engine-keepalive
-    doomberg/environment: ${DOOMBERG_ENV}
+    ithaca/component: ibkr-engine-keepalive
+    ithaca/environment: ${ITHACA_ENV}
 spec:
   schedule: "* * * * *"
   concurrencyPolicy: Forbid
@@ -259,8 +259,8 @@ spec:
       template:
         metadata:
           labels:
-            doomberg/component: ibkr-engine-keepalive
-            doomberg/environment: ${DOOMBERG_ENV}
+            ithaca/component: ibkr-engine-keepalive
+            ithaca/environment: ${ITHACA_ENV}
         spec:
           restartPolicy: Never
           automountServiceAccountToken: false
@@ -282,7 +282,7 @@ spec:
             - name: keepalive
               image: ${IBKR_ENGINE_IMAGE}
               imagePullPolicy: IfNotPresent
-              args: ["shell", "-c", "/opt/venv/bin/python -m doomberg_ibkr_engine.keepalive --json"]
+              args: ["shell", "-c", "/opt/venv/bin/python -m ithaca_ibkr_engine.keepalive --json"]
               env:
                 - name: IBKR_CLIENT_PORTAL_URL
                   value: https://ibkr-client-portal.${K8S_GATEWAY_NAMESPACE}.svc.cluster.local:5000/v1/api
