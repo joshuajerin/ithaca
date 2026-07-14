@@ -248,6 +248,8 @@ jobs:
           K8S_WORKER_NAMESPACE: ${{ vars.K8S_WORKER_NAMESPACE }}
           APP_HOST: ${{ vars.APP_HOST }}
           MCP_HOST: ${{ vars.MCP_HOST }}
+          REST_NODE_PORT: ${{ vars.REST_NODE_PORT || '30081' }}
+          MCP_NODE_PORT: ${{ vars.MCP_NODE_PORT || '30809' }}
           DEPLOY_MODE: ${{ needs.classify.outputs.deploy_mode }}
         run: |
           set -euo pipefail
@@ -428,6 +430,8 @@ jobs:
           K8S_WORKER_NAMESPACE: ${{ vars.K8S_WORKER_NAMESPACE }}
           APP_HOST: ${{ vars.APP_HOST }}
           MCP_HOST: ${{ vars.MCP_HOST }}
+          REST_NODE_PORT: ${{ vars.REST_NODE_PORT || '30081' }}
+          MCP_NODE_PORT: ${{ vars.MCP_NODE_PORT || '30809' }}
         run: |
           set -euo pipefail
           {
@@ -439,6 +443,8 @@ jobs:
             echo "K8S_WORKER_NAMESPACE=${K8S_WORKER_NAMESPACE}"
             echo "APP_HOST=${APP_HOST}"
             echo "MCP_HOST=${MCP_HOST}"
+            echo "REST_NODE_PORT=${REST_NODE_PORT}"
+            echo "MCP_NODE_PORT=${MCP_NODE_PORT}"
             echo "WORKER_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-ithaca}/ithaca:${IMAGE_TAG}"
             echo "IBKR_ENGINE_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-ithaca}/ithaca-ibkr-engine:${IMAGE_TAG}"
           } >> "${GITHUB_ENV}"
@@ -524,6 +530,8 @@ jobs:
           K8S_WORKER_NAMESPACE: ${{ vars.K8S_WORKER_NAMESPACE }}
           APP_HOST: ${{ vars.APP_HOST }}
           MCP_HOST: ${{ vars.MCP_HOST }}
+          REST_NODE_PORT: ${{ vars.REST_NODE_PORT || '30081' }}
+          MCP_NODE_PORT: ${{ vars.MCP_NODE_PORT || '30809' }}
         run: |
           set -euo pipefail
           {
@@ -535,6 +543,8 @@ jobs:
             echo "K8S_WORKER_NAMESPACE=${K8S_WORKER_NAMESPACE}"
             echo "APP_HOST=${APP_HOST}"
             echo "MCP_HOST=${MCP_HOST}"
+            echo "REST_NODE_PORT=${REST_NODE_PORT}"
+            echo "MCP_NODE_PORT=${MCP_NODE_PORT}"
             echo "WORKER_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-ithaca}/ithaca:${IMAGE_TAG}"
             echo "IBKR_ENGINE_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-ithaca}/ithaca-ibkr-engine:${IMAGE_TAG}"
           } >> "${GITHUB_ENV}"
