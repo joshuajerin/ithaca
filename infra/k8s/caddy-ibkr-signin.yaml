@@ -28,6 +28,28 @@ data:
       reverse_proxy ithaca-app.${K8S_GATEWAY_NAMESPACE}.svc.cluster.local:8000
     }
 
+    ${ITHACA_LEGACY_ROOT_DOMAIN}, www.${ITHACA_LEGACY_ROOT_DOMAIN} {
+      redir https://tradeithaca.com{uri} permanent
+    }
+
+    app.${ITHACA_LEGACY_ROOT_DOMAIN} {
+      redir https://app.tradeithaca.com{uri} permanent
+    }
+
+    ibkr.${ITHACA_LEGACY_ROOT_DOMAIN} {
+      redir https://ibkr.tradeithaca.com{uri} permanent
+    }
+
+    mcp.${ITHACA_LEGACY_ROOT_DOMAIN} {
+      reverse_proxy ithaca-app.${K8S_GATEWAY_NAMESPACE}.svc.cluster.local:8080 {
+        flush_interval -1
+        transport http {
+          read_timeout 1h
+          write_timeout 1h
+        }
+      }
+    }
+
     ${IBKR_SIGNIN_HOST} {
       @signin_allowed remote_ip ${IBKR_SIGNIN_REMOTE_IPS}
       handle @signin_allowed {
