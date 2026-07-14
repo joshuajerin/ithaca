@@ -1,802 +1,208 @@
-name: deploy-do
-run-name: deploy-do ${{ github.event.inputs.deploy_env || 'prod' }} ${{ github.event.inputs.mode || 'auto' }} @ ${{ github.event.workflow_run.head_sha || github.sha }}
+name: Deploy
+run-name: Deploy ${{ github.event.inputs.deploy_env || 'production' }} @ ${{ github.sha }}
 
-# Deploy only after ci, deploy-checks, and prod-parity pass for the same main SHA.
+# A deployment is only needed when the application or its infrastructure changes.
+# Marketing, docs, and workflow-only commits keep their normal CI/Vercel checks and
+# never create a DigitalOcean deployment run.
 on:
-  pull_request:
-  workflow_run:
-    workflows: ["ci", "deploy-checks", "prod-parity"]
-    types: [completed]
-    branches: ["main"]
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - Dockerfile.ibkr-engine
+      - .dockerignore
+      - doomberg-core/**
+      - services/**
+      - packages/**
+      - scripts/**
+      - deploy/**
+      - infra/terraform/**
+      - web/**
+      - pyproject.toml
+      - uv.lock
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
   workflow_dispatch:
     inputs:
       deploy_env:
-        description: Environment to validate or deploy.
-        type: choice
+        description: Target environment
         required: true
         default: dev
-        options:
-          - dev
-          - prod
-      mode:
-        description: Use dry-run for a no-mutation deploy preflight; deploy mutates the selected environment.
         type: choice
+        options: [dev, prod]
+      mode:
+        description: Apply the deployment or validate it without mutation
         required: true
         default: dry-run
-        options:
-          - dry-run
-          - deploy
+        type: choice
+        options: [dry-run, deploy]
 
 permissions:
   actions: read
   contents: read
-  statuses: write
 
 concurrency:
-  group: deploy-do-${{ github.event_name }}-${{ github.event.inputs.deploy_env || 'prod' }}-${{ github.ref }}
+  group: deploy-${{ github.event.inputs.deploy_env || 'prod' }}
   cancel-in-progress: true
 
 jobs:
-  gate:
-    name: 0/6 • gate (ci + deploy-checks + prod-parity must pass)
+  deploy:
+    name: Deploy ${{ github.event.inputs.deploy_env || 'production' }}
     runs-on: self-hosted
-    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    environment: ${{ github.event.inputs.deploy_env || 'prod' }}
+    env:
+      DEPLOY_ENV: ${{ github.event.inputs.deploy_env || 'prod' }}
+      DEPLOY_MODE: ${{ github.event.inputs.mode || 'deploy' }}
+      IMAGE_TAG: ${{ github.sha }}
+      LOAD_LOCAL_ENV: "0"
+      REGISTRY_NAME: ${{ vars.REGISTRY_NAME || 'ithaca' }}
+      DO_CLUSTER_NAME: ${{ vars.DO_CLUSTER_NAME }}
+      K8S_GATEWAY_NAMESPACE: ${{ vars.K8S_GATEWAY_NAMESPACE }}
+      K8S_WORKER_NAMESPACE: ${{ vars.K8S_WORKER_NAMESPACE }}
+      APP_HOST: ${{ vars.APP_HOST }}
+      MCP_HOST: ${{ vars.MCP_HOST }}
+      DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      ITHACA_PLATFORM_DB_URL: ${{ secrets.ITHACA_PLATFORM_DB_URL }}
+      ITHACA_SESSION_SECRET: ${{ secrets.ITHACA_SESSION_SECRET }}
+      CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+      CLERK_PEM_PUBLIC_KEY: ${{ secrets.CLERK_PEM_PUBLIC_KEY }}
+      CLERK_JWKS_URL: ${{ vars.CLERK_JWKS_URL }}
+      CLERK_ALLOWED_ORIGINS: ${{ vars.CLERK_ALLOWED_ORIGINS }}
+      CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ITHACA_ADAPTIVE_DASHBOARD_PROVIDER: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_PROVIDER || 'modal' }}
+      ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL }}
+      ITHACA_ADAPTIVE_DASHBOARD_API_KEY: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_API_KEY }}
+      ITHACA_ADAPTIVE_DASHBOARD_MODAL_KEY: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_MODAL_KEY }}
+      ITHACA_ADAPTIVE_DASHBOARD_MODAL_SECRET: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_MODAL_SECRET }}
+      ITHACA_ADAPTIVE_DASHBOARD_MODEL: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_MODEL || 'google/gemma-4-E4B-it' }}
+      ITHACA_ADMIN_TOKEN: ${{ secrets.ITHACA_ADMIN_TOKEN }}
+      FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+      DATABENTO_API_KEY: ${{ secrets.DATABENTO_API_KEY }}
+      ITHACA_SMOKE_API_KEY: ${{ secrets.ITHACA_SMOKE_API_KEY }}
+      ITHACA_SMOKE_NO_SCOPE_API_KEY: ${{ secrets.ITHACA_SMOKE_NO_SCOPE_API_KEY }}
+      ITHACA_ARTIFACT_BUCKET: ${{ vars.ITHACA_ARTIFACT_BUCKET }}
+      ITHACA_ARTIFACT_ENDPOINT_URL: ${{ vars.ITHACA_ARTIFACT_ENDPOINT_URL }}
+      ITHACA_ARTIFACT_REGION: ${{ vars.ITHACA_ARTIFACT_REGION }}
+      ITHACA_ARTIFACT_ACCESS_KEY_ID: ${{ secrets.ITHACA_ARTIFACT_ACCESS_KEY_ID }}
+      ITHACA_ARTIFACT_SECRET_ACCESS_KEY: ${{ secrets.ITHACA_ARTIFACT_SECRET_ACCESS_KEY }}
+      IBKR_ENGINE_ENABLED: ${{ vars.IBKR_ENGINE_ENABLED }}
+      SHARED_IBKR_NAMESPACE: ${{ vars.SHARED_IBKR_NAMESPACE }}
+      ITHACA_IBKR_ENGINE_URL: ${{ vars.ITHACA_IBKR_ENGINE_URL }}
+      ITHACA_IBKR_ENGINE_TOKEN: ${{ secrets.ITHACA_IBKR_ENGINE_TOKEN }}
+      ITHACA_IBKR_QUOTE_PATH: ${{ vars.ITHACA_IBKR_QUOTE_PATH }}
+      ITHACA_IBKR_ACCOUNTS_PATH: ${{ vars.ITHACA_IBKR_ACCOUNTS_PATH }}
+      ITHACA_IBKR_POSITIONS_PATH: ${{ vars.ITHACA_IBKR_POSITIONS_PATH }}
+      ITHACA_IBKR_ORDERS_PATH: ${{ vars.ITHACA_IBKR_ORDERS_PATH }}
+      ITHACA_IBKR_ORDER_PATH: ${{ vars.ITHACA_IBKR_ORDER_PATH }}
+      IBKR_SIGNIN_PUBLIC: ${{ vars.IBKR_SIGNIN_PUBLIC }}
+      IBKR_SIGNIN_HOST: ${{ vars.IBKR_SIGNIN_HOST }}
+      IBKR_SIGNIN_REMOTE_IPS: ${{ vars.IBKR_SIGNIN_REMOTE_IPS }}
+      APPLY_CADDY: ${{ vars.APPLY_CADDY }}
+      CADDY_APPLY_ENV: ${{ vars.CADDY_APPLY_ENV }}
+      CADDY_NAMESPACE: ${{ vars.CADDY_NAMESPACE }}
+      ITHACA_LEGACY_ROOT_DOMAIN: ${{ vars.ITHACA_LEGACY_ROOT_DOMAIN }}
+      ITHACA_LEGACY_KEY_PREFIX: ${{ vars.ITHACA_LEGACY_KEY_PREFIX }}
+      ITHACA_ENABLE_LIVE_EXECUTION: ${{ vars.ITHACA_ENABLE_LIVE_EXECUTION }}
+      ITHACA_EXECUTION_KILL_SWITCH: ${{ vars.ITHACA_EXECUTION_KILL_SWITCH }}
+      ITHACA_EXECUTION_MAX_NOTIONAL_USD: ${{ vars.ITHACA_EXECUTION_MAX_NOTIONAL_USD }}
+      ITHACA_EXECUTION_MAX_QUANTITY: ${{ vars.ITHACA_EXECUTION_MAX_QUANTITY }}
+      ITHACA_EXECUTION_MAX_FRESHNESS_MS: ${{ vars.ITHACA_EXECUTION_MAX_FRESHNESS_MS }}
+      APP_NODE_WORKLOAD: ${{ vars.APP_NODE_WORKLOAD }}
+      WORKER_NODE_WORKLOAD: ${{ vars.WORKER_NODE_WORKLOAD }}
+      APP_REPLICAS: ${{ vars.APP_REPLICAS }}
+      WORKER_REPLICAS: ${{ vars.WORKER_REPLICAS }}
+      BACKTEST_REPLICAS: ${{ vars.BACKTEST_REPLICAS }}
+      BACKTEST_MIN_REPLICAS: ${{ vars.BACKTEST_MIN_REPLICAS }}
+      BACKTEST_MAX_REPLICAS: ${{ vars.BACKTEST_MAX_REPLICAS }}
+      BACKTEST_WORKER_ENABLED: ${{ vars.BACKTEST_WORKER_ENABLED }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
 
-      - name: Verify all upstream gates passed for this SHA
-        shell: bash
+      - name: Wait for required checks
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
-          EVENT_WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          EVENT_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          echo "Triggered by: ${{ github.event_name }}"
-          if [[ "${EVENT_NAME}" == "pull_request" || "${EVENT_NAME}" == "workflow_dispatch" ]]; then
-            echo "Pull-request/manual run — upstream workflow_run gate is not required."
-          else
-            echo "Upstream workflow: ${EVENT_WORKFLOW_NAME}"
-            echo "Conclusion: ${EVENT_WORKFLOW_CONCLUSION}"
-            if [[ "${EVENT_WORKFLOW_CONCLUSION}" != "success" ]]; then
-              echo "ERROR: upstream workflow did not succeed. Aborting deploy."
-              exit 1
-            fi
-            python3 .github/scripts/verify_required_workflows.py
-          fi
-          echo "Gate passed."
+          EVENT_HEAD_SHA: ${{ github.sha }}
+        run: python3 .github/scripts/verify_required_workflows.py
 
-  source-deploy-status-pending:
-    name: Production deployment status
-    runs-on: self-hosted
-    needs: gate
-    if: github.event_name == 'workflow_run'
-    steps:
-      - name: Surface production deployment on the source commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
-          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${SOURCE_SHA}" \
-            -f state=pending \
-            -f context='Ithaca / production deployment' \
-            -f description='Production deployment is running.' \
-            -f target_url="${TARGET_URL}" >/dev/null
-
-  classify:
-    name: 1/6 • classify deploy target
-    runs-on: self-hosted
-    needs: gate
-    outputs:
-      deploy_env: ${{ steps.classify.outputs.deploy_env }}
-      image_tag: ${{ steps.classify.outputs.image_tag }}
-      short_sha: ${{ steps.classify.outputs.short_sha }}
-      push_latest: ${{ steps.classify.outputs.push_latest }}
-      deploy_mode: ${{ steps.classify.outputs.deploy_mode }}
-    steps:
-      - id: classify
+      - name: Validate deployment configuration
         shell: bash
-        env:
-          EVENT_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
-          DISPATCH_DEPLOY_ENV: ${{ github.event.inputs.deploy_env }}
-          DISPATCH_MODE: ${{ github.event.inputs.mode }}
-          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          # When triggered by workflow_run, the SHA comes from the workflow_run event.
-          # Pull requests render and validate the dev manifests only. A PR must never
-          # mutate a shared environment or point a dev process at production state.
-          # When triggered by workflow_dispatch, use GITHUB_SHA and the selected mode
-          if [[ "${EVENT_NAME}" == "workflow_run" && -n "${EVENT_HEAD_SHA}" ]]; then
-            short="${EVENT_HEAD_SHA}"
-            short="${short:0:7}"
-            deploy_env="prod"
-            deploy_mode="deploy"
-            image_tag="${short}"
-          elif [[ "${EVENT_NAME}" == "pull_request" ]]; then
-            short="${GITHUB_SHA}"
-            short="${short:0:7}"
-            deploy_env="dev"
-            deploy_mode="dry-run"
-            image_tag="pr-${PULL_REQUEST_NUMBER}-${short}"
-          else
-            short="${GITHUB_SHA::7}"
-            deploy_env="${DISPATCH_DEPLOY_ENV:-dev}"
-            deploy_mode="${DISPATCH_MODE:-dry-run}"
-            image_tag="${short}"
-          fi
-          push_latest="false"
-          if [[ "${deploy_env}" == "prod" && "${deploy_mode}" == "deploy" ]]; then
-            push_latest="true"
-          fi
-          {
-            echo "deploy_env=${deploy_env}"
-            echo "deploy_mode=${deploy_mode}"
-            echo "image_tag=${image_tag}"
-            echo "short_sha=${short}"
-            echo "push_latest=${push_latest}"
-          } >> "${GITHUB_OUTPUT}"
-
-  checks:
-    name: 3/6 • deploy gates
-    runs-on: self-hosted
-    needs: [classify, deploy-config-preflight]
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-
-      - name: Set up uv
-        run: bash .github/scripts/setup_uv.sh
-
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
-        with:
-          dest: ${{ runner.temp }}/setup-pnpm
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Workspace, contract, test, demo, and web gates
-        run: bash .github/scripts/prod_parity_checks.sh
-
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
-
-      - name: Docker image build smoke
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: ithaca:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
-
-      - name: IBKR engine image build smoke
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
-        with:
-          context: .
-          file: ./Dockerfile.ibkr-engine
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: ithaca-ibkr-engine:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
-
-      - name: Service role smoke
-        run: |
-          set -euo pipefail
-          docker run --rm ithaca:ci shell -c \
-            'python -c "import ithaca_core, ithaca_platform, ithaca_runtime, ithaca_rest, ithaca_control, ithaca_mcp; print(\"imports OK\")"'
-          cid="$(docker run -d -e ITHACA_DB=:memory: ithaca:ci conductor)"
-          sleep 5
-          docker logs "$cid" | grep -q "ithaca conductor up"
-          docker rm -f "$cid"
-          cid="$(docker run -d -e ITHACA_DB=:memory: ithaca:ci trigger-engine)"
-          sleep 5
-          docker logs "$cid" | grep -q "ithaca trigger engine up"
-          docker rm -f "$cid"
-          docker run --rm ithaca-ibkr-engine:ci python -c \
-            'import ithaca_ibkr_engine; print("ibkr engine imports OK")'
-
-      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
-        with:
-          terraform_version: "1.15.6"
-
-      - name: Terraform deploy-layer checks
-        working-directory: infra/terraform
-        run: |
-          set -euo pipefail
-          terraform fmt -check -recursive
-          terraform init -backend=false -input=false
-          terraform validate -no-color
-          if out="$(terraform plan -input=false -var='backtest_node_size=gpu-h100x1-80gb' 2>&1)"; then
-            echo "FAIL: plan accepted a GPU node slug"
-            echo "$out"
-            exit 1
-          fi
-          echo "$out" | grep -qi "CPU-ONLY GUARDRAIL"
-
-  deploy-config-preflight:
-    name: 2/6 • deploy config preflight
-    runs-on: self-hosted
-    needs: classify
-    environment: ${{ github.event_name == 'pull_request' && 'dev' || needs.classify.outputs.deploy_env }}
-    steps:
-      - name: Required secrets and variables
-        shell: bash
-        env:
-          DEPLOY_ENV: ${{ needs.classify.outputs.deploy_env }}
-          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-          ITHACA_PLATFORM_DB_URL: ${{ secrets.ITHACA_PLATFORM_DB_URL }}
-          ITHACA_SESSION_SECRET: ${{ secrets.ITHACA_SESSION_SECRET }}
-          CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
-          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
-          CLERK_PEM_PUBLIC_KEY: ${{ secrets.CLERK_PEM_PUBLIC_KEY }}
-          CLERK_JWKS_URL: ${{ vars.CLERK_JWKS_URL }}
-          CLERK_ALLOWED_ORIGINS: ${{ vars.CLERK_ALLOWED_ORIGINS }}
-          CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ITHACA_ADAPTIVE_DASHBOARD_PROVIDER: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_PROVIDER || 'modal' }}
-          ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL }}
-          ITHACA_ADAPTIVE_DASHBOARD_API_KEY: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_API_KEY }}
-          ITHACA_ADAPTIVE_DASHBOARD_MODAL_KEY: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_MODAL_KEY }}
-          ITHACA_ADAPTIVE_DASHBOARD_MODAL_SECRET: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_MODAL_SECRET }}
-          ITHACA_ADAPTIVE_DASHBOARD_MODEL: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_MODEL || 'google/gemma-4-E4B-it' }}
-          ITHACA_ADMIN_TOKEN: ${{ secrets.ITHACA_ADMIN_TOKEN }}
-          ITHACA_SMOKE_API_KEY: ${{ secrets.ITHACA_SMOKE_API_KEY }}
-          ITHACA_SMOKE_NO_SCOPE_API_KEY: ${{ secrets.ITHACA_SMOKE_NO_SCOPE_API_KEY }}
-          ITHACA_ARTIFACT_BUCKET: ${{ vars.ITHACA_ARTIFACT_BUCKET }}
-          ITHACA_ARTIFACT_ENDPOINT_URL: ${{ vars.ITHACA_ARTIFACT_ENDPOINT_URL }}
-          ITHACA_ARTIFACT_ACCESS_KEY_ID: ${{ secrets.ITHACA_ARTIFACT_ACCESS_KEY_ID }}
-          ITHACA_ARTIFACT_SECRET_ACCESS_KEY: ${{ secrets.ITHACA_ARTIFACT_SECRET_ACCESS_KEY }}
-          BACKTEST_WORKER_ENABLED: ${{ vars.BACKTEST_WORKER_ENABLED }}
-          DO_CLUSTER_NAME: ${{ vars.DO_CLUSTER_NAME }}
-          K8S_GATEWAY_NAMESPACE: ${{ vars.K8S_GATEWAY_NAMESPACE }}
-          K8S_WORKER_NAMESPACE: ${{ vars.K8S_WORKER_NAMESPACE }}
-          APP_HOST: ${{ vars.APP_HOST }}
-          MCP_HOST: ${{ vars.MCP_HOST }}
-          REST_NODE_PORT: ${{ vars.REST_NODE_PORT || '30081' }}
-          MCP_NODE_PORT: ${{ vars.MCP_NODE_PORT || '30809' }}
-          DEPLOY_MODE: ${{ needs.classify.outputs.deploy_mode }}
-        run: |
-          set -euo pipefail
-
-          missing=0
-          require_env() {
-            local name="$1"
-            if [[ -z "${!name:-}" ]]; then
-              echo "ERROR: required ${DEPLOY_ENV} deploy config is missing: ${name}" >&2
-              missing=1
-            fi
-          }
-
-          if [[ "${DEPLOY_MODE}" == "dry-run" ]]; then
-            echo "Deploy config preflight is in dry-run mode; live deploy credentials are not required."
-            require_env DIGITALOCEAN_ACCESS_TOKEN
-            require_env DO_CLUSTER_NAME
-          else
-            require_env DIGITALOCEAN_ACCESS_TOKEN
-            require_env ITHACA_PLATFORM_DB_URL
-            require_env ITHACA_SESSION_SECRET
-            require_env CLERK_PUBLISHABLE_KEY
-            require_env CLERK_SECRET_KEY
-            require_env CLERK_ALLOWED_ORIGINS
-            require_env CLERK_ISSUER
-            require_env DO_CLUSTER_NAME
-            require_env K8S_GATEWAY_NAMESPACE
-            require_env K8S_WORKER_NAMESPACE
-            require_env APP_HOST
-            require_env MCP_HOST
-            require_env ITHACA_ADAPTIVE_DASHBOARD_PROVIDER
-            require_env ITHACA_ADAPTIVE_DASHBOARD_MODEL
-            case "${ITHACA_ADAPTIVE_DASHBOARD_PROVIDER}" in
-              modal|modal-openai)
-                require_env ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL
-                require_env ITHACA_ADAPTIVE_DASHBOARD_MODAL_KEY
-                require_env ITHACA_ADAPTIVE_DASHBOARD_MODAL_SECRET
-                ;;
-              openai|openai-compatible)
-                require_env ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL
-                require_env ITHACA_ADAPTIVE_DASHBOARD_API_KEY
-                ;;
-              anthropic)
-                require_env ANTHROPIC_API_KEY
-                ;;
-              *)
-                echo "ERROR: unsupported ITHACA_ADAPTIVE_DASHBOARD_PROVIDER=${ITHACA_ADAPTIVE_DASHBOARD_PROVIDER}" >&2
-                missing=1
-                ;;
-            esac
-            if [[ -z "${CLERK_PEM_PUBLIC_KEY:-}" && -z "${CLERK_JWKS_URL:-}" ]]; then
-              echo "ERROR: required ${DEPLOY_ENV} deploy config is missing: CLERK_PEM_PUBLIC_KEY or CLERK_JWKS_URL" >&2
-              missing=1
-            fi
-          fi
-
-          if [[ "${DEPLOY_ENV}" == "prod" && "${DEPLOY_MODE}" != "dry-run" ]]; then
-            require_env ITHACA_ADMIN_TOKEN
-            require_env ITHACA_SMOKE_API_KEY
-            require_env ITHACA_SMOKE_NO_SCOPE_API_KEY
-            if [[ "${BACKTEST_WORKER_ENABLED:-0}" == "1" ]]; then
-              require_env ITHACA_ARTIFACT_BUCKET
-              require_env ITHACA_ARTIFACT_ENDPOINT_URL
-              require_env ITHACA_ARTIFACT_ACCESS_KEY_ID
-              require_env ITHACA_ARTIFACT_SECRET_ACCESS_KEY
-            fi
-          fi
-
-          if [[ "${missing}" != "0" ]]; then
-            exit 1
-          fi
-
-          # Clerk publishable keys encode their Frontend API host. Refuse to build
-          # a browser bundle when that host, the backend issuer, or the allowed
-          # app origin drift apart. Environment-level secrets override repository
-          # secrets, so this catches a stale prod environment before deployment.
-          if [[ "${DEPLOY_ENV}" == "prod" && "${DEPLOY_MODE}" != "dry-run" ]]; then
-            clerk_key_payload="${CLERK_PUBLISHABLE_KEY#pk_live_}"
-            if [[ "${clerk_key_payload}" == "${CLERK_PUBLISHABLE_KEY}" ]]; then
-              clerk_key_payload="${CLERK_PUBLISHABLE_KEY#pk_test_}"
-            fi
-            clerk_key_host="$(printf '%s' "${clerk_key_payload}" | tr '_-' '/+' | base64 --decode 2>/dev/null || true)"
-            clerk_key_host="${clerk_key_host%\$}"
-            clerk_issuer_host="${CLERK_ISSUER#https://}"
-            clerk_issuer_host="${clerk_issuer_host%%/*}"
-            expected_app_origin="https://${APP_HOST}"
-
-            if [[ -z "${clerk_key_host}" || "${clerk_key_host}" != "${clerk_issuer_host}" ]]; then
-              echo "ERROR: CLERK_PUBLISHABLE_KEY host does not match CLERK_ISSUER for prod." >&2
-              exit 1
-            fi
-            if [[ "${CLERK_ALLOWED_ORIGINS}" != *"${expected_app_origin}"* ]]; then
-              echo "ERROR: CLERK_ALLOWED_ORIGINS does not include ${expected_app_origin}." >&2
-              exit 1
-            fi
-            if [[ "${APP_HOST}" == *doomberg.me || "${MCP_HOST}" == *doomberg.me || "${CLERK_ISSUER}" == *doomberg.me || "${CLERK_JWKS_URL}" == *doomberg.me ]]; then
-              echo "ERROR: prod public host configuration still contains a legacy Doomberg domain." >&2
-              exit 1
-            fi
-          fi
-
-          echo "Deploy config preflight passed for ${DEPLOY_ENV}."
-
-  build-push:
-    name: 4/6 • build and push image
-    runs-on: self-hosted
-    needs: [classify, checks]
-    if: needs.classify.outputs.deploy_mode == 'deploy'
-    environment: ${{ needs.classify.outputs.deploy_env }}
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+          required=(DIGITALOCEAN_ACCESS_TOKEN ITHACA_PLATFORM_DB_URL ITHACA_SESSION_SECRET CLERK_PUBLISHABLE_KEY CLERK_SECRET_KEY CLERK_ALLOWED_ORIGINS CLERK_ISSUER DO_CLUSTER_NAME K8S_GATEWAY_NAMESPACE K8S_WORKER_NAMESPACE APP_HOST MCP_HOST)
+          for name in "${required[@]}"; do
+            test -n "${!name:-}" || { echo "Missing deployment configuration: ${name}" >&2; exit 1; }
+          done
+          test -n "${CLERK_PEM_PUBLIC_KEY:-}${CLERK_JWKS_URL:-}" || { echo "Missing Clerk verification key" >&2; exit 1; }
 
       - uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@c0c8b32d33a5244f1e5947304550403b63930415
+      - uses: azure/setup-kubectl@c0c8b32d33a5244f1e5947304550403b63930415
         with:
-          version: "v1.33.0"
+          version: v1.33.0
 
-      - name: Resolve registry
-        shell: bash
-        env:
-          REGISTRY_NAME: ${{ vars.REGISTRY_NAME }}
-        run: echo "REGISTRY_NAME=${REGISTRY_NAME:-ithaca}" >> "${GITHUB_ENV}"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
-      - name: Login to DOCR
-        run: doctl registry login --expiry-seconds 1200
-
-      - name: Build and push immutable image
+      - name: Build and publish application image
+        if: env.DEPLOY_MODE == 'deploy'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64
           push: true
-          tags: registry.digitalocean.com/${{ env.REGISTRY_NAME }}/ithaca:${{ needs.classify.outputs.image_tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
+          tags: registry.digitalocean.com/${{ env.REGISTRY_NAME }}/ithaca:${{ github.sha }}
           build-args: |
             CLERK_PUBLISHABLE_VALUE=${{ secrets.CLERK_PUBLISHABLE_KEY }}
             VITE_API_BASE=/api
 
-      - name: Verify pushed app image exists
+      - name: Connect cluster and apply deployment
         shell: bash
         run: |
           set -euo pipefail
-          docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/ithaca:${{ needs.classify.outputs.image_tag }}" >/dev/null
-
-      - name: Build and push immutable IBKR engine image
-        if: needs.classify.outputs.deploy_env == 'prod' && vars.IBKR_ENGINE_ENABLED != '0'
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
-        with:
-          context: .
-          file: ./Dockerfile.ibkr-engine
-          platforms: linux/amd64
-          push: true
-          tags: registry.digitalocean.com/${{ env.REGISTRY_NAME }}/ithaca-ibkr-engine:${{ needs.classify.outputs.image_tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
-
-      - name: Verify pushed IBKR engine image exists
-        if: needs.classify.outputs.deploy_env == 'prod' && vars.IBKR_ENGINE_ENABLED != '0'
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/ithaca-ibkr-engine:${{ needs.classify.outputs.image_tag }}" >/dev/null
-
-  deploy-dry-run:
-    name: 4/6 • deploy dry-run to ${{ needs.classify.outputs.deploy_env }}
-    runs-on: self-hosted
-    needs: [classify, checks]
-    if: needs.classify.outputs.deploy_mode == 'dry-run'
-    environment: ${{ github.event_name == 'pull_request' && 'dev' || needs.classify.outputs.deploy_env }}
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-
-      - uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f
-        with:
-          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@c0c8b32d33a5244f1e5947304550403b63930415
-        with:
-          version: "v1.33.0"
-
-      - name: Save kubeconfig
-        env:
-          DO_CLUSTER_NAME: ${{ vars.DO_CLUSTER_NAME }}
-        run: doctl kubernetes cluster kubeconfig save "${DO_CLUSTER_NAME}"
-
-      - name: Resolve dry-run environment
-        shell: bash
-        env:
-          DEPLOY_ENV: ${{ needs.classify.outputs.deploy_env }}
-          IMAGE_TAG: ${{ needs.classify.outputs.image_tag }}
-          REGISTRY_NAME: ${{ vars.REGISTRY_NAME }}
-          DO_CLUSTER_NAME: ${{ vars.DO_CLUSTER_NAME }}
-          K8S_GATEWAY_NAMESPACE: ${{ vars.K8S_GATEWAY_NAMESPACE }}
-          K8S_WORKER_NAMESPACE: ${{ vars.K8S_WORKER_NAMESPACE }}
-          APP_HOST: ${{ vars.APP_HOST }}
-          MCP_HOST: ${{ vars.MCP_HOST }}
-          REST_NODE_PORT: ${{ vars.REST_NODE_PORT || '30081' }}
-          MCP_NODE_PORT: ${{ vars.MCP_NODE_PORT || '30809' }}
-        run: |
-          set -euo pipefail
-          {
-            echo "DEPLOY_ENV=${DEPLOY_ENV}"
-            echo "IMAGE_TAG=${IMAGE_TAG}"
-            echo "REGISTRY_NAME=${REGISTRY_NAME:-ithaca}"
-            echo "DO_CLUSTER_NAME=${DO_CLUSTER_NAME}"
-            echo "K8S_GATEWAY_NAMESPACE=${K8S_GATEWAY_NAMESPACE}"
-            echo "K8S_WORKER_NAMESPACE=${K8S_WORKER_NAMESPACE}"
-            echo "APP_HOST=${APP_HOST}"
-            echo "MCP_HOST=${MCP_HOST}"
-            echo "REST_NODE_PORT=${REST_NODE_PORT}"
-            echo "MCP_NODE_PORT=${MCP_NODE_PORT}"
-            echo "WORKER_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-ithaca}/ithaca:${IMAGE_TAG}"
-            echo "IBKR_ENGINE_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-ithaca}/ithaca-ibkr-engine:${IMAGE_TAG}"
-          } >> "${GITHUB_ENV}"
-
-      - name: Render and validate deploy manifests without applying
-        env:
-          LOAD_LOCAL_ENV: "0"
-          DEPLOY_DRY_RUN: "client"
-          APP_NODE_WORKLOAD: ${{ vars.APP_NODE_WORKLOAD }}
-          WORKER_NODE_WORKLOAD: ${{ vars.WORKER_NODE_WORKLOAD }}
-          APP_REPLICAS: ${{ vars.APP_REPLICAS }}
-          WORKER_REPLICAS: ${{ vars.WORKER_REPLICAS }}
-          ITHACA_PLATFORM_DB_URL: ${{ secrets.ITHACA_PLATFORM_DB_URL || 'postgresql://dry-run.invalid/ithaca' }}
-          ITHACA_SESSION_SECRET: ${{ secrets.ITHACA_SESSION_SECRET || 'dry-run-session-secret' }}
-          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY || 'sk_test_dry-run' }}
-          CLERK_PEM_PUBLIC_KEY: ${{ secrets.CLERK_PEM_PUBLIC_KEY }}
-          CLERK_JWKS_URL: ${{ vars.CLERK_JWKS_URL || 'https://clerk.example.invalid/.well-known/jwks.json' }}
-          CLERK_ALLOWED_ORIGINS: ${{ vars.CLERK_ALLOWED_ORIGINS || 'https://dev-app.tradeithaca.com' }}
-          CLERK_ISSUER: ${{ vars.CLERK_ISSUER || 'https://clerk.example.invalid' }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ITHACA_ADAPTIVE_DASHBOARD_PROVIDER: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_PROVIDER || 'modal' }}
-          ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL || 'https://dry-run.invalid/v1' }}
-          ITHACA_ADAPTIVE_DASHBOARD_API_KEY: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_API_KEY || 'dry-run-modal-key' }}
-          ITHACA_ADAPTIVE_DASHBOARD_MODAL_KEY: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_MODAL_KEY || 'wk-dry-run' }}
-          ITHACA_ADAPTIVE_DASHBOARD_MODAL_SECRET: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_MODAL_SECRET || 'ws-dry-run' }}
-          ITHACA_ADAPTIVE_DASHBOARD_MODEL: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_MODEL || 'google/gemma-4-E4B-it' }}
-          ITHACA_ADMIN_TOKEN: ${{ secrets.ITHACA_ADMIN_TOKEN }}
-          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
-          DATABENTO_API_KEY: ${{ secrets.DATABENTO_API_KEY }}
-          IBKR_ENGINE_ENABLED: ${{ vars.IBKR_ENGINE_ENABLED }}
-          SHARED_IBKR_NAMESPACE: ${{ vars.SHARED_IBKR_NAMESPACE }}
-          ITHACA_IBKR_ENGINE_URL: ${{ vars.ITHACA_IBKR_ENGINE_URL }}
-          ITHACA_IBKR_ENGINE_TOKEN: ${{ secrets.ITHACA_IBKR_ENGINE_TOKEN }}
-          ITHACA_IBKR_QUOTE_PATH: ${{ vars.ITHACA_IBKR_QUOTE_PATH }}
-          ITHACA_IBKR_ACCOUNTS_PATH: ${{ vars.ITHACA_IBKR_ACCOUNTS_PATH }}
-          ITHACA_IBKR_POSITIONS_PATH: ${{ vars.ITHACA_IBKR_POSITIONS_PATH }}
-          ITHACA_IBKR_ORDERS_PATH: ${{ vars.ITHACA_IBKR_ORDERS_PATH }}
-          ITHACA_IBKR_ORDER_PATH: ${{ vars.ITHACA_IBKR_ORDER_PATH }}
-          IBKR_SIGNIN_PUBLIC: ${{ vars.IBKR_SIGNIN_PUBLIC }}
-          IBKR_SIGNIN_HOST: ${{ vars.IBKR_SIGNIN_HOST }}
-          IBKR_SIGNIN_REMOTE_IPS: ${{ vars.IBKR_SIGNIN_REMOTE_IPS }}
-          APPLY_CADDY: "0"
-          CADDY_APPLY_ENV: ${{ vars.CADDY_APPLY_ENV }}
-          ITHACA_ENABLE_LIVE_EXECUTION: ${{ vars.ITHACA_ENABLE_LIVE_EXECUTION }}
-          ITHACA_EXECUTION_KILL_SWITCH: ${{ vars.ITHACA_EXECUTION_KILL_SWITCH }}
-          ITHACA_EXECUTION_MAX_NOTIONAL_USD: ${{ vars.ITHACA_EXECUTION_MAX_NOTIONAL_USD }}
-          ITHACA_EXECUTION_MAX_QUANTITY: ${{ vars.ITHACA_EXECUTION_MAX_QUANTITY }}
-          ITHACA_EXECUTION_MAX_FRESHNESS_MS: ${{ vars.ITHACA_EXECUTION_MAX_FRESHNESS_MS }}
-        run: bash deploy/deploy_services.sh
-
-  pr-production-deploy-status:
-    name: 5/6 • deploy to prod
-    runs-on: self-hosted
-    needs: [classify, deploy-dry-run]
-    if: github.event_name == 'pull_request'
-    steps:
-      - name: Record post-merge production deployment
-        shell: bash
-        run: |
-          echo "Production deployment is intentionally deferred until this PR is merged into main."
-          echo "The main-branch deploy-do run will build, deploy, health-check, and launch-gate this SHA."
-
-  pr-mark-prod-latest-status:
-    name: 6/6 • mark prod latest
-    runs-on: self-hosted
-    needs: pr-production-deploy-status
-    if: github.event_name == 'pull_request'
-    steps:
-      - name: Record post-merge latest tag update
-        shell: bash
-        run: |
-          echo "The production latest image tag is updated only after the post-merge deployment succeeds."
-
-  deploy:
-    name: 5/6 • deploy to ${{ needs.classify.outputs.deploy_env }}
-    runs-on: self-hosted
-    needs: [classify, build-push]
-    if: needs.classify.outputs.deploy_mode == 'deploy'
-    environment: ${{ needs.classify.outputs.deploy_env }}
-    concurrency:
-      group: deploy-${{ needs.classify.outputs.deploy_env }}
-      cancel-in-progress: true
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-          fetch-depth: 0
-
-      - uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f
-        with:
-          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@c0c8b32d33a5244f1e5947304550403b63930415
-        with:
-          version: "v1.33.0"
-
-      - name: Resolve deploy environment
-        shell: bash
-        env:
-          DEPLOY_ENV: ${{ needs.classify.outputs.deploy_env }}
-          IMAGE_TAG: ${{ needs.classify.outputs.image_tag }}
-          REGISTRY_NAME: ${{ vars.REGISTRY_NAME }}
-          DO_CLUSTER_NAME: ${{ vars.DO_CLUSTER_NAME }}
-          K8S_GATEWAY_NAMESPACE: ${{ vars.K8S_GATEWAY_NAMESPACE }}
-          K8S_WORKER_NAMESPACE: ${{ vars.K8S_WORKER_NAMESPACE }}
-          APP_HOST: ${{ vars.APP_HOST }}
-          MCP_HOST: ${{ vars.MCP_HOST }}
-          REST_NODE_PORT: ${{ vars.REST_NODE_PORT || '30081' }}
-          MCP_NODE_PORT: ${{ vars.MCP_NODE_PORT || '30809' }}
-        run: |
-          set -euo pipefail
-          {
-            echo "DEPLOY_ENV=${DEPLOY_ENV}"
-            echo "IMAGE_TAG=${IMAGE_TAG}"
-            echo "REGISTRY_NAME=${REGISTRY_NAME:-ithaca}"
-            echo "DO_CLUSTER_NAME=${DO_CLUSTER_NAME}"
-            echo "K8S_GATEWAY_NAMESPACE=${K8S_GATEWAY_NAMESPACE}"
-            echo "K8S_WORKER_NAMESPACE=${K8S_WORKER_NAMESPACE}"
-            echo "APP_HOST=${APP_HOST}"
-            echo "MCP_HOST=${MCP_HOST}"
-            echo "REST_NODE_PORT=${REST_NODE_PORT}"
-            echo "MCP_NODE_PORT=${MCP_NODE_PORT}"
-            echo "WORKER_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-ithaca}/ithaca:${IMAGE_TAG}"
-            echo "IBKR_ENGINE_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-ithaca}/ithaca-ibkr-engine:${IMAGE_TAG}"
-          } >> "${GITHUB_ENV}"
-
-      - name: Ref freshness guard
-        shell: bash
-        run: |
-          set -euo pipefail
+          doctl registry login --expiry-seconds 1200
+          doctl kubernetes cluster kubeconfig save "${DO_CLUSTER_NAME}"
           if [[ "${DEPLOY_ENV}" == "prod" ]]; then
-            git fetch origin main
-            test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+            test "$(git rev-parse HEAD)" = "$(git ls-remote origin refs/heads/main | cut -f1)"
           fi
+          export WORKER_IMAGE="registry.digitalocean.com/${REGISTRY_NAME}/ithaca:${GITHUB_SHA}"
+          export IBKR_ENGINE_IMAGE="registry.digitalocean.com/${REGISTRY_NAME}/ithaca-ibkr-engine:${GITHUB_SHA}"
+          if [[ "${DEPLOY_MODE}" == "dry-run" ]]; then
+            export DEPLOY_DRY_RUN=client
+          fi
+          bash deploy/deploy_services.sh
 
-      - name: Save kubeconfig
-        run: doctl kubernetes cluster kubeconfig save "${DO_CLUSTER_NAME}"
-
-      - name: Deploy services
-        env:
-          LOAD_LOCAL_ENV: "0"
-          APP_NODE_WORKLOAD: ${{ vars.APP_NODE_WORKLOAD }}
-          WORKER_NODE_WORKLOAD: ${{ vars.WORKER_NODE_WORKLOAD }}
-          APP_REPLICAS: ${{ vars.APP_REPLICAS }}
-          WORKER_REPLICAS: ${{ vars.WORKER_REPLICAS }}
-          BACKTEST_REPLICAS: ${{ vars.BACKTEST_REPLICAS }}
-          BACKTEST_MAX_REPLICAS: ${{ vars.BACKTEST_MAX_REPLICAS }}
-          BACKTEST_WORKER_ENABLED: ${{ vars.BACKTEST_WORKER_ENABLED }}
-          ITHACA_PLATFORM_DB_URL: ${{ secrets.ITHACA_PLATFORM_DB_URL }}
-          ITHACA_SESSION_SECRET: ${{ secrets.ITHACA_SESSION_SECRET }}
-          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
-          CLERK_PEM_PUBLIC_KEY: ${{ secrets.CLERK_PEM_PUBLIC_KEY }}
-          CLERK_JWKS_URL: ${{ vars.CLERK_JWKS_URL }}
-          CLERK_ALLOWED_ORIGINS: ${{ vars.CLERK_ALLOWED_ORIGINS }}
-          CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ITHACA_ADAPTIVE_DASHBOARD_PROVIDER: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_PROVIDER || 'modal' }}
-          ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL }}
-          ITHACA_ADAPTIVE_DASHBOARD_API_KEY: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_API_KEY }}
-          ITHACA_ADAPTIVE_DASHBOARD_MODAL_KEY: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_MODAL_KEY }}
-          ITHACA_ADAPTIVE_DASHBOARD_MODAL_SECRET: ${{ secrets.ITHACA_ADAPTIVE_DASHBOARD_MODAL_SECRET }}
-          ITHACA_ADAPTIVE_DASHBOARD_MODEL: ${{ vars.ITHACA_ADAPTIVE_DASHBOARD_MODEL || 'google/gemma-4-E4B-it' }}
-          ITHACA_ADMIN_TOKEN: ${{ secrets.ITHACA_ADMIN_TOKEN }}
-          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
-          DATABENTO_API_KEY: ${{ secrets.DATABENTO_API_KEY }}
-          ITHACA_ARTIFACT_BUCKET: ${{ vars.ITHACA_ARTIFACT_BUCKET }}
-          ITHACA_ARTIFACT_ENDPOINT_URL: ${{ vars.ITHACA_ARTIFACT_ENDPOINT_URL }}
-          ITHACA_ARTIFACT_REGION: ${{ vars.ITHACA_ARTIFACT_REGION }}
-          ITHACA_ARTIFACT_ACCESS_KEY_ID: ${{ secrets.ITHACA_ARTIFACT_ACCESS_KEY_ID }}
-          ITHACA_ARTIFACT_SECRET_ACCESS_KEY: ${{ secrets.ITHACA_ARTIFACT_SECRET_ACCESS_KEY }}
-          IBKR_ENGINE_ENABLED: ${{ vars.IBKR_ENGINE_ENABLED }}
-          SHARED_IBKR_NAMESPACE: ${{ vars.SHARED_IBKR_NAMESPACE }}
-          ITHACA_IBKR_ENGINE_URL: ${{ vars.ITHACA_IBKR_ENGINE_URL }}
-          ITHACA_IBKR_ENGINE_TOKEN: ${{ secrets.ITHACA_IBKR_ENGINE_TOKEN }}
-          ITHACA_IBKR_QUOTE_PATH: ${{ vars.ITHACA_IBKR_QUOTE_PATH }}
-          ITHACA_IBKR_ACCOUNTS_PATH: ${{ vars.ITHACA_IBKR_ACCOUNTS_PATH }}
-          ITHACA_IBKR_POSITIONS_PATH: ${{ vars.ITHACA_IBKR_POSITIONS_PATH }}
-          ITHACA_IBKR_ORDERS_PATH: ${{ vars.ITHACA_IBKR_ORDERS_PATH }}
-          ITHACA_IBKR_ORDER_PATH: ${{ vars.ITHACA_IBKR_ORDER_PATH }}
-          IBKR_SIGNIN_PUBLIC: ${{ vars.IBKR_SIGNIN_PUBLIC }}
-          IBKR_SIGNIN_HOST: ${{ vars.IBKR_SIGNIN_HOST }}
-          IBKR_SIGNIN_REMOTE_IPS: ${{ vars.IBKR_SIGNIN_REMOTE_IPS }}
-          APPLY_CADDY: ${{ vars.APPLY_CADDY }}
-          CADDY_APPLY_ENV: ${{ vars.CADDY_APPLY_ENV }}
-          CADDY_NAMESPACE: ${{ vars.CADDY_NAMESPACE }}
-          ITHACA_LEGACY_ROOT_DOMAIN: ${{ vars.ITHACA_LEGACY_ROOT_DOMAIN }}
-          ITHACA_LEGACY_KEY_PREFIX: ${{ vars.ITHACA_LEGACY_KEY_PREFIX }}
-          ITHACA_ENABLE_LIVE_EXECUTION: ${{ vars.ITHACA_ENABLE_LIVE_EXECUTION }}
-          ITHACA_EXECUTION_KILL_SWITCH: ${{ vars.ITHACA_EXECUTION_KILL_SWITCH }}
-          ITHACA_EXECUTION_MAX_NOTIONAL_USD: ${{ vars.ITHACA_EXECUTION_MAX_NOTIONAL_USD }}
-          ITHACA_EXECUTION_MAX_QUANTITY: ${{ vars.ITHACA_EXECUTION_MAX_QUANTITY }}
-          ITHACA_EXECUTION_MAX_FRESHNESS_MS: ${{ vars.ITHACA_EXECUTION_MAX_FRESHNESS_MS }}
-        run: bash deploy/deploy_services.sh
-
-      - name: HTTP health checks
+      - name: Verify customer launch gate
+        if: env.DEPLOY_MODE == 'deploy' && env.DEPLOY_ENV == 'prod'
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsS --retry 6 --retry-delay 5 "https://${APP_HOST}/livez"
-          curl -fsS --retry 6 --retry-delay 5 "https://${APP_HOST}/healthz"
-          curl -fsS --retry 6 --retry-delay 5 "https://${APP_HOST}/readyz"
-          code="$(curl -sS -o /tmp/ithaca-mcp-response.txt -w "%{http_code}" "https://${MCP_HOST}/mcp")"
-          test "${code}" = "401"
-
-      - name: Customer launch gate
-        shell: bash
-        env:
-          ITHACA_SMOKE_API_KEY: ${{ secrets.ITHACA_SMOKE_API_KEY }}
-          ITHACA_SMOKE_NO_SCOPE_API_KEY: ${{ secrets.ITHACA_SMOKE_NO_SCOPE_API_KEY }}
-          LAUNCH_GATE_REQUIRE_IBKR: ${{ vars.LAUNCH_GATE_REQUIRE_IBKR }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${ITHACA_SMOKE_API_KEY}" ]]; then
-            if [[ "${DEPLOY_ENV}" == "prod" ]]; then
-              echo "ERROR: prod requires ITHACA_SMOKE_API_KEY for authenticated launch-gate checks" >&2
-              exit 1
-            fi
-            echo "WARN: skipping authenticated launch gate; ITHACA_SMOKE_API_KEY is unset" >&2
-            exit 0
-          fi
-          ibkr_args=()
-          if [[ "${LAUNCH_GATE_REQUIRE_IBKR:-0}" == "1" ]]; then
-            ibkr_args+=(--require-ibkr)
-          fi
-          kubectl -n "${K8S_GATEWAY_NAMESPACE}" exec deploy/ithaca-app -c mcp-gateway -- \
-            env \
+          for attempt in {1..12}; do
+            if kubectl -n "${K8S_GATEWAY_NAMESPACE}" exec deploy/ithaca-app -c mcp-gateway -- env \
               ITHACA_API_KEY="${ITHACA_SMOKE_API_KEY}" \
               ITHACA_MCP_NO_SCOPE_API_KEY="${ITHACA_SMOKE_NO_SCOPE_API_KEY}" \
-              /opt/venv/bin/python scripts/launch_gate.py \
-                --mode http \
-                --base-url "https://${APP_HOST}" \
-                --mcp-url "https://${MCP_HOST}/mcp" \
-                --require-postgres \
-                --require-workers-ready \
-                --require-mcp \
-                "${ibkr_args[@]}" \
-                --json
+              /opt/venv/bin/python scripts/launch_gate.py --mode http --base-url "https://${APP_HOST}" --mcp-url "https://${MCP_HOST}/mcp" --require-postgres --require-workers-ready --require-mcp --json; then
+              exit 0
+            fi
+            test "${attempt}" -lt 12 || exit 1
+            echo "Launch gate is settling after rollout; retrying in 10 seconds (${attempt}/12)."
+            sleep 10
+          done
 
-  mark-latest:
-    name: 6/6 • mark prod latest
-    runs-on: self-hosted
-    needs: [classify, deploy]
-    if: needs.classify.outputs.push_latest == 'true'
-    environment: prod
-    steps:
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
-
-      - uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f
-        with:
-          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-
-      - name: Resolve registry
+      - name: Mark deployed production image as latest
+        if: env.DEPLOY_MODE == 'deploy' && env.DEPLOY_ENV == 'prod'
         shell: bash
-        env:
-          REGISTRY_NAME: ${{ vars.REGISTRY_NAME }}
-        run: echo "REGISTRY_NAME=${REGISTRY_NAME:-ithaca}" >> "${GITHUB_ENV}"
-
-      - name: Login to DOCR
-        run: doctl registry login --expiry-seconds 1200
-
-      - name: Move latest to deployed prod image
-        env:
-          IBKR_ENGINE_ENABLED: ${{ vars.IBKR_ENGINE_ENABLED }}
         run: |
           set -euo pipefail
-          docker buildx imagetools create \
-            -t "registry.digitalocean.com/${REGISTRY_NAME}/ithaca:latest" \
-            "registry.digitalocean.com/${REGISTRY_NAME}/ithaca:${{ needs.classify.outputs.image_tag }}"
-          docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/ithaca:latest" >/dev/null
+          docker buildx imagetools create -t "registry.digitalocean.com/${REGISTRY_NAME}/ithaca:latest" "registry.digitalocean.com/${REGISTRY_NAME}/ithaca:${GITHUB_SHA}"
           if [[ "${IBKR_ENGINE_ENABLED:-1}" != "0" ]]; then
-            docker buildx imagetools create \
-              -t "registry.digitalocean.com/${REGISTRY_NAME}/ithaca-ibkr-engine:latest" \
-              "registry.digitalocean.com/${REGISTRY_NAME}/ithaca-ibkr-engine:${{ needs.classify.outputs.image_tag }}"
-            docker buildx imagetools inspect "registry.digitalocean.com/${REGISTRY_NAME}/ithaca-ibkr-engine:latest" >/dev/null
+            docker buildx imagetools create -t "registry.digitalocean.com/${REGISTRY_NAME}/ithaca-ibkr-engine:latest" "registry.digitalocean.com/${REGISTRY_NAME}/ithaca-ibkr-engine:${GITHUB_SHA}"
           fi
-
-  source-deploy-status-final:
-    name: Publish production deployment status
-    runs-on: self-hosted
-    needs: [source-deploy-status-pending, deploy, mark-latest]
-    if: always() && needs.source-deploy-status-pending.result == 'success'
-    steps:
-      - name: Complete source commit deployment status
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
-          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          DEPLOY_RESULT: ${{ needs.deploy.result }}
-          LATEST_RESULT: ${{ needs.mark-latest.result }}
-        run: |
-          set -euo pipefail
-          state=failure
-          description='Production deployment failed.'
-          if [[ "${DEPLOY_RESULT}" == "success" && ( "${LATEST_RESULT}" == "success" || "${LATEST_RESULT}" == "skipped" ) ]]; then
-            state=success
-            description='Production deployment passed.'
-          elif [[ "${DEPLOY_RESULT}" == "cancelled" ]]; then
-            state=error
-            description='Production deployment was cancelled.'
-          fi
-          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${SOURCE_SHA}" \
-            -f state="${state}" \
-            -f context='Ithaca / production deployment' \
-            -f description="${description}" \
-            -f target_url="${TARGET_URL}" >/dev/null
