@@ -91,9 +91,9 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          # When triggered by workflow_run, the SHA comes from the workflow_run event
-          # When triggered by pull_request, deploy the merge SHA to dev with the
-          # same build-push/deploy jobs that prod uses after merge.
+          # When triggered by workflow_run, the SHA comes from the workflow_run event.
+          # Pull requests render and validate the dev manifests only. A PR must never
+          # mutate a shared environment or point a dev process at production state.
           # When triggered by workflow_dispatch, use GITHUB_SHA and the selected mode
           if [[ "${EVENT_NAME}" == "workflow_run" && -n "${EVENT_HEAD_SHA}" ]]; then
             short="${EVENT_HEAD_SHA}"
@@ -105,7 +105,7 @@ jobs:
             short="${GITHUB_SHA}"
             short="${short:0:7}"
             deploy_env="dev"
-            deploy_mode="deploy"
+            deploy_mode="dry-run"
             image_tag="pr-${PULL_REQUEST_NUMBER}-${short}"
           else
             short="${GITHUB_SHA::7}"
