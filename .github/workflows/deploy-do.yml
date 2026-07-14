@@ -248,6 +248,8 @@ jobs:
           K8S_WORKER_NAMESPACE: ${{ vars.K8S_WORKER_NAMESPACE }}
           APP_HOST: ${{ vars.APP_HOST }}
           MCP_HOST: ${{ vars.MCP_HOST }}
+          REST_NODE_PORT: ${{ vars.REST_NODE_PORT || '30081' }}
+          MCP_NODE_PORT: ${{ vars.MCP_NODE_PORT || '30809' }}
           DEPLOY_MODE: ${{ needs.classify.outputs.deploy_mode }}
         run: |
           set -euo pipefail
@@ -428,6 +430,8 @@ jobs:
           K8S_WORKER_NAMESPACE: ${{ vars.K8S_WORKER_NAMESPACE }}
           APP_HOST: ${{ vars.APP_HOST }}
           MCP_HOST: ${{ vars.MCP_HOST }}
+          REST_NODE_PORT: ${{ vars.REST_NODE_PORT || '30081' }}
+          MCP_NODE_PORT: ${{ vars.MCP_NODE_PORT || '30809' }}
         run: |
           set -euo pipefail
           {
@@ -439,6 +443,8 @@ jobs:
             echo "K8S_WORKER_NAMESPACE=${K8S_WORKER_NAMESPACE}"
             echo "APP_HOST=${APP_HOST}"
             echo "MCP_HOST=${MCP_HOST}"
+            echo "REST_NODE_PORT=${REST_NODE_PORT}"
+            echo "MCP_NODE_PORT=${MCP_NODE_PORT}"
             echo "WORKER_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-ithaca}/ithaca:${IMAGE_TAG}"
             echo "IBKR_ENGINE_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-ithaca}/ithaca-ibkr-engine:${IMAGE_TAG}"
           } >> "${GITHUB_ENV}"
@@ -489,6 +495,29 @@ jobs:
           ITHACA_EXECUTION_MAX_FRESHNESS_MS: ${{ vars.ITHACA_EXECUTION_MAX_FRESHNESS_MS }}
         run: bash deploy/deploy_services.sh
 
+  pr-production-deploy-status:
+    name: 5/6 • deploy to prod
+    runs-on: self-hosted
+    needs: [classify, deploy-dry-run]
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Record post-merge production deployment
+        shell: bash
+        run: |
+          echo "Production deployment is intentionally deferred until this PR is merged into main."
+          echo "The main-branch deploy-do run will build, deploy, health-check, and launch-gate this SHA."
+
+  pr-mark-prod-latest-status:
+    name: 6/6 • mark prod latest
+    runs-on: self-hosted
+    needs: pr-production-deploy-status
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Record post-merge latest tag update
+        shell: bash
+        run: |
+          echo "The production latest image tag is updated only after the post-merge deployment succeeds."
+
   deploy:
     name: 5/6 • deploy to ${{ needs.classify.outputs.deploy_env }}
     runs-on: self-hosted
@@ -524,6 +553,8 @@ jobs:
           K8S_WORKER_NAMESPACE: ${{ vars.K8S_WORKER_NAMESPACE }}
           APP_HOST: ${{ vars.APP_HOST }}
           MCP_HOST: ${{ vars.MCP_HOST }}
+          REST_NODE_PORT: ${{ vars.REST_NODE_PORT || '30081' }}
+          MCP_NODE_PORT: ${{ vars.MCP_NODE_PORT || '30809' }}
         run: |
           set -euo pipefail
           {
@@ -535,6 +566,8 @@ jobs:
             echo "K8S_WORKER_NAMESPACE=${K8S_WORKER_NAMESPACE}"
             echo "APP_HOST=${APP_HOST}"
             echo "MCP_HOST=${MCP_HOST}"
+            echo "REST_NODE_PORT=${REST_NODE_PORT}"
+            echo "MCP_NODE_PORT=${MCP_NODE_PORT}"
             echo "WORKER_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-ithaca}/ithaca:${IMAGE_TAG}"
             echo "IBKR_ENGINE_IMAGE=registry.digitalocean.com/${REGISTRY_NAME:-ithaca}/ithaca-ibkr-engine:${IMAGE_TAG}"
           } >> "${GITHUB_ENV}"
