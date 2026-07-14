@@ -121,6 +121,7 @@ export function App() {
              <Route path="/deployments/:id" element={<DeploymentDetail />} />
              <Route path="/settings" element={<Settings />} />
              <Route path="/sign-up" element={<Navigate to="/dashboard" replace />} />
+             <Route path="/access" element={<Navigate to="/dashboard" replace />} />
              <Route path="/waitlist" element={<Navigate to="/dashboard" replace />} />
 
             <Route path="/agent-link" element={<AgentLink />} />

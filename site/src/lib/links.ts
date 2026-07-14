@@ -3,6 +3,8 @@
 export const APP_URL: string =
   (import.meta.env.VITE_APP_URL as string | undefined) ?? "http://localhost:5173/";
 
+export const WAITLIST_URL = new URL("/waitlist", APP_URL).toString();
+
 export const DOCS_URL: string =
   (import.meta.env.VITE_DOCS_URL as string | undefined) ?? "https://docs.doomberg.me/";
 
