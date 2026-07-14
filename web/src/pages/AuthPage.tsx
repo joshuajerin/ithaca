@@ -1,5 +1,6 @@
-import { SignIn, SignUp, Waitlist } from "@clerk/react";
-import { Link, useLocation } from "react-router-dom";
+
+import { SignIn, Waitlist } from "@clerk/react";
+import { useLocation } from "react-router-dom";
 import { IthacaMark } from "../auth/icons";
 import { legalUrl } from "../lib/legal";
 
@@ -15,10 +16,13 @@ const embeddedClerkAppearance = {
   },
 } as const;
 
+export function shouldShowWaitlist(pathname: string) {
+  return !pathname.startsWith("/access");
+}
+
 export function AuthPage() {
   const { pathname } = useLocation();
-  const isSignUp = pathname.startsWith("/sign-up");
-  const isWaitlist = pathname.startsWith("/waitlist");
+  const isWaitlist = shouldShowWaitlist(pathname);
 
   return (
     <div className="auth">
@@ -32,26 +36,10 @@ export function AuthPage() {
         </div>
 
         {isWaitlist ? (
-          <Waitlist appearance={embeddedClerkAppearance} />
-        ) : isSignUp ? (
-          <SignUp appearance={embeddedClerkAppearance} path="/sign-up" routing="path" />
+          <Waitlist appearance={embeddedClerkAppearance} signInUrl="/access" />
         ) : (
-          <SignIn appearance={embeddedClerkAppearance} path="/" routing="path" />
+          <SignIn appearance={embeddedClerkAppearance} path="/access" routing="path" />
         )}
-
-        <div className="auth-mode-row">
-          <span>
-            {isWaitlist || isSignUp ? "Already approved?" : "New to Ithaca?"}
-          </span>
-          <Link
-            className="link-btn auth-mode-link"
-            data-auth-switch
-            to={isWaitlist || isSignUp ? "/" : "/waitlist"}
-          >
-            {isWaitlist || isSignUp ? "Sign in" : "Join the waitlist"}
-          </Link>
-        </div>
-
         <p className="auth-consent">
           By continuing you agree to our{" "}
           <a href={legalUrl("terms")} target="_blank" rel="noopener noreferrer">
