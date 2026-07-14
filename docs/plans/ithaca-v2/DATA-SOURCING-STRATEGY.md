@@ -82,7 +82,7 @@ Source: [Exegy — Market Data Fees: planning infrastructure](https://www.exegy.
 
 ### 2.2 Professional vs Non-Professional (an order-of-magnitude lever)
 
-The gap is ~5x on depth feeds (Nasdaq $80.50 vs $15.00; NYSE $78 vs $16) and up to 27x on Nasdaq Basic. To qualify as **Non-Professional** you must be a *natural person*, use the data *only for personal use*, *not be registered/qualified* with any securities regulator, *not be an investment adviser*, and *trade only your own capital* ([Interactive Brokers definitions](https://www.interactivebrokers.com/en/accounts/fees/professionalDefinations.php), [NYSE Non-Professional Subscriber Policy](https://www.nyse.com/publicdocs/nyse/data/Policy-Non-ProfessionalSubscribers_PDP.pdf)). **For a B2B/agent platform, assume essentially every user is Professional** — and assume audits will reclassify aggressively ("professional-user creep").
+The gap is ~5x on depth feeds (Nasdaq $80.50 vs $15.00; NYSE $78 vs $16) and up to 27x on Nasdaq Basic. To qualify as **Non-Professional** you must be a *natural person*, use the data *only for personal use*, *not be registered/qualified* with any securities regulator, *not be an investment adviser*, and *trade only your own capital* ([NYSE Non-Professional Subscriber Policy](https://www.nyse.com/publicdocs/nyse/data/Policy-Non-ProfessionalSubscribers_PDP.pdf)). **For a B2B/agent platform, assume essentially every user is Professional** — and assume audits will reclassify aggressively ("professional-user creep").
 
 ### 2.3 Non-display use — the dominant cost for an AI-agent platform
 
@@ -300,7 +300,6 @@ Short, surgical edits given this decision:
 - NYSE Proprietary Market Data Fee Schedule — https://www.nyse.com/publicdocs/nyse/data/NYSE_Market_Data_Fee_Schedule.pdf
 - Nasdaq US Equities & Options Data Policies — https://www.nasdaqtrader.com/content/AdministrationSupport/Policy/USEquitiesandOptionsDataPolicies.pdf
 - NYSE Non-Professional Subscriber Policy — https://www.nyse.com/publicdocs/nyse/data/Policy-Non-ProfessionalSubscribers_PDP.pdf
-- Interactive Brokers — Pro/Non-Pro definitions — https://www.interactivebrokers.com/en/accounts/fees/professionalDefinations.php
 - Nasdaq UTP Plan Vendor Agreement — https://www.utpplan.com/DOC/VendorAgreement.pdf
 - NYSE Market Data Vendor Guide — https://www.nyse.com/publicdocs/ctaplan/notifications/trader-update/NYSE%20Market%20Data%20Vendor%20Guide.pdf
 - CTA MISU Policy — https://www.nyse.com/publicdocs/nyse/data/MISU_Policy_with_FAQ.pdf

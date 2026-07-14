@@ -627,7 +627,7 @@ class Toolset:
             out = self._typed_error(
                 "PROVIDER_DEGRADED",
                 f"live history unavailable: {exc}",
-                "Check the Ithaca live-data engine history route and IBKR session entitlements.",
+                "Check the Ithaca live-data engine history route and connected-account entitlements.",
             )
         tr.tool_result("market.get_ohlcv", span, _provenance_summary(out))
         return out
@@ -1809,7 +1809,7 @@ class Toolset:
         max_freshness_ms: int | None = None,
         _ctx: dict | None = None,
     ) -> dict:
-        """Read-only smoke for the connected-account IBKR engine quote route."""
+        """Read-only smoke for the connected-account live-data quote route."""
 
         ctx = dict(_ctx or {})
         tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT

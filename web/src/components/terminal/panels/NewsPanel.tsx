@@ -149,7 +149,7 @@ export function NewsPanel({ data }: { data: NewsData | null | undefined }) {
             </div>
           ))}
           {items.length === 0 && (
-            <div className="font-serif text-sm text-muted-foreground text-center py-6 italic">No recent IBKR headlines available.</div>
+            <div className="font-serif text-sm text-muted-foreground text-center py-6 italic">No recent market headlines available.</div>
           )}
           {items.length > 0 && filtered.length === 0 && (
             <div className="font-serif text-sm text-muted-foreground text-center py-6 italic">No headlines match your filters.</div>

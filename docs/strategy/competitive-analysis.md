@@ -95,7 +95,7 @@ A developer or quant who wants to give their AI agent access to options flow + c
 
 ### What they are
 
-QuantConnect is the leading open-source cloud backtesting and live execution platform for algorithmic traders. Founded in 2013, they built LEAN — an open-source C#/Python backtesting engine that has become the de facto standard for retail and semi-professional quant work. The hosted platform runs backtests at scale, has a research environment (Jupyter-based), and connects to a large number of brokers (Interactive Brokers, Tradier, Coinbase, etc.) for live execution. They have a reported 250,000+ registered users and a strong institutional arm (QuantConnect Alpha Streams, where algorithms are sold to hedge funds).
+QuantConnect is the leading open-source cloud backtesting and live execution platform for algorithmic traders. Founded in 2013, they built LEAN — an open-source C#/Python backtesting engine that has become the de facto standard for retail and semi-professional quant work. The hosted platform runs backtests at scale, has a research environment (Jupyter-based), and connects to a large number of brokers for live execution. They have a reported 250,000+ registered users and a strong institutional arm (QuantConnect Alpha Streams, where algorithms are sold to hedge funds).
 
 ### What they do really well
 
@@ -152,7 +152,7 @@ Build an MCP adapter for LEAN. This is technically straightforward — expose ba
 
 ### The customer who would choose them over Ithaca
 
-A systematic quant trader who writes Python, wants rigorous backtesting with tick-level realism, plans to connect to Interactive Brokers for live execution, and needs to run 50+ parallel backtests. They will write their own research code and don't need an AI agent layer.
+A systematic quant trader who writes Python, wants rigorous backtesting with tick-level realism, plans to connect to a broker for live execution, and needs to run 50+ parallel backtests. They will write their own research code and don't need an AI agent layer.
 
 ### The customer who would choose Ithaca over them
 
