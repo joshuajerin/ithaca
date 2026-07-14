@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 
-from doomberg_ibkr_engine import keepalive
-from doomberg_ibkr_engine.client_portal import ClientPortalAuthError
+from ithaca_ibkr_engine import keepalive
+from ithaca_ibkr_engine.client_portal import ClientPortalAuthError
 
 
 def test_keepalive_reports_sanitized_success(monkeypatch, capsys) -> None:

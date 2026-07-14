@@ -1,4 +1,4 @@
-# Container Registry (DOCR) — holds the single multi-stage doomberg image that
+# Container Registry (DOCR) — holds the single multi-stage ithaca image that
 # every service (mcp-gateway, rest-gateway, control-plane, runtime worker/
 # scheduler, archive loader) runs from. CPU-only image; no GPU/inference.
 #
@@ -8,7 +8,7 @@
 # which maintains the dockercfg pull secret across namespaces automatically — no
 # per-Deployment imagePullSecrets needed.
 
-resource "digitalocean_container_registry" "doomberg" {
+resource "digitalocean_container_registry" "ithaca" {
   name                   = var.registry_name
   subscription_tier_slug = var.registry_subscription_tier
   region                 = var.region

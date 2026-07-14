@@ -57,7 +57,7 @@ const ADAPTIVE_WIDGET_IDS = new Set([
   "live_data_status",
 ]);
 
-const INSTALL_COMMAND = "curl -fsSL https://app.doomberg.me/install.py | python3";
+const INSTALL_COMMAND = "curl -fsSL https://app.tradeithaca.com/install.py | python3";
 
 function SearchIcon() {
   return (
@@ -103,7 +103,7 @@ function AdaptiveDashboardEmptyState() {
       <DotWaveCanvas />
       <div className="adaptive-empty-card">
         <p className="adaptive-empty-message">
-          Install the Doomberg MCP and start a research session to have a personalized dashboard.
+          Install the Ithaca MCP and start a research session to have a personalized dashboard.
         </p>
         <div className="adaptive-install-command">
           <span className="adaptive-install-prompt">$</span>

@@ -18,14 +18,14 @@ locals {
   # `k8s:<cluster-id>`. Both paper and backtest nodes carry it, but the rest-/mcp-
   # gateway NodePort Services only have endpoints on the paper pool (the app pods
   # are pinned there), so the LB healthcheck keeps only those nodes in rotation.
-  lb_droplet_tag = var.apply_resource_tags ? local.gateway_pool_tag : "k8s:${digitalocean_kubernetes_cluster.doomberg.id}"
+  lb_droplet_tag = var.apply_resource_tags ? local.gateway_pool_tag : "k8s:${digitalocean_kubernetes_cluster.ithaca.id}"
 }
 
 resource "digitalocean_loadbalancer" "gateways" {
   name      = "${local.name_prefix}-lb"
   region    = var.region
   size_unit = var.lb_size_unit
-  vpc_uuid  = digitalocean_vpc.doomberg.id
+  vpc_uuid  = digitalocean_vpc.ithaca.id
 
   # Target the always-on gateway pool by tag.
   droplet_tag = local.lb_droplet_tag

@@ -1,6 +1,6 @@
 # Dedicated IBKR engine image. It contains:
 # - the official IBKR Client Portal Gateway zip downloaded at build time
-# - the Doomberg FastAPI wrapper that normalizes gateway responses for the app/MCP/workers
+# - the Ithaca FastAPI wrapper that normalizes gateway responses for the app/MCP/workers
 FROM python:3.12-slim-bookworm AS builder
 
 RUN pip install --no-cache-dir uv==0.7.13
@@ -15,7 +15,7 @@ WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
 COPY packages/contracts/py/pyproject.toml packages/contracts/py/
-COPY doomberg-core/pyproject.toml doomberg-core/
+COPY ithaca-core/pyproject.toml ithaca-core/
 COPY services/platform/pyproject.toml services/platform/
 COPY services/mcp-gateway/pyproject.toml services/mcp-gateway/
 COPY services/control-plane/pyproject.toml services/control-plane/
@@ -24,14 +24,14 @@ COPY services/runtime/pyproject.toml services/runtime/
 COPY services/ibkr-engine/pyproject.toml services/ibkr-engine/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-workspace --package doomberg-ibkr-engine
+    uv sync --frozen --no-install-workspace --package ithaca-ibkr-engine
 
 COPY packages/contracts/py/ packages/contracts/py/
-COPY doomberg-core/ doomberg-core/
+COPY ithaca-core/ ithaca-core/
 COPY services/ibkr-engine/ services/ibkr-engine/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --package doomberg-ibkr-engine
+    uv sync --frozen --package ithaca-ibkr-engine
 
 FROM eclipse-temurin:17-jre-jammy AS gateway
 
@@ -54,8 +54,8 @@ FROM python:3.12-slim-bookworm AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates openjdk-17-jre-headless \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system --gid 10001 doomberg \
-    && useradd --system --uid 10001 --gid doomberg --home-dir /app --no-create-home doomberg
+    && groupadd --system --gid 10001 ithaca \
+    && useradd --system --uid 10001 --gid ithaca --home-dir /app --no-create-home ithaca
 
 ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
@@ -65,23 +65,23 @@ ENV PATH="/opt/venv/bin:${PATH}" \
     CLIENT_PORTAL_TEMPLATE=/opt/clientportal-root-template \
     IBKR_CLIENT_PORTAL_URL=https://127.0.0.1:5000/v1/api \
     IBKR_CLIENT_PORTAL_VERIFY_SSL=false \
-    DOOMBERG_IBKR_ENGINE_PORT=8090
+    ITHACA_IBKR_ENGINE_PORT=8090
 
 WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
-COPY --from=builder /app/doomberg-core /app/doomberg-core
+COPY --from=builder /app/ithaca-core /app/ithaca-core
 COPY --from=builder /app/packages /app/packages
 COPY --from=builder /app/services/ibkr-engine /app/services/ibkr-engine
 COPY --from=gateway /opt/clientportal /opt/clientportal
 COPY --from=gateway /opt/clientportal-root-template /opt/clientportal-root-template
 COPY deploy/ibkr_engine_entrypoint.sh /usr/local/bin/ibkr_engine_entrypoint.sh
-COPY deploy/ibkr-conf.yaml /usr/local/share/doomberg/ibkr-conf.yaml
+COPY deploy/ibkr-conf.yaml /usr/local/share/ithaca/ibkr-conf.yaml
 
 RUN chmod +x /usr/local/bin/ibkr_engine_entrypoint.sh \
-    && chown -R doomberg:doomberg /opt/clientportal /opt/clientportal-root-template /app
+    && chown -R ithaca:ithaca /opt/clientportal /opt/clientportal-root-template /app
 
-USER doomberg
+USER ithaca
 
 ENTRYPOINT ["/usr/local/bin/ibkr_engine_entrypoint.sh"]
 CMD ["ibkr-engine"]

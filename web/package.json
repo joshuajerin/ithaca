@@ -1,9 +1,9 @@
 {
-  "name": "@doomberg/web",
+  "name": "@ithaca/web",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Doomberg v2 dashboard — React + Vite + TS.",
+  "description": "Ithaca v2 dashboard — React + Vite + TS.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@clerk/react": "^6.11.1",
-    "@doomberg/contracts": "workspace:*",
+    "@ithaca/contracts": "workspace:*",
     "@radix-ui/react-scroll-area": "^1.2.12",
     "@radix-ui/react-slider": "^1.4.1",
     "@tailwindcss/vite": "^4.3.1",

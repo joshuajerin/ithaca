@@ -5,7 +5,7 @@ import { useState, type FormEvent } from "react";
 import { api } from "./api";
 import { AuthPage } from "./pages/AuthPage";
 import { useAuth } from "./auth/AuthContext";
-import { DoombergMark } from "./auth/icons";
+import { IthacaMark } from "./auth/icons";
 
 const Dashboard = lazy(() => import("./pages/Dashboard").then((module) => ({ default: module.Dashboard })));
 const SessionsList = lazy(() => import("./pages/SessionsList").then((module) => ({ default: module.SessionsList })));
@@ -76,8 +76,8 @@ export function App() {
   return (
     <div className="app">
       <aside className="rail" aria-label="Primary navigation">
-        <div className="rail-brand" aria-label="Doomberg">
-          <DoombergMark size={26} />
+        <div className="rail-brand" aria-label="Ithaca">
+          <IthacaMark size={26} />
         </div>
 
         <nav className="rail-nav">
@@ -144,7 +144,7 @@ export function App() {
             <div className="feedback-dialog-head">
               <div>
                 <h2 id="feedback-title">Feedback</h2>
-                <p>Send a bug report or feature request directly to Doomberg.</p>
+                <p>Send a bug report or feature request directly to Ithaca.</p>
               </div>
               <button type="button" className="btn" onClick={closeFeedback}>Close</button>
             </div>

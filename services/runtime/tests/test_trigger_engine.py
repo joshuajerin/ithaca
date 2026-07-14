@@ -7,14 +7,14 @@ import threading
 import time
 import urllib.error
 
-from doomberg_runtime import (
+from ithaca_runtime import (
     NotificationDispatcher,
     StaticQuoteClient,
     TriggerEngine,
     TriggerJobWorker,
     webhook_signature,
 )
-from doomberg_runtime.notifications import PermanentDeliveryError, WebhookAdapter
+from ithaca_runtime.notifications import PermanentDeliveryError, WebhookAdapter
 
 
 def _policy(*, cooldown="20m", require_live=True, approval_required=False):
@@ -37,13 +37,13 @@ def _policy(*, cooldown="20m", require_live=True, approval_required=False):
     }
 
 
-def _quote(now, *, price=950, entitlement_class="doomberg_live"):
+def _quote(now, *, price=950, entitlement_class="ithaca_live"):
     return {
         "symbol": "NVDA",
         "price": price,
         "as_of": now.isoformat(),
         "received_time": now.isoformat(),
-        "source": "doomberg-live-data",
+        "source": "ithaca-live-data",
         "entitlement_class": entitlement_class,
     }
 
@@ -71,8 +71,8 @@ def test_trigger_engine_fires_quote_run_and_cooldown_blocks_repeat(durable_platf
                     "price": 950,
                     "as_of": now.isoformat(),
                     "received_time": now.isoformat(),
-                    "source": "doomberg-live-data",
-                    "entitlement_class": "doomberg_live",
+                    "source": "ithaca-live-data",
+                    "entitlement_class": "ithaca_live",
                 }
             }
         ),
@@ -87,7 +87,7 @@ def test_trigger_engine_fires_quote_run_and_cooldown_blocks_repeat(durable_platf
     assert run["kind"] == "trigger"
     assert run["state"] == "succeeded"
     assert run["result"]["data"]["symbol"] == "NVDA"
-    assert run["result"]["provenance"]["source"] == "doomberg-live-data"
+    assert run["result"]["provenance"]["source"] == "ithaca-live-data"
     types = [event["type"] for event in durable_platform.trace.events(tenant, run_id)]
     assert types == [
         "trigger_fired",
@@ -136,8 +136,8 @@ def test_trigger_engine_fires_percent_change_from_previous_close(durable_platfor
                     "previous_close": 100,
                     "as_of": now.isoformat(),
                     "received_time": now.isoformat(),
-                    "source": "doomberg-live-data",
-                    "entitlement_class": "doomberg_live",
+                    "source": "ithaca-live-data",
+                    "entitlement_class": "ithaca_live",
                 }
             }
         ),
@@ -176,8 +176,8 @@ def test_trigger_engine_percent_change_does_not_fire_above_threshold(durable_pla
                     "previous_close": 100,
                     "as_of": now.isoformat(),
                     "received_time": now.isoformat(),
-                    "source": "doomberg-live-data",
-                    "entitlement_class": "doomberg_live",
+                    "source": "ithaca-live-data",
+                    "entitlement_class": "ithaca_live",
                 }
             }
         ),
@@ -195,7 +195,7 @@ def test_trigger_engine_run_forever_requires_leadership(durable_platform, monkey
     now = dt.datetime(2026, 6, 24, 13, 30, tzinfo=dt.timezone.utc)
     _active_trigger(durable_platform, tenant, _policy(cooldown="9999d"))
     quote_client = StaticQuoteClient({"NVDA": _quote(now)})
-    monkeypatch.setenv("DOOMBERG_TRIGGER_LEASE_TTL_S", "30")
+    monkeypatch.setenv("ITHACA_TRIGGER_LEASE_TTL_S", "30")
 
     assert durable_platform.leases.acquire("trigger-engine", "owner-1", ttl_seconds=30) is not None
     blocked = TriggerEngine(durable_platform, quote_client=quote_client, worker_id="owner-2")
@@ -284,7 +284,7 @@ def test_trigger_dry_run_predicts_fire_without_side_effects(durable_platform, te
         "broker_order": False,
     }
     assert result["context"]["symbol"] == "NVDA"
-    assert result["context"]["entitlement_class"] == "doomberg_live"
+    assert result["context"]["entitlement_class"] == "ithaca_live"
     assert durable_platform.runs.list(tenant) == []
     assert durable_platform.jobs.list(tenant) == []
     assert durable_platform.approvals.list(tenant) == []
@@ -366,8 +366,8 @@ def test_trigger_engine_creates_approval_when_requested(durable_platform, tenant
                     "price": 950,
                     "as_of": now.isoformat(),
                     "received_time": now.isoformat(),
-                    "source": "doomberg-live-data",
-                    "entitlement_class": "doomberg_live",
+                    "source": "ithaca-live-data",
+                    "entitlement_class": "ithaca_live",
                 }
             }
         ),
@@ -422,7 +422,7 @@ def test_notification_dispatcher_marks_implicit_ui_delivery_sent(durable_platfor
         subject_type="trigger_firing",
         subject_id="fir_1",
         priority="high",
-        payload={"channels": ["doomberg_ui"], "symbol": "NVDA"},
+        payload={"channels": ["ithaca_ui"], "symbol": "NVDA"},
     )
 
     result = NotificationDispatcher(durable_platform).poll_once()
@@ -431,7 +431,7 @@ def test_notification_dispatcher_marks_implicit_ui_delivery_sent(durable_platfor
     updated = durable_platform.notifications.get(tenant, alert["notification_id"])
     assert updated["state"] == "sent"
     attempts = durable_platform.notifications.list_attempts(tenant, alert["notification_id"])
-    assert attempts[0]["target_id"] == "doomberg_ui:implicit"
+    assert attempts[0]["target_id"] == "ithaca_ui:implicit"
     assert attempts[0]["state"] == "succeeded"
 
 
@@ -443,7 +443,7 @@ def test_webhook_signature_is_stable():
 
 
 def test_webhook_delivery_rejects_private_targets(monkeypatch):
-    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.setenv("ITHACA_ENV", "prod")
     adapter = WebhookAdapter()
     notification = {
         "event_type": "trigger.fired",
@@ -466,7 +466,7 @@ def test_webhook_delivery_rejects_private_targets(monkeypatch):
 
 
 def test_webhook_delivery_rejects_public_http_targets(monkeypatch):
-    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.setenv("ITHACA_ENV", "prod")
     adapter = WebhookAdapter()
     notification = {
         "event_type": "trigger.fired",
@@ -489,7 +489,7 @@ def test_webhook_delivery_rejects_public_http_targets(monkeypatch):
 
 
 def test_webhook_delivery_rejects_userinfo(monkeypatch):
-    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.setenv("ITHACA_ENV", "prod")
     adapter = WebhookAdapter()
     notification = {
         "event_type": "trigger.fired",
@@ -512,7 +512,7 @@ def test_webhook_delivery_rejects_userinfo(monkeypatch):
 
 
 def test_webhook_delivery_rejects_redirects(monkeypatch):
-    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.setenv("ITHACA_ENV", "prod")
     adapter = WebhookAdapter()
     notification = {
         "event_type": "trigger.fired",
@@ -547,8 +547,8 @@ def test_webhook_delivery_rejects_redirects(monkeypatch):
 
 
 def test_private_webhook_targets_require_local_explicit_opt_in(monkeypatch, local_server):
-    monkeypatch.setenv("DOOMBERG_ENV", "test")
-    monkeypatch.setenv("DOOMBERG_ALLOW_PRIVATE_WEBHOOKS", "1")
+    monkeypatch.setenv("ITHACA_ENV", "test")
+    monkeypatch.setenv("ITHACA_ALLOW_PRIVATE_WEBHOOKS", "1")
     adapter = WebhookAdapter()
     notification = {
         "event_type": "trigger.fired",
@@ -567,4 +567,4 @@ def test_private_webhook_targets_require_local_explicit_opt_in(monkeypatch, loca
     delivered = adapter.deliver(notification, target)
 
     assert delivered["status"] == 200
-    assert local_server.requests[0]["headers"]["X-Doomberg-Signature"].startswith("hmac-sha256=")
+    assert local_server.requests[0]["headers"]["X-Ithaca-Signature"].startswith("hmac-sha256=")

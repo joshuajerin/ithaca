@@ -10,7 +10,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: default-deny-all
-  namespace: doomberg-workers
+  namespace: ithaca-workers
 spec:
   podSelector: {} # all pods
   policyTypes:
@@ -23,11 +23,11 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-egress-data-gateway
-  namespace: doomberg-workers
+  namespace: ithaca-workers
 spec:
   podSelector:
     matchLabels:
-      doomberg/component: worker
+      ithaca/component: worker
   policyTypes:
     - Egress
   egress:
@@ -35,10 +35,10 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              doomberg/role: data-gateway
+              ithaca/role: data-gateway
           podSelector:
             matchLabels:
-              doomberg/component: data-gateway
+              ithaca/component: data-gateway
       ports:
         - protocol: TCP
           port: 8080

@@ -3,7 +3,7 @@
 Two layers, both network-free:
 
 * the auth layer (Principal resolution + scope policy) exercised through the ASGI
-  middleware directly with a real :class:`~doomberg_platform.AuthStore` on an in-memory
+  middleware directly with a real :class:`~ithaca_platform.AuthStore` on an in-memory
   Platform — valid key → principal, bad/missing/revoked → 401, scope-too-low → 403; and
 * an HTTP-mode smoke test that drives the SDK's streamable-HTTP app via Starlette's
   ``TestClient`` (no real port) to prove auth + scope enforcement + per-request tenant
@@ -16,8 +16,8 @@ import json
 import pytest
 from starlette.testclient import TestClient
 
-from doomberg_core import Core, DataGateway
-from doomberg_mcp import (
+from ithaca_core import Core, DataGateway
+from ithaca_mcp import (
     InMemoryTrace,
     Principal,
     TenantAuthMiddleware,
@@ -25,8 +25,8 @@ from doomberg_mcp import (
     build_http_app,
     current_principal,
 )
-from doomberg_mcp.http import _bearer, _is_tool_call, _requires_data_read, _scope_needed
-from doomberg_platform import Platform
+from ithaca_mcp.http import _bearer, _is_tool_call, _requires_data_read, _scope_needed
+from ithaca_platform import Platform
 
 
 # --------------------------------------------------------------------------------------
@@ -91,7 +91,7 @@ def _det_core() -> Core:
 # unit: small pure helpers (the bearer parse + scope policy)
 # --------------------------------------------------------------------------------------
 def test_bearer_extracts_token():
-    assert _bearer([(b"authorization", b"Bearer dmbg_test_abc_secret")]) == "dmbg_test_abc_secret"
+    assert _bearer([(b"authorization", b"Bearer ith_test_abc_secret")]) == "ith_test_abc_secret"
     assert _bearer([(b"Authorization", b"bearer xyz")]) == "xyz"  # case-insensitive scheme+name
     assert _bearer([(b"authorization", b"Basic zzz")]) is None  # wrong scheme
     assert _bearer([]) is None  # no header
@@ -131,13 +131,13 @@ def test_scope_policy_recognizes_calls():
     # baseline enforced by the hosted middleware.
     body = json.dumps({
         "method": "resources/read",
-        "params": {"uri": "doomberg://skills/catalog"},
+        "params": {"uri": "ithaca://skills/catalog"},
     }).encode()
     assert _scope_needed(body) == set()
     assert _requires_data_read(body) is True
     body = json.dumps({
         "method": "resources/read",
-        "params": {"uri": "doomberg://alerts/open"},
+        "params": {"uri": "ithaca://alerts/open"},
     }).encode()
     assert _scope_needed(body) == {"alerts:read"}
     body = json.dumps({"method": "resources/list"}).encode()
@@ -222,7 +222,7 @@ def test_missing_key_is_401(middleware):
 
 
 def test_bad_key_is_401(middleware):
-    out = _run_mw(middleware, token="dmbg_test_deadbeef_notarealsecret", body=CALL)
+    out = _run_mw(middleware, token="ith_test_deadbeef_notarealsecret", body=CALL)
     assert out["status"] == 401 and out["passed"] is False
 
 
@@ -239,7 +239,7 @@ def test_tool_call_requires_data_read_scope(middleware, keys):
 
 def test_resource_read_requires_data_read_scope(middleware, keys):
     body = {"jsonrpc": "2.0", "id": 1, "method": "resources/read",
-            "params": {"uri": "doomberg://skills/catalog"}}
+            "params": {"uri": "ithaca://skills/catalog"}}
 
     denied = _run_mw(middleware, token=keys["no_scope"], body=body)
     allowed = _run_mw(middleware, token=keys["read_only"], body=body)
@@ -250,7 +250,7 @@ def test_resource_read_requires_data_read_scope(middleware, keys):
 
 def test_alert_resource_requires_alert_read_scope(middleware, keys):
     body = {"jsonrpc": "2.0", "id": 1, "method": "resources/read",
-            "params": {"uri": "doomberg://alerts/open"}}
+            "params": {"uri": "ithaca://alerts/open"}}
 
     denied = _run_mw(middleware, token=keys["read_only"], body=body)
     allowed = _run_mw(middleware, token=keys["alert_read"], body=body)

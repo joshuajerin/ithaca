@@ -20,7 +20,7 @@ export default function CTA() {
 
         <div className="relative">
           <h2 className="display mx-auto max-w-[20ch] text-[2.5rem] leading-[1.04] sm:text-5xl lg:text-[3.6rem]">
-            Open Doomberg.
+            Open Ithaca.
           </h2>
           <p className="mx-auto mt-5 max-w-[48ch] text-[1.1rem] leading-relaxed text-cream/75">
             Use the dashboard for market data, backtests, and paper trades.

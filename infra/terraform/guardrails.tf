@@ -1,6 +1,6 @@
 # CPU-ONLY GUARDRAIL (DATA-LAYER-INTERFACES.md → INFRASTRUCTURE GUARDRAIL).
 #
-# Doomberg v2 runs NO untrusted code and NO model inference on this stack — it is
+# Ithaca v2 runs NO untrusted code and NO model inference on this stack — it is
 # trusted numpy over declarative specs. There is therefore NO legitimate reason for
 # a GPU node, a GPU database, or any inference / pass-through product to appear here.
 #

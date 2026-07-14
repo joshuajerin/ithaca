@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from doomberg_platform import ClerkApiError, ClerkWaitlistService
+from ithaca_platform import ClerkApiError, ClerkWaitlistService
 
 
 class _Response:

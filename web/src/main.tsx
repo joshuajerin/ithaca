@@ -37,7 +37,7 @@ function MissingClerkConfig() {
       <div className="auth-card auth-callback">
         <div className="auth-brand">
           <div>
-            Doomberg
+            Ithaca
           </div>
         </div>
         <h1 className="auth-title">Authentication is not configured</h1>

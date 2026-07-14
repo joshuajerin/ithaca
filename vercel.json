@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "pnpm install --frozen-lockfile=false --config.strictDepBuilds=false",
-  "buildCommand": "pnpm --filter @doomberg/site run build",
+  "buildCommand": "pnpm --filter @ithaca/site run build",
   "outputDirectory": "site/dist",
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }

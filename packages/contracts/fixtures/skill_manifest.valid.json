@@ -6,7 +6,7 @@
   "source_classes": ["computed"],
   "runtime": {
     "profile": "interactive",
-    "image": "registry.digitalocean.com/doomberg/doomberg:latest",
+    "image": "registry.digitalocean.com/ithaca/ithaca:latest",
     "cpu": 0.25,
     "memory_mb": 256,
     "timeout_seconds": 30

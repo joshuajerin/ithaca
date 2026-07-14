@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { StrategySpec as StrategySpecSchema } from "@doomberg/contracts";
+import { StrategySpec as StrategySpecSchema } from "@ithaca/contracts";
 import { api } from "../api";
 import { useAsync } from "../hooks/useAsync";
 import type { BacktestResult, RunRow, StrategyRow } from "../types";

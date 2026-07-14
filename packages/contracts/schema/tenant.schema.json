@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://doomberg.dev/contracts/tenant.schema.json",
+  "$id": "https://ithaca.dev/contracts/tenant.schema.json",
   "title": "TenantContext",
   "description": "The canonical request-scoped tenant + actor context. tenant_id is THE single isolation key (the v1 firmId/firm_id aliases are banned). Resolved at the two front doors only and bound into ctx; the data layer + Postgres RLS is the single enforcement point.",
   "type": "object",

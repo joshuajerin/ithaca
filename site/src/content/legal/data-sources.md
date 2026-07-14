@@ -1,6 +1,6 @@
 # Third-Party Data Sources
 
-Doomberg, operated by **Ithaca, Inc., a Delaware corporation**, integrates market and reference data from third-party providers. This page describes those providers and the limitations that apply to data made available through the Service. Data is provided on an **"as is"** basis for research and simulated ("paper") use only; see our [Risk Disclosures](/disclosures).
+Ithaca, operated by **Ithaca, Inc., a Delaware corporation**, integrates market and reference data from third-party providers. This page describes those providers and the limitations that apply to data made available through the Service. Data is provided on an **"as is"** basis for research and simulated ("paper") use only; see our [Risk Disclosures](/disclosures).
 
 ## 1. Alpaca
 

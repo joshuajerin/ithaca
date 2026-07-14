@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Interactive Doomberg MCP installer for local coding agents.
+"""Interactive Ithaca MCP installer for local coding agents.
 
-The installer opens the Doomberg web app, receives a one-time key from the signed-in
+The installer opens the Ithaca web app, receives a one-time key from the signed-in
 browser session on a localhost callback, then registers the hosted MCP endpoint with
 the selected local agent clients.
 """
@@ -25,12 +25,12 @@ from urllib import error as urlerror
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-DEFAULT_APP_URL = "https://app.doomberg.me"
-DEFAULT_MCP_URL = "https://mcp.doomberg.me/mcp"
-CONFIG_DIR = Path.home() / ".config" / "doomberg"
+DEFAULT_APP_URL = "https://app.tradeithaca.com"
+DEFAULT_MCP_URL = "https://mcp.tradeithaca.com/mcp"
+CONFIG_DIR = Path.home() / ".config" / "ithaca"
 ENV_FILE = CONFIG_DIR / "mcp.env"
 TOOLS_GUIDE_FILE = CONFIG_DIR / "TOOLS.md"
-SHELL_MARKER = "# Doomberg MCP environment"
+SHELL_MARKER = "# Ithaca MCP environment"
 CLIENT_ALIASES = {
     "all": "all",
     "cursor": "cursor",
@@ -90,8 +90,8 @@ def _handler(state: CallbackState):
                 _json_response(self, 403, {"error": "state mismatch"})
                 return
             api_key = str(payload.get("api_key") or "")
-            if not api_key.startswith("dmbg_"):
-                state.error = "approval did not return a Doomberg API key"
+            if not api_key.startswith("ith_"):
+                state.error = "approval did not return a Ithaca API key"
                 state.event.set()
                 _json_response(self, 400, {"error": state.error})
                 return
@@ -122,9 +122,9 @@ def _agent_link_url(app_url: str, callback_url: str, state: str, mcp_url: str,
 def _write_env_file(api_key: str, mcp_url: str) -> None:
     ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        "# Written by Doomberg MCP installer. Keep this file private.",
-        f"export DOOMBERG_MCP_API_KEY={shlex.quote(api_key)}",
-        f"export DOOMBERG_MCP_URL={shlex.quote(mcp_url)}",
+        "# Written by Ithaca MCP installer. Keep this file private.",
+        f"export ITHACA_MCP_API_KEY={shlex.quote(api_key)}",
+        f"export ITHACA_MCP_URL={shlex.quote(mcp_url)}",
         "",
     ]
     ENV_FILE.write_text("\n".join(lines), encoding="utf-8")
@@ -170,7 +170,7 @@ def _http_mcp_env_config(mcp_url: str) -> dict[str, Any]:
         "type": "http",
         "url": mcp_url,
         "headers": {
-            "Authorization": "Bearer ${DOOMBERG_MCP_API_KEY}",
+            "Authorization": "Bearer ${ITHACA_MCP_API_KEY}",
         },
     }
 
@@ -212,8 +212,8 @@ def _ensure_shell_sources_env() -> None:
 def _set_launchctl_env(api_key: str, mcp_url: str) -> None:
     if platform.system() != "Darwin" or shutil.which("launchctl") is None:
         return
-    subprocess.run(["launchctl", "setenv", "DOOMBERG_MCP_API_KEY", api_key], check=False)
-    subprocess.run(["launchctl", "setenv", "DOOMBERG_MCP_URL", mcp_url], check=False)
+    subprocess.run(["launchctl", "setenv", "ITHACA_MCP_API_KEY", api_key], check=False)
+    subprocess.run(["launchctl", "setenv", "ITHACA_MCP_URL", mcp_url], check=False)
 
 
 def _install_codex_mcp(name: str, mcp_url: str) -> str:
@@ -222,7 +222,7 @@ def _install_codex_mcp(name: str, mcp_url: str) -> str:
         return (
             "Codex: codex CLI not found; run manually: "
             f"codex mcp add {name} --url {mcp_url} "
-            "--bearer-token-env-var DOOMBERG_MCP_API_KEY"
+            "--bearer-token-env-var ITHACA_MCP_API_KEY"
         )
     subprocess.run([codex, "mcp", "remove", name], stdout=subprocess.DEVNULL,
                    stderr=subprocess.DEVNULL, check=False)
@@ -235,7 +235,7 @@ def _install_codex_mcp(name: str, mcp_url: str) -> str:
             "--url",
             mcp_url,
             "--bearer-token-env-var",
-            "DOOMBERG_MCP_API_KEY",
+            "ITHACA_MCP_API_KEY",
         ],
         check=True,
         timeout=30,
@@ -248,7 +248,7 @@ def _install_claude_code_mcp(name: str, mcp_url: str, _api_key: str) -> str:
     if claude is None:
         path = Path.home() / ".claude" / "mcp.json"
         _merge_mcp_json(path, name, _http_mcp_env_config(mcp_url))
-        return f"Claude Code: claude CLI not found; wrote {path} with DOOMBERG_MCP_API_KEY env reference"
+        return f"Claude Code: claude CLI not found; wrote {path} with ITHACA_MCP_API_KEY env reference"
     subprocess.run([claude, "mcp", "remove", "--scope", "user", name],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
     subprocess.run(
@@ -261,14 +261,14 @@ def _install_claude_code_mcp(name: str, mcp_url: str, _api_key: str) -> str:
             "--scope",
             "user",
             "--header",
-            "Authorization: Bearer ${DOOMBERG_MCP_API_KEY}",
+            "Authorization: Bearer ${ITHACA_MCP_API_KEY}",
             name,
             mcp_url,
         ],
         check=True,
         timeout=30,
     )
-    return "Claude Code: registered with `claude mcp add --transport http` using DOOMBERG_MCP_API_KEY"
+    return "Claude Code: registered with `claude mcp add --transport http` using ITHACA_MCP_API_KEY"
 
 
 def _install_openclaw_mcp(name: str, mcp_url: str, api_key: str) -> str:
@@ -407,7 +407,7 @@ def _verify_mcp_initialize(mcp_url: str, api_key: str) -> dict[str, Any]:
                 "params": {
                     "protocolVersion": "2025-06-18",
                     "capabilities": {},
-                    "clientInfo": {"name": "doomberg-installer", "version": "1"},
+                    "clientInfo": {"name": "ithaca-installer", "version": "1"},
                 },
             },
         )
@@ -523,12 +523,12 @@ def _run_agent_init_smoke(mcp_url: str, api_key: str, session_id: str, goal: str
         mcp_url,
         api_key,
         session_id,
-        "doomberg_init",
+        "ithaca_init",
         {"goal": goal},
         mid=40,
     )
     if result.get("status") != "ready" or not result.get("session_id"):
-        raise RuntimeError(f"doomberg_init did not return a ready session: {result}")
+        raise RuntimeError(f"ithaca_init did not return a ready session: {result}")
     return result
 
 
@@ -547,16 +547,16 @@ def _build_tools_markdown(
 ) -> str:
     generated_at = time.strftime("%Y-%m-%d %H:%M:%S %Z")
     lines = [
-        "# Doomberg MCP Tools",
+        "# Ithaca MCP Tools",
         "",
-        f"Generated by the Doomberg installer at {generated_at}.",
+        f"Generated by the Ithaca installer at {generated_at}.",
         f"Endpoint: `{mcp_url}`",
         "",
-        "This file intentionally does not contain bearer tokens. The installer stores the token in `~/.config/doomberg/mcp.env`.",
+        "This file intentionally does not contain bearer tokens. The installer stores the token in `~/.config/ithaca/mcp.env`.",
         "",
         "## First-call workflow",
         "",
-        "1. Call `doomberg_init(goal=\"<user goal>\")` first. The installer has already smoke-tested this call.",
+        "1. Call `ithaca_init(goal=\"<user goal>\")` first. The installer has already smoke-tested this call.",
         "2. Use `list_toolkits` or `search_skills` to pick the smallest relevant surface.",
         "3. Use `describe_toolkit` or `describe_skill` before uncertain calls.",
         "4. Use direct tools for interactive answers and `run_skill` for durable backtests or longer work.",
@@ -641,7 +641,7 @@ def _build_tools_markdown(
 def _write_tools_guide(mcp_url: str, api_key: str, session_id: str,
                        init_result: dict[str, Any]) -> Path:
     tools = _list_mcp_tools(mcp_url, api_key, session_id)
-    catalog = _read_mcp_resource(mcp_url, api_key, session_id, "doomberg://toolkits/catalog", mid=31)
+    catalog = _read_mcp_resource(mcp_url, api_key, session_id, "ithaca://toolkits/catalog", mid=31)
     toolkit_entries = catalog.get("toolkits") or []
     toolkits: list[dict[str, Any]] = []
     for index, entry in enumerate(toolkit_entries):
@@ -657,7 +657,7 @@ def _write_tools_guide(mcp_url: str, api_key: str, session_id: str,
                 mid=32 + index,
             )
         )
-    skills_catalog = _read_mcp_resource(mcp_url, api_key, session_id, "doomberg://skills/catalog", mid=50)
+    skills_catalog = _read_mcp_resource(mcp_url, api_key, session_id, "ithaca://skills/catalog", mid=50)
     markdown = _build_tools_markdown(
         mcp_url=mcp_url,
         init_result=init_result,
@@ -676,19 +676,19 @@ def _write_tools_guide(mcp_url: str, api_key: str, session_id: str,
 
 def _agent_bootstrap_prompt(name: str) -> str:
     return (
-        "After your agent reloads MCP config, call the Doomberg init tool first. "
+        "After your agent reloads MCP config, call the Ithaca init tool first. "
         "It opens the visible research session with the user's prompt:\n"
-        f"  {name}.doomberg_init(goal=\"<what you want Doomberg to research or build>\")\n"
+        f"  {name}.ithaca_init(goal=\"<what you want Ithaca to research or build>\")\n"
         "Then call direct tools or search_skills/describe_skill/run_skill inside that session. "
         "Every MCP request is still authenticated with the installed key."
     )
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Install Doomberg MCP into a local agent.")
-    parser.add_argument("--app-url", default=os.environ.get("DOOMBERG_APP_URL", DEFAULT_APP_URL))
-    parser.add_argument("--mcp-url", default=os.environ.get("DOOMBERG_MCP_URL", DEFAULT_MCP_URL))
-    parser.add_argument("--name", default="doomberg")
+    parser = argparse.ArgumentParser(description="Install Ithaca MCP into a local agent.")
+    parser.add_argument("--app-url", default=os.environ.get("ITHACA_APP_URL", DEFAULT_APP_URL))
+    parser.add_argument("--mcp-url", default=os.environ.get("ITHACA_MCP_URL", DEFAULT_MCP_URL))
+    parser.add_argument("--name", default="ithaca")
     parser.add_argument(
         "--client",
         type=_normalize_client,
@@ -704,8 +704,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--init-goal",
-        default="Initialize Doomberg MCP after install and show the first-call workflow.",
-        help="Goal passed to doomberg_init during the post-auth MCP smoke.",
+        default="Initialize Ithaca MCP after install and show the first-call workflow.",
+        help="Goal passed to ithaca_init during the post-auth MCP smoke.",
     )
     args = parser.parse_args(argv)
 
@@ -719,9 +719,9 @@ def main(argv: list[str] | None = None) -> int:
     link = _agent_link_url(args.app_url, callback_url, state_token, args.mcp_url,
                            args.name, args.client)
     if args.agent_init:
-        print("Send this URL to the user so they can sign in or create an account and approve Doomberg MCP:")
+        print("Send this URL to the user so they can sign in or create an account and approve Ithaca MCP:")
     else:
-        print("Open this URL to sign in and approve Doomberg MCP:")
+        print("Open this URL to sign in and approve Ithaca MCP:")
     print(link)
     if not args.no_open and not args.agent_init:
         webbrowser.open(link)
@@ -748,14 +748,14 @@ def main(argv: list[str] | None = None) -> int:
             results.append(failure)
 
     key_id = payload.get("key_id", "")
-    print(f"Doomberg MCP installed as '{args.name}'.")
+    print(f"Ithaca MCP installed as '{args.name}'.")
     for result in results:
         print(f"- {result}")
     if key_id:
         print(f"Key id: {key_id}")
     print(f"Token env: {ENV_FILE}")
     print("Each MCP request is authenticated with this key automatically.")
-    print("Agent flow: call doomberg_init with the user prompt; it opens the visible session.")
+    print("Agent flow: call ithaca_init with the user prompt; it opens the visible session.")
     print("Then use list_toolkits/search_skills, describe the relevant surface, and call direct tools or run_skill.")
 
     init = _verify_mcp_initialize(mcp_url, api_key)
@@ -765,9 +765,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"MCP initialize: ok (session {session_id})")
         try:
             init_result = _run_agent_init_smoke(mcp_url, api_key, session_id, str(args.init_goal))
-            print(f"doomberg_init: ok (research session {init_result['session_id']})")
+            print(f"ithaca_init: ok (research session {init_result['session_id']})")
         except Exception as exc:
-            print(f"doomberg_init: {exc}")
+            print(f"ithaca_init: {exc}")
             failures.append(str(exc))
         if init_result is not None:
             try:

@@ -1,4 +1,4 @@
-"""Test harness for doomberg-runtime.
+"""Test harness for ithaca-runtime.
 
 Provides:
 - A deterministic, network-free synthetic price fetch (replicated from the core's
@@ -22,12 +22,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-# --- make doomberg_core + doomberg_contracts importable in isolated runs ---------
+# --- make ithaca_core + ithaca_contracts importable in isolated runs ---------
 _ROOT = Path(__file__).resolve().parents[3]
 _TEST_ROOT = Path(__file__).resolve().parent
 for p in (
     _TEST_ROOT,
-    _ROOT / "doomberg-core" / "src",
+    _ROOT / "ithaca-core" / "src",
     _ROOT / "packages" / "contracts" / "py",
     _ROOT / "services" / "platform" / "src",
 ):
@@ -35,9 +35,9 @@ for p in (
     if p.exists() and sp not in sys.path:
         sys.path.insert(0, sp)
 
-from doomberg_contracts import TraceEvent  # noqa: E402
-from doomberg_core import Core, DataGateway  # noqa: E402
-from doomberg_platform import Platform as DurablePlatform  # noqa: E402
+from ithaca_contracts import TraceEvent  # noqa: E402
+from ithaca_core import Core, DataGateway  # noqa: E402
+from ithaca_platform import Platform as DurablePlatform  # noqa: E402
 
 
 class _LocalServer:

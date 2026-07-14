@@ -9,7 +9,7 @@ from types import ModuleType
 
 def _load_gate() -> ModuleType:
     path = Path(__file__).resolve().parents[3] / "scripts" / "launch_gate.py"
-    spec = importlib.util.spec_from_file_location("doomberg_launch_gate", path)
+    spec = importlib.util.spec_from_file_location("ithaca_launch_gate", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -23,7 +23,7 @@ def _json_payload(output: str) -> dict:
 
 
 def test_launch_gate_local_mode_passes_without_external_services(capsys, monkeypatch):
-    monkeypatch.delenv("DOOMBERG_IBKR_ENGINE_URL", raising=False)
+    monkeypatch.delenv("ITHACA_IBKR_ENGINE_URL", raising=False)
     gate = _load_gate()
 
     code = gate.main(["--mode", "local", "--db", ":memory:", "--skip-ibkr", "--json"])
@@ -118,7 +118,7 @@ def test_launch_gate_requires_current_worker_role_heartbeats():
 
 
 def test_launch_gate_can_require_ibkr_smoke(capsys, monkeypatch):
-    monkeypatch.delenv("DOOMBERG_IBKR_ENGINE_URL", raising=False)
+    monkeypatch.delenv("ITHACA_IBKR_ENGINE_URL", raising=False)
     gate = _load_gate()
 
     code = gate.main(["--mode", "local", "--db", ":memory:", "--require-ibkr", "--json"])
@@ -132,7 +132,7 @@ def test_launch_gate_can_require_ibkr_smoke(capsys, monkeypatch):
 
 
 def test_launch_gate_worker_flag_rejects_lease_only_state(capsys, monkeypatch):
-    monkeypatch.delenv("DOOMBERG_IBKR_ENGINE_URL", raising=False)
+    monkeypatch.delenv("ITHACA_IBKR_ENGINE_URL", raising=False)
     gate = _load_gate()
 
     code = gate.main([

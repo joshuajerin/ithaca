@@ -86,7 +86,7 @@ export default function Hero() {
           >
             Research live market data, test strategies against historical
             context, and paper-trade the results from one dashboard built for
-            agent workflows. Doomberg keeps tools, runs, evidence, and approvals
+            agent workflows. Ithaca keeps tools, runs, evidence, and approvals
             in one place.
           </motion.p>
 

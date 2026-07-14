@@ -1,9 +1,9 @@
 {
-  "name": "@doomberg/contracts",
+  "name": "@ithaca/contracts",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Doomberg v2 shared contracts (generated zod schemas). Source of truth: ../schema/*.schema.json",
+  "description": "Ithaca v2 shared contracts (generated zod schemas). Source of truth: ../schema/*.schema.json",
   "main": "src/index.ts",
   "scripts": {
     "test": "vitest run",

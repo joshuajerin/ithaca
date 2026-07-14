@@ -30,7 +30,7 @@ jobs:
           platforms: linux/amd64
           push: false
           load: true
-          tags: doomberg:ci
+          tags: ithaca:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
       - name: Build the IBKR engine image (CPU-only, no push)
@@ -41,27 +41,27 @@ jobs:
           platforms: linux/amd64
           push: false
           load: true
-          tags: doomberg-ibkr-engine:ci
+          tags: ithaca-ibkr-engine:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
       - name: Smoke-test the service roles boot
         run: |
           set -euo pipefail
           # imports resolve for every service in the single image
-          docker run --rm doomberg:ci shell -c \
-            'python -c "import doomberg_core, doomberg_platform, doomberg_runtime, doomberg_rest, doomberg_control, doomberg_mcp; print(\"imports OK\")"'
+          docker run --rm ithaca:ci shell -c \
+            'python -c "import ithaca_core, ithaca_platform, ithaca_runtime, ithaca_rest, ithaca_control, ithaca_mcp; print(\"imports OK\")"'
           # the conductor role starts (prints its banner) then we stop it
-          cid="$(docker run -d -e DOOMBERG_DB=:memory: doomberg:ci conductor)"
+          cid="$(docker run -d -e ITHACA_DB=:memory: ithaca:ci conductor)"
           sleep 5
-          docker logs "$cid" | grep -q "doomberg conductor up" && echo "conductor role OK"
+          docker logs "$cid" | grep -q "ithaca conductor up" && echo "conductor role OK"
           docker rm -f "$cid"
           # the trigger-engine role starts and stays alive even before an IBKR URL is configured
-          cid="$(docker run -d -e DOOMBERG_DB=:memory: doomberg:ci trigger-engine)"
+          cid="$(docker run -d -e ITHACA_DB=:memory: ithaca:ci trigger-engine)"
           sleep 5
-          docker logs "$cid" | grep -q "doomberg trigger engine up" && echo "trigger-engine role OK"
+          docker logs "$cid" | grep -q "ithaca trigger engine up" && echo "trigger-engine role OK"
           docker rm -f "$cid"
-          docker run --rm doomberg-ibkr-engine:ci python -c \
-            'import doomberg_ibkr_engine; print("ibkr engine imports OK")'
+          docker run --rm ithaca-ibkr-engine:ci python -c \
+            'import ithaca_ibkr_engine; print("ibkr engine imports OK")'
 
   terraform-check:
     name: 2/2 • terraform fmt + validate

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://doomberg.dev/contracts/auth.schema.json",
+  "$id": "https://ithaca.dev/contracts/auth.schema.json",
   "title": "AuthPrincipal",
-  "description": "The resolved authenticated principal. Account model: Tenant -> User -> Agent (stable principal) -> Credential (rotatable secret). Effective permission = role INTERSECT scopes INTERSECT tenant. Key format: dmbg_<env>_<keyid>_<secret> (only sha256(secret) is stored).",
+  "description": "The resolved authenticated principal. Account model: Tenant -> User -> Agent (stable principal) -> Credential (rotatable secret). Effective permission = role INTERSECT scopes INTERSECT tenant. Key format: ith_<env>_<keyid>_<secret> (only sha256(secret) is stored).",
   "type": "object",
   "additionalProperties": false,
   "required": ["tenant_id", "principal_id", "principal_kind", "scopes"],

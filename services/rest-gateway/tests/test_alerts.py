@@ -10,7 +10,7 @@ def test_alerts_list_ack_and_replay_sse(client, stores, tenant_a):
         subject_type="trigger_firing",
         subject_id="fir_1",
         priority="high",
-        payload={"symbol": "NVDA", "channels": ["doomberg_ui"]},
+        payload={"symbol": "NVDA", "channels": ["ithaca_ui"]},
     )
 
     listed = client.get("/api/alerts", headers={"X-Tenant-Id": tenant_a})
@@ -42,7 +42,7 @@ def test_alert_events_ticket_can_be_redeemed_once(client, stores, tenant_a):
         event_type="trigger.fired",
         subject_type="trigger_firing",
         subject_id="fir_1",
-        payload={"symbol": "NVDA", "channels": ["doomberg_ui"]},
+        payload={"symbol": "NVDA", "channels": ["ithaca_ui"]},
     )
 
     ticket = client.post("/api/alerts/events-ticket", headers={"X-Tenant-Id": tenant_a})

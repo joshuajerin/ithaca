@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from doomberg_platform import RunStore
+from ithaca_platform import RunStore
 
 
 def _spec(name: str = "demo") -> dict:

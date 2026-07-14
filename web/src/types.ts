@@ -18,7 +18,7 @@ export type TraceEvent = z.infer<typeof TraceEventSchema>;
 export type TraceEventType = TraceEvent["type"];
 
 // Run row as returned by GET /api/runs and GET /api/runs/{id}. The rest-gateway reads these
-// from doomberg_platform.RunStore; the UI treats unknown fields permissively (display-only).
+// from ithaca_platform.RunStore; the UI treats unknown fields permissively (display-only).
 export interface RunRow {
   id: string;
   run_id?: string;
@@ -472,7 +472,7 @@ export interface DashboardMarketData {
 export type DashboardActivityResponse = DashboardReadEnvelope<DashboardActivityData>;
 export type DashboardProviderStatusResponse = DashboardReadEnvelope<DashboardProviderStatusData>;
 export type DashboardMarketResponse = DashboardReadEnvelope<DashboardMarketData>;
-// Backtest result `data` shape (from INTERFACES.md / doomberg_core).
+// Backtest result `data` shape (from INTERFACES.md / ithaca_core).
 export interface BacktestResult {
   equityCurve: { d: string; v: number }[];
   comparisonCurve?: { d: string; strategy: number; benchmark: number }[];

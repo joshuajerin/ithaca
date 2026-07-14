@@ -4,7 +4,7 @@
 #   export SPACES_ACCESS_KEY_ID=...
 #   export SPACES_SECRET_ACCESS_KEY=...
 
-project_name = "doomberg"
+project_name = "ithaca"
 environment  = "dev"
 region       = "nyc3"
 
@@ -29,7 +29,7 @@ postgres_size       = "db-s-2vcpu-4gb"
 postgres_node_count = 2
 
 # Container Registry (DOCR) — the single multi-service image.
-registry_name              = "doomberg"
+registry_name              = "ithaca"
 registry_subscription_tier = "professional"
 
 # Public HA Load Balancer -> always-on gateways.
@@ -38,7 +38,7 @@ lb_size_unit = 2
 # One-shot archive loader (seeds archive.* on first deploy; set false after).
 enable_archive_load_job = true
 
-spaces_bucket_name = "doomberg-artifacts"
+spaces_bucket_name = "ithaca-artifacts"
 manage_spaces      = true
 
 vpc_ip_range = "10.20.0.0/20"

@@ -48,7 +48,7 @@ jobs:
           export PATH="${HOME}/.local/bin:${PATH}"
           for pkg in \
             packages/contracts/py \
-            doomberg-core \
+            ithaca-core \
             services/platform \
             services/mcp-gateway \
             services/control-plane \
@@ -95,7 +95,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: vitest
-        run: pnpm --filter @doomberg/contracts run test
+        run: pnpm --filter @ithaca/contracts run test
 
   web:
     name: 5/5 • web typecheck + build + test
@@ -111,5 +111,5 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @doomberg/web run test
-      - run: pnpm --filter @doomberg/web run build
+      - run: pnpm --filter @ithaca/web run test
+      - run: pnpm --filter @ithaca/web run build

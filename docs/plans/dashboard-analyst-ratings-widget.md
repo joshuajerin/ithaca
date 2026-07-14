@@ -2,7 +2,7 @@
 
 ## Goal
 
-Implement the old Doomberg-style `AnalystRatingsPanel` as a real subwidget on the authenticated `/dashboard` page.
+Implement the old Ithaca-style `AnalystRatingsPanel` as a real subwidget on the authenticated `/dashboard` page.
 
 The target visual is the screenshot-approved compact terminal panel: black card, serif symbol and consensus header, price target strip, rating distribution bars, and recent analyst upgrade/downgrade rows.
 
@@ -11,7 +11,7 @@ The target visual is the screenshot-approved compact terminal panel: black card,
 - `web/src/App.tsx` routes authenticated users to `/dashboard` through `web/src/pages/Dashboard.tsx`; no route changes are needed.
 - `web/src/pages/Dashboard.tsx` currently renders a hand-built terminal dashboard with sections for price chart, session tape, generic subwidgets, news flow, options/trade flow, and deployment activity.
 - `web/src/pages/Dashboard.tsx` already depends on class names like `terminal-grid`, `terminal-panel`, `price-panel`, `terminal-panel-head`, `price-chart`, `range-row`, `mini-grid`, `news-flow`, and `mini-table`.
-- `web/src/index.css` currently has no `terminal-*`, `price-panel`, `mini-grid`, `news-flow`, or related rules. That means the existing dashboard markup does not yet have the visual system needed for the old Doomberg widget look.
+- `web/src/index.css` currently has no `terminal-*`, `price-panel`, `mini-grid`, `news-flow`, or related rules. That means the existing dashboard markup does not yet have the visual system needed for the old Ithaca widget look.
 - The old v1 analyst widget archive has been removed. Rebuild the card as a v2-local component instead of importing archived UI code.
 - The old panel source depended on v1-only pieces: Tailwind utility classes, archived shadcn UI, and `lucide-react` icons.
 - The current web app dependencies in `web/package.json` do not include `lucide-react`, `framer-motion`, `recharts`, Tailwind, or the archived `@workspace/api-client-react` package. Porting the widget should avoid adding those dependencies for this narrow dashboard change.
@@ -114,7 +114,7 @@ The component should be self-contained in the dashboard page or a small local da
 
 - The current dashboard already contains unstyled terminal class names. Adding the analyst widget without the missing CSS would make the page look inconsistent, so the CSS pass is required.
 - The old v1 widget used Tailwind and `lucide-react`; directly copying it would fail in the current app without new dependencies. The implementation should port the markup and visual result, not import the v1 file directly.
-- The current app has a warm light shell. A fully black analyst card needs careful scoping so it feels like a Doomberg terminal module rather than a dark-mode page takeover.
+- The current app has a warm light shell. A fully black analyst card needs careful scoping so it feels like a Ithaca terminal module rather than a dark-mode page takeover.
 - Text overflow risk is highest in the price range value, long firm names, and `Neutral to Buy` action label. CSS should use grid constraints, `min-width: 0`, and truncation where needed.
 - The screenshot uses sample market data, not live analyst data. The UI should make no claim that it is live unless real data is later wired.
 
@@ -123,15 +123,15 @@ The component should be self-contained in the dashboard page or a small local da
 After implementation, run:
 
 ```bash
-pnpm --filter @doomberg/web typecheck
-pnpm --filter @doomberg/web build
+pnpm --filter @ithaca/web typecheck
+pnpm --filter @ithaca/web build
 ```
 
 For visual verification, run the local app:
 
 ```bash
-DOOMBERG_DB=./doomberg.db uv run --package doomberg-rest-gateway uvicorn doomberg_rest.app:create_app --factory --host 127.0.0.1 --port 8000
-pnpm --filter @doomberg/web dev -- --host 127.0.0.1 --port 5173
+ITHACA_DB=./ithaca.db uv run --package ithaca-rest-gateway uvicorn ithaca_rest.app:create_app --factory --host 127.0.0.1 --port 8000
+pnpm --filter @ithaca/web dev -- --host 127.0.0.1 --port 5173
 ```
 
 Then inspect `/dashboard` at desktop and mobile widths and confirm:

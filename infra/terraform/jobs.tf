@@ -10,14 +10,14 @@
 # Invariants encoded here:
 #   - activeDeadlineSeconds = the AGGREGATE wall-clock deadline (SIGKILL on breach)
 #   - restartPolicy = Never (a crashed tick loses one tick, not the book)
-#   - pods carry doomberg/component=worker so the NetworkPolicy binds (deny-all
+#   - pods carry ithaca/component=worker so the NetworkPolicy binds (deny-all
 #     egress except the Data Gateway)
 #   - nodeSelector + toleration pin Jobs to the right tainted pool
 #   - no public egress; the only network reachability is the Gateway (policy)
 
 locals {
   worker_pod_labels = {
-    "doomberg/component" = "worker"
+    "ithaca/component" = "worker"
   }
 }
 
@@ -70,11 +70,11 @@ resource "kubernetes_job" "backtest_template" {
           name              = "backtest"
           image             = var.worker_image
           image_pull_policy = "IfNotPresent"
-          command           = ["python", "-m", "doomberg_runtime.backtest_runner"]
+          command           = ["python", "-m", "ithaca_runtime.backtest_runner"]
 
           # run_id / tenant_id stamped per-job by the control plane.
           env {
-            name  = "DOOMBERG_MODE"
+            name  = "ITHACA_MODE"
             value = "backtest"
           }
           env {
@@ -168,10 +168,10 @@ resource "kubernetes_cron_job_v1" "paper_tick" {
               name              = "paper-tick"
               image             = var.worker_image
               image_pull_policy = "IfNotPresent"
-              command           = ["python", "-m", "doomberg_runtime.live_runner"]
+              command           = ["python", "-m", "ithaca_runtime.live_runner"]
 
               env {
-                name  = "DOOMBERG_MODE"
+                name  = "ITHACA_MODE"
                 value = "paper"
               }
               env {

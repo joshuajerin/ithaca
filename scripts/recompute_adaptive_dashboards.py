@@ -9,8 +9,8 @@ import os
 from datetime import date
 from typing import Any
 
-from doomberg_platform import Platform
-from doomberg_runtime import AdaptiveDashboardWorker, recompute_user_profile
+from ithaca_platform import Platform
+from ithaca_runtime import AdaptiveDashboardWorker, recompute_user_profile
 
 
 def _parse_date(raw: str | None) -> str | None:
@@ -21,7 +21,7 @@ def _parse_date(raw: str | None) -> str | None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", default=os.environ.get("DOOMBERG_DB", ":memory:"))
+    parser.add_argument("--db", default=os.environ.get("ITHACA_DB", ":memory:"))
     parser.add_argument("--tenant-id")
     parser.add_argument("--user-id")
     parser.add_argument("--date", dest="generated_for_date")

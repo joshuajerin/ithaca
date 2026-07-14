@@ -5,17 +5,17 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: caddy-config
-  namespace: doomberg-gateway
+  namespace: ithaca-gateway
 data:
   Caddyfile: |
     {
       http_port 8080
       https_port 8443
-      email admin@doomberg.me
+      email admin@tradeithaca.com
     }
 
-    mcp.doomberg.me {
-      reverse_proxy doomberg-app.doomberg-gateway.svc.cluster.local:8080 {
+    mcp.tradeithaca.com {
+      reverse_proxy ithaca-app.ithaca-gateway.svc.cluster.local:8080 {
         flush_interval -1
         transport http {
           read_timeout 1h
@@ -24,8 +24,8 @@ data:
       }
     }
 
-    app.doomberg.me {
-      reverse_proxy doomberg-app.doomberg-gateway.svc.cluster.local:8000
+    app.tradeithaca.com {
+      reverse_proxy ithaca-app.ithaca-gateway.svc.cluster.local:8000
     }
 
     ${IBKR_SIGNIN_HOST} {
@@ -43,8 +43,8 @@ data:
       respond "IBKR sign-in window is closed or not allowed from this IP." 403
     }
 
-    dev-mcp.doomberg.me, dev-mcp.129.212.135.120.sslip.io {
-      reverse_proxy doomberg-app.doomberg-dev-gateway.svc.cluster.local:8080 {
+    dev-mcp.tradeithaca.com, dev-mcp.129.212.135.120.sslip.io {
+      reverse_proxy ithaca-app.ithaca-dev-gateway.svc.cluster.local:8080 {
         flush_interval -1
         transport http {
           read_timeout 1h
@@ -53,15 +53,15 @@ data:
       }
     }
 
-    dev-app.doomberg.me, dev-app.129.212.135.120.sslip.io {
-      reverse_proxy doomberg-app.doomberg-dev-gateway.svc.cluster.local:8000
+    dev-app.tradeithaca.com, dev-app.129.212.135.120.sslip.io {
+      reverse_proxy ithaca-app.ithaca-dev-gateway.svc.cluster.local:8000
     }
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: caddy-data
-  namespace: doomberg-gateway
+  namespace: ithaca-gateway
 spec:
   accessModes: [ReadWriteOnce]
   storageClassName: do-block-storage
@@ -73,20 +73,20 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: caddy
-  namespace: doomberg-gateway
+  namespace: ithaca-gateway
   labels:
-    doomberg/component: caddy
+    ithaca/component: caddy
 spec:
   replicas: 1
   strategy:
     type: Recreate
   selector:
     matchLabels:
-      doomberg/component: caddy
+      ithaca/component: caddy
   template:
     metadata:
       labels:
-        doomberg/component: caddy
+        ithaca/component: caddy
     spec:
       automountServiceAccountToken: false
       nodeSelector:
@@ -124,9 +124,9 @@ apiVersion: v1
 kind: Service
 metadata:
   name: caddy
-  namespace: doomberg-gateway
+  namespace: ithaca-gateway
   labels:
-    doomberg/component: caddy
+    ithaca/component: caddy
   annotations:
     service.beta.kubernetes.io/do-loadbalancer-protocol: "tcp"
     service.beta.kubernetes.io/do-loadbalancer-healthcheck-protocol: "tcp"
@@ -135,7 +135,7 @@ spec:
   type: LoadBalancer
   externalTrafficPolicy: Local
   selector:
-    doomberg/component: caddy
+    ithaca/component: caddy
   ports:
     - { name: http, port: 80, targetPort: 8080, protocol: TCP }
     - { name: https, port: 443, targetPort: 8443, protocol: TCP }

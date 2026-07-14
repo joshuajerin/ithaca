@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from doomberg_platform import BookConflict, BookNotFound, BookStore
+from ithaca_platform import BookConflict, BookNotFound, BookStore
 
 
 @pytest.fixture()

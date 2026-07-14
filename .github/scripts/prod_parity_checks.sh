@@ -5,7 +5,7 @@ export PATH="${HOME}/.local/bin:${PATH}"
 
 python_packages=(
   packages/contracts/py
-  doomberg-core
+  ithaca-core
   services/platform
   services/mcp-gateway
   services/control-plane
@@ -36,7 +36,7 @@ echo "::endgroup::"
 
 echo "::group::Web and contracts"
 pnpm install --frozen-lockfile
-pnpm --filter @doomberg/contracts run test
-pnpm --filter @doomberg/web run test
-pnpm --filter @doomberg/web run build
+pnpm --filter @ithaca/contracts run test
+pnpm --filter @ithaca/web run test
+pnpm --filter @ithaca/web run build
 echo "::endgroup::"

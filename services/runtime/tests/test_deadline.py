@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from doomberg_runtime.deadline import Deadline, DeadlineExceeded
+from ithaca_runtime.deadline import Deadline, DeadlineExceeded
 
 
 def test_remaining_and_per_call_clamp():

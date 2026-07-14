@@ -7,7 +7,7 @@ import argparse
 import json
 import sys
 
-from doomberg_core.providers import IbkrEngineClient
+from ithaca_core.providers import IbkrEngineClient
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -18,7 +18,7 @@ def main(argv: list[str] | None = None) -> int:
         "--max-freshness-ms",
         type=int,
         default=None,
-        help="Fail if quote freshness exceeds this limit. Env fallback: DOOMBERG_IBKR_SMOKE_MAX_FRESHNESS_MS.",
+        help="Fail if quote freshness exceeds this limit. Env fallback: ITHACA_IBKR_SMOKE_MAX_FRESHNESS_MS.",
     )
     parser.add_argument("--json", action="store_true", help="Print the full sanitized JSON diagnosis.")
     args = parser.parse_args(argv)

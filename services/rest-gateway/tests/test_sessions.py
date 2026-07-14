@@ -113,7 +113,7 @@ def test_create_session_can_start_realtime_without_prompt(client, stores, tenant
 
 
 def test_create_session_dev_tenant_fallback_disabled_in_prod(client, monkeypatch, tenant_a):
-    monkeypatch.setenv("DOOMBERG_ENV", "prod")
+    monkeypatch.setenv("ITHACA_ENV", "prod")
 
     resp = client.post(
         "/api/sessions",
@@ -128,7 +128,7 @@ def test_create_session_dev_tenant_fallback_disabled_in_prod(client, monkeypatch
 def test_create_session_dev_tenant_fallback_disabled_when_env_missing(
     client, monkeypatch, tenant_a
 ):
-    monkeypatch.delenv("DOOMBERG_ENV", raising=False)
+    monkeypatch.delenv("ITHACA_ENV", raising=False)
 
     resp = client.post(
         "/api/sessions",

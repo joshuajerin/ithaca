@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from rest_helpers import seed_run
-from doomberg_rest.app import _database_health
+from ithaca_rest.app import _database_health
 
 
 def _h(tenant_id: str) -> dict[str, str]:
@@ -31,8 +31,8 @@ class _QuoteServer:
                         "last": 212.45,
                         "event_time": now,
                         "received_time": now,
-                        "source": "doomberg-live-data",
-                        "entitlement_class": "doomberg_live",
+                        "source": "ithaca-live-data",
+                        "entitlement_class": "ithaca_live",
                     }
                 }
                 raw = json.dumps(body).encode("utf-8")
@@ -74,10 +74,10 @@ def test_dev_tenant_header_must_be_uuid(client):
 
 
 def test_ops_status_reports_live_data_and_paper_execution(client, stores, tenant_a, monkeypatch):
-    monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", "https://ibkr.example")
-    monkeypatch.setenv("DOOMBERG_IBKR_QUOTE_PATH", "/v1/quote/{symbol}")
-    monkeypatch.setenv("DOOMBERG_IBKR_ORDER_PATH", "/v1/orders")
-    monkeypatch.setenv("DOOMBERG_ENABLE_LIVE_EXECUTION", "1")
+    monkeypatch.setenv("ITHACA_IBKR_ENGINE_URL", "https://ibkr.example")
+    monkeypatch.setenv("ITHACA_IBKR_QUOTE_PATH", "/v1/quote/{symbol}")
+    monkeypatch.setenv("ITHACA_IBKR_ORDER_PATH", "/v1/orders")
+    monkeypatch.setenv("ITHACA_ENABLE_LIVE_EXECUTION", "1")
     run_id = seed_run(stores, tenant_a, kind="backtest")
     stores.jobs.create_for_run(tenant_a, run_id, kind="backtest", profile="backtest")
     stores.leases.acquire("trigger-engine", "worker-a", ttl_seconds=60)
@@ -87,7 +87,7 @@ def test_ops_status_reports_live_data_and_paper_execution(client, stores, tenant
         tenant_a,
         provider="ibkr",
         capabilities=["quotes", "orders", "trading"],
-        entitlements=[{"dataset": "equities-options", "entitlement_class": "doomberg_live"}],
+        entitlements=[{"dataset": "equities-options", "entitlement_class": "ithaca_live"}],
         account_ref="ibkr-vps",
     )
 
@@ -152,8 +152,8 @@ def test_database_health_fails_closed_on_ping_error():
 
 def test_live_data_smoke_route_calls_read_only_quote_engine(client, tenant_a, monkeypatch):
     with _QuoteServer() as server:
-        monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
-        monkeypatch.setenv("DOOMBERG_IBKR_QUOTE_PATH", "/v1/quote/{symbol}")
+        monkeypatch.setenv("ITHACA_IBKR_ENGINE_URL", server.url)
+        monkeypatch.setenv("ITHACA_IBKR_QUOTE_PATH", "/v1/quote/{symbol}")
 
         response = client.get(
             "/api/ops/live-data-smoke?symbol=aapl&max_freshness_ms=10000",
@@ -199,8 +199,8 @@ def test_trigger_dry_run_route_has_no_side_effects(client, stores, tenant_a):
                 "price": 950,
                 "event_time": now,
                 "received_time": now,
-                "source": "doomberg-live-data",
-                "entitlement_class": "doomberg_live",
+                "source": "ithaca-live-data",
+                "entitlement_class": "ithaca_live",
             },
         },
     )
@@ -216,7 +216,7 @@ def test_trigger_dry_run_route_has_no_side_effects(client, stores, tenant_a):
         "approval": False,
         "broker_order": False,
     }
-    assert body["context"]["source"] == "doomberg-live-data"
+    assert body["context"]["source"] == "ithaca-live-data"
     assert stores.runs.list(tenant_a) == []
     assert stores.jobs.list(tenant_a) == []
     assert stores.approvals.list(tenant_a) == []
@@ -233,7 +233,7 @@ def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tena
         tenant_a,
         run_id,
         kind="summary",
-        uri="spaces://doomberg-artifacts/runs/demo/summary.json",
+        uri="spaces://ithaca-artifacts/runs/demo/summary.json",
         metadata={"sha256": "abc"},
     )
     approval = stores.approvals.create(
@@ -247,7 +247,7 @@ def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tena
         tenant_a,
         provider="alpaca",
         capabilities=["bars", "orders"],
-        entitlements=[{"dataset": "equities", "entitlement_class": "doomberg_live"}],
+        entitlements=[{"dataset": "equities", "entitlement_class": "ithaca_live"}],
         credential_ref="secret://tenant-a/alpaca",
     )
     snapshot = stores.providers.create_snapshot(
@@ -299,28 +299,28 @@ def test_control_plane_rows_are_tenant_scoped_and_reachable(client, stores, tena
     created_provider = client.post(
         "/api/providers",
         json={
-            "provider": "doomberg-live-data",
+            "provider": "ithaca-live-data",
             "capabilities": ["quote", "bars"],
             "entitlements": [
                 {
                     "dataset": "us_equities",
-                    "entitlement_class": "doomberg_live",
+                    "entitlement_class": "ithaca_live",
                     "freshness_class": "live",
                 }
             ],
             "account_ref": "ibkr-paper",
-            "credential_ref": "env:DOOMBERG_IBKR_ENGINE_TOKEN",
+            "credential_ref": "env:ITHACA_IBKR_ENGINE_TOKEN",
         },
         headers=_h(tenant_a),
     )
     assert created_provider.status_code == 201, created_provider.text
     created_provider_body = created_provider.json()
-    assert created_provider_body["provider"] == "doomberg-live-data"
+    assert created_provider_body["provider"] == "ithaca-live-data"
     assert created_provider_body["credential_configured"] is True
     assert "credential_ref" not in json.dumps(created_provider_body)
     assert "account_ref" not in json.dumps(created_provider_body)
     stored_provider = stores.providers.get_connection(tenant_a, created_provider_body["connection_id"])
-    assert stored_provider["credential_ref"] == "env:DOOMBERG_IBKR_ENGINE_TOKEN"
+    assert stored_provider["credential_ref"] == "env:ITHACA_IBKR_ENGINE_TOKEN"
     assert client.get("/api/dataset-snapshots", headers=_h(tenant_a)).json()["snapshots"][0]["dataset"] == "prices"
 
     listed_intents = client.get("/api/order-intents", headers=_h(tenant_a))

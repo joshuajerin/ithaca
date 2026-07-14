@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from doomberg_platform import AuthStore, hash_secret
-from doomberg_platform.auth_store import KEY_PREFIX, VALID_SCOPES
+from ithaca_platform import AuthStore, hash_secret
+from ithaca_platform.auth_store import KEY_PREFIX, VALID_SCOPES
 
 
 @pytest.fixture()
@@ -32,8 +32,8 @@ def test_mint_key_has_contract_format_and_returns_keyid(auth):
     tid = auth.create_tenant("t")
     key, key_id = auth.mint_key(tid, ["data:read"])
     parts = key.split("_", 3)
-    assert parts[0] == KEY_PREFIX  # dmbg
-    assert len(parts) == 4         # dmbg_<env>_<keyid>_<secret>
+    assert parts[0] == KEY_PREFIX
+    assert len(parts) == 4         # ith_<env>_<keyid>_<secret>
     assert parts[2] == key_id      # the public, stable credential id
 
 
@@ -57,6 +57,14 @@ def test_verify_valid_key_yields_tenant_and_scopes(auth):
     assert principal["tenant_id"] == tid
     assert principal["key_id"] == key_id
     assert set(principal["scopes"]) == {"data:read", "strategy:author"}
+
+
+def test_verify_accepts_configured_legacy_prefix(auth, monkeypatch):
+    tenant_id = auth.create_tenant("t")
+    key, _ = auth.mint_key(tenant_id, ["data:read"])
+    monkeypatch.setenv("ITHACA_LEGACY_KEY_PREFIX", "legacy")
+    legacy_key = key.replace(f"{KEY_PREFIX}_", "legacy_", 1)
+    assert auth.verify(legacy_key)["tenant_id"] == tenant_id
 
 
 def test_verify_rejects_garbage_and_wrong_secret(auth):
