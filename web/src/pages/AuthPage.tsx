@@ -21,8 +21,10 @@ export function shouldShowWaitlist(pathname: string) {
 }
 
 export function AuthPage() {
-  const { pathname } = useLocation();
-  const isWaitlist = shouldShowWaitlist(pathname);
+  const { pathname, search, hash } = useLocation();
+  const isAgentLink = pathname.startsWith("/agent-link");
+  const isWaitlist = !isAgentLink && shouldShowWaitlist(pathname);
+  const redirectUrl = `${pathname}${search}${hash}`;
 
   return (
     <div className="auth">
@@ -37,6 +39,23 @@ export function AuthPage() {
 
         {isWaitlist ? (
           <Waitlist appearance={embeddedClerkAppearance} signInUrl="/access" />
+        ) : isAgentLink ? (
+          <>
+            <header>
+              <h1 className="auth-title">Sign in to approve the agent</h1>
+              <p className="auth-sub">
+                Once you’re signed in, you’ll return here to approve Ithaca MCP access.
+              </p>
+            </header>
+            <SignIn
+              appearance={embeddedClerkAppearance}
+              path="/agent-link"
+              routing="path"
+              forceRedirectUrl={redirectUrl}
+              fallbackRedirectUrl={redirectUrl}
+              withSignUp={false}
+            />
+          </>
         ) : (
           <SignIn appearance={embeddedClerkAppearance} path="/access" routing="path" />
         )}
