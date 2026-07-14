@@ -137,11 +137,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          required=(DIGITALOCEAN_ACCESS_TOKEN ITHACA_PLATFORM_DB_URL ITHACA_SESSION_SECRET CLERK_PUBLISHABLE_KEY CLERK_SECRET_KEY CLERK_ALLOWED_ORIGINS CLERK_ISSUER DO_CLUSTER_NAME K8S_GATEWAY_NAMESPACE K8S_WORKER_NAMESPACE APP_HOST MCP_HOST)
-          for name in "${required[@]}"; do
-            test -n "${!name:-}" || { echo "Missing deployment configuration: ${name}" >&2; exit 1; }
-          done
+          require_env() { test -n "${!1:-}" || { echo "Missing deployment configuration: $1" >&2; exit 1; }; }
+          require_env DIGITALOCEAN_ACCESS_TOKEN
+          require_env ITHACA_PLATFORM_DB_URL
+          require_env ITHACA_SESSION_SECRET
+          require_env CLERK_PUBLISHABLE_KEY
+          require_env CLERK_SECRET_KEY
+          require_env CLERK_ALLOWED_ORIGINS
+          require_env CLERK_ISSUER
+          require_env DO_CLUSTER_NAME
+          require_env K8S_GATEWAY_NAMESPACE
+          require_env K8S_WORKER_NAMESPACE
+          require_env APP_HOST
+          require_env MCP_HOST
           test -n "${CLERK_PEM_PUBLIC_KEY:-}${CLERK_JWKS_URL:-}" || { echo "Missing Clerk verification key" >&2; exit 1; }
+          if [[ "${BACKTEST_WORKER_ENABLED:-0}" == "1" ]]; then
+            require_env ITHACA_ARTIFACT_BUCKET
+            require_env ITHACA_ARTIFACT_ENDPOINT_URL
+            require_env ITHACA_ARTIFACT_ACCESS_KEY_ID
+            require_env ITHACA_ARTIFACT_SECRET_ACCESS_KEY
+          fi
 
       - uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f
         with:
@@ -172,6 +187,8 @@ jobs:
 
       - name: Connect cluster and apply deployment
         shell: bash
+        env:
+          ITHACA_EXECUTION_KILL_SWITCH: ${{ vars.ITHACA_EXECUTION_KILL_SWITCH }}
         run: |
           set -euo pipefail
           doctl registry login --expiry-seconds 1200
@@ -185,6 +202,15 @@ jobs:
             export DEPLOY_DRY_RUN=client
           fi
           bash deploy/deploy_services.sh
+
+      - name: Verify deployed HTTP endpoints
+        if: env.DEPLOY_MODE == 'deploy'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 6 --retry-delay 5 "https://${APP_HOST}/livez"
+          curl -fsS --retry 6 --retry-delay 5 "https://${APP_HOST}/healthz"
+          curl -fsS --retry 6 --retry-delay 5 "https://${APP_HOST}/readyz"
 
       - name: Verify customer launch gate
         if: env.DEPLOY_MODE == 'deploy' && env.DEPLOY_ENV == 'prod'
