@@ -1,6 +1,6 @@
 import { SignIn, SignUp, Waitlist } from "@clerk/react";
 import { Link, useLocation } from "react-router-dom";
-import { DoombergMark } from "../auth/icons";
+import { IthacaMark } from "../auth/icons";
 import { legalUrl } from "../lib/legal";
 
 const embeddedClerkAppearance = {
@@ -25,9 +25,9 @@ export function AuthPage() {
       <div className="auth-bg" />
       <div className="auth-card clerk-auth-card">
         <div className="auth-brand">
-          <DoombergMark size={30} />
+          <IthacaMark size={30} />
           <div>
-            Doomberg
+            Ithaca
           </div>
         </div>
 
@@ -41,7 +41,7 @@ export function AuthPage() {
 
         <div className="auth-mode-row">
           <span>
-            {isWaitlist || isSignUp ? "Already approved?" : "New to Doomberg?"}
+            {isWaitlist || isSignUp ? "Already approved?" : "New to Ithaca?"}
           </span>
           <Link
             className="link-btn auth-mode-link"

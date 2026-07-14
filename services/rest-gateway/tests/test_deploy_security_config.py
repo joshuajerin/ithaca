@@ -20,12 +20,12 @@ def test_deploy_workflow_preflight_requires_clerk_issuer() -> None:
 def test_deploy_workflow_uses_platform_db_secret() -> None:
     workflow = (REPO_ROOT / ".github" / "workflows" / "deploy-do.yml").read_text()
 
-    assert "DOOMBERG_PLATFORM_DB_URL: ${{ secrets.DOOMBERG_PLATFORM_DB_URL }}" in workflow
-    assert "require_env DOOMBERG_PLATFORM_DB_URL" in workflow
-    assert "DOOMBERG_ARCHIVE_URL" not in workflow
+    assert "ITHACA_PLATFORM_DB_URL: ${{ secrets.ITHACA_PLATFORM_DB_URL }}" in workflow
+    assert "require_env ITHACA_PLATFORM_DB_URL" in workflow
+    assert "ITHACA_ARCHIVE_URL" not in workflow
 
 
-def test_deploy_restarts_consumers_when_doomberg_secret_changes() -> None:
+def test_deploy_restarts_consumers_when_ithaca_secret_changes() -> None:
     deploy_script = (REPO_ROOT / "deploy" / "deploy_services.sh").read_text()
     kill_switch_lib = (
         REPO_ROOT / "deploy" / "lib" / "execution_kill_switch.sh"
@@ -33,8 +33,8 @@ def test_deploy_restarts_consumers_when_doomberg_secret_changes() -> None:
 
     assert 'gateway_db_secret_before="$(secret_checksum' in deploy_script
     assert 'worker_db_secret_before="$(secret_checksum' in deploy_script
-    assert 'rollout restart deployment/doomberg-app' in deploy_script
-    assert 'rollout restart deployment/doomberg-workers' in deploy_script
+    assert 'rollout restart deployment/ithaca-app' in deploy_script
+    assert 'rollout restart deployment/ithaca-workers' in deploy_script
     assert 'resolve_execution_kill_switch "${K8S_GATEWAY_NAMESPACE}"' in deploy_script
     assert 'preserving existing execution kill-switch value' in kill_switch_lib
     assert 'refusing to default it off' in kill_switch_lib
@@ -43,7 +43,7 @@ def test_deploy_restarts_consumers_when_doomberg_secret_changes() -> None:
 
     workflow = (REPO_ROOT / ".github" / "workflows" / "deploy-do.yml").read_text()
     assert workflow.count(
-        "DOOMBERG_EXECUTION_KILL_SWITCH: ${{ vars.DOOMBERG_EXECUTION_KILL_SWITCH }}"
+        "ITHACA_EXECUTION_KILL_SWITCH: ${{ vars.ITHACA_EXECUTION_KILL_SWITCH }}"
     ) == 2
 
 
@@ -75,7 +75,7 @@ def test_dedicated_backtest_workers_are_opt_in_for_production() -> None:
     worker_manifest = (REPO_ROOT / "infra" / "k8s" / "worker-deployment.yaml").read_text()
 
     assert 'BACKTEST_WORKER_ENABLED="0"' in deploy_script
-    assert 'DOOMBERG_ENABLE_BACKTEST_LOOP="1"' in deploy_script
+    assert 'ITHACA_ENABLE_BACKTEST_LOOP="1"' in deploy_script
     assert 'if [[ "${DEPLOY_ENV}" == "prod" && "${BACKTEST_WORKER_ENABLED}" == "1" ]]' in deploy_script
     assert 'if [[ "${BACKTEST_WORKER_ENABLED:-0}" == "1" ]]; then' in workflow
-    assert 'value: "${DOOMBERG_ENABLE_BACKTEST_LOOP}"' in worker_manifest
+    assert 'value: "${ITHACA_ENABLE_BACKTEST_LOOP}"' in worker_manifest

@@ -8,9 +8,9 @@ from typing import Any
 from control_helpers import agent_headers, human_headers
 import pytest
 
-from doomberg_control.actions import ActionError
-from doomberg_control.deps import Ctx
-from doomberg_control.execution_gateway import (
+from ithaca_control.actions import ActionError
+from ithaca_control.deps import Ctx
+from ithaca_control.execution_gateway import (
     BROKER_IBKR,
     BROKER_PAPER,
     ExecutionGateway,
@@ -305,7 +305,7 @@ def test_execution_kill_switch_preserves_partial_execution_state(
 def test_execution_environment_kill_switch_fails_closed(
     monkeypatch: pytest.MonkeyPatch, platform, tenant_a
 ):
-    monkeypatch.setenv("DOOMBERG_EXECUTION_KILL_SWITCH", "1")
+    monkeypatch.setenv("ITHACA_EXECUTION_KILL_SWITCH", "1")
     gateway = ExecutionGateway(platform)
     control = gateway.get_kill_switch(Ctx(tenant_a, "human", "trader-1"))
     assert control["enabled"] is True

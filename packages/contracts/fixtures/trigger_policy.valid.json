@@ -28,7 +28,7 @@
     }
   },
   "notify": {
-    "channels": ["doomberg_ui", "claude_channel", "webhook"],
+    "channels": ["ithaca_ui", "claude_channel", "webhook"],
     "priority": "high"
   }
 }

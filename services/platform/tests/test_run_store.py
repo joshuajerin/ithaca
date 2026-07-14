@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from platform_helpers import new_uuid, strategy_spec
 
-from doomberg_platform import RunNotFound, TransitionConflict, TransitionError
+from ithaca_platform import RunNotFound, TransitionConflict, TransitionError
 
 
 def test_create_starts_in_draft_at_version_zero(run_store):

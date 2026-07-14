@@ -1,16 +1,16 @@
-# Caddy — automatic HTTPS reverse proxy for the public doomberg.me endpoints.
+# Caddy — automatic HTTPS reverse proxy for the public tradeithaca.com endpoints.
 #
 # Why Caddy: it obtains + auto-renews Let's Encrypt certs with zero config (ACME
 # HTTP-01 on :80 / TLS-ALPN-01 on :443) and routes by Host. It fronts the in-cluster
-# doomberg-app Service (rest :8000, mcp :8080). A dedicated DO LoadBalancer Service
-# gives it a public IP; point the doomberg.me subdomains at that IP and TLS issues
-# automatically once DNS resolves. Lives in doomberg-gateway (unrestricted egress,
+# ithaca-app Service (rest :8000, mcp :8080). A dedicated DO LoadBalancer Service
+# gives it a public IP; point the tradeithaca.com subdomains at that IP and TLS issues
+# automatically once DNS resolves. Lives in ithaca-gateway (unrestricted egress,
 # so it can reach the ACME API).
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: caddy-config
-  namespace: doomberg-gateway
+  namespace: ithaca-gateway
 data:
   Caddyfile: |
     {
@@ -18,12 +18,12 @@ data:
       # public :80 -> 8080 and :443 -> 8443, so ACME still sees the canonical ports.
       http_port 8080
       https_port 8443
-      email admin@doomberg.me
+      email admin@tradeithaca.com
     }
 
-    # Production MCP endpoint for remote BYO agents: https://mcp.doomberg.me/mcp
-    mcp.doomberg.me {
-      reverse_proxy doomberg-app.doomberg-gateway.svc.cluster.local:8080 {
+    # Production MCP endpoint for remote BYO agents: https://mcp.tradeithaca.com/mcp
+    mcp.tradeithaca.com {
+      reverse_proxy ithaca-app.ithaca-gateway.svc.cluster.local:8080 {
         # MCP streamable-HTTP is long-lived SSE; don't buffer or cut it short.
         flush_interval -1
         transport http {
@@ -33,14 +33,27 @@ data:
       }
     }
 
-    # The UI / REST API: https://app.doomberg.me
-    app.doomberg.me {
-      reverse_proxy doomberg-app.doomberg-gateway.svc.cluster.local:8000
+    # The UI / REST API: https://app.tradeithaca.com
+    app.tradeithaca.com {
+      reverse_proxy ithaca-app.ithaca-gateway.svc.cluster.local:8000
     }
 
-    # Dev: latest non-main branch.
-    dev-mcp.doomberg.me, dev-mcp.129.212.135.120.sslip.io {
-      reverse_proxy doomberg-app.doomberg-dev-gateway.svc.cluster.local:8080 {
+    # Temporary compatibility hosts. The legacy root is injected at deploy time
+    # and removed after the announced migration window.
+    ${ITHACA_LEGACY_ROOT_DOMAIN}, www.${ITHACA_LEGACY_ROOT_DOMAIN} {
+      redir https://tradeithaca.com{uri} permanent
+    }
+
+    app.${ITHACA_LEGACY_ROOT_DOMAIN} {
+      redir https://app.tradeithaca.com{uri} permanent
+    }
+
+    ibkr.${ITHACA_LEGACY_ROOT_DOMAIN} {
+      redir https://ibkr.tradeithaca.com{uri} permanent
+    }
+
+    mcp.${ITHACA_LEGACY_ROOT_DOMAIN} {
+      reverse_proxy ithaca-app.ithaca-gateway.svc.cluster.local:8080 {
         flush_interval -1
         transport http {
           read_timeout 1h
@@ -49,15 +62,34 @@ data:
       }
     }
 
-    dev-app.doomberg.me, dev-app.129.212.135.120.sslip.io {
-      reverse_proxy doomberg-app.doomberg-dev-gateway.svc.cluster.local:8000
+    # Dev: latest non-main branch.
+    dev-mcp.tradeithaca.com, dev-mcp.129.212.135.120.sslip.io {
+      reverse_proxy ithaca-app.ithaca-dev-gateway.svc.cluster.local:8080 {
+        flush_interval -1
+        transport http {
+          read_timeout 1h
+          write_timeout 1h
+        }
+      }
+    }
+
+    dev-app.tradeithaca.com, dev-app.129.212.135.120.sslip.io {
+      reverse_proxy ithaca-app.ithaca-dev-gateway.svc.cluster.local:8000
+    }
+
+    dev-app.${ITHACA_LEGACY_ROOT_DOMAIN} {
+      redir https://dev-app.tradeithaca.com{uri} permanent
+    }
+
+    dev-mcp.${ITHACA_LEGACY_ROOT_DOMAIN} {
+      redir https://dev-mcp.tradeithaca.com{uri} permanent
     }
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: caddy-data
-  namespace: doomberg-gateway
+  namespace: ithaca-gateway
 spec:
   accessModes: [ReadWriteOnce]
   storageClassName: do-block-storage
@@ -69,20 +101,20 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: caddy
-  namespace: doomberg-gateway
+  namespace: ithaca-gateway
   labels:
-    doomberg/component: caddy
+    ithaca/component: caddy
 spec:
   replicas: 1
   strategy:
     type: Recreate # single writer on the cert volume (RWO)
   selector:
     matchLabels:
-      doomberg/component: caddy
+      ithaca/component: caddy
   template:
     metadata:
       labels:
-        doomberg/component: caddy
+        ithaca/component: caddy
     spec:
       automountServiceAccountToken: false
       nodeSelector:
@@ -120,9 +152,9 @@ apiVersion: v1
 kind: Service
 metadata:
   name: caddy
-  namespace: doomberg-gateway
+  namespace: ithaca-gateway
   labels:
-    doomberg/component: caddy
+    ithaca/component: caddy
   annotations:
     # TCP passthrough: Caddy terminates TLS itself (so ACME TLS-ALPN works).
     service.beta.kubernetes.io/do-loadbalancer-protocol: "tcp"
@@ -132,7 +164,7 @@ spec:
   type: LoadBalancer
   externalTrafficPolicy: Local
   selector:
-    doomberg/component: caddy
+    ithaca/component: caddy
   ports:
     - { name: http, port: 80, targetPort: 8080, protocol: TCP }
     - { name: https, port: 443, targetPort: 8443, protocol: TCP }

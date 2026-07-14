@@ -1,4 +1,4 @@
-# Doomberg v2 — Internal Competitive Analysis
+# Ithaca v2 — Internal Competitive Analysis
 
 **Last updated:** 2026-06-18
 **Audience:** Founding team, internal only
@@ -20,7 +20,7 @@ Competitors are grouped into three tiers:
 
 ## Tier 1 — Primary Competitors
 
-These three have the most direct feature overlap with Doomberg. Any sales conversation will involve at least one of them.
+These three have the most direct feature overlap with Ithaca. Any sales conversation will involve at least one of them.
 
 ---
 
@@ -62,30 +62,30 @@ Unusual Whales is a retail-to-professional financial intelligence platform built
 - **API:** ~$200–500/month, volume-tiered, terms unclear on redistribution
 - **Annual discounts:** ~25% off monthly
 
-### How they'd likely respond to Doomberg
+### How they'd likely respond to Ithaca
 
-Initially ignore. Their customer is a trader who wants to click through a dashboard, not a developer building an agent. If Doomberg starts eating into their API customer base (developers building tools on top of flow data), they would likely lower API prices and accelerate their own "AI features" roadmap — which at this point probably means adding a chatbot to the dashboard, not a real MCP surface. Congressional trades are a political/PR win for them; they'd defend it hard.
+Initially ignore. Their customer is a trader who wants to click through a dashboard, not a developer building an agent. If Ithaca starts eating into their API customer base (developers building tools on top of flow data), they would likely lower API prices and accelerate their own "AI features" roadmap — which at this point probably means adding a chatbot to the dashboard, not a real MCP surface. Congressional trades are a political/PR win for them; they'd defend it hard.
 
-### Where Doomberg beats them
+### Where Ithaca beats them
 
-- **MCP-native programmatic access** — an AI agent can call Doomberg's `congress_trades`, `options_greeks`, `sentiment_get` etc. tools directly. No scraping, no unofficial API.
+- **MCP-native programmatic access** — an AI agent can call Ithaca's `congress_trades`, `options_greeks`, `sentiment_get` etc. tools directly. No scraping, no unofficial API.
 - **Backtesting** — you can test whether that unusual options activity actually predicted price movement using our backtest engine.
 - **Full workflow** — from signal (options flow / congressional trade) → research → backtest → paper deploy. Unusual Whales has no workflow; it's discrete data views.
 - **Audit trail** — every tool call is tenant-isolated and traced. Useful for compliance-conscious users.
 
-### Where they beat Doomberg
+### Where they beat Ithaca
 
 - **Real-time OPRA data** — our options data is delayed or sourced downstream; theirs is direct OPRA. This is a meaningful gap for intraday traders.
 - **Dark pool / block prints** — we don't have this data at all currently.
 - **Community** — they have a massive, engaged user base that generates secondhand signal.
-- **Price** — their dashboard is cheap. Doomberg will be priced higher and will need to justify it.
-- **Brand recognition** — retail traders know Unusual Whales. Doomberg is new.
+- **Price** — their dashboard is cheap. Ithaca will be priced higher and will need to justify it.
+- **Brand recognition** — retail traders know Unusual Whales. Ithaca is new.
 
-### The customer who would choose them over Doomberg
+### The customer who would choose them over Ithaca
 
 A retail day trader or swing trader who watches options flow manually, wants mobile alerts on unusual activity, participates in the Discord to cross-reference community commentary, and has no interest in building automated systems. They want curated human-readable alerts, not an API.
 
-### The customer who would choose Doomberg over them
+### The customer who would choose Ithaca over them
 
 A developer or quant who wants to give their AI agent access to options flow + congressional trades + fundamentals as part of a systematic research or trading pipeline. They need MCP endpoints, not a dashboard. They want to backtest whether the congressional trade signal has alpha. They need tenant isolation for multi-client use.
 
@@ -130,31 +130,31 @@ QuantConnect is the leading open-source cloud backtesting and live execution pla
 - **Trading Firm:** ~$80/month — full live trading support
 - **Data add-ons:** US Equity data from $10–200+/month depending on resolution
 
-### How they'd likely respond to Doomberg
+### How they'd likely respond to Ithaca
 
-Build an MCP adapter for LEAN. This is technically straightforward — expose backtest_run as an MCP tool, publish it. They have the engineering resources. Their risk is that they do this slowly because their roadmap is driven by the quant coder audience, not the "AI agent" audience. If Doomberg gains traction with developers building AI trading agents, QuantConnect would notice and add MCP endpoints within 12–18 months. They would frame it as "LEAN for AI agents."
+Build an MCP adapter for LEAN. This is technically straightforward — expose backtest_run as an MCP tool, publish it. They have the engineering resources. Their risk is that they do this slowly because their roadmap is driven by the quant coder audience, not the "AI agent" audience. If Ithaca gains traction with developers building AI trading agents, QuantConnect would notice and add MCP endpoints within 12–18 months. They would frame it as "LEAN for AI agents."
 
-### Where Doomberg beats them
+### Where Ithaca beats them
 
-- **BYO agent paradigm** — Doomberg has no opinion about what agent you use. QuantConnect owns the execution environment.
+- **BYO agent paradigm** — Ithaca has no opinion about what agent you use. QuantConnect owns the execution environment.
 - **Onboarding speed** — a declarative StrategySpec and an MCP call is faster to prototype than writing LEAN Python.
 - **Research tool breadth** — 29 tools covering flow, congressional, sentiment, macro, options surface. QuantConnect's research is mostly price/fundamental.
 - **Observability** — 3-column trace of agent reasoning + tool calls + evidence is unique. QuantConnect shows P&L curves, not agent thinking.
 - **Human-gated money path** — explicit promote → activate → live with manual gate. QuantConnect trusts you to configure your own risk controls.
 
-### Where they beat Doomberg
+### Where they beat Ithaca
 
 - **Backtest engine depth** — LEAN handles tick data, options pricing at fill time, multi-leg combos, realistic execution models. Our backtest engine is not at this level.
 - **Live execution breadth** — 15+ brokers. We have paper trading and Alpaca seam; full live execution is not shipped.
 - **Data depth** — their licensed data library for US equities is far deeper historically.
-- **Credibility with serious quants** — QuantConnect is trusted. Doomberg is unproven.
-- **Open source** — LEAN is forkable. Doomberg is a hosted service.
+- **Credibility with serious quants** — QuantConnect is trusted. Ithaca is unproven.
+- **Open source** — LEAN is forkable. Ithaca is a hosted service.
 
-### The customer who would choose them over Doomberg
+### The customer who would choose them over Ithaca
 
 A systematic quant trader who writes Python, wants rigorous backtesting with tick-level realism, plans to connect to Interactive Brokers for live execution, and needs to run 50+ parallel backtests. They will write their own research code and don't need an AI agent layer.
 
-### The customer who would choose Doomberg over them
+### The customer who would choose Ithaca over them
 
 A developer building an AI agent that should be able to conduct financial research and propose/test/paper-trade strategies — but who doesn't want to become an expert in LEAN. They want to call `backtest_run` with a JSON spec, not manage a LEAN codebase. They may serve multiple tenants and need isolation + audit trails.
 
@@ -197,19 +197,19 @@ The Bloomberg Terminal (Bloomberg Professional Service) is the dominant institut
 - **BLPAPI:** Included with terminal subscription
 - **No self-serve tier.** Sales-driven only.
 
-### How they'd likely respond to Doomberg
+### How they'd likely respond to Ithaca
 
-They won't, initially. Doomberg's target customer is not a Bloomberg subscriber. If AI-native financial tools start pulling institutional buy-side away from terminals (e.g., hedge funds replacing terminal seats with AI agents), Bloomberg would build their own MCP surface on top of BLPAPI. They have the engineering resources. They are not sleeping — Bloomberg already has an internal AI push (2024 GPT-4-based earnings call analysis, etc.). But organizational inertia is real; an MCP adapter for BLPAPI would likely take 2–3 years to reach GA.
+They won't, initially. Ithaca's target customer is not a Bloomberg subscriber. If AI-native financial tools start pulling institutional buy-side away from terminals (e.g., hedge funds replacing terminal seats with AI agents), Bloomberg would build their own MCP surface on top of BLPAPI. They have the engineering resources. They are not sleeping — Bloomberg already has an internal AI push (2024 GPT-4-based earnings call analysis, etc.). But organizational inertia is real; an MCP adapter for BLPAPI would likely take 2–3 years to reach GA.
 
-### Where Doomberg beats them
+### Where Ithaca beats them
 
-- **Price** — orders of magnitude cheaper. An independent developer or small fund can access Doomberg; they cannot afford Bloomberg.
-- **MCP-native** — Doomberg's tools are MCP endpoints from day one. Bloomberg's API requires custom integration.
+- **Price** — orders of magnitude cheaper. An independent developer or small fund can access Ithaca; they cannot afford Bloomberg.
+- **MCP-native** — Ithaca's tools are MCP endpoints from day one. Bloomberg's API requires custom integration.
 - **BYO agent** — bring Claude, GPT, or your own model. Bloomberg's AI features use Bloomberg's models.
 - **Workflow** — research → backtest → paper deploy in one platform. Bloomberg has the research half; deploy is complex and institutional.
 - **Onboarding** — self-serve. Bloomberg requires a sales contract.
 
-### Where they beat Doomberg
+### Where they beat Ithaca
 
 - **Everything data-related** — depth, breadth, quality, latency, history.
 - **Institutional trust** — Bloomberg data is what funds' compliance teams have approved.
@@ -217,11 +217,11 @@ They won't, initially. Doomberg's target customer is not a Bloomberg subscriber.
 - **Ecosystem** — Excel integration, IB messaging, OMS connectors — decades of workflow built in.
 - **PIT fundamentals** — Bloomberg's point-in-time is the gold standard.
 
-### The customer who would choose them over Doomberg
+### The customer who would choose them over Ithaca
 
 An institutional portfolio manager or analyst at a fund, bank, or large asset manager who needs real-time fixed income pricing, Bloomberg chat access, the full FIGI/SEDOL universe, and whose firm's compliance policy mandates Bloomberg-sourced data.
 
-### The customer who would choose Doomberg over them
+### The customer who would choose Ithaca over them
 
 An independent developer, small fund ($10M–$500M AUM), or fintech building AI-native financial tooling who needs good-enough data + MCP endpoints + backtest + paper trading at a price point that doesn't require a 2-seat minimum Bloomberg contract. They want to give their Claude or GPT agent access to financial tools, not manage a Bloomberg terminal subscription.
 
@@ -229,7 +229,7 @@ An independent developer, small fund ($10M–$500M AUM), or fintech building AI-
 
 ## Tier 2 — Significant Overlap on One Dimension
 
-These competitors each overlap Doomberg on one critical capability. They're important to understand but less likely to be a direct head-to-head comparison unless Doomberg expands into their core.
+These competitors each overlap Ithaca on one critical capability. They're important to understand but less likely to be a direct head-to-head comparison unless Ithaca expands into their core.
 
 ---
 
@@ -266,23 +266,23 @@ Good UX and price positioning. They're in the "Bloomberg alternative" category. 
 - **Pro:** ~$49/month
 - **Expert:** ~$79/month (more data, more history)
 
-### How they'd likely respond to Doomberg
+### How they'd likely respond to Ithaca
 
 Ignore. Their roadmap is UI-first. They might add "AI features" (ask a chatbot about your portfolio), but MCP-native tooling for BYO agents is unlikely from this team in the near term.
 
-### Where Doomberg beats them
+### Where Ithaca beats them
 
 Programmatic access, MCP endpoints, backtest, deploy, options data, congressional/insider data. Koyfin has none of these.
 
-### Where they beat Doomberg
+### Where they beat Ithaca
 
 UI/UX quality, macro data breadth, charting quality, established user base, onboarding simplicity. Koyfin is a better reading/research experience for a human analyst.
 
-### The customer who would choose them over Doomberg
+### The customer who would choose them over Ithaca
 
 An independent equity analyst or RIA who wants to research 20 stocks a day, build watchlists, chart macro indicators, and write reports. No automation, no agent.
 
-### The customer who would choose Doomberg over them
+### The customer who would choose Ithaca over them
 
 A developer building an AI agent that needs to call fundamentals, macro, or screener data programmatically as MCP tools.
 
@@ -319,23 +319,23 @@ The alt data assembly itself. Congressional trades, lobbying, and satellite data
 - **Professional:** ~$100–200/month
 - **Institutional:** Custom
 
-### How they'd likely respond to Doomberg
+### How they'd likely respond to Ithaca
 
-Build MCP wrappers for their API. This is one developer's weekend project; the schemas exist. If Doomberg gains traction as a tool platform, Quiver could position as a data provider that plugs into Doomberg. More likely: they build MCP tools and compete on alt data depth.
+Build MCP wrappers for their API. This is one developer's weekend project; the schemas exist. If Ithaca gains traction as a tool platform, Quiver could position as a data provider that plugs into Ithaca. More likely: they build MCP tools and compete on alt data depth.
 
-### Where Doomberg beats them
+### Where Ithaca beats them
 
 MCP-native tools that don't require the user to build their own wrappers, backtest integration so you can test whether the congressional signal has alpha, full workflow.
 
-### Where they beat Doomberg
+### Where they beat Ithaca
 
 Alt data breadth (lobbying, patents, government contracts, satellite). We don't have this data.
 
-### The customer who would choose them over Doomberg
+### The customer who would choose them over Ithaca
 
 A quant researcher who wants raw alt data signals in a Pandas DataFrame and will do their own analysis.
 
-### The customer who would choose Doomberg over them
+### The customer who would choose Ithaca over them
 
 A developer who wants congressional + insider data available as MCP tools for their AI agent without building wrappers, and who also needs backtest/deploy in the same platform.
 
@@ -373,23 +373,23 @@ UX and distribution. They've made "systematic trading" feel non-threatening to r
 - **Basic:** ~$19/month
 - **Pro:** ~$29/month
 
-### How they'd likely respond to Doomberg
+### How they'd likely respond to Ithaca
 
 This is the most interesting competitive response. Composer could add an "AI strategy builder" mode where you describe a strategy in natural language and it gets translated to their execution graph. That would address the "BYO agent" gap. However, their architecture is fundamentally visual/no-code — retrofitting MCP tool calls would require significant engineering. More likely they add a chatbot wrapper around their existing builder.
 
-### Where Doomberg beats them
+### Where Ithaca beats them
 
 BYO agent paradigm (you bring the intelligence), data depth (options, alt data, fundamentals PIT), backtest sophistication, observability, multi-asset beyond US equities/ETFs.
 
-### Where they beat Doomberg
+### Where they beat Ithaca
 
 UX for non-coders, live execution (they have it; we don't fully), price point, established user base for systematic retail trading.
 
-### The customer who would choose them over Doomberg
+### The customer who would choose them over Ithaca
 
 A retail investor who wants to automate their momentum strategy on ETFs, doesn't code, and wants a clean UI to do it in 20 minutes without an API key.
 
-### The customer who would choose Doomberg over them
+### The customer who would choose Ithaca over them
 
 A developer building an AI agent that should research, backtest, and propose systematic strategies with full audit trail. They need MCP endpoints and want to bring Claude or GPT as the strategy brain.
 
@@ -425,25 +425,25 @@ Broker-dealer licensing is a genuine regulatory moat. Getting a FINRA BD license
 - **Live trading:** Commission-free for equities; options: $0.65/contract
 - **Data subscriptions:** ~$9–29/month for real-time data (separate from trading)
 
-### How they'd likely respond to Doomberg
+### How they'd likely respond to Ithaca
 
-Alpaca is a potential partner, not primarily a competitor. They're the execution layer we'd plug into. However, if Doomberg gained significant traction and decided to build execution natively, Alpaca would be irrelevant in that scenario. Their response to an agent-native trading platform would likely be to partner (offer Doomberg as a preferred execution layer) rather than compete.
+Alpaca is a potential partner, not primarily a competitor. They're the execution layer we'd plug into. However, if Ithaca gained significant traction and decided to build execution natively, Alpaca would be irrelevant in that scenario. Their response to an agent-native trading platform would likely be to partner (offer Ithaca as a preferred execution layer) rather than compete.
 
-### Where Doomberg beats them
+### Where Ithaca beats them
 
 Research, data, backtest, observability, strategy workflow — everything above order submission.
 
-### Where they beat Doomberg
+### Where they beat Ithaca
 
 Execution infrastructure, broker-dealer licensing, options clearing, live trading reliability. We are not and should not try to be a broker.
 
-### The customer who would choose them over Doomberg
+### The customer who would choose them over Ithaca
 
 A developer who has their own research and strategy code and just needs a reliable, cheap API to execute orders. They don't want a platform, just a brokerage endpoint.
 
-### The customer who would choose Doomberg over them
+### The customer who would choose Ithaca over them
 
-A developer who wants a full workflow from AI agent research → backtest → paper trading with observability. They'd use Alpaca as the execution seam inside Doomberg, not as a standalone.
+A developer who wants a full workflow from AI agent research → backtest → paper trading with observability. They'd use Alpaca as the execution seam inside Ithaca, not as a standalone.
 
 ---
 
@@ -478,23 +478,23 @@ Licensed broker research is the core moat. They have agreements with 100+ sell-s
 - **Enterprise only** — pricing typically $15,000–$50,000+/year depending on seats and corpus access
 - No public self-serve tier at meaningful functionality
 
-### How they'd likely respond to Doomberg
+### How they'd likely respond to Ithaca
 
-They wouldn't see Doomberg as a threat — we're targeting developers; they're targeting enterprise analysts. If Doomberg started productizing LLM-assisted document analysis over SEC filings/earnings calls, AlphaSense would have legitimate grounds to consider it competition. Their response would be enterprise sales muscle, not product development.
+They wouldn't see Ithaca as a threat — we're targeting developers; they're targeting enterprise analysts. If Ithaca started productizing LLM-assisted document analysis over SEC filings/earnings calls, AlphaSense would have legitimate grounds to consider it competition. Their response would be enterprise sales muscle, not product development.
 
-### Where Doomberg beats them
+### Where Ithaca beats them
 
-Price (orders of magnitude), MCP-native access, backtest + deploy, options/alternative data. For anything outside document analysis, Doomberg is more capable.
+Price (orders of magnitude), MCP-native access, backtest + deploy, options/alternative data. For anything outside document analysis, Ithaca is more capable.
 
-### Where they beat Doomberg
+### Where they beat Ithaca
 
 Document corpus (especially licensed broker research), earnings call search quality, enterprise integrations, regulatory document coverage, institutional trust.
 
-### The customer who would choose them over Doomberg
+### The customer who would choose them over Ithaca
 
 An equity research analyst at a hedge fund or investment bank who needs to search across 10 years of earnings calls for a theme, read broker research, and generate summaries. They don't code; they do fundamental analysis.
 
-### The customer who would choose Doomberg over them
+### The customer who would choose Ithaca over them
 
 A developer building an AI agent that needs MCP tools for financial data + backtest + paper trading. AlphaSense has no relevance to this use case.
 
@@ -530,23 +530,23 @@ Price and simplicity for fundamental analysts. Not a strong technical moat — t
 - **Free:** Limited but usable
 - **Pro:** ~$30/month
 
-### How they'd likely respond to Doomberg
+### How they'd likely respond to Ithaca
 
 They are not a competitor in any meaningful sense. Tikr is a reading/analysis tool for fundamental investors. They won't build MCP endpoints or backtest engines.
 
-### Where Doomberg beats them
+### Where Ithaca beats them
 
 Programmatic access, everything systematic, agent-native workflow.
 
-### Where they beat Doomberg
+### Where they beat Ithaca
 
 UI quality for manual fundamental analysis, DCF model templates, filing annotation, global small-cap fundamentals coverage.
 
-### The customer who would choose them over Doomberg
+### The customer who would choose them over Ithaca
 
 A value investor who does manual DCF models, reads 10-Ks, and wants a clean interface to pull historical income statements globally.
 
-### The customer who would choose Doomberg over them
+### The customer who would choose Ithaca over them
 
 Anyone building a systematic or AI-assisted research workflow.
 
@@ -582,31 +582,31 @@ Distribution and brand. The finance feature rides on Perplexity's existing moat,
 - **Free:** Unlimited basic searches
 - **Pro:** ~$20/month (includes more powerful models, Pro Search)
 
-### How they'd likely respond to Doomberg
+### How they'd likely respond to Ithaca
 
-Perplexity has little reason to respond. Their Finance feature targets the curious retail investor who wants quick answers, not systematic traders. If Doomberg launched an AI research interface, Perplexity would not see it as a threat. They might publish MCP tools for their Finance data in the future — which would be relevant to Doomberg.
+Perplexity has little reason to respond. Their Finance feature targets the curious retail investor who wants quick answers, not systematic traders. If Ithaca launched an AI research interface, Perplexity would not see it as a threat. They might publish MCP tools for their Finance data in the future — which would be relevant to Ithaca.
 
-### Where Doomberg beats them
+### Where Ithaca beats them
 
 Structured, licensed financial data, backtest, deploy, options/alt data, MCP tools callable by agents, audit trail.
 
-### Where they beat Doomberg
+### Where they beat Ithaca
 
 Distribution (50M+ users vs. zero), brand recognition, breadth of general research questions, real-time web crawling for news.
 
-### The customer who would choose them over Doomberg
+### The customer who would choose them over Ithaca
 
 Someone who wants a quick answer to "what's happening with AAPL this week" and doesn't need an agent pipeline or backtest.
 
-### The customer who would choose Doomberg over them
+### The customer who would choose Ithaca over them
 
-A developer whose AI agent needs structured, reliable financial data via MCP tools. Perplexity gives prose; Doomberg gives JSON that an agent can act on.
+A developer whose AI agent needs structured, reliable financial data via MCP tools. Perplexity gives prose; Ithaca gives JSON that an agent can act on.
 
 ---
 
 ## Tier 3 — Adjacent / Niche
 
-These competitors overlap Doomberg on a specific, narrow dimension. Understanding them matters for data sourcing, partnership strategy, and preventing flank attacks.
+These competitors overlap Ithaca on a specific, narrow dimension. Understanding them matters for data sourcing, partnership strategy, and preventing flank attacks.
 
 ---
 
@@ -614,7 +614,7 @@ These competitors overlap Doomberg on a specific, narrow dimension. Understandin
 
 ### What they are
 
-Polygon.io is a financial market data API provider — raw OHLCV for US equities, options, forex, and crypto. Founded 2018, developer-friendly, REST + WebSocket APIs, fast, reliable. They are infrastructure, not a product. Many fintech tools (including potentially Doomberg) are built on top of Polygon's data.
+Polygon.io is a financial market data API provider — raw OHLCV for US equities, options, forex, and crypto. Founded 2018, developer-friendly, REST + WebSocket APIs, fast, reliable. They are infrastructure, not a product. Many fintech tools (including potentially Ithaca) are built on top of Polygon's data.
 
 ### What they do really well
 
@@ -640,23 +640,23 @@ Data reliability and developer mindshare. They've become a standard infrastructu
 - **Developer:** $79/month — real-time
 - **Advanced:** $199+/month — options real-time, high volume
 
-### How they'd likely respond to Doomberg
+### How they'd likely respond to Ithaca
 
-Polygon is a potential data supplier for Doomberg, not a competitor. They might publish MCP tools for their API — but raw OHLCV via MCP is not a product, it's infrastructure.
+Polygon is a potential data supplier for Ithaca, not a competitor. They might publish MCP tools for their API — but raw OHLCV via MCP is not a product, it's infrastructure.
 
-### Where Doomberg beats them
+### Where Ithaca beats them
 
 Everything above data delivery — research tools, backtest, deploy, observability.
 
-### Where they beat Doomberg
+### Where they beat Ithaca
 
 Raw data latency, data breadth for prices, developer reliability, price for pure data access.
 
-### The customer who would choose them over Doomberg
+### The customer who would choose them over Ithaca
 
 A developer who has their own research/backtest pipeline and just needs a reliable, cheap price data API.
 
-### The customer who would choose Doomberg over them
+### The customer who would choose Ithaca over them
 
 A developer who wants data + compute + agent tools in one platform.
 
@@ -691,23 +691,23 @@ Proprietary model trained on 900+ features. Switching cost is low — it's a sco
 - **Pro:** ~$30–50/month
 - **API:** ~$100–300/month depending on volume
 
-### How they'd likely respond to Doomberg
+### How they'd likely respond to Ithaca
 
 Not a response. Different target customer. Danelfin serves investors who want to know "what's a good stock to buy," not developers building agent pipelines.
 
-### Where Doomberg beats them
+### Where Ithaca beats them
 
 Programmatic MCP access, BYO agent, backtest, workflow.
 
-### Where they beat Doomberg
+### Where they beat Ithaca
 
 Pre-built AI signals for users who don't want to build their own research pipeline. Faster for a human to consume.
 
-### The customer who would choose them over Doomberg
+### The customer who would choose them over Ithaca
 
 A non-technical investor who wants AI-generated stock picks without building anything.
 
-### The customer who would choose Doomberg over them
+### The customer who would choose Ithaca over them
 
 A developer who wants to build their own scoring logic using raw data and their own AI model, then backtest it.
 
@@ -743,23 +743,23 @@ Retail brand recognition in the technical analysis space. Not a deep technical m
 - **Trader:** ~$150/month
 - **Premium:** ~$350/month
 
-### How they'd likely respond to Doomberg
+### How they'd likely respond to Ithaca
 
 No response. Entirely different customer and architecture philosophy.
 
-### Where Doomberg beats them
+### Where Ithaca beats them
 
 Data quality, BYO agent, MCP surface, backtest rigor, fundamentals, alt data.
 
-### Where they beat Doomberg
+### Where they beat Ithaca
 
 Pre-built pattern recognition, retail UX, no-code bots, educational content.
 
-### The customer who would choose them over Doomberg
+### The customer who would choose them over Ithaca
 
 A retail trader who wants technical AI signals with no coding and no API.
 
-### The customer who would choose Doomberg over them
+### The customer who would choose Ithaca over them
 
 A developer who wants to build and test systematic strategies with full data access.
 
@@ -794,23 +794,23 @@ RIA distribution and workflow stickiness. RIAs build compliance workflows around
 - **Individual:** ~$150–300/month
 - **Team:** Custom, ~$2,000–10,000/year
 
-### How they'd likely respond to Doomberg
+### How they'd likely respond to Ithaca
 
 No response. Entirely different segment (RIAs vs. developers/quants).
 
-### Where Doomberg beats them
+### Where Ithaca beats them
 
 Programmatic access, BYO agent, backtest, alt data, developer-friendliness.
 
-### Where they beat Doomberg
+### Where they beat Ithaca
 
 RIA compliance workflow, client reporting, mutual fund/ETF data depth, established RIA relationships.
 
-### The customer who would choose them over Doomberg
+### The customer who would choose them over Ithaca
 
 An RIA or financial advisor who needs to build client-facing reports and manage model portfolios in a compliance-friendly environment.
 
-### The customer who would choose Doomberg over them
+### The customer who would choose Ithaca over them
 
 A developer building AI-native financial analysis tooling.
 
@@ -820,7 +820,7 @@ A developer building AI-native financial analysis tooling.
 
 ### What they are
 
-FinancialDatasets.ai is the most architecturally similar competitor to Doomberg — a financial data MCP server. They provide MCP tools for financial data (primarily fundamentals: income statements, balance sheets, cash flows, prices) callable by AI agents. Founded ~2024. Self-described as "financial data for AI agents." They appear to be a small team, likely 1–3 people, and are positioned as a data layer without the research depth, backtest, or deploy capabilities of Doomberg.
+FinancialDatasets.ai is the most architecturally similar competitor to Ithaca — a financial data MCP server. They provide MCP tools for financial data (primarily fundamentals: income statements, balance sheets, cash flows, prices) callable by AI agents. Founded ~2024. Self-described as "financial data for AI agents." They appear to be a small team, likely 1–3 people, and are positioned as a data layer without the research depth, backtest, or deploy capabilities of Ithaca.
 
 ### What they do really well
 
@@ -847,26 +847,26 @@ First mover on the "financial data via MCP" positioning. Developer mindshare if 
 - **Free tier:** Limited calls
 - **Paid:** ~$30–100/month based on usage (approximate — their pricing page updates)
 
-### How they'd likely respond to Doomberg
+### How they'd likely respond to Ithaca
 
-This is the competitor that would most directly feel Doomberg as a threat. They would likely respond by:
+This is the competitor that would most directly feel Ithaca as a threat. They would likely respond by:
 1. Expanding data breadth (add options, congressional, insider).
 2. Marketing heavily on "simplicity" — we're just data, no opinionated platform.
 3. Potentially being acquired by a larger data vendor or broker (Polygon, Alpaca) who wants to compete in the MCP space.
 
-### Where Doomberg beats them
+### Where Ithaca beats them
 
 Data breadth (29 tools vs. their ~5–8 tools), backtest engine, paper trading deploy, observability, tenant isolation, human-gated money path, and the full research-to-deploy workflow.
 
-### Where they beat Doomberg
+### Where they beat Ithaca
 
 Simplicity — if you just want fundamentals in your AI agent, they're faster to integrate. Lower price point. Potentially better for developers who don't need the full platform.
 
-### The customer who would choose them over Doomberg
+### The customer who would choose them over Ithaca
 
 An indie developer building a simple AI assistant that can answer "what's AAPL's P/E ratio" and doesn't need backtest or deploy.
 
-### The customer who would choose Doomberg over them
+### The customer who would choose Ithaca over them
 
 A developer building a serious AI trading agent that needs the full research toolkit, backtest validation, paper trading observation, and multi-tenant isolation.
 
@@ -874,9 +874,9 @@ A developer building a serious AI trading agent that needs the full research too
 
 ## Strategic Positioning Summary
 
-**Where Doomberg sits in the landscape:**
+**Where Ithaca sits in the landscape:**
 
-Doomberg occupies a currently empty position at the intersection of three trends:
+Ithaca occupies a currently empty position at the intersection of three trends:
 1. **AI agents calling financial tools** (no one has built the right MCP surface)
 2. **Systematic strategy deployment accessible to developers** (not just quant coders)
 3. **Human-in-the-loop trust layer** for AI money management (nobody has designed this correctly)
@@ -884,13 +884,13 @@ Doomberg occupies a currently empty position at the intersection of three trends
 The clearest wedge opportunities, in priority order:
 
 **Wedge 1: The "MCP-native Bloomberg alternative for developers"**
-Bloomberg has everything but is closed, expensive, and not agent-friendly. QuantConnect has backtest/deploy but no research depth and no MCP. Doomberg can be the first platform where an AI agent can do Bloomberg-grade research AND backtest AND deploy — all via standard MCP calls. The target customer is a developer building an AI financial agent and needing a one-stop MCP tool platform.
+Bloomberg has everything but is closed, expensive, and not agent-friendly. QuantConnect has backtest/deploy but no research depth and no MCP. Ithaca can be the first platform where an AI agent can do Bloomberg-grade research AND backtest AND deploy — all via standard MCP calls. The target customer is a developer building an AI financial agent and needing a one-stop MCP tool platform.
 
 **Wedge 2: Congressional/insider/alt data accessible to agents**
-Unusual Whales and Quiver Quantitative have the data but no MCP surface and no backtest. Doomberg can be the place where an AI agent calls `congress_trades`, validates the signal with `backtest_run`, and proposes a strategy for paper trading — in a single agent loop. This is a workflow no competitor supports today.
+Unusual Whales and Quiver Quantitative have the data but no MCP surface and no backtest. Ithaca can be the place where an AI agent calls `congress_trades`, validates the signal with `backtest_run`, and proposes a strategy for paper trading — in a single agent loop. This is a workflow no competitor supports today.
 
 **Wedge 3: The "trust layer" for AI trading proposals**
-No competitor has a human-gated money path by design. As regulators and institutions start asking "how do you prevent your AI agent from self-trading without oversight," Doomberg's promote → activate → live → pause workflow is a defensible architectural position. This is most relevant in the 12–24 month timeframe as AI trading regulation emerges.
+No competitor has a human-gated money path by design. As regulators and institutions start asking "how do you prevent your AI agent from self-trading without oversight," Ithaca's promote → activate → live → pause workflow is a defensible architectural position. This is most relevant in the 12–24 month timeframe as AI trading regulation emerges.
 
 ---
 
@@ -899,25 +899,25 @@ No competitor has a human-gated money path by design. As regulators and institut
 Ranked by (likelihood × severity):
 
 **1. FinancialDatasets.ai + Polygon.io collaboration or merger (High likelihood, High severity)**
-If Polygon builds or acquires an MCP server for their full data suite (OHLCV + options + news) and FinancialDatasets.ai adds that data, you get "Polygon's data via MCP" — which undercuts Doomberg's data layer. Polygon has the engineering resources and developer distribution to do this in 6–12 months. Severity: high, because it removes Doomberg's data-accessibility advantage for the developer audience.
+If Polygon builds or acquires an MCP server for their full data suite (OHLCV + options + news) and FinancialDatasets.ai adds that data, you get "Polygon's data via MCP" — which undercuts Ithaca's data layer. Polygon has the engineering resources and developer distribution to do this in 6–12 months. Severity: high, because it removes Ithaca's data-accessibility advantage for the developer audience.
 
 **2. QuantConnect publishes MCP endpoints for LEAN (Medium-High likelihood, High severity)**
-QuantConnect has ~250K users, a mature backtest engine, and engineering resources. If someone internally champions "LEAN via MCP," they could ship it in one quarter. This would give developers a backtest endpoint from a trusted platform. It doesn't include Doomberg's research tools or observability, but it's a credible counter. Timeline: 12–18 months. Severity: high for the backtest dimension.
+QuantConnect has ~250K users, a mature backtest engine, and engineering resources. If someone internally champions "LEAN via MCP," they could ship it in one quarter. This would give developers a backtest endpoint from a trusted platform. It doesn't include Ithaca's research tools or observability, but it's a credible counter. Timeline: 12–18 months. Severity: high for the backtest dimension.
 
 **3. Unusual Whales ships an API/MCP tier with broader data (Medium likelihood, High severity)**
 Unusual Whales already has a paid API. If they wrap it in MCP tools (congressional, options flow, dark pool) with a clean developer interface, they become a real competitor for the alt data / flow data dimension. Their community moat means early adoption would be fast. Timeline: 6–12 months is plausible. Severity: high for congressional/insider/options-flow use cases.
 
 **4. A large player (Perplexity, OpenAI, Anthropic) builds a financial MCP server (Low-Medium likelihood, Very High severity)**
-If Perplexity builds a financial MCP tool suite with licensed data, or if OpenAI's operator ecosystem includes a financial data MCP server, the distribution advantage would be insurmountable for an early-stage Doomberg. Probability is moderate (financial data is a natural adjacent product for AI platforms). Severity is existential for the data-layer portion of the business.
+If Perplexity builds a financial MCP tool suite with licensed data, or if OpenAI's operator ecosystem includes a financial data MCP server, the distribution advantage would be insurmountable for an early-stage Ithaca. Probability is moderate (financial data is a natural adjacent product for AI platforms). Severity is existential for the data-layer portion of the business.
 
 **5. Regulatory risk on AI trading automation (Low likelihood, Moderate severity)**
-If regulators issue guidance that AI-proposed trades require specific oversight mechanisms that Doomberg doesn't implement, it could block the deploy pathway. Doomberg's human-gated design is a hedge against this, but the specific regulatory requirements are unknown. Probability is low in the next 12 months but rising.
+If regulators issue guidance that AI-proposed trades require specific oversight mechanisms that Ithaca doesn't implement, it could block the deploy pathway. Ithaca's human-gated design is a hedge against this, but the specific regulatory requirements are unknown. Probability is low in the next 12 months but rising.
 
 ---
 
 ## Data Gaps
 
-Specific financial data Doomberg is currently missing that competitors have:
+Specific financial data Ithaca is currently missing that competitors have:
 
 | Data Type | Who Has It | Gap Severity |
 |---|---|---|
@@ -934,7 +934,7 @@ Specific financial data Doomberg is currently missing that competitors have:
 | FX / rates / commodities real-time | Bloomberg, Polygon | High if macro strategies are in scope |
 | Point-in-time index constituents | Bloomberg, QuantConnect | High for backtest survivorship bias correction |
 
-The most critical gaps for Doomberg's core use case: real-time OPRA options data, tick-level historical data, and point-in-time index constituents (for correct backtesting).
+The most critical gaps for Ithaca's core use case: real-time OPRA options data, tick-level historical data, and point-in-time index constituents (for correct backtesting).
 
 ---
 
@@ -945,13 +945,13 @@ The most critical gaps for Doomberg's core use case: real-time OPRA options data
 Specifically: Anthropic publishes `mcp-server-finance` — a first-party MCP server with licensed fundamentals, news, and price data — as part of the Claude ecosystem. Or OpenAI builds financial data tools into their operator ecosystem.
 
 Why this is existential:
-1. **Distribution** — Claude has millions of users. A first-party financial MCP server gets immediate adoption from every Claude user building financial agents. Doomberg can't compete on distribution.
-2. **Trust** — developers trust Anthropic/OpenAI infrastructure by default. A first-party financial server carries implicit trust that a third-party Doomberg has to earn.
-3. **Cost** — if Anthropic cross-subsidizes the financial server (running it at cost or free to drive Claude adoption), Doomberg's pricing model breaks.
+1. **Distribution** — Claude has millions of users. A first-party financial MCP server gets immediate adoption from every Claude user building financial agents. Ithaca can't compete on distribution.
+2. **Trust** — developers trust Anthropic/OpenAI infrastructure by default. A first-party financial server carries implicit trust that a third-party Ithaca has to earn.
+3. **Cost** — if Anthropic cross-subsidizes the financial server (running it at cost or free to drive Claude adoption), Ithaca's pricing model breaks.
 
-**The mitigation:** Doomberg must become more than a data layer before this happens. The defensible position is the full workflow (backtest + deploy + human-gated money path + observability), not the data access alone. A first-party MCP financial data server doesn't backtest, doesn't paper-trade, doesn't have a promote workflow. The "trust layer for AI money management" is harder to replicate than the data layer. Doomberg needs to be known for the workflow, not just the tools.
+**The mitigation:** Ithaca must become more than a data layer before this happens. The defensible position is the full workflow (backtest + deploy + human-gated money path + observability), not the data access alone. A first-party MCP financial data server doesn't backtest, doesn't paper-trade, doesn't have a promote workflow. The "trust layer for AI money management" is harder to replicate than the data layer. Ithaca needs to be known for the workflow, not just the tools.
 
-The secondary nightmare: Alpaca + QuantConnect announce a partnership and ship an MCP surface together — QuantConnect's backtest engine + Alpaca's execution + a shared MCP tool layer. This doesn't require a hyperscaler and is probably achievable in 12 months by two motivated engineering teams. It would directly replicate Doomberg's research-to-deploy-to-execute arc, minus the alt data depth and observability.
+The secondary nightmare: Alpaca + QuantConnect announce a partnership and ship an MCP surface together — QuantConnect's backtest engine + Alpaca's execution + a shared MCP tool layer. This doesn't require a hyperscaler and is probably achievable in 12 months by two motivated engineering teams. It would directly replicate Ithaca's research-to-deploy-to-execute arc, minus the alt data depth and observability.
 
 ---
 

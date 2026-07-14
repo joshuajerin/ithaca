@@ -52,7 +52,7 @@ def test_dashboard_summary_uses_only_tenant_backtest_evidence(client, stores, te
     body = client.get("/api/dashboard/summary", headers=_headers(tenant_a)).json()
 
     assert body["status"] in {"ready", "stale"}
-    assert body["source"] == "doomberg-platform"
+    assert body["source"] == "ithaca-platform"
     assert body["data"]["run_counts"]["total"] == 1
     assert body["data"]["latest_backtest"]["run_id"] == run_id
     assert body["data"]["latest_backtest"]["stats"] == {"sharpe": 1.25, "vol": 0.12}
@@ -232,7 +232,7 @@ def test_activity_is_tenant_scoped_and_limit_is_enforced(client, stores, tenant_
 def test_market_and_provider_status_redact_private_connection_details(
     client, stores, tenant_a, monkeypatch
 ):
-    monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", "https://private-engine.example")
+    monkeypatch.setenv("ITHACA_IBKR_ENGINE_URL", "https://private-engine.example")
     stores.providers.upsert_connection(
         tenant_a,
         provider="ibkr",
@@ -258,17 +258,17 @@ def test_market_and_provider_status_redact_private_connection_details(
     serialized = str({"provider": provider, "market": market})
 
     assert provider["data"]["counts"] == {"total": 1, "connected": 1}
-    assert provider["data"]["connections"][0]["provider"] == "doomberg-live-data"
+    assert provider["data"]["connections"][0]["provider"] == "ithaca-live-data"
     assert provider["data"]["connections"][0]["capabilities"] == ["quotes"]
     assert provider["data"]["connections"][0]["credential_configured"] is True
-    assert market["data"]["quote_providers"][0]["provider"] == "doomberg-live-data"
+    assert market["data"]["quote_providers"][0]["provider"] == "ithaca-live-data"
     assert legacy_provider["connections"][0]["tenant_id"] == tenant_a
     assert legacy_provider["connections"][0]["retention_policy"] == "tenant-default"
     assert market["data"]["snapshots"][0] == {
         "snapshot_id": market["data"]["snapshots"][0]["snapshot_id"],
-        "provider": "doomberg-live-data",
+        "provider": "ithaca-live-data",
         "dataset": "prices",
-        "entitlement_class": "doomberg_live",
+        "entitlement_class": "ithaca_live",
         "as_of": "2026-07-12T00:00:00Z",
         "created_at": market["data"]["snapshots"][0]["created_at"],
     }
@@ -316,7 +316,7 @@ def test_dashboard_routes_enforce_api_key_read_scopes(client, stores):
 
 
 def test_market_reports_configured_but_unregistered_source(client, tenant_a, monkeypatch):
-    monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", "https://private-engine.example")
+    monkeypatch.setenv("ITHACA_IBKR_ENGINE_URL", "https://private-engine.example")
 
     body = client.get("/api/dashboard/market", headers=_headers(tenant_a)).json()
 
@@ -328,7 +328,7 @@ def test_market_reports_configured_but_unregistered_source(client, tenant_a, mon
 def test_market_freshness_uses_observation_time_not_connection_time(
     client, stores, tenant_a, monkeypatch
 ):
-    monkeypatch.setenv("DOOMBERG_DASHBOARD_STALE_AFTER_MS", "60000")
+    monkeypatch.setenv("ITHACA_DASHBOARD_STALE_AFTER_MS", "60000")
     stores.providers.upsert_connection(
         tenant_a,
         provider="community",
@@ -364,7 +364,7 @@ def test_connected_provider_without_observation_is_unavailable(client, stores, t
 
 
 def test_dashboard_contract_marks_old_data_stale(client, stores, tenant_a, monkeypatch):
-    monkeypatch.setenv("DOOMBERG_DASHBOARD_STALE_AFTER_MS", "60000")
+    monkeypatch.setenv("ITHACA_DASHBOARD_STALE_AFTER_MS", "60000")
     run_id = seed_run(stores, tenant_a, kind="research")
     old = "2020-01-01T00:00:00+00:00"
     with stores.db.write_lock:

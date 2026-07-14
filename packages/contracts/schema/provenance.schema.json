@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://doomberg.dev/contracts/provenance.schema.json",
+  "$id": "https://ithaca.dev/contracts/provenance.schema.json",
   "title": "ProvenanceEnvelope",
   "description": "The mandatory wrapper around EVERY data-layer tool payload. Honesty contract: data is never imputed to hide gaps, mock is never dressed as live, asOf is the data's timestamp not the fetch time. Directly answers the v1 review lesson that silent mock-for-real substitution destroyed trust.",
   "type": "object",
@@ -58,7 +58,7 @@
         "cache_hit": { "type": "boolean", "default": false },
         "inputs": {
           "type": "string",
-          "description": "Optional source class for computed results, e.g. 'agent' or 'doomberg-v1-archive'."
+          "description": "Optional source class for computed results, e.g. 'agent' or 'ithaca-v1-archive'."
         }
       }
     },

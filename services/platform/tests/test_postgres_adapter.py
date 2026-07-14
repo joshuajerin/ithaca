@@ -12,7 +12,7 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from platform_helpers import new_uuid, trace_event
 
-from doomberg_platform import (
+from ithaca_platform import (
     AuthStore,
     CompliancePolicyConflict,
     CompliancePolicyStore,
@@ -26,7 +26,7 @@ from doomberg_platform import (
     WorkerHeartbeatStore,
     open_db,
 )
-from doomberg_platform.migrations import (
+from ithaca_platform.migrations import (
     MIGRATIONS,
     Migration,
     MigrationDrift,
@@ -34,7 +34,7 @@ from doomberg_platform.migrations import (
     apply_migrations,
     validate_migrations,
 )
-from doomberg_platform.pg_db import (
+from ithaca_platform.pg_db import (
     PostgresDb,
     PostgresPoolConfig,
     _convert_placeholders,
@@ -66,7 +66,7 @@ class _MigrationConnection:
                     for version, (name, checksum) in sorted(self.applied.items())
                 ]
             )
-        if sql.startswith("INSERT INTO doomberg_schema_migrations"):
+        if sql.startswith("INSERT INTO ithaca_schema_migrations"):
             version, name, checksum = params
             self.applied[int(version)] = (str(name), str(checksum))
         return _Rows()
@@ -76,7 +76,7 @@ def test_postgres_dsn_detection() -> None:
     assert is_postgres_dsn("postgresql://user:pw@host/db")
     assert is_postgres_dsn("postgres://user:pw@host/db")
     assert not is_postgres_dsn(":memory:")
-    assert not is_postgres_dsn("./doomberg.db")
+    assert not is_postgres_dsn("./ithaca.db")
 
 
 def test_placeholder_conversion_ignores_sql_string_literals() -> None:
@@ -102,7 +102,7 @@ def test_postgres_migrations_are_ordered_idempotent_and_locked() -> None:
     assert sum("pg_advisory_xact_lock" in sql for sql, _ in conn.statements) == 2
     first_lock = next(i for i, (sql, _) in enumerate(conn.statements) if "pg_advisory" in sql)
     first_ledger = next(
-        i for i, (sql, _) in enumerate(conn.statements) if "CREATE TABLE IF NOT EXISTS doomberg_schema" in sql
+        i for i, (sql, _) in enumerate(conn.statements) if "CREATE TABLE IF NOT EXISTS ithaca_schema" in sql
     )
     assert first_lock < first_ledger
 
@@ -113,8 +113,8 @@ def test_postgres_rls_migration_forces_direct_and_indirect_tenant_policies() -> 
     for table in ("runs", "api_keys", "trace_events", "order_intents", "run_seq"):
         assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY" in rls.sql
         assert f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY" in rls.sql
-        assert f"CREATE POLICY doomberg_{table}_access ON {table}" in rls.sql
-    assert "scoped_run.tenant_id = current_setting('doomberg.tenant_id', true)" in rls.sql
+        assert f"CREATE POLICY ithaca_{table}_access ON {table}" in rls.sql
+    assert "scoped_run.tenant_id = current_setting('ithaca.tenant_id', true)" in rls.sql
     assert "scoped_user.id = oauth_accounts.user_id" in rls.sql
     assert "scoped_user.id = user_sessions.user_id" in rls.sql
 
@@ -135,7 +135,7 @@ def test_postgres_execution_control_migration_is_forced_and_tenant_scoped() -> N
         assert f"CREATE TABLE IF NOT EXISTS {table}" in controls.sql
         assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY" in controls.sql
         assert f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY" in controls.sql
-        assert f"CREATE POLICY doomberg_{table}_access ON {table}" in controls.sql
+        assert f"CREATE POLICY ithaca_{table}_access ON {table}" in controls.sql
 
 
 def test_postgres_compliance_policy_migration_is_forced_and_tenant_scoped() -> None:
@@ -145,7 +145,7 @@ def test_postgres_compliance_policy_migration_is_forced_and_tenant_scoped() -> N
         assert f"CREATE TABLE IF NOT EXISTS {table}" in policies.sql
         assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY" in policies.sql
         assert f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY" in policies.sql
-        assert f"CREATE POLICY doomberg_{table}_access ON {table}" in policies.sql
+        assert f"CREATE POLICY ithaca_{table}_access ON {table}" in policies.sql
 
 
 def test_postgres_worker_heartbeat_migration_is_system_only() -> None:
@@ -154,7 +154,7 @@ def test_postgres_worker_heartbeat_migration_is_system_only() -> None:
     assert "CREATE TABLE IF NOT EXISTS worker_heartbeats" in heartbeats.sql
     assert "ALTER TABLE worker_heartbeats ENABLE ROW LEVEL SECURITY" in heartbeats.sql
     assert "ALTER TABLE worker_heartbeats FORCE ROW LEVEL SECURITY" in heartbeats.sql
-    assert "current_setting('doomberg.system_access', true) = 'on'" in heartbeats.sql
+    assert "current_setting('ithaca.system_access', true) = 'on'" in heartbeats.sql
 
 
 def test_postgres_migration_validation_fails_on_pending_schema() -> None:
@@ -199,21 +199,21 @@ def test_postgres_migrations_allow_explicit_forward_compatible_schema() -> None:
 
 
 def test_forward_migration_override_is_explicit(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS", raising=False)
+    monkeypatch.delenv("ITHACA_DB_ALLOW_FORWARD_MIGRATIONS", raising=False)
     assert allow_forward_migrations() is False
-    monkeypatch.setenv("DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS", "true")
+    monkeypatch.setenv("ITHACA_DB_ALLOW_FORWARD_MIGRATIONS", "true")
     assert allow_forward_migrations() is True
-    monkeypatch.setenv("DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS", "sometimes")
+    monkeypatch.setenv("ITHACA_DB_ALLOW_FORWARD_MIGRATIONS", "sometimes")
     with pytest.raises(ValueError, match="must be a boolean value"):
         allow_forward_migrations()
 
 
 def test_postgres_migration_mode_is_explicit(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("DOOMBERG_DB_MIGRATION_MODE", raising=False)
+    monkeypatch.delenv("ITHACA_DB_MIGRATION_MODE", raising=False)
     assert migration_mode() == "apply"
-    monkeypatch.setenv("DOOMBERG_DB_MIGRATION_MODE", "validate")
+    monkeypatch.setenv("ITHACA_DB_MIGRATION_MODE", "validate")
     assert migration_mode() == "validate"
-    monkeypatch.setenv("DOOMBERG_DB_MIGRATION_MODE", "invalid")
+    monkeypatch.setenv("ITHACA_DB_MIGRATION_MODE", "invalid")
     with pytest.raises(ValueError, match="must be apply, validate, or off"):
         migration_mode()
 
@@ -222,8 +222,8 @@ def test_postgres_migration_mode_is_explicit(monkeypatch: pytest.MonkeyPatch) ->
 def test_postgres_migration_mode_passes_forward_compatibility_override(
     monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
-    monkeypatch.setenv("DOOMBERG_DB_MIGRATION_MODE", mode)
-    monkeypatch.setenv("DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS", "1")
+    monkeypatch.setenv("ITHACA_DB_MIGRATION_MODE", mode)
+    monkeypatch.setenv("ITHACA_DB_ALLOW_FORWARD_MIGRATIONS", "1")
     conn = _MigrationConnection()
     if mode == "validate":
         for migration in MIGRATIONS:
@@ -239,8 +239,8 @@ def test_postgres_migration_mode_passes_forward_compatibility_override(
 def test_postgres_migration_mode_off_does_not_parse_forward_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("DOOMBERG_DB_MIGRATION_MODE", "off")
-    monkeypatch.setenv("DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS", "invalid")
+    monkeypatch.setenv("ITHACA_DB_MIGRATION_MODE", "off")
+    monkeypatch.setenv("ITHACA_DB_ALLOW_FORWARD_MIGRATIONS", "invalid")
     db = SimpleNamespace()
 
     status = PostgresDb._migrate(db)
@@ -251,28 +251,28 @@ def test_postgres_migration_mode_off_does_not_parse_forward_override(
 def test_postgres_pool_config_is_bounded_and_validated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("DOOMBERG_POSTGRES_POOL_MIN", "2")
-    monkeypatch.setenv("DOOMBERG_POSTGRES_POOL_MAX", "6")
-    monkeypatch.setenv("DOOMBERG_POSTGRES_POOL_TIMEOUT_S", "4.5")
+    monkeypatch.setenv("ITHACA_POSTGRES_POOL_MIN", "2")
+    monkeypatch.setenv("ITHACA_POSTGRES_POOL_MAX", "6")
+    monkeypatch.setenv("ITHACA_POSTGRES_POOL_TIMEOUT_S", "4.5")
     config = PostgresPoolConfig.from_env()
     assert (config.min_size, config.max_size, config.timeout_seconds) == (2, 6, 4.5)
 
-    monkeypatch.setenv("DOOMBERG_POSTGRES_POOL_MIN", "7")
+    monkeypatch.setenv("ITHACA_POSTGRES_POOL_MIN", "7")
     with pytest.raises(ValueError, match="POOL_MIN cannot exceed POOL_MAX"):
         PostgresPoolConfig.from_env()
 
-    monkeypatch.setenv("DOOMBERG_POSTGRES_POOL_MIN", "1")
-    monkeypatch.setenv("DOOMBERG_POSTGRES_POOL_TIMEOUT_S", "nan")
+    monkeypatch.setenv("ITHACA_POSTGRES_POOL_MIN", "1")
+    monkeypatch.setenv("ITHACA_POSTGRES_POOL_TIMEOUT_S", "nan")
     with pytest.raises(ValueError, match="must be greater than 0"):
         PostgresPoolConfig.from_env()
 
 
 @pytest.mark.skipif(
-    not os.environ.get("DOOMBERG_PLATFORM_PG_URL"),
-    reason="set DOOMBERG_PLATFORM_PG_URL to run the live Postgres pool test",
+    not os.environ.get("ITHACA_PLATFORM_PG_URL"),
+    reason="set ITHACA_PLATFORM_PG_URL to run the live Postgres pool test",
 )
 def test_live_postgres_pool_parallelism_transaction_pinning_and_recovery() -> None:
-    url = os.environ["DOOMBERG_PLATFORM_PG_URL"]
+    url = os.environ["ITHACA_PLATFORM_PG_URL"]
     db = PostgresDb(url, pool_config=PostgresPoolConfig(min_size=1, max_size=4))
     try:
         with db.conn as conn:
@@ -314,7 +314,7 @@ def test_live_postgres_pool_parallelism_transaction_pinning_and_recovery() -> No
                 while listener_pid is None and time.monotonic() < deadline:
                     row = admin.execute(
                         "SELECT pid FROM pg_stat_activity "
-                        "WHERE application_name = 'doomberg-listener' LIMIT 1"
+                        "WHERE application_name = 'ithaca-listener' LIMIT 1"
                     ).fetchone()
                     listener_pid = None if row is None else int(row[0])
                     if listener_pid is None:
@@ -322,7 +322,7 @@ def test_live_postgres_pool_parallelism_transaction_pinning_and_recovery() -> No
                 assert listener_pid is not None
                 listener_count = admin.execute(
                     "SELECT count(*) FROM pg_stat_activity "
-                    "WHERE application_name = 'doomberg-listener'"
+                    "WHERE application_name = 'ithaca-listener'"
                 ).fetchone()[0]
                 assert listener_count == 1
                 assert admin.execute(
@@ -333,7 +333,7 @@ def test_live_postgres_pool_parallelism_transaction_pinning_and_recovery() -> No
                 while replacement_pid is None and time.monotonic() < deadline:
                     row = admin.execute(
                         "SELECT pid FROM pg_stat_activity "
-                        "WHERE application_name = 'doomberg-listener' AND pid <> %s LIMIT 1",
+                        "WHERE application_name = 'ithaca-listener' AND pid <> %s LIMIT 1",
                         (listener_pid,),
                     ).fetchone()
                     replacement_pid = None if row is None else int(row[0])
@@ -349,15 +349,15 @@ def test_live_postgres_pool_parallelism_transaction_pinning_and_recovery() -> No
 
 
 @pytest.mark.skipif(
-    not os.environ.get("DOOMBERG_PLATFORM_PG_URL"),
-    reason="set DOOMBERG_PLATFORM_PG_URL to run the live Postgres RLS test",
+    not os.environ.get("ITHACA_PLATFORM_PG_URL"),
+    reason="set ITHACA_PLATFORM_PG_URL to run the live Postgres RLS test",
 )
 def test_live_postgres_rls_fails_closed_and_scopes_tenant_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    url = os.environ["DOOMBERG_PLATFORM_PG_URL"]
+    url = os.environ["ITHACA_PLATFORM_PG_URL"]
     owner_db = PostgresDb(url, pool_config=PostgresPoolConfig(min_size=1, max_size=2))
-    role = f"doomberg_rls_{new_uuid().replace('-', '')[:16]}"
+    role = f"ithaca_rls_{new_uuid().replace('-', '')[:16]}"
     password = new_uuid()
     app_db: PostgresDb | None = None
     role_created = False
@@ -424,11 +424,11 @@ def test_live_postgres_rls_fails_closed_and_scopes_tenant_rows(
         app_url = make_conninfo(url, user=role, password=password)
         with psycopg.connect(app_url) as raw_app:
             assert raw_app.execute("SELECT run_id FROM runs").fetchall() == []
-            raw_app.execute("SELECT set_config('doomberg.tenant_id', %s, true)", (tenant_a,))
+            raw_app.execute("SELECT set_config('ithaca.tenant_id', %s, true)", (tenant_a,))
             assert raw_app.execute("SELECT run_id FROM runs").fetchall() == [(run_a,)]
             assert raw_app.execute("SELECT run_id FROM run_seq").fetchall() == [(run_a,)]
 
-        monkeypatch.setenv("DOOMBERG_DB_MIGRATION_MODE", "validate")
+        monkeypatch.setenv("ITHACA_DB_MIGRATION_MODE", "validate")
         app_db = PostgresDb(app_url, pool_config=PostgresPoolConfig(min_size=1, max_size=2))
         assert RunStore(app_db).get(tenant_a, run_a) is not None
         assert RunStore(app_db).get(tenant_b, run_a) is None
@@ -458,12 +458,12 @@ def test_live_postgres_rls_fails_closed_and_scopes_tenant_rows(
 
 
 @pytest.mark.skipif(
-    not os.environ.get("DOOMBERG_PLATFORM_PG_URL"),
-    reason="set DOOMBERG_PLATFORM_PG_URL to run the live Postgres platform smoke test",
+    not os.environ.get("ITHACA_PLATFORM_PG_URL"),
+    reason="set ITHACA_PLATFORM_PG_URL to run the live Postgres platform smoke test",
 )
 def test_live_postgres_platform_smoke() -> None:
-    db = open_db(os.environ["DOOMBERG_PLATFORM_PG_URL"])
-    second_db = open_db(os.environ["DOOMBERG_PLATFORM_PG_URL"])
+    db = open_db(os.environ["ITHACA_PLATFORM_PG_URL"])
+    second_db = open_db(os.environ["ITHACA_PLATFORM_PG_URL"])
     try:
         tenant_id = AuthStore(db).create_tenant("pg smoke")
         other_tenant_id = AuthStore(db).create_tenant("pg smoke unrelated tenant")

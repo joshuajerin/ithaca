@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://doomberg.dev/contracts/trigger_policy.schema.json",
+  "$id": "https://ithaca.dev/contracts/trigger_policy.schema.json",
   "title": "TriggerPolicy",
   "type": "object",
   "additionalProperties": false,
@@ -96,7 +96,7 @@
           "items": {
             "type": "string",
             "enum": [
-              "doomberg_ui",
+              "ithaca_ui",
               "claude_channel",
               "claude_ws",
               "generic_mcp_resource",
@@ -109,7 +109,7 @@
               "mobile_push"
             ]
           },
-          "default": ["doomberg_ui"]
+          "default": ["ithaca_ui"]
         },
         "priority": {
           "type": "string",

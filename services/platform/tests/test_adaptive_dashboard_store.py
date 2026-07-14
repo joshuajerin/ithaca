@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from doomberg_platform import AdaptiveDashboardSpecError, validate_adaptive_dashboard_spec
+from ithaca_platform import AdaptiveDashboardSpecError, validate_adaptive_dashboard_spec
 from platform_helpers import new_uuid
 
 

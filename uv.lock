@@ -15,14 +15,14 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "doomberg-contracts",
-    "doomberg-control-plane",
-    "doomberg-core",
-    "doomberg-ibkr-engine",
-    "doomberg-mcp-gateway",
-    "doomberg-platform",
-    "doomberg-rest-gateway",
-    "doomberg-runtime",
+    "ithaca-contracts",
+    "ithaca-control-plane",
+    "ithaca-core",
+    "ithaca-ibkr-engine",
+    "ithaca-mcp-gateway",
+    "ithaca-platform",
+    "ithaca-rest-gateway",
+    "ithaca-runtime",
 ]
 
 [[package]]
@@ -579,7 +579,7 @@ wheels = [
 ]
 
 [[package]]
-name = "doomberg-contracts"
+name = "ithaca-contracts"
 version = "0.0.0"
 source = { editable = "packages/contracts/py" }
 dependencies = [
@@ -601,13 +601,13 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [[package]]
-name = "doomberg-control-plane"
+name = "ithaca-control-plane"
 version = "0.0.0"
 source = { editable = "services/control-plane" }
 dependencies = [
-    { name = "doomberg-contracts" },
-    { name = "doomberg-core" },
-    { name = "doomberg-platform" },
+    { name = "ithaca-contracts" },
+    { name = "ithaca-core" },
+    { name = "ithaca-platform" },
     { name = "fastapi" },
     { name = "uvicorn" },
 ]
@@ -620,9 +620,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "doomberg-contracts", editable = "packages/contracts/py" },
-    { name = "doomberg-core", editable = "doomberg-core" },
-    { name = "doomberg-platform", editable = "services/platform" },
+    { name = "ithaca-contracts", editable = "packages/contracts/py" },
+    { name = "ithaca-core", editable = "ithaca-core" },
+    { name = "ithaca-platform", editable = "services/platform" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
@@ -631,11 +631,11 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [[package]]
-name = "doomberg-core"
+name = "ithaca-core"
 version = "0.0.0"
-source = { editable = "doomberg-core" }
+source = { editable = "ithaca-core" }
 dependencies = [
-    { name = "doomberg-contracts" },
+    { name = "ithaca-contracts" },
     { name = "httpx" },
     { name = "numpy" },
     { name = "pandas" },
@@ -655,7 +655,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "databento", marker = "extra == 'databento'", specifier = ">=0.6" },
-    { name = "doomberg-contracts", editable = "packages/contracts/py" },
+    { name = "ithaca-contracts", editable = "packages/contracts/py" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pandas", specifier = ">=2.0" },
@@ -667,11 +667,11 @@ requires-dist = [
 provides-extras = ["dev", "databento"]
 
 [[package]]
-name = "doomberg-ibkr-engine"
+name = "ithaca-ibkr-engine"
 version = "0.0.0"
 source = { editable = "services/ibkr-engine" }
 dependencies = [
-    { name = "doomberg-core" },
+    { name = "ithaca-core" },
     { name = "fastapi" },
     { name = "uvicorn" },
 ]
@@ -684,7 +684,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "doomberg-core", editable = "doomberg-core" },
+    { name = "ithaca-core", editable = "ithaca-core" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
@@ -693,14 +693,14 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [[package]]
-name = "doomberg-mcp-gateway"
+name = "ithaca-mcp-gateway"
 version = "0.0.0"
 source = { editable = "services/mcp-gateway" }
 dependencies = [
-    { name = "doomberg-contracts" },
-    { name = "doomberg-control-plane" },
-    { name = "doomberg-core" },
-    { name = "doomberg-platform" },
+    { name = "ithaca-contracts" },
+    { name = "ithaca-control-plane" },
+    { name = "ithaca-core" },
+    { name = "ithaca-platform" },
     { name = "mcp" },
     { name = "pydantic" },
 ]
@@ -713,10 +713,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "doomberg-contracts", editable = "packages/contracts/py" },
-    { name = "doomberg-control-plane", editable = "services/control-plane" },
-    { name = "doomberg-core", editable = "doomberg-core" },
-    { name = "doomberg-platform", editable = "services/platform" },
+    { name = "ithaca-contracts", editable = "packages/contracts/py" },
+    { name = "ithaca-control-plane", editable = "services/control-plane" },
+    { name = "ithaca-core", editable = "ithaca-core" },
+    { name = "ithaca-platform", editable = "services/platform" },
     { name = "mcp", specifier = ">=1.2.0" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
@@ -725,12 +725,12 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [[package]]
-name = "doomberg-platform"
+name = "ithaca-platform"
 version = "0.0.0"
 source = { editable = "services/platform" }
 dependencies = [
-    { name = "doomberg-contracts" },
-    { name = "doomberg-core" },
+    { name = "ithaca-contracts" },
+    { name = "ithaca-core" },
     { name = "psycopg", extra = ["binary", "pool"] },
 ]
 
@@ -741,23 +741,23 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "doomberg-contracts", editable = "packages/contracts/py" },
-    { name = "doomberg-core", editable = "doomberg-core" },
+    { name = "ithaca-contracts", editable = "packages/contracts/py" },
+    { name = "ithaca-core", editable = "ithaca-core" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
 ]
 provides-extras = ["dev"]
 
 [[package]]
-name = "doomberg-rest-gateway"
+name = "ithaca-rest-gateway"
 version = "0.0.0"
 source = { editable = "services/rest-gateway" }
 dependencies = [
-    { name = "doomberg-contracts" },
-    { name = "doomberg-control-plane" },
-    { name = "doomberg-core" },
-    { name = "doomberg-platform" },
-    { name = "doomberg-runtime" },
+    { name = "ithaca-contracts" },
+    { name = "ithaca-control-plane" },
+    { name = "ithaca-core" },
+    { name = "ithaca-platform" },
+    { name = "ithaca-runtime" },
     { name = "fastapi" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "uvicorn" },
@@ -765,19 +765,19 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
-    { name = "doomberg-mcp-gateway" },
+    { name = "ithaca-mcp-gateway" },
     { name = "httpx" },
     { name = "pytest" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "doomberg-contracts", editable = "packages/contracts/py" },
-    { name = "doomberg-control-plane", editable = "services/control-plane" },
-    { name = "doomberg-core", editable = "doomberg-core" },
-    { name = "doomberg-mcp-gateway", marker = "extra == 'dev'", editable = "services/mcp-gateway" },
-    { name = "doomberg-platform", editable = "services/platform" },
-    { name = "doomberg-runtime", editable = "services/runtime" },
+    { name = "ithaca-contracts", editable = "packages/contracts/py" },
+    { name = "ithaca-control-plane", editable = "services/control-plane" },
+    { name = "ithaca-core", editable = "ithaca-core" },
+    { name = "ithaca-mcp-gateway", marker = "extra == 'dev'", editable = "services/mcp-gateway" },
+    { name = "ithaca-platform", editable = "services/platform" },
+    { name = "ithaca-runtime", editable = "services/runtime" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10" },
@@ -787,14 +787,14 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [[package]]
-name = "doomberg-runtime"
+name = "ithaca-runtime"
 version = "0.0.0"
 source = { editable = "services/runtime" }
 dependencies = [
     { name = "boto3" },
-    { name = "doomberg-contracts" },
-    { name = "doomberg-core", extra = ["databento"] },
-    { name = "doomberg-platform" },
+    { name = "ithaca-contracts" },
+    { name = "ithaca-core", extra = ["databento"] },
+    { name = "ithaca-platform" },
 ]
 
 [package.optional-dependencies]
@@ -805,9 +805,9 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", specifier = ">=1.35" },
-    { name = "doomberg-contracts", editable = "packages/contracts/py" },
-    { name = "doomberg-core", extras = ["databento"], editable = "doomberg-core" },
-    { name = "doomberg-platform", editable = "services/platform" },
+    { name = "ithaca-contracts", editable = "packages/contracts/py" },
+    { name = "ithaca-core", extras = ["databento"], editable = "ithaca-core" },
+    { name = "ithaca-platform", editable = "services/platform" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
 ]
 provides-extras = ["dev"]

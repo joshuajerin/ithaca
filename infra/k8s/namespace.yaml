@@ -6,14 +6,14 @@ kind: Namespace
 metadata:
   name: ${K8S_GATEWAY_NAMESPACE}
   labels:
-    doomberg/role: data-gateway
-    doomberg/environment: ${DOOMBERG_ENV}
+    ithaca/role: data-gateway
+    ithaca/environment: ${ITHACA_ENV}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: ${K8S_WORKER_NAMESPACE}
   labels:
-    doomberg/role: workers
-    doomberg/environment: ${DOOMBERG_ENV}
+    ithaca/role: workers
+    ithaca/environment: ${ITHACA_ENV}
     pod-security.kubernetes.io/enforce: restricted

@@ -4,9 +4,9 @@
 This is the loop nothing drove before: the control plane enqueues runs and gates promotions,
 and THIS process pulls the backtest queue and ticks live paper deployments on a cadence. In
 production it is a DO worker pod (or two); locally it is one process over the shared
-``DOOMBERG_DB`` so a created run actually executes without a manual call.
+``ITHACA_DB`` so a created run actually executes without a manual call.
 
-    DOOMBERG_DB=./doomberg.db uv run python scripts/run_workers.py
+    ITHACA_DB=./ithaca.db uv run python scripts/run_workers.py
 
 Both loops run in daemon threads; Ctrl-C stops them cleanly. The paper scheduler uses the
 control plane's single-writer ``apply_paper_delta`` so the book is only ever written there.
@@ -18,11 +18,11 @@ import signal
 import threading
 from contextlib import suppress
 
-from doomberg_control.execution_gateway import ExecutionGateway
-from doomberg_control.money import make_applier
-from doomberg_core import Core
-from doomberg_platform import Platform
-from doomberg_runtime import (
+from ithaca_control.execution_gateway import ExecutionGateway
+from ithaca_control.money import make_applier
+from ithaca_core import Core
+from ithaca_platform import Platform
+from ithaca_runtime import (
     AdaptiveDashboardWorker,
     AlwaysOpen,
     BacktestWorker,
@@ -31,30 +31,30 @@ from doomberg_runtime import (
     RegularHoursCalendar,
     TriggerJobWorker,
 )
-from doomberg_runtime.leader import acquire_loop_lease, process_owner, release_loop_lease
-from doomberg_runtime.health import WorkerReporter
+from ithaca_runtime.leader import acquire_loop_lease, process_owner, release_loop_lease
+from ithaca_runtime.health import WorkerReporter
 
 
 def main() -> int:
-    db = os.environ.get("DOOMBERG_DB", ":memory:")
+    db = os.environ.get("ITHACA_DB", ":memory:")
     if db == ":memory:":
-        print("WARNING: DOOMBERG_DB=:memory: — workers won't share state with the gateways.\n"
-              "         Set DOOMBERG_DB to a file path (e.g. ./doomberg.db).")
+        print("WARNING: ITHACA_DB=:memory: — workers won't share state with the gateways.\n"
+              "         Set ITHACA_DB to a file path (e.g. ./ithaca.db).")
     platform = Platform(db)
     core = Core()  # live data gateway (free sources); offline cores are injected in tests/demos
 
-    backtest_interval = float(os.environ.get("DOOMBERG_BACKTEST_INTERVAL_S", "2"))
-    trigger_job_interval = float(os.environ.get("DOOMBERG_TRIGGER_JOB_INTERVAL_S", "2"))
-    notification_interval = float(os.environ.get("DOOMBERG_NOTIFICATION_INTERVAL_S", "2"))
-    reconciliation_interval = float(os.environ.get("DOOMBERG_RECONCILIATION_INTERVAL_S", "5"))
-    paper_interval = float(os.environ.get("DOOMBERG_PAPER_INTERVAL_S", "60"))
-    adaptive_dashboard_interval = float(os.environ.get("DOOMBERG_ADAPTIVE_DASHBOARD_INTERVAL_S", "60"))
+    backtest_interval = float(os.environ.get("ITHACA_BACKTEST_INTERVAL_S", "2"))
+    trigger_job_interval = float(os.environ.get("ITHACA_TRIGGER_JOB_INTERVAL_S", "2"))
+    notification_interval = float(os.environ.get("ITHACA_NOTIFICATION_INTERVAL_S", "2"))
+    reconciliation_interval = float(os.environ.get("ITHACA_RECONCILIATION_INTERVAL_S", "5"))
+    paper_interval = float(os.environ.get("ITHACA_PAPER_INTERVAL_S", "60"))
+    adaptive_dashboard_interval = float(os.environ.get("ITHACA_ADAPTIVE_DASHBOARD_INTERVAL_S", "60"))
     paper_lease_ttl = float(os.environ.get(
-        "DOOMBERG_PAPER_LEASE_TTL_S",
+        "ITHACA_PAPER_LEASE_TTL_S",
         str(max(180.0, paper_interval * 3.0)),
     ))
     # Honor market hours only if asked; daily-close paper + the staleness gate default to always-on.
-    calendar = RegularHoursCalendar() if os.environ.get("DOOMBERG_MARKET_HOURS") == "1" else AlwaysOpen()
+    calendar = RegularHoursCalendar() if os.environ.get("ITHACA_MARKET_HOURS") == "1" else AlwaysOpen()
 
     worker = BacktestWorker(platform, core)
     trigger_worker = TriggerJobWorker(platform, core)
@@ -188,7 +188,7 @@ def main() -> int:
             daemon=True,
         ),
     ]
-    if os.environ.get("DOOMBERG_ENABLE_BACKTEST_LOOP", "1").strip().lower() in {"1", "true", "yes"}:
+    if os.environ.get("ITHACA_ENABLE_BACKTEST_LOOP", "1").strip().lower() in {"1", "true", "yes"}:
         threads.insert(
             0,
             threading.Thread(
@@ -203,7 +203,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
 
     backtest_mode = "embedded" if any(t.name == "backtest-worker" for t in threads) else "dedicated"
-    print(f"doomberg conductor up — db={db}, backtest={backtest_mode} every {backtest_interval}s, "
+    print(f"ithaca conductor up — db={db}, backtest={backtest_mode} every {backtest_interval}s, "
           f"trigger jobs every {trigger_job_interval}s, paper every {paper_interval}s, "
           f"notifications every {notification_interval}s, "
           f"execution reconciliation every {reconciliation_interval}s, "

@@ -2,17 +2,17 @@
 #
 # The active worker loops live in worker-deployment.yaml. This deployment is the
 # stateless ingress/control surface over the managed Postgres platform store
-# (DOOMBERG_DB from doomberg-db.platform_url), so it does not mount a shared
+# (ITHACA_DB from ithaca-db.platform_url), so it does not mount a shared
 # SQLite PVC and can be scaled separately from compute workers.
 # ${WORKER_IMAGE} is substituted by deploy_services.sh.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: doomberg-app
+  name: ithaca-app
   namespace: ${K8S_GATEWAY_NAMESPACE}
   labels:
-    doomberg/component: app
-    doomberg/environment: ${DOOMBERG_ENV}
+    ithaca/component: app
+    ithaca/environment: ${ITHACA_ENV}
 spec:
   replicas: ${APP_REPLICAS}
   strategy:
@@ -22,14 +22,14 @@ spec:
       maxUnavailable: ${APP_MAX_UNAVAILABLE}
   selector:
     matchLabels:
-      doomberg/component: app
+      ithaca/component: app
   template:
     metadata:
       labels:
-        doomberg/component: app
-        doomberg/environment: ${DOOMBERG_ENV}
+        ithaca/component: app
+        ithaca/environment: ${ITHACA_ENV}
         # Mark this pod as the same-env data-gateway target for worker egress.
-        doomberg/role: data-gateway
+        ithaca/role: data-gateway
     spec:
       automountServiceAccountToken: false
       nodeSelector:
@@ -46,8 +46,8 @@ spec:
               podAffinityTerm:
                 labelSelector:
                   matchLabels:
-                    doomberg/component: app
-                    doomberg/environment: ${DOOMBERG_ENV}
+                    ithaca/component: app
+                    ithaca/environment: ${ITHACA_ENV}
                 topologyKey: kubernetes.io/hostname
       securityContext:
         runAsNonRoot: true
@@ -65,17 +65,17 @@ spec:
           imagePullPolicy: IfNotPresent
           args: ["platform-migrate"]
           env:
-            - name: DOOMBERG_ENV
-              value: "${DOOMBERG_ENV}"
-            - name: DOOMBERG_DB
+            - name: ITHACA_ENV
+              value: "${ITHACA_ENV}"
+            - name: ITHACA_DB
               valueFrom:
                 secretKeyRef:
-                  name: doomberg-db
+                  name: ithaca-db
                   key: platform_url
-            - name: DOOMBERG_DB_MIGRATION_MODE
+            - name: ITHACA_DB_MIGRATION_MODE
               value: "apply"
-            - name: DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS
-              value: "${DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS}"
+            - name: ITHACA_DB_ALLOW_FORWARD_MIGRATIONS
+              value: "${ITHACA_DB_ALLOW_FORWARD_MIGRATIONS}"
           resources:
             requests: { cpu: "100m", memory: 128Mi }
             limits: { cpu: "500m", memory: 256Mi }
@@ -99,109 +99,112 @@ spec:
             - name: rest
               containerPort: 8000
           env:
-            - name: DOOMBERG_ENV
-              value: "${DOOMBERG_ENV}"
-            - name: DOOMBERG_DB
+            - name: ITHACA_ENV
+              value: "${ITHACA_ENV}"
+            - name: ITHACA_DB
               valueFrom:
                 secretKeyRef:
-                  name: doomberg-db
+                  name: ithaca-db
                   key: platform_url
-            - name: DOOMBERG_DB_MIGRATION_MODE
+            - name: ITHACA_DB_MIGRATION_MODE
               value: "validate"
-            - name: DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS
-              value: "${DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS}"
-            - name: DOOMBERG_REST_PORT
+            - name: ITHACA_DB_ALLOW_FORWARD_MIGRATIONS
+              value: "${ITHACA_DB_ALLOW_FORWARD_MIGRATIONS}"
+            - name: ITHACA_REST_PORT
               value: "8000"
-            - name: DOOMBERG_SESSION_SECRET
+            - name: ITHACA_SESSION_SECRET
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: session_secret, optional: true }
+                secretKeyRef: { name: ithaca-db, key: session_secret, optional: true }
+            - name: ITHACA_LEGACY_KEY_PREFIX
+              valueFrom:
+                secretKeyRef: { name: ithaca-db, key: legacy_key_prefix, optional: true }
             - name: CLERK_SECRET_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: clerk_secret_key }
+                secretKeyRef: { name: ithaca-db, key: clerk_secret_key }
             - name: CLERK_PEM_PUBLIC_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: clerk_pem_public_key, optional: true }
+                secretKeyRef: { name: ithaca-db, key: clerk_pem_public_key, optional: true }
             - name: CLERK_JWKS_URL
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: clerk_jwks_url, optional: true }
+                secretKeyRef: { name: ithaca-db, key: clerk_jwks_url, optional: true }
             - name: CLERK_ALLOWED_ORIGINS
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: clerk_allowed_origins, optional: true }
+                secretKeyRef: { name: ithaca-db, key: clerk_allowed_origins, optional: true }
             - name: CLERK_ISSUER
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: clerk_issuer, optional: true }
+                secretKeyRef: { name: ithaca-db, key: clerk_issuer, optional: true }
             - name: FMP_API_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: fmp_api_key, optional: true }
+                secretKeyRef: { name: ithaca-db, key: fmp_api_key, optional: true }
             - name: DATABENTO_API_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: databento_api_key, optional: true }
+                secretKeyRef: { name: ithaca-db, key: databento_api_key, optional: true }
             - name: DATABENTO_DATASET
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: databento_dataset, optional: true }
-            - name: DOOMBERG_DATA_SOURCE
+                secretKeyRef: { name: ithaca-db, key: databento_dataset, optional: true }
+            - name: ITHACA_DATA_SOURCE
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: data_source, optional: true }
-            - name: DOOMBERG_ARTIFACT_BUCKET
+                secretKeyRef: { name: ithaca-db, key: data_source, optional: true }
+            - name: ITHACA_ARTIFACT_BUCKET
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: artifact_bucket, optional: true }
-            - name: DOOMBERG_ARTIFACT_ENDPOINT_URL
+                secretKeyRef: { name: ithaca-db, key: artifact_bucket, optional: true }
+            - name: ITHACA_ARTIFACT_ENDPOINT_URL
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: artifact_endpoint_url, optional: true }
-            - name: DOOMBERG_ARTIFACT_REGION
+                secretKeyRef: { name: ithaca-db, key: artifact_endpoint_url, optional: true }
+            - name: ITHACA_ARTIFACT_REGION
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: artifact_region, optional: true }
-            - name: DOOMBERG_ARTIFACT_ACCESS_KEY_ID
+                secretKeyRef: { name: ithaca-db, key: artifact_region, optional: true }
+            - name: ITHACA_ARTIFACT_ACCESS_KEY_ID
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: artifact_access_key_id, optional: true }
-            - name: DOOMBERG_ARTIFACT_SECRET_ACCESS_KEY
+                secretKeyRef: { name: ithaca-db, key: artifact_access_key_id, optional: true }
+            - name: ITHACA_ARTIFACT_SECRET_ACCESS_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: artifact_secret_access_key, optional: true }
-            - name: DOOMBERG_ENABLE_LIVE_EXECUTION
+                secretKeyRef: { name: ithaca-db, key: artifact_secret_access_key, optional: true }
+            - name: ITHACA_ENABLE_LIVE_EXECUTION
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: enable_live_execution, optional: true }
-            - name: DOOMBERG_EXECUTION_KILL_SWITCH
+                secretKeyRef: { name: ithaca-db, key: enable_live_execution, optional: true }
+            - name: ITHACA_EXECUTION_KILL_SWITCH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: execution_kill_switch, optional: true }
-            - name: DOOMBERG_EXECUTION_MAX_NOTIONAL_USD
+                secretKeyRef: { name: ithaca-db, key: execution_kill_switch, optional: true }
+            - name: ITHACA_EXECUTION_MAX_NOTIONAL_USD
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: execution_max_notional_usd, optional: true }
-            - name: DOOMBERG_EXECUTION_MAX_QUANTITY
+                secretKeyRef: { name: ithaca-db, key: execution_max_notional_usd, optional: true }
+            - name: ITHACA_EXECUTION_MAX_QUANTITY
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: execution_max_quantity, optional: true }
-            - name: DOOMBERG_EXECUTION_MAX_FRESHNESS_MS
+                secretKeyRef: { name: ithaca-db, key: execution_max_quantity, optional: true }
+            - name: ITHACA_EXECUTION_MAX_FRESHNESS_MS
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: execution_max_freshness_ms, optional: true }
-            - name: DOOMBERG_IBKR_ENGINE_URL
+                secretKeyRef: { name: ithaca-db, key: execution_max_freshness_ms, optional: true }
+            - name: ITHACA_IBKR_ENGINE_URL
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_engine_url, optional: true }
-            - name: DOOMBERG_IBKR_ENGINE_TOKEN
+                secretKeyRef: { name: ithaca-db, key: ibkr_engine_url, optional: true }
+            - name: ITHACA_IBKR_ENGINE_TOKEN
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_engine_token, optional: true }
-            - name: DOOMBERG_IBKR_QUOTE_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_engine_token, optional: true }
+            - name: ITHACA_IBKR_QUOTE_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_quote_path, optional: true }
-            - name: DOOMBERG_IBKR_HISTORY_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_quote_path, optional: true }
+            - name: ITHACA_IBKR_HISTORY_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_history_path, optional: true }
-            - name: DOOMBERG_IBKR_NEWS_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_history_path, optional: true }
+            - name: ITHACA_IBKR_NEWS_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_news_path, optional: true }
-            - name: DOOMBERG_IBKR_SCANNER_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_news_path, optional: true }
+            - name: ITHACA_IBKR_SCANNER_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_scanner_path, optional: true }
-            - name: DOOMBERG_IBKR_ORDER_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_scanner_path, optional: true }
+            - name: ITHACA_IBKR_ORDER_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_order_path, optional: true }
-            - name: DOOMBERG_IBKR_ACCOUNTS_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_order_path, optional: true }
+            - name: ITHACA_IBKR_ACCOUNTS_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_accounts_path, optional: true }
-            - name: DOOMBERG_IBKR_POSITIONS_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_accounts_path, optional: true }
+            - name: ITHACA_IBKR_POSITIONS_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_positions_path, optional: true }
-            - name: DOOMBERG_IBKR_ORDERS_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_positions_path, optional: true }
+            - name: ITHACA_IBKR_ORDERS_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_orders_path, optional: true }
+                secretKeyRef: { name: ithaca-db, key: ibkr_orders_path, optional: true }
           readinessProbe:
             httpGet:
               path: /healthz
@@ -233,70 +236,70 @@ spec:
             - name: control
               containerPort: 8001
           env:
-            - name: DOOMBERG_ENV
-              value: "${DOOMBERG_ENV}"
-            - name: DOOMBERG_DB
+            - name: ITHACA_ENV
+              value: "${ITHACA_ENV}"
+            - name: ITHACA_DB
               valueFrom:
                 secretKeyRef:
-                  name: doomberg-db
+                  name: ithaca-db
                   key: platform_url
-            - name: DOOMBERG_DB_MIGRATION_MODE
+            - name: ITHACA_DB_MIGRATION_MODE
               value: "validate"
-            - name: DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS
-              value: "${DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS}"
-            - name: DOOMBERG_CONTROL_PORT
+            - name: ITHACA_DB_ALLOW_FORWARD_MIGRATIONS
+              value: "${ITHACA_DB_ALLOW_FORWARD_MIGRATIONS}"
+            - name: ITHACA_CONTROL_PORT
               value: "8001"
-            - name: DOOMBERG_ADMIN_TOKEN
+            - name: ITHACA_ADMIN_TOKEN
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: admin_token, optional: true }
+                secretKeyRef: { name: ithaca-db, key: admin_token, optional: true }
             - name: CLERK_SECRET_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: clerk_secret_key }
-            - name: DOOMBERG_ENABLE_LIVE_EXECUTION
+                secretKeyRef: { name: ithaca-db, key: clerk_secret_key }
+            - name: ITHACA_ENABLE_LIVE_EXECUTION
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: enable_live_execution, optional: true }
-            - name: DOOMBERG_EXECUTION_KILL_SWITCH
+                secretKeyRef: { name: ithaca-db, key: enable_live_execution, optional: true }
+            - name: ITHACA_EXECUTION_KILL_SWITCH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: execution_kill_switch, optional: true }
-            - name: DOOMBERG_EXECUTION_MAX_NOTIONAL_USD
+                secretKeyRef: { name: ithaca-db, key: execution_kill_switch, optional: true }
+            - name: ITHACA_EXECUTION_MAX_NOTIONAL_USD
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: execution_max_notional_usd, optional: true }
-            - name: DOOMBERG_EXECUTION_MAX_QUANTITY
+                secretKeyRef: { name: ithaca-db, key: execution_max_notional_usd, optional: true }
+            - name: ITHACA_EXECUTION_MAX_QUANTITY
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: execution_max_quantity, optional: true }
-            - name: DOOMBERG_EXECUTION_MAX_FRESHNESS_MS
+                secretKeyRef: { name: ithaca-db, key: execution_max_quantity, optional: true }
+            - name: ITHACA_EXECUTION_MAX_FRESHNESS_MS
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: execution_max_freshness_ms, optional: true }
-            - name: DOOMBERG_IBKR_ENGINE_URL
+                secretKeyRef: { name: ithaca-db, key: execution_max_freshness_ms, optional: true }
+            - name: ITHACA_IBKR_ENGINE_URL
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_engine_url, optional: true }
-            - name: DOOMBERG_IBKR_ENGINE_TOKEN
+                secretKeyRef: { name: ithaca-db, key: ibkr_engine_url, optional: true }
+            - name: ITHACA_IBKR_ENGINE_TOKEN
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_engine_token, optional: true }
-            - name: DOOMBERG_IBKR_QUOTE_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_engine_token, optional: true }
+            - name: ITHACA_IBKR_QUOTE_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_quote_path, optional: true }
-            - name: DOOMBERG_IBKR_HISTORY_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_quote_path, optional: true }
+            - name: ITHACA_IBKR_HISTORY_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_history_path, optional: true }
-            - name: DOOMBERG_IBKR_NEWS_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_history_path, optional: true }
+            - name: ITHACA_IBKR_NEWS_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_news_path, optional: true }
-            - name: DOOMBERG_IBKR_SCANNER_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_news_path, optional: true }
+            - name: ITHACA_IBKR_SCANNER_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_scanner_path, optional: true }
-            - name: DOOMBERG_IBKR_ORDER_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_scanner_path, optional: true }
+            - name: ITHACA_IBKR_ORDER_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_order_path, optional: true }
-            - name: DOOMBERG_IBKR_ACCOUNTS_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_order_path, optional: true }
+            - name: ITHACA_IBKR_ACCOUNTS_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_accounts_path, optional: true }
-            - name: DOOMBERG_IBKR_POSITIONS_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_accounts_path, optional: true }
+            - name: ITHACA_IBKR_POSITIONS_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_positions_path, optional: true }
-            - name: DOOMBERG_IBKR_ORDERS_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_positions_path, optional: true }
+            - name: ITHACA_IBKR_ORDERS_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_orders_path, optional: true }
+                secretKeyRef: { name: ithaca-db, key: ibkr_orders_path, optional: true }
           readinessProbe:
             httpGet: { path: /healthz, port: 8001 }
             initialDelaySeconds: 5
@@ -327,83 +330,86 @@ spec:
             - name: mcp
               containerPort: 8080
           env:
-            - name: DOOMBERG_ENV
-              value: "${DOOMBERG_ENV}"
-            - name: DOOMBERG_MCP_TRANSPORT
+            - name: ITHACA_ENV
+              value: "${ITHACA_ENV}"
+            - name: ITHACA_MCP_TRANSPORT
               value: http
-            - name: DOOMBERG_MCP_PORT
+            - name: ITHACA_MCP_PORT
               value: "8080"
-            - name: DOOMBERG_MCP_ALLOWED_HOSTS
+            - name: ITHACA_MCP_ALLOWED_HOSTS
               value: "${MCP_ALLOWED_HOSTS}"
-            - name: DOOMBERG_DB
+            - name: ITHACA_LEGACY_KEY_PREFIX
+              valueFrom:
+                secretKeyRef: { name: ithaca-db, key: legacy_key_prefix, optional: true }
+            - name: ITHACA_DB
               valueFrom:
                 secretKeyRef:
-                  name: doomberg-db
+                  name: ithaca-db
                   key: platform_url
-            - name: DOOMBERG_DB_MIGRATION_MODE
+            - name: ITHACA_DB_MIGRATION_MODE
               value: "validate"
-            - name: DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS
-              value: "${DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS}"
+            - name: ITHACA_DB_ALLOW_FORWARD_MIGRATIONS
+              value: "${ITHACA_DB_ALLOW_FORWARD_MIGRATIONS}"
             - name: CLERK_SECRET_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: clerk_secret_key }
+                secretKeyRef: { name: ithaca-db, key: clerk_secret_key }
             - name: FMP_API_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: fmp_api_key, optional: true }
+                secretKeyRef: { name: ithaca-db, key: fmp_api_key, optional: true }
             - name: DATABENTO_API_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: databento_api_key, optional: true }
+                secretKeyRef: { name: ithaca-db, key: databento_api_key, optional: true }
             - name: DATABENTO_DATASET
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: databento_dataset, optional: true }
-            - name: DOOMBERG_DATA_SOURCE
+                secretKeyRef: { name: ithaca-db, key: databento_dataset, optional: true }
+            - name: ITHACA_DATA_SOURCE
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: data_source, optional: true }
-            - name: DOOMBERG_ENABLE_LIVE_EXECUTION
+                secretKeyRef: { name: ithaca-db, key: data_source, optional: true }
+            - name: ITHACA_ENABLE_LIVE_EXECUTION
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: enable_live_execution, optional: true }
-            - name: DOOMBERG_EXECUTION_KILL_SWITCH
+                secretKeyRef: { name: ithaca-db, key: enable_live_execution, optional: true }
+            - name: ITHACA_EXECUTION_KILL_SWITCH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: execution_kill_switch, optional: true }
-            - name: DOOMBERG_EXECUTION_MAX_NOTIONAL_USD
+                secretKeyRef: { name: ithaca-db, key: execution_kill_switch, optional: true }
+            - name: ITHACA_EXECUTION_MAX_NOTIONAL_USD
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: execution_max_notional_usd, optional: true }
-            - name: DOOMBERG_EXECUTION_MAX_QUANTITY
+                secretKeyRef: { name: ithaca-db, key: execution_max_notional_usd, optional: true }
+            - name: ITHACA_EXECUTION_MAX_QUANTITY
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: execution_max_quantity, optional: true }
-            - name: DOOMBERG_EXECUTION_MAX_FRESHNESS_MS
+                secretKeyRef: { name: ithaca-db, key: execution_max_quantity, optional: true }
+            - name: ITHACA_EXECUTION_MAX_FRESHNESS_MS
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: execution_max_freshness_ms, optional: true }
-            - name: DOOMBERG_IBKR_ENGINE_URL
+                secretKeyRef: { name: ithaca-db, key: execution_max_freshness_ms, optional: true }
+            - name: ITHACA_IBKR_ENGINE_URL
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_engine_url, optional: true }
-            - name: DOOMBERG_IBKR_ENGINE_TOKEN
+                secretKeyRef: { name: ithaca-db, key: ibkr_engine_url, optional: true }
+            - name: ITHACA_IBKR_ENGINE_TOKEN
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_engine_token, optional: true }
-            - name: DOOMBERG_IBKR_QUOTE_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_engine_token, optional: true }
+            - name: ITHACA_IBKR_QUOTE_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_quote_path, optional: true }
-            - name: DOOMBERG_IBKR_HISTORY_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_quote_path, optional: true }
+            - name: ITHACA_IBKR_HISTORY_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_history_path, optional: true }
-            - name: DOOMBERG_IBKR_NEWS_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_history_path, optional: true }
+            - name: ITHACA_IBKR_NEWS_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_news_path, optional: true }
-            - name: DOOMBERG_IBKR_SCANNER_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_news_path, optional: true }
+            - name: ITHACA_IBKR_SCANNER_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_scanner_path, optional: true }
-            - name: DOOMBERG_IBKR_ORDER_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_scanner_path, optional: true }
+            - name: ITHACA_IBKR_ORDER_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_order_path, optional: true }
-            - name: DOOMBERG_IBKR_ACCOUNTS_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_order_path, optional: true }
+            - name: ITHACA_IBKR_ACCOUNTS_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_accounts_path, optional: true }
-            - name: DOOMBERG_IBKR_POSITIONS_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_accounts_path, optional: true }
+            - name: ITHACA_IBKR_POSITIONS_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_positions_path, optional: true }
-            - name: DOOMBERG_IBKR_ORDERS_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_positions_path, optional: true }
+            - name: ITHACA_IBKR_ORDERS_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_orders_path, optional: true }
+                secretKeyRef: { name: ithaca-db, key: ibkr_orders_path, optional: true }
           readinessProbe:
             tcpSocket: { port: 8080 }
             initialDelaySeconds: 5

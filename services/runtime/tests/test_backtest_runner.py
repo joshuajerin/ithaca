@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from doomberg_runtime import result_hash, run_backtest_job
-from doomberg_runtime.deadline import Deadline
+from ithaca_runtime import result_hash, run_backtest_job
+from ithaca_runtime.deadline import Deadline
 
 from runtime_helpers import seed_queued_run
 
@@ -35,7 +35,7 @@ def test_backtest_writes_result_and_succeeds(platform, tenant_id, spec, core):
 
 
 def test_backtest_records_canonical_artifact_bundle(durable_platform, tenant_id, spec, core, tmp_path, monkeypatch):
-    monkeypatch.setenv("DOOMBERG_ARTIFACT_DIR", str(tmp_path))
+    monkeypatch.setenv("ITHACA_ARTIFACT_DIR", str(tmp_path))
     run_id = seed_queued_run(durable_platform, tenant_id, spec)
     job = durable_platform.jobs.create_for_run(
         tenant_id,

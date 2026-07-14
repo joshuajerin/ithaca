@@ -1,6 +1,6 @@
 # Risk Disclosures & Disclaimers
 
-These Risk Disclosures and Disclaimers apply to your use of the Doomberg platform and related services (the "Service") operated by **Ithaca, Inc., a Delaware corporation**. Read them carefully. They supplement the [Terms of Service](/terms).
+These Risk Disclosures and Disclaimers apply to your use of the Ithaca platform and related services (the "Service") operated by **Ithaca, Inc., a Delaware corporation**. Read them carefully. They supplement the [Terms of Service](/terms).
 
 ## 1. Not investment advice
 

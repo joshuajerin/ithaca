@@ -14,7 +14,7 @@ import pytest
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
-import doomberg_contracts as contracts
+import ithaca_contracts as contracts
 
 CONTRACTS_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_DIR = CONTRACTS_ROOT / "schema"

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from doomberg_runtime import artifact_storage
+from ithaca_runtime import artifact_storage
 
 
 class FakeS3:
@@ -13,8 +13,8 @@ class FakeS3:
 
 def test_put_artifact_uses_private_encrypted_object_storage(monkeypatch):
     fake = FakeS3()
-    monkeypatch.setenv("DOOMBERG_ARTIFACT_BUCKET", "private-bucket")
-    monkeypatch.setenv("DOOMBERG_ARTIFACT_ENDPOINT_URL", "https://nyc3.example.test")
+    monkeypatch.setenv("ITHACA_ARTIFACT_BUCKET", "private-bucket")
+    monkeypatch.setenv("ITHACA_ARTIFACT_ENDPOINT_URL", "https://nyc3.example.test")
     monkeypatch.setattr(artifact_storage, "_client", lambda: fake)
 
     uri = artifact_storage.put_artifact(

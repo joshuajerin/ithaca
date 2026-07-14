@@ -1,4 +1,4 @@
-# Core DigitalOcean topology for Doomberg v2 (MASTER-PLAN §5.7).
+# Core DigitalOcean topology for Ithaca v2 (MASTER-PLAN §5.7).
 # RELIABILITY-FIRST, HA, CPU-ONLY. Budget is generous; we optimize for uptime.
 #
 #   VPC ── DOKS cluster ── node pool: backtest (autoscale min 1 -> max 8, WARM)
@@ -21,7 +21,7 @@ locals {
   # auto-applies the `k8s:<cluster-id>` tag to every worker droplet, which the LB
   # targets (see loadbalancer.tf) — so dropping custom tags costs nothing here.
   common_tags = var.apply_resource_tags ? [
-    "doomberg",
+    "ithaca",
     var.environment,
     "managed-by:terraform",
   ] : []
@@ -31,7 +31,7 @@ locals {
 # VPC — private network holding the cluster, Postgres, and the Data Gateway.
 # Workers have NO public egress; their only allowed destination is the Gateway.
 # ---------------------------------------------------------------------------
-resource "digitalocean_vpc" "doomberg" {
+resource "digitalocean_vpc" "ithaca" {
   name     = "${local.name_prefix}-vpc"
   region   = var.region
   ip_range = var.vpc_ip_range
@@ -45,11 +45,11 @@ data "digitalocean_kubernetes_versions" "current" {
   version_prefix = "${var.kubernetes_version}."
 }
 
-resource "digitalocean_kubernetes_cluster" "doomberg" {
+resource "digitalocean_kubernetes_cluster" "ithaca" {
   name     = "${local.name_prefix}-doks"
   region   = var.region
   version  = data.digitalocean_kubernetes_versions.current.latest_version
-  vpc_uuid = digitalocean_vpc.doomberg.id
+  vpc_uuid = digitalocean_vpc.ithaca.id
 
   # Pull the private image from DOCR without per-Deployment imagePullSecrets.
   registry_integration = true
@@ -95,7 +95,7 @@ resource "digitalocean_kubernetes_cluster" "doomberg" {
   }
 
   # registry_integration above needs the registry to exist first.
-  depends_on = [digitalocean_container_registry.doomberg]
+  depends_on = [digitalocean_container_registry.ithaca]
 }
 
 # ---------------------------------------------------------------------------
@@ -105,7 +105,7 @@ resource "digitalocean_kubernetes_cluster" "doomberg" {
 # paper-tick Jobs. NOT scale-to-zero; a node failure must not take it down.
 # ---------------------------------------------------------------------------
 resource "digitalocean_kubernetes_node_pool" "paper" {
-  cluster_id = digitalocean_kubernetes_cluster.doomberg.id
+  cluster_id = digitalocean_kubernetes_cluster.ithaca.id
   name       = "paper"
   size       = var.paper_node_size
   node_count = var.paper_node_count
@@ -141,7 +141,7 @@ resource "digitalocean_kubernetes_node_pool" "paper" {
 resource "digitalocean_database_cluster" "postgres" {
   # Gated: default OFF. The prod Managed Postgres already exists (seeded with the
   # archive). Never create a duplicate. The workload reads the existing DB via the
-  # DOOMBERG_PROD_URL secret. Set manage_postgres=true only for a fresh cluster.
+  # ITHACA_PROD_URL secret. Set manage_postgres=true only for a fresh cluster.
   count = var.manage_postgres ? 1 : 0
 
   name       = "${local.name_prefix}-pg"
@@ -151,7 +151,7 @@ resource "digitalocean_database_cluster" "postgres" {
   region     = var.region
   node_count = var.postgres_node_count # >= 2 -> primary + standby (HA)
   # Bind the DB into the same private network as the workers.
-  private_network_uuid = digitalocean_vpc.doomberg.id
+  private_network_uuid = digitalocean_vpc.ithaca.id
 
   # Off-peak engine-maintenance window (UTC). Backups/PITR are automatic.
   maintenance_window {
@@ -198,7 +198,7 @@ resource "digitalocean_database_firewall" "postgres" {
 
   rule {
     type  = "k8s"
-    value = digitalocean_kubernetes_cluster.doomberg.id
+    value = digitalocean_kubernetes_cluster.ithaca.id
   }
 }
 

@@ -10,8 +10,8 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from doomberg_mcp import PlatformTraceSink, Toolset
-from doomberg_platform import Platform
+from ithaca_mcp import PlatformTraceSink, Toolset
+from ithaca_platform import Platform
 
 R1 = "11111111-1111-1111-1111-111111111111"
 R2 = "22222222-2222-2222-2222-222222222222"
@@ -50,7 +50,7 @@ class _QuoteServer:
                         "scope": "AAPL",
                         "items": [{
                             "headline": "Apple moves higher after hours",
-                            "source": "Doomberg",
+                            "source": "Ithaca",
                             "publishedAt": now,
                         }],
                         "asOf": now,
@@ -63,8 +63,8 @@ class _QuoteServer:
                                 "price": 212.45,
                                 "event_time": now,
                                 "received_time": now,
-                                "source": "doomberg-live-data",
-                                "entitlement_class": "doomberg_live",
+                                "source": "ithaca-live-data",
+                                "entitlement_class": "ithaca_live",
                             }
                         }
                     }
@@ -158,10 +158,10 @@ class _LiveDataFallbackServer:
 
 def test_market_get_ohlcv_returns_envelope_and_traces(toolset, monkeypatch):
     with _QuoteServer() as server:
-        monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
-        monkeypatch.setenv("DOOMBERG_IBKR_HISTORY_PATH", "/history?symbol={symbol}")
+        monkeypatch.setenv("ITHACA_IBKR_ENGINE_URL", server.url)
+        monkeypatch.setenv("ITHACA_IBKR_HISTORY_PATH", "/history?symbol={symbol}")
         out = toolset.market_get_ohlcv("AAA", range="1y", _ctx={"run_id": R1, "tenant_id": R1, "agent_id": AGENT})
-    assert out["provenance"]["source"] == "doomberg-live-data"
+    assert out["provenance"]["source"] == "ithaca-live-data"
     assert server.requests == [{"path": "/history?symbol=AAA&period=1y&bar=1d", "tenant": R1}]
     events = toolset.sink.events(R1)
     assert [e["type"] for e in events] == ["tool_call", "tool_result"]
@@ -200,14 +200,14 @@ def test_agent_cannot_self_stamp_tenant(toolset, sample_spec):
 
 
 async def test_server_registers_three_tools(toolset):
-    from doomberg_mcp import create_server
+    from ithaca_mcp import create_server
 
     mcp, _ = create_server(toolset)
     tools = await mcp.list_tools()
     names = {t.name for t in tools}
     assert {"market_get_ohlcv", "market_quote", "backtest_run", "propose_strategy"} <= names
     assert {
-        "doomberg_init",
+        "ithaca_init",
         "start_research_session",
         "session_context",
         "search_skills",
@@ -229,15 +229,15 @@ async def test_server_registers_three_tools(toolset):
     assert "ibkr_smoke" not in names
 
 
-def test_doomberg_init_returns_first_call_workflow(toolset):
-    out = toolset.doomberg_init(goal="research AAPL momentum")
+def test_ithaca_init_returns_first_call_workflow(toolset):
+    out = toolset.ithaca_init(goal="research AAPL momentum")
 
     assert out["status"] == "ready"
     assert out["goal_captured"] is True
     assert out["session_id"]
     assert out["session"]["prompt"] == "research AAPL momentum"
     assert out["start_here"][0]["tool"] == "start_research_session"
-    assert out["start_here"][0]["status"] == "already_started_by_doomberg_init"
+    assert out["start_here"][0]["status"] == "already_started_by_ithaca_init"
     assert {tool["name"] for tool in out["direct_tools"]} >= {
         "market_get_ohlcv",
         "market_news",
@@ -251,46 +251,46 @@ def test_doomberg_init_returns_first_call_workflow(toolset):
 
 
 async def test_server_registers_control_plane_resources(toolset):
-    from doomberg_mcp import create_server
+    from ithaca_mcp import create_server
 
     mcp, _ = create_server(toolset)
 
     resources = await mcp.list_resources()
     uris = {str(resource.uri) for resource in resources}
     assert {
-        "doomberg://skills/catalog",
-        "doomberg://toolkits/catalog",
-        "doomberg://policies/current",
-        "doomberg://accounts",
-        "doomberg://data/providers",
-        "doomberg://triggers",
-        "doomberg://alerts/open",
-        "doomberg://trigger-firings/recent",
+        "ithaca://skills/catalog",
+        "ithaca://toolkits/catalog",
+        "ithaca://policies/current",
+        "ithaca://accounts",
+        "ithaca://data/providers",
+        "ithaca://triggers",
+        "ithaca://alerts/open",
+        "ithaca://trigger-firings/recent",
     } <= uris
 
     templates = await mcp.list_resource_templates()
     template_uris = {template.uriTemplate for template in templates}
     assert {
-        "doomberg://skills/{skill_id}/{version}",
-        "doomberg://toolkits/{toolkit_id}",
-        "doomberg://runs/{run_id}",
-        "doomberg://triggers/{trigger_id}",
-        "doomberg://alerts/{notification_id}",
+        "ithaca://skills/{skill_id}/{version}",
+        "ithaca://toolkits/{toolkit_id}",
+        "ithaca://runs/{run_id}",
+        "ithaca://triggers/{trigger_id}",
+        "ithaca://alerts/{notification_id}",
     } <= template_uris
 
 
 async def test_skill_resources_return_catalog_and_manifest(toolset):
-    from doomberg_mcp import create_server
+    from ithaca_mcp import create_server
 
     mcp, _ = create_server(toolset)
 
-    catalog_contents = await mcp.read_resource("doomberg://skills/catalog")
+    catalog_contents = await mcp.read_resource("ithaca://skills/catalog")
     catalog = json.loads(catalog_contents[0].content)
     assert catalog["kind"] == "skills.catalog"
     assert catalog["count"] == 10
     assert any(skill["skill_id"] == "market.get_ohlcv" for skill in catalog["skills"])
 
-    manifest_contents = await mcp.read_resource("doomberg://skills/market.get_ohlcv/0.1.0")
+    manifest_contents = await mcp.read_resource("ithaca://skills/market.get_ohlcv/0.1.0")
     manifest = json.loads(manifest_contents[0].content)
     assert manifest["skill_id"] == "market.get_ohlcv"
     assert manifest["version"] == "0.1.0"
@@ -298,7 +298,7 @@ async def test_skill_resources_return_catalog_and_manifest(toolset):
 
 
 async def test_toolkit_resources_return_grouped_direct_tools(toolset):
-    from doomberg_mcp import create_server
+    from ithaca_mcp import create_server
 
     mcp, ts = create_server(toolset)
 
@@ -313,19 +313,19 @@ async def test_toolkit_resources_return_grouped_direct_tools(toolset):
     assert "backtest_run" in toolkit["direct_tools"]
     assert "list_approvals" in toolkit["direct_tools"]
 
-    catalog_contents = await mcp.read_resource("doomberg://toolkits/catalog")
+    catalog_contents = await mcp.read_resource("ithaca://toolkits/catalog")
     catalog = json.loads(catalog_contents[0].content)
     assert catalog["kind"] == "toolkits.catalog"
     assert any(t["toolkit_id"] == "computed-risk" for t in catalog["toolkits"])
 
-    toolkit_contents = await mcp.read_resource("doomberg://toolkits/market-research")
+    toolkit_contents = await mcp.read_resource("ithaca://toolkits/market-research")
     manifest = json.loads(toolkit_contents[0].content)
     assert "market_news" in manifest["direct_tools"]
     assert "market_tide" not in manifest["direct_tools"]
 
 
 async def test_platform_resources_return_tenant_scoped_views_without_secrets(toolset_core):
-    from doomberg_mcp import create_server
+    from ithaca_mcp import create_server
 
     default_tenant = "00000000-0000-0000-0000-000000000000"
     platform = Platform(":memory:")
@@ -341,7 +341,7 @@ async def test_platform_resources_return_tenant_scoped_views_without_secrets(too
         default_tenant,
         provider="ibkr",
         capabilities=["quote", "orders"],
-        entitlements=[{"dataset": "equities", "entitlement_class": "doomberg_live"}],
+        entitlements=[{"dataset": "equities", "entitlement_class": "ithaca_live"}],
         account_ref="DU12345",
         credential_ref="secret://ibkr-token",
     )
@@ -352,7 +352,7 @@ async def test_platform_resources_return_tenant_scoped_views_without_secrets(too
         entitlement_class="public_delayed",
         as_of="2026-06-24T00:00:00+00:00",
         manifest={"symbols": ["AAPL"]},
-        uri="spaces://doomberg-artifacts/snapshots/prices.parquet",
+        uri="spaces://ithaca-artifacts/snapshots/prices.parquet",
     )
     ts = Toolset(
         core=toolset_core,
@@ -362,18 +362,18 @@ async def test_platform_resources_return_tenant_scoped_views_without_secrets(too
     )
     mcp, _ = create_server(ts)
 
-    run_contents = await mcp.read_resource(f"doomberg://runs/{run_id}")
+    run_contents = await mcp.read_resource(f"ithaca://runs/{run_id}")
     run_body = json.loads(run_contents[0].content)
     assert run_body["run"]["run_id"] == run_id
     assert run_body["events"][0]["type"] == "run_transition"
 
-    accounts = json.loads((await mcp.read_resource("doomberg://accounts"))[0].content)
+    accounts = json.loads((await mcp.read_resource("ithaca://accounts"))[0].content)
     assert accounts["accounts"] == []
     assert "credential_ref" not in json.dumps(accounts)
     assert "DU12345" not in json.dumps(accounts)
 
-    providers = json.loads((await mcp.read_resource("doomberg://data/providers"))[0].content)
-    assert providers["connections"][0]["provider"] == "doomberg-live-data"
+    providers = json.loads((await mcp.read_resource("ithaca://data/providers"))[0].content)
+    assert providers["connections"][0]["provider"] == "ithaca-live-data"
     assert "orders" not in providers["connections"][0]["capabilities"]
     assert providers["dataset_snapshots"][0]["dataset"] == "prices"
     assert "credential_ref" not in json.dumps(providers)
@@ -417,8 +417,8 @@ def test_resource_methods_are_tenant_scoped_and_redacted(toolset_core):
 
 def test_ibkr_smoke_returns_diagnosis_and_traces_provider_status(toolset, monkeypatch):
     with _QuoteServer() as server:
-        monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
-        monkeypatch.setenv("DOOMBERG_IBKR_QUOTE_PATH", "/quote/{symbol}")
+        monkeypatch.setenv("ITHACA_IBKR_ENGINE_URL", server.url)
+        monkeypatch.setenv("ITHACA_IBKR_QUOTE_PATH", "/quote/{symbol}")
 
         out = toolset.ibkr_smoke(
             "aapl",
@@ -432,7 +432,7 @@ def test_ibkr_smoke_returns_diagnosis_and_traces_provider_status(toolset, monkey
     assert server.requests == [{"path": "/quote/AAPL", "tenant": R6}]
     event = toolset.sink.events(R6)[-1]
     assert event["type"] == "provider_status"
-    assert event["data"]["provider"] == "doomberg-live-data"
+    assert event["data"]["provider"] == "ithaca-live-data"
     assert event["data"]["ok"] is True
 
 
@@ -449,10 +449,10 @@ def test_run_skill_exposes_live_quote_and_blocks_broker_read_skills(toolset_core
     started = ts.start_research_session("check live quote and broker policy", _ctx=ctx)
     assert started["status"] == "ok"
     with _QuoteServer() as server:
-        monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
-        monkeypatch.setenv("DOOMBERG_IBKR_QUOTE_PATH", "/quote/{symbol}")
-        monkeypatch.setenv("DOOMBERG_IBKR_ACCOUNTS_PATH", "/accounts")
-        monkeypatch.setenv("DOOMBERG_IBKR_POSITIONS_PATH", "/positions?account={account}")
+        monkeypatch.setenv("ITHACA_IBKR_ENGINE_URL", server.url)
+        monkeypatch.setenv("ITHACA_IBKR_QUOTE_PATH", "/quote/{symbol}")
+        monkeypatch.setenv("ITHACA_IBKR_ACCOUNTS_PATH", "/accounts")
+        monkeypatch.setenv("ITHACA_IBKR_POSITIONS_PATH", "/positions?account={account}")
 
         quote = ts.run_skill(
             "market.quote",
@@ -467,7 +467,7 @@ def test_run_skill_exposes_live_quote_and_blocks_broker_read_skills(toolset_core
 
     assert quote["status"] == "succeeded"
     assert quote["result"]["data"]["symbol"] == "AAPL"
-    assert quote["result"]["provenance"]["source"] == "doomberg-live-data"
+    assert quote["result"]["provenance"]["source"] == "ithaca-live-data"
     assert positions["status"] == "failed"
     assert positions["error"]["code"] == "POLICY_DENIED"
     assert [request["path"] for request in server.requests] == ["/quote/AAPL"]
@@ -480,8 +480,8 @@ def test_run_skill_exposes_live_quote_and_blocks_broker_read_skills(toolset_core
 
 def test_direct_market_quote_passes_extended_hours_to_live_engine(toolset, monkeypatch):
     with _QuoteServer() as server:
-        monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
-        monkeypatch.setenv("DOOMBERG_IBKR_QUOTE_PATH", "/quote/{symbol}")
+        monkeypatch.setenv("ITHACA_IBKR_ENGINE_URL", server.url)
+        monkeypatch.setenv("ITHACA_IBKR_QUOTE_PATH", "/quote/{symbol}")
 
         out = toolset.market_quote(
             "aapl",
@@ -491,21 +491,21 @@ def test_direct_market_quote_passes_extended_hours_to_live_engine(toolset, monke
         )
 
     assert out["data"]["symbol"] == "AAPL"
-    assert out["provenance"]["source"] == "doomberg-live-data"
+    assert out["provenance"]["source"] == "ithaca-live-data"
     assert server.requests == [{"path": "/quote/AAPL?extended_hours=true", "tenant": R6}]
 
 
 def test_direct_market_news_is_live_only_when_engine_configured(toolset, monkeypatch):
     with _LiveDataFallbackServer() as server:
-        monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
-        monkeypatch.setenv("DOOMBERG_IBKR_NEWS_PATH", "/news")
-        monkeypatch.setenv("DOOMBERG_IBKR_SCANNER_PATH", "/scanner")
+        monkeypatch.setenv("ITHACA_IBKR_ENGINE_URL", server.url)
+        monkeypatch.setenv("ITHACA_IBKR_NEWS_PATH", "/news")
+        monkeypatch.setenv("ITHACA_IBKR_SCANNER_PATH", "/scanner")
 
         out = toolset.market_news("aapl", _ctx={"run_id": R6, "tenant_id": R6, "agent_id": AGENT})
 
-    assert out["data"]["items"][0]["headline"] == "NVDA active in Doomberg live market scan"
+    assert out["data"]["items"][0]["headline"] == "NVDA active in Ithaca live market scan"
     assert out["data"]["items"][0]["kind"] == "market_activity"
-    assert out["provenance"]["source"] == "doomberg-live-data"
+    assert out["provenance"]["source"] == "ithaca-live-data"
     assert out["warnings"] == []
     assert '"headline": "h"' not in json.dumps(out)
     assert server.requests == [
@@ -564,8 +564,8 @@ def test_run_skill_interactive_persists_result_and_trace(toolset_core, monkeypat
     ts.start_research_session("run interactive ohlcv", _ctx=ctx)
 
     with _QuoteServer() as server:
-        monkeypatch.setenv("DOOMBERG_IBKR_ENGINE_URL", server.url)
-        monkeypatch.setenv("DOOMBERG_IBKR_HISTORY_PATH", "/history?symbol={symbol}")
+        monkeypatch.setenv("ITHACA_IBKR_ENGINE_URL", server.url)
+        monkeypatch.setenv("ITHACA_IBKR_HISTORY_PATH", "/history?symbol={symbol}")
         out = ts.run_skill(
             "market.get_ohlcv",
             input={"symbol": "AAA", "range": "1y"},
@@ -574,7 +574,7 @@ def test_run_skill_interactive_persists_result_and_trace(toolset_core, monkeypat
 
     assert out["status"] == "succeeded"
     got = ts.get_run(out["run_id"], _ctx=ctx)
-    assert got["run"]["result"]["provenance"]["source"] == "doomberg-live-data"
+    assert got["run"]["result"]["provenance"]["source"] == "ithaca-live-data"
     assert any(e["type"] == "tool_result" for e in got["events"])
 
 

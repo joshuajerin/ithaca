@@ -1,10 +1,10 @@
 # Terms of Service
 
-These Terms of Service ("Terms") govern your access to and use of the Doomberg platform, websites, APIs, MCP gateway, and related services (collectively, the "Service"). The Service is operated by **Ithaca, Inc., a Delaware corporation** ("Ithaca", "we", "our", or "us"). By accessing or using the Service, or by connecting an agent to it, you agree to be bound by these Terms. If you do not agree, do not use the Service.
+These Terms of Service ("Terms") govern your access to and use of the Ithaca platform, websites, APIs, MCP gateway, and related services (collectively, the "Service"). The Service is operated by **Ithaca, Inc., a Delaware corporation** ("Ithaca", "we", "our", or "us"). By accessing or using the Service, or by connecting an agent to it, you agree to be bound by these Terms. If you do not agree, do not use the Service.
 
 ## 1. Definitions
 
-- **"Doomberg"** — the quant-research, backtesting, and paper-trading observability platform operated by Ithaca.
+- **"Ithaca"** — the quant-research, backtesting, and paper-trading observability platform operated by Ithaca.
 - **"Agent"** — any autonomous or semi-autonomous software you connect to the Service, including via the Model Context Protocol (MCP).
 - **"User", "you"** — the individual or entity that creates an account or connects an Agent.
 - **"StrategySpec"** — a declarative strategy definition you submit to the Service.
@@ -20,7 +20,7 @@ Authentication is provided through our identity provider, Clerk. You are respons
 
 ## 4. Paper-only; no live trading
 
-**The Service is for research, backtesting, and simulated ("paper") trading only.** Doomberg does not execute live orders, does not custody assets, and does not move real money. The Service never runs your Agent's code on your behalf and never submits live broker orders. Any reference to portfolios, fills, or positions describes simulated activity unless explicitly stated otherwise in a separately executed agreement.
+**The Service is for research, backtesting, and simulated ("paper") trading only.** Ithaca does not execute live orders, does not custody assets, and does not move real money. The Service never runs your Agent's code on your behalf and never submits live broker orders. Any reference to portfolios, fills, or positions describes simulated activity unless explicitly stated otherwise in a separately executed agreement.
 
 ## 5. Not investment advice
 

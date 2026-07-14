@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Approve email addresses for Doomberg through Clerk's managed waitlist."""
+"""Approve email addresses for Ithaca through Clerk's managed waitlist."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import json
 import os
 import sys
 
-from doomberg_platform import ClerkApiError, ClerkWaitlistService
+from ithaca_platform import ClerkApiError, ClerkWaitlistService
 
 
 def _parser() -> argparse.ArgumentParser:

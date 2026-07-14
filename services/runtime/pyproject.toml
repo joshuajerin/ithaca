@@ -1,9 +1,9 @@
 [project]
-name = "doomberg-runtime"
+name = "ithaca-runtime"
 version = "0.0.0"
-description = "DO workers: backtest_runner + live_runner. Out-of-process; imports doomberg-core."
+description = "DO workers: backtest_runner + live_runner. Out-of-process; imports ithaca-core."
 requires-python = ">=3.11"
-dependencies = ["doomberg-core[databento]", "doomberg-contracts", "doomberg-platform", "boto3>=1.35"]
+dependencies = ["ithaca-core[databento]", "ithaca-contracts", "ithaca-platform", "boto3>=1.35"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
@@ -13,12 +13,12 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/doomberg_runtime"]
+packages = ["src/ithaca_runtime"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.uv.sources]
-doomberg-core = { workspace = true }
-doomberg-contracts = { workspace = true }
-doomberg-platform = { workspace = true }
+ithaca-core = { workspace = true }
+ithaca-contracts = { workspace = true }
+ithaca-platform = { workspace = true }

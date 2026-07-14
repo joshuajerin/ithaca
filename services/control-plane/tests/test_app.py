@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 
 from control_helpers import agent_headers, human_headers, valid_spec
-from doomberg_platform import TransitionConflict
+from ithaca_platform import TransitionConflict
 
 
 # ----------------------------------------------------------------------------------------

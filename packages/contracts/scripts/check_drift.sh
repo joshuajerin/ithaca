@@ -12,7 +12,7 @@ tmp_after="$(mktemp)"
 trap 'rm -f "$tmp_before" "$tmp_after"' EXIT
 
 snapshot_generated() {
-  find py/doomberg_contracts/generated ts/src/generated -type f \
+  find py/ithaca_contracts/generated ts/src/generated -type f \
       ! -path '*/__pycache__/*' ! -name '*.pyc' -print0 \
     | sort -z \
     | xargs -0 shasum -a 256

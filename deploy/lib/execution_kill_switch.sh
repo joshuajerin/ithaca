@@ -6,12 +6,12 @@
 resolve_execution_kill_switch() {
   local namespace="$1"
   local dry_run_mode="$2"
-  local requested="${DOOMBERG_EXECUTION_KILL_SWITCH:-}"
+  local requested="${ITHACA_EXECUTION_KILL_SWITCH:-}"
   local encoded=""
 
   if [[ -z "${requested}" && "${dry_run_mode}" == "off" ]]; then
     if ! encoded="$(
-      kubectl -n "${namespace}" get secret doomberg-db \
+      kubectl -n "${namespace}" get secret ithaca-db \
         --ignore-not-found -o jsonpath='{.data.execution_kill_switch}'
     )"; then
       echo "ERROR: unable to read the existing execution kill-switch; refusing to default it off" >&2
@@ -28,7 +28,7 @@ resolve_execution_kill_switch() {
 
   requested="${requested:-0}"
   if [[ "${requested}" != "0" && "${requested}" != "1" ]]; then
-    echo "ERROR: DOOMBERG_EXECUTION_KILL_SWITCH must be 0 or 1" >&2
+    echo "ERROR: ITHACA_EXECUTION_KILL_SWITCH must be 0 or 1" >&2
     return 1
   fi
   printf '%s' "${requested}"

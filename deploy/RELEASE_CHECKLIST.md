@@ -1,6 +1,6 @@
 # Production release checklist
 
-This is the release decision record for Doomberg. Complete it against the exact
+This is the release decision record for Ithaca. Complete it against the exact
 image digest being promoted; a green source checkout is not release evidence.
 
 ## Before rollout
@@ -8,7 +8,7 @@ image digest being promoted; a green source checkout is not release evidence.
 - Record the image digest, git SHA, deploy environment, operator, and UTC start time.
 - Confirm the stacked PR chain is merged in order and every required remote check is green.
 - Confirm the production migration job uses the same image digest as the gateways and workers.
-- Confirm `DOOMBERG_DB_MIGRATION_MODE=validate` on long-running services; only the one-shot
+- Confirm `ITHACA_DB_MIGRATION_MODE=validate` on long-running services; only the one-shot
   `platform-migrate` role may apply schema changes.
 - Read the current global and tenant execution kill switches. A release must preserve an
   active halt; it must never clear one as a side effect.
@@ -22,8 +22,8 @@ Run from the released image after the rollout:
 ```bash
 python scripts/launch_gate.py \
   --mode http \
-  --base-url "${DOOMBERG_REST_URL}" \
-  --mcp-url "${DOOMBERG_MCP_URL}" \
+  --base-url "${ITHACA_REST_URL}" \
+  --mcp-url "${ITHACA_MCP_URL}" \
   --require-postgres \
   --require-workers-ready \
   --require-mcp \

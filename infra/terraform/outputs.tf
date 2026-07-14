@@ -2,33 +2,33 @@
 
 output "cluster_id" {
   description = "DOKS cluster id."
-  value       = digitalocean_kubernetes_cluster.doomberg.id
+  value       = digitalocean_kubernetes_cluster.ithaca.id
 }
 
 output "cluster_name" {
   description = "DOKS cluster name."
-  value       = digitalocean_kubernetes_cluster.doomberg.name
+  value       = digitalocean_kubernetes_cluster.ithaca.name
 }
 
 output "cluster_endpoint" {
   description = "DOKS API server endpoint."
-  value       = digitalocean_kubernetes_cluster.doomberg.endpoint
+  value       = digitalocean_kubernetes_cluster.ithaca.endpoint
 }
 
 output "kubeconfig" {
   description = "Raw kubeconfig for the cluster. Sensitive — pipe to a file, never echo."
-  value       = digitalocean_kubernetes_cluster.doomberg.kube_config[0].raw_config
+  value       = digitalocean_kubernetes_cluster.ithaca.kube_config[0].raw_config
   sensitive   = true
 }
 
 output "vpc_id" {
   description = "VPC id holding the cluster, Postgres, and the Data Gateway."
-  value       = digitalocean_vpc.doomberg.id
+  value       = digitalocean_vpc.ithaca.id
 }
 
 # Private host/port — the workers reach Postgres over the VPC, never the public host.
 # Null when Terraform does not manage Postgres (the prod DB is read via the
-# DOOMBERG_PROD_URL secret instead; see var.manage_postgres).
+# ITHACA_PROD_URL secret instead; see var.manage_postgres).
 output "postgres_private_host" {
   description = "Private (VPC) host for Managed Postgres. Null when manage_postgres=false."
   value       = try(one(digitalocean_database_cluster.postgres[*].private_host), null)
@@ -74,17 +74,17 @@ output "worker_namespace" {
 # ---------------------------------------------------------------------------
 output "registry_name" {
   description = "DigitalOcean Container Registry name."
-  value       = digitalocean_container_registry.doomberg.name
+  value       = digitalocean_container_registry.ithaca.name
 }
 
 output "registry_endpoint" {
-  description = "DOCR endpoint (registry host) — prefix for image refs, e.g. <endpoint>/doomberg:<tag>."
-  value       = digitalocean_container_registry.doomberg.endpoint
+  description = "DOCR endpoint (registry host) — prefix for image refs, e.g. <endpoint>/ithaca:<tag>."
+  value       = digitalocean_container_registry.ithaca.endpoint
 }
 
 output "registry_server_url" {
   description = "DOCR server URL (for `docker login` / `doctl registry login`)."
-  value       = digitalocean_container_registry.doomberg.server_url
+  value       = digitalocean_container_registry.ithaca.server_url
 }
 
 # ---------------------------------------------------------------------------

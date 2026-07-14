@@ -18,8 +18,8 @@ export function GithubIcon() {
   );
 }
 
-// The Doomberg diamond mark, matching the marketing site.
-export function DoombergMark({ size = 28 }: { size?: number }) {
+// The Ithaca diamond mark, matching the marketing site.
+export function IthacaMark({ size = 28 }: { size?: number }) {
   return (
     <span className="db-mark" style={{ width: size, height: size }}>
       <span className="db-mark-outer" />

@@ -59,8 +59,8 @@ jobs:
         env:
           DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
           TERRAFORM_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
-          DATA_GATEWAY_NAMESPACE: ${{ vars.K8S_GATEWAY_NAMESPACE || 'doomberg-dev-gateway' }}
-          WORKER_NAMESPACE: ${{ vars.K8S_WORKER_NAMESPACE || 'doomberg-dev-workers' }}
+          DATA_GATEWAY_NAMESPACE: ${{ vars.K8S_GATEWAY_NAMESPACE || 'ithaca-dev-gateway' }}
+          WORKER_NAMESPACE: ${{ vars.K8S_WORKER_NAMESPACE || 'ithaca-dev-workers' }}
         run: |
           set -euo pipefail
           terraform plan -input=false \

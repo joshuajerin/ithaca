@@ -1,6 +1,6 @@
-# Onboarding to Doomberg v2
+# Onboarding to Ithaca v2
 
-Doomberg v2 is a multi-tenant platform for **bring-your-own (BYO) agents**: an external agent
+Ithaca v2 is a multi-tenant platform for **bring-your-own (BYO) agents**: an external agent
 (or a human in the web UI) authors strategies, requests backtests and paper deployments, and
 watches the whole thing happen on a gap-free, tenant-isolated trace. This guide takes you from
 "no account" to a live paper deployment you can observe.
@@ -18,18 +18,18 @@ uv run python scripts/demo_full_circle.py
 
 A **tenant** is the single hard isolation key: every run, strategy, trace event, and paper
 book carries it, and every query filters by it. Tenants are created by an operator through the
-admin endpoints on the control plane, which are gated behind `DOOMBERG_ADMIN_TOKEN`.
+admin endpoints on the control plane, which are gated behind `ITHACA_ADMIN_TOKEN`.
 
-> If `DOOMBERG_ADMIN_TOKEN` is **unset**, the admin endpoints return `404` and are completely
+> If `ITHACA_ADMIN_TOKEN` is **unset**, the admin endpoints return `404` and are completely
 > inert — they don't exist for dev or tests. Set it (to a strong random value) only on the
 > operator's control-plane process to enable onboarding.
 
 ```bash
-export DOOMBERG_ADMIN_TOKEN="<operator-secret>"
+export ITHACA_ADMIN_TOKEN="<operator-secret>"
 
 # Create the tenant
 curl -sX POST http://localhost:8000/admin/tenants \
-  -H "X-Admin-Token: $DOOMBERG_ADMIN_TOKEN" \
+  -H "X-Admin-Token: $ITHACA_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name": "Acme Capital"}'
 # -> {"tenant_id": "…uuid…", "name": "Acme Capital"}
@@ -43,21 +43,21 @@ manager immediately.
 
 ```bash
 curl -sX POST http://localhost:8000/admin/tenants/<tenant_id>/keys \
-  -H "X-Admin-Token: $DOOMBERG_ADMIN_TOKEN" \
+  -H "X-Admin-Token: $ITHACA_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"scopes": ["data:read", "strategy:author", "deploy:backtest", "deploy:paper"]}'
-# -> {"key_id": "…", "api_key": "dmbg_<env>_<keyid>_<secret>", "scopes": [...]}
+# -> {"key_id": "…", "api_key": "ith_<env>_<keyid>_<secret>", "scopes": [...]}
 ```
 
 ### Key format
 
 ```
-dmbg_<env>_<keyid>_<secret>
+ith_<env>_<keyid>_<secret>
 ```
 
 | segment    | meaning                                                                    |
 |------------|----------------------------------------------------------------------------|
-| `dmbg`     | fixed prefix.                                                              |
+| `ith`      | fixed prefix.                                                               |
 | `<env>`    | deployment env tag (`test` by default, `prod` in production).             |
 | `<keyid>`  | the public, stable credential id. **Audit attributes to this.** Revoking it does not rotate the principal. |
 | `<secret>` | high-entropy token. **Never stored** — only `sha256(salt + secret)` is persisted, so a database leak cannot reconstruct a usable key. |
@@ -70,7 +70,7 @@ Every call goes to the **same front door** (the control plane for writes; the re
 the UI/observability). Authenticate with the bearer key:
 
 ```
-Authorization: Bearer dmbg_<env>_<keyid>_<secret>
+Authorization: Bearer ith_<env>_<keyid>_<secret>
 ```
 
 The gateway derives the **tenant from the key** — it is authoritative, so you never send a
@@ -127,10 +127,10 @@ The rest-gateway serves the built web app (`web/dist`) as static files at `/`, b
 registered **last**, so `/api/*` and `/healthz` always take precedence; client-side routes
 fall through to `index.html`. If no build is present (dev / tests) the mount is skipped and the
 gateway still starts as an API-only backend. Point the image at a prebuilt bundle with
-`DOOMBERG_WEB_DIST=/abs/path/to/dist` (defaults to the repo-relative `web/dist`).
+`ITHACA_WEB_DIST=/abs/path/to/dist` (defaults to the repo-relative `web/dist`).
 
 Build the UI with:
 
 ```bash
-pnpm --filter @doomberg/web run build
+pnpm --filter @ithaca/web run build
 ```

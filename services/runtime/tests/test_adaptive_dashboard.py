@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from doomberg_runtime import (
+from ithaca_runtime import (
     AdaptiveDashboardWorker,
     AnthropicDashboardClient,
     AnthropicDashboardError,
@@ -276,10 +276,10 @@ def test_modal_client_sends_proxy_token_headers(monkeypatch):
 
 
 def test_default_client_prefers_modal_provider(monkeypatch):
-    monkeypatch.delenv("DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER", raising=False)
-    monkeypatch.setenv("DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY", "wk-test")
-    monkeypatch.setenv("DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET", "ws-test")
-    monkeypatch.setenv("DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL", "https://example.test/v1")
+    monkeypatch.delenv("ITHACA_ADAPTIVE_DASHBOARD_PROVIDER", raising=False)
+    monkeypatch.setenv("ITHACA_ADAPTIVE_DASHBOARD_MODAL_KEY", "wk-test")
+    monkeypatch.setenv("ITHACA_ADAPTIVE_DASHBOARD_MODAL_SECRET", "ws-test")
+    monkeypatch.setenv("ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL", "https://example.test/v1")
 
     client = create_adaptive_dashboard_client()
 

@@ -6,7 +6,7 @@ import datetime as dt
 
 import pytest
 
-from doomberg_runtime import run_paper_tick
+from ithaca_runtime import run_paper_tick
 
 from runtime_helpers import seed_queued_run
 
@@ -82,7 +82,7 @@ def test_paper_tick_no_marks_denial(platform, tenant_id, spec):
         class _GW:
             def price_panel(self, symbols, range_="1y", as_of=None):
                 import numpy as np
-                from doomberg_core.gateway.data_gateway import PricePanel
+                from ithaca_core.gateway.data_gateway import PricePanel
                 return PricePanel([], np.zeros((0, 0)), [], list(symbols)), {"provenance": {}}
         gateway = _GW()
 

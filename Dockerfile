@@ -1,17 +1,17 @@
-# Doomberg v2 — single multi-service CPU image.
+# Ithaca v2 — single multi-service CPU image.
 #
 # ONE lean image runs all four services (the workspace is path-linked, so one
 # `uv sync` builds the whole product). The container's ROLE is chosen by the
 # command/args at run time — see `deploy/entrypoint.sh` and the targets below:
 #
-#   mcp-gateway     :  doomberg-mcp        (python -m doomberg_mcp)         MCP tools
-#   rest-gateway    :  doomberg-rest       (uvicorn doomberg_rest.app:app)  REST + SSE
-#   control-plane   :  doomberg-control    (uvicorn doomberg_control.app)   money-path writer
-#   conductor       :  doomberg-conductor  (python scripts/run_workers.py)  backtest worker + paper scheduler
-#   trigger-engine  :  doomberg-trigger    (python -m doomberg_runtime.trigger_engine)
+#   mcp-gateway     :  ithaca-mcp        (python -m ithaca_mcp)         MCP tools
+#   rest-gateway    :  ithaca-rest       (uvicorn ithaca_rest.app:app)  REST + SSE
+#   control-plane   :  ithaca-control    (uvicorn ithaca_control.app)   money-path writer
+#   conductor       :  ithaca-conductor  (python scripts/run_workers.py)  backtest worker + paper scheduler
+#   trigger-engine  :  ithaca-trigger    (python -m ithaca_runtime.trigger_engine)
 #   backtest-worker :  dedicated durable backtest queue worker
-#   backtest-runner :  doomberg-backtest   (python -m doomberg_runtime.backtest_runner)
-#   live-runner     :  doomberg-live       (python -m doomberg_runtime.live_runner)
+#   backtest-runner :  ithaca-backtest   (python -m ithaca_runtime.backtest_runner)
+#   live-runner     :  ithaca-live       (python -m ithaca_runtime.live_runner)
 #
 # CPU-ONLY: base is python:3.12-slim (no CUDA, no GPU libs). numpy is the only
 # heavy dep and runs on CPU.
@@ -38,7 +38,7 @@ WORKDIR /app
 #    to resolve the path sources, so we copy their pyproject.toml stubs too.
 COPY pyproject.toml uv.lock ./
 COPY packages/contracts/py/pyproject.toml packages/contracts/py/
-COPY doomberg-core/pyproject.toml doomberg-core/
+COPY ithaca-core/pyproject.toml ithaca-core/
 COPY services/platform/pyproject.toml services/platform/
 COPY services/mcp-gateway/pyproject.toml services/mcp-gateway/
 COPY services/control-plane/pyproject.toml services/control-plane/
@@ -53,7 +53,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # 3) Now copy the actual source and install the workspace packages themselves.
 COPY packages/ packages/
-COPY doomberg-core/ doomberg-core/
+COPY ithaca-core/ ithaca-core/
 COPY services/ services/
 COPY scripts/ scripts/
 
@@ -99,7 +99,7 @@ COPY web/ web/
 
 RUN VITE_CLERK_PUBLISHABLE_KEY="${CLERK_PUBLISHABLE_VALUE}" \
     VITE_API_BASE="${VITE_API_BASE}" \
-    pnpm --filter @doomberg/web run build
+    pnpm --filter @ithaca/web run build
 
 # ---------------------------------------------------------------------------
 # Stage 3 — runtime: copy the venv + the app source onto a clean slim base.
@@ -108,14 +108,14 @@ RUN VITE_CLERK_PUBLISHABLE_KEY="${CLERK_PUBLISHABLE_VALUE}" \
 FROM python:3.12-slim AS runtime
 
 # Run as an unprivileged user (matches the pod securityContext runAsNonRoot).
-RUN groupadd --system --gid 10001 doomberg \
-    && useradd  --system --uid 10001 --gid doomberg --home-dir /app --no-create-home doomberg
+RUN groupadd --system --gid 10001 ithaca \
+    && useradd  --system --uid 10001 --gid ithaca --home-dir /app --no-create-home ithaca
 
 ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     # Default system-of-record DSN; overridden in-cluster to the Managed PG DSN.
-    DOOMBERG_DB=":memory:"
+    ITHACA_DB=":memory:"
 
 WORKDIR /app
 
@@ -125,18 +125,18 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /app/scripts /app/scripts
 # Source trees are installed editable into the venv; copy them so imports + the
 # loader script resolve. (No data/, no tests, no node_modules — see .dockerignore.)
-COPY --from=builder /app/doomberg-core /app/doomberg-core
+COPY --from=builder /app/ithaca-core /app/ithaca-core
 COPY --from=builder /app/services /app/services
 COPY --from=builder /app/packages /app/packages
 
 # Built web UI — the rest-gateway serves this at / via StaticFiles.
-# DOOMBERG_WEB_DIST env var points the gateway here; it's set in entrypoint.sh.
+# ITHACA_WEB_DIST env var points the gateway here; it's set in entrypoint.sh.
 COPY --from=web-builder /app/web/dist /app/web/dist
 
 COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-USER doomberg
+USER ithaca
 
 # Default role = the conductor (singleton/interactive loops). Override the
 # CMD (or pass a role arg to the entrypoint) to run a different service.

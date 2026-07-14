@@ -4,7 +4,7 @@
 variable "project_name" {
   description = "Short slug used as a name prefix for all resources."
   type        = string
-  default     = "doomberg"
+  default     = "ithaca"
 }
 
 # Applying user-defined tags requires the DO API `tag:create` scope. This deploy's
@@ -121,11 +121,11 @@ variable "paper_node_count" {
 # Whether Terraform OWNS (creates/manages) the Managed Postgres cluster. In this
 # deployment the dev + prod Managed Postgres already exist (created out of band
 # via doctl), so this defaults to FALSE: Terraform must NOT create a duplicate
-# DB. The workload reads the existing prod DB via the DOOMBERG_PROD_URL secret
+# DB. The workload reads the existing prod DB via the ITHACA_PROD_URL secret
 # instead. Flip to true only to let
 # Terraform stand up a brand-new managed cluster.
 variable "manage_postgres" {
-  description = "If true, Terraform creates + manages the Managed Postgres cluster/db/user/firewall and PG-DSN outputs. Default false: the prod DB already exists and is read via the DOOMBERG_PROD_URL secret; never let TF create a duplicate."
+  description = "If true, Terraform creates + manages the Managed Postgres cluster/db/user/firewall and PG-DSN outputs. Default false: the prod DB already exists and is read via the ITHACA_PROD_URL secret; never let TF create a duplicate."
   type        = bool
   default     = false
 }
@@ -165,13 +165,13 @@ variable "postgres_node_count" {
 variable "postgres_app_db_name" {
   description = "Application database name (RLS-enforced system of record)."
   type        = string
-  default     = "doomberg"
+  default     = "ithaca"
 }
 
 variable "postgres_app_user" {
   description = "Non-owner application role. RLS + FORCE ROW LEVEL SECURITY apply to it (MASTER-PLAN §7)."
   type        = string
-  default     = "doomberg_app"
+  default     = "ithaca_app"
 }
 
 # ---------------------------------------------------------------------------
@@ -181,7 +181,7 @@ variable "postgres_app_user" {
 variable "spaces_bucket_name" {
   description = "Spaces bucket for backtest artifacts. Must be globally unique; suffixed in code."
   type        = string
-  default     = "doomberg-artifacts"
+  default     = "ithaca-artifacts"
 }
 
 # Whether to create the Spaces bucket. Requires SPACES_ACCESS_KEY_ID /
@@ -211,13 +211,13 @@ variable "vpc_ip_range" {
 variable "worker_namespace" {
   description = "Kubernetes namespace the backtest/paper worker pods run in."
   type        = string
-  default     = "doomberg-workers"
+  default     = "ithaca-workers"
 }
 
 variable "data_gateway_namespace" {
   description = "Namespace hosting the Data Gateway facade Service (the one allowed egress target)."
   type        = string
-  default     = "doomberg-gateway"
+  default     = "ithaca-gateway"
 }
 
 variable "data_gateway_port" {
@@ -249,9 +249,9 @@ variable "paper_tick_schedule" {
 }
 
 variable "worker_image" {
-  description = "Container image for the shared doomberg-core worker (backtest + paper-tick). Built from the repo Dockerfile + pushed to the DO Container Registry below."
+  description = "Container image for the shared ithaca-core worker (backtest + paper-tick). Built from the repo Dockerfile + pushed to the DO Container Registry below."
   type        = string
-  default     = "registry.digitalocean.com/doomberg/doomberg:latest"
+  default     = "registry.digitalocean.com/ithaca/ithaca:latest"
 }
 
 # ---------------------------------------------------------------------------
@@ -259,9 +259,9 @@ variable "worker_image" {
 # ---------------------------------------------------------------------------
 
 variable "registry_name" {
-  description = "DigitalOcean Container Registry name (global; account-unique). Holds the doomberg image."
+  description = "DigitalOcean Container Registry name (global; account-unique). Holds the ithaca image."
   type        = string
-  default     = "doomberg"
+  default     = "ithaca"
 }
 
 variable "registry_subscription_tier" {

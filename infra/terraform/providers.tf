@@ -14,10 +14,10 @@ provider "digitalocean" {
 # default-deny egress NetworkPolicy can be expressed as a first-class resource
 # (an invariant in the cluster, per MASTER-PLAN §5.2/§5.7).
 provider "kubernetes" {
-  host  = digitalocean_kubernetes_cluster.doomberg.endpoint
-  token = digitalocean_kubernetes_cluster.doomberg.kube_config[0].token
+  host  = digitalocean_kubernetes_cluster.ithaca.endpoint
+  token = digitalocean_kubernetes_cluster.ithaca.kube_config[0].token
 
   cluster_ca_certificate = base64decode(
-    digitalocean_kubernetes_cluster.doomberg.kube_config[0].cluster_ca_certificate
+    digitalocean_kubernetes_cluster.ithaca.kube_config[0].cluster_ca_certificate
   )
 }

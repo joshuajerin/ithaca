@@ -9,11 +9,11 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: doomberg-workers
+  name: ithaca-workers
   namespace: ${K8S_WORKER_NAMESPACE}
   labels:
-    doomberg/component: worker
-    doomberg/environment: ${DOOMBERG_ENV}
+    ithaca/component: worker
+    ithaca/environment: ${ITHACA_ENV}
 spec:
   replicas: ${WORKER_REPLICAS}
   strategy:
@@ -23,14 +23,14 @@ spec:
       maxUnavailable: ${WORKER_MAX_UNAVAILABLE}
   selector:
     matchLabels:
-      doomberg/component: worker
-      doomberg/worker-role: active-runtime
+      ithaca/component: worker
+      ithaca/worker-role: active-runtime
   template:
     metadata:
       labels:
-        doomberg/component: worker
-        doomberg/worker-role: active-runtime
-        doomberg/environment: ${DOOMBERG_ENV}
+        ithaca/component: worker
+        ithaca/worker-role: active-runtime
+        ithaca/environment: ${ITHACA_ENV}
     spec:
       automountServiceAccountToken: false
       nodeSelector:
@@ -47,8 +47,8 @@ spec:
               podAffinityTerm:
                 labelSelector:
                   matchLabels:
-                    doomberg/component: worker
-                    doomberg/environment: ${DOOMBERG_ENV}
+                    ithaca/component: worker
+                    ithaca/environment: ${ITHACA_ENV}
                 topologyKey: kubernetes.io/hostname
       securityContext:
         runAsNonRoot: true
@@ -63,17 +63,17 @@ spec:
           imagePullPolicy: IfNotPresent
           args: ["platform-migrate"]
           env:
-            - name: DOOMBERG_ENV
-              value: "${DOOMBERG_ENV}"
-            - name: DOOMBERG_DB
+            - name: ITHACA_ENV
+              value: "${ITHACA_ENV}"
+            - name: ITHACA_DB
               valueFrom:
                 secretKeyRef:
-                  name: doomberg-db
+                  name: ithaca-db
                   key: platform_url
-            - name: DOOMBERG_DB_MIGRATION_MODE
+            - name: ITHACA_DB_MIGRATION_MODE
               value: "apply"
-            - name: DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS
-              value: "${DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS}"
+            - name: ITHACA_DB_ALLOW_FORWARD_MIGRATIONS
+              value: "${ITHACA_DB_ALLOW_FORWARD_MIGRATIONS}"
           resources:
             requests: { cpu: "100m", memory: 128Mi }
             limits: { cpu: "500m", memory: 256Mi }
@@ -94,64 +94,64 @@ spec:
           imagePullPolicy: IfNotPresent
           args: ["conductor"]
           env:
-            - name: DOOMBERG_ENV
-              value: "${DOOMBERG_ENV}"
-            - name: DOOMBERG_DB
+            - name: ITHACA_ENV
+              value: "${ITHACA_ENV}"
+            - name: ITHACA_DB
               valueFrom:
                 secretKeyRef:
-                  name: doomberg-db
+                  name: ithaca-db
                   key: platform_url
-            - name: DOOMBERG_DB_MIGRATION_MODE
+            - name: ITHACA_DB_MIGRATION_MODE
               value: "validate"
-            - name: DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS
-              value: "${DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS}"
-            - name: DOOMBERG_BACKTEST_INTERVAL_S
+            - name: ITHACA_DB_ALLOW_FORWARD_MIGRATIONS
+              value: "${ITHACA_DB_ALLOW_FORWARD_MIGRATIONS}"
+            - name: ITHACA_BACKTEST_INTERVAL_S
               value: "2"
-            - name: DOOMBERG_ENABLE_BACKTEST_LOOP
-              value: "${DOOMBERG_ENABLE_BACKTEST_LOOP}"
-            - name: DOOMBERG_TRIGGER_JOB_INTERVAL_S
+            - name: ITHACA_ENABLE_BACKTEST_LOOP
+              value: "${ITHACA_ENABLE_BACKTEST_LOOP}"
+            - name: ITHACA_TRIGGER_JOB_INTERVAL_S
               value: "2"
-            - name: DOOMBERG_NOTIFICATION_INTERVAL_S
+            - name: ITHACA_NOTIFICATION_INTERVAL_S
               value: "2"
-            - name: DOOMBERG_PAPER_INTERVAL_S
+            - name: ITHACA_PAPER_INTERVAL_S
               value: "60"
-            - name: DOOMBERG_PAPER_LEASE_TTL_S
+            - name: ITHACA_PAPER_LEASE_TTL_S
               value: "180"
-            - name: DOOMBERG_ADAPTIVE_DASHBOARD_INTERVAL_S
+            - name: ITHACA_ADAPTIVE_DASHBOARD_INTERVAL_S
               value: "60"
-            - name: DOOMBERG_ADAPTIVE_DASHBOARD_PROVIDER
+            - name: ITHACA_ADAPTIVE_DASHBOARD_PROVIDER
               valueFrom:
-                secretKeyRef: { name: doomberg-adaptive-dashboard, key: provider }
-            - name: DOOMBERG_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL
+                secretKeyRef: { name: ithaca-adaptive-dashboard, key: provider }
+            - name: ITHACA_ADAPTIVE_DASHBOARD_OPENAI_BASE_URL
               valueFrom:
-                secretKeyRef: { name: doomberg-adaptive-dashboard, key: openai_base_url, optional: true }
-            - name: DOOMBERG_ADAPTIVE_DASHBOARD_API_KEY
+                secretKeyRef: { name: ithaca-adaptive-dashboard, key: openai_base_url, optional: true }
+            - name: ITHACA_ADAPTIVE_DASHBOARD_API_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-adaptive-dashboard, key: api_key, optional: true }
-            - name: DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_KEY
+                secretKeyRef: { name: ithaca-adaptive-dashboard, key: api_key, optional: true }
+            - name: ITHACA_ADAPTIVE_DASHBOARD_MODAL_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-adaptive-dashboard, key: modal_key, optional: true }
-            - name: DOOMBERG_ADAPTIVE_DASHBOARD_MODAL_SECRET
+                secretKeyRef: { name: ithaca-adaptive-dashboard, key: modal_key, optional: true }
+            - name: ITHACA_ADAPTIVE_DASHBOARD_MODAL_SECRET
               valueFrom:
-                secretKeyRef: { name: doomberg-adaptive-dashboard, key: modal_secret, optional: true }
-            - name: DOOMBERG_ADAPTIVE_DASHBOARD_MODEL
+                secretKeyRef: { name: ithaca-adaptive-dashboard, key: modal_secret, optional: true }
+            - name: ITHACA_ADAPTIVE_DASHBOARD_MODEL
               valueFrom:
-                secretKeyRef: { name: doomberg-adaptive-dashboard, key: model }
+                secretKeyRef: { name: ithaca-adaptive-dashboard, key: model }
             - name: ANTHROPIC_API_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-adaptive-dashboard, key: anthropic_api_key, optional: true }
+                secretKeyRef: { name: ithaca-adaptive-dashboard, key: anthropic_api_key, optional: true }
             - name: FMP_API_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: fmp_api_key, optional: true }
+                secretKeyRef: { name: ithaca-db, key: fmp_api_key, optional: true }
             - name: DATABENTO_API_KEY
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: databento_api_key, optional: true }
+                secretKeyRef: { name: ithaca-db, key: databento_api_key, optional: true }
             - name: DATABENTO_DATASET
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: databento_dataset, optional: true }
-            - name: DOOMBERG_DATA_SOURCE
+                secretKeyRef: { name: ithaca-db, key: databento_dataset, optional: true }
+            - name: ITHACA_DATA_SOURCE
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: data_source, optional: true }
+                secretKeyRef: { name: ithaca-db, key: data_source, optional: true }
           resources:
             requests: { cpu: "200m", memory: 320Mi }
             limits: { cpu: "2", memory: 2Gi }
@@ -170,39 +170,39 @@ spec:
           imagePullPolicy: IfNotPresent
           args: ["trigger-engine"]
           env:
-            - name: DOOMBERG_ENV
-              value: "${DOOMBERG_ENV}"
-            - name: DOOMBERG_DB
+            - name: ITHACA_ENV
+              value: "${ITHACA_ENV}"
+            - name: ITHACA_DB
               valueFrom:
                 secretKeyRef:
-                  name: doomberg-db
+                  name: ithaca-db
                   key: platform_url
-            - name: DOOMBERG_DB_MIGRATION_MODE
+            - name: ITHACA_DB_MIGRATION_MODE
               value: "validate"
-            - name: DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS
-              value: "${DOOMBERG_DB_ALLOW_FORWARD_MIGRATIONS}"
-            - name: DOOMBERG_TRIGGER_INTERVAL_S
+            - name: ITHACA_DB_ALLOW_FORWARD_MIGRATIONS
+              value: "${ITHACA_DB_ALLOW_FORWARD_MIGRATIONS}"
+            - name: ITHACA_TRIGGER_INTERVAL_S
               value: "5"
-            - name: DOOMBERG_TRIGGER_LEASE_TTL_S
+            - name: ITHACA_TRIGGER_LEASE_TTL_S
               value: "60"
-            - name: DOOMBERG_IBKR_ENGINE_URL
+            - name: ITHACA_IBKR_ENGINE_URL
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_engine_url, optional: true }
-            - name: DOOMBERG_IBKR_ENGINE_TOKEN
+                secretKeyRef: { name: ithaca-db, key: ibkr_engine_url, optional: true }
+            - name: ITHACA_IBKR_ENGINE_TOKEN
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_engine_token, optional: true }
-            - name: DOOMBERG_IBKR_QUOTE_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_engine_token, optional: true }
+            - name: ITHACA_IBKR_QUOTE_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_quote_path, optional: true }
-            - name: DOOMBERG_IBKR_HISTORY_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_quote_path, optional: true }
+            - name: ITHACA_IBKR_HISTORY_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_history_path, optional: true }
-            - name: DOOMBERG_IBKR_NEWS_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_history_path, optional: true }
+            - name: ITHACA_IBKR_NEWS_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_news_path, optional: true }
-            - name: DOOMBERG_IBKR_SCANNER_PATH
+                secretKeyRef: { name: ithaca-db, key: ibkr_news_path, optional: true }
+            - name: ITHACA_IBKR_SCANNER_PATH
               valueFrom:
-                secretKeyRef: { name: doomberg-db, key: ibkr_scanner_path, optional: true }
+                secretKeyRef: { name: ithaca-db, key: ibkr_scanner_path, optional: true }
           resources:
             requests: { cpu: "100m", memory: 192Mi }
             limits: { cpu: "500m", memory: 512Mi }

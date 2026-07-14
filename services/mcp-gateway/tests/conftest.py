@@ -6,8 +6,8 @@ import datetime as dt
 import numpy as np
 import pytest
 
-from doomberg_core import Core, DataGateway
-from doomberg_mcp import InMemoryTrace, Toolset
+from ithaca_core import Core, DataGateway
+from ithaca_mcp import InMemoryTrace, Toolset
 
 
 def _trading_days(n: int, start: str = "2024-01-01") -> list[str]:

@@ -14,8 +14,8 @@ resource "kubernetes_namespace" "workers" {
     name = var.worker_namespace
 
     labels = {
-      "doomberg/role"                      = "workers"
-      "doomberg/environment"               = var.environment
+      "ithaca/role"                      = "workers"
+      "ithaca/environment"               = var.environment
       "pod-security.kubernetes.io/enforce" = "restricted"
     }
   }
@@ -26,8 +26,8 @@ resource "kubernetes_namespace" "gateway" {
     name = var.data_gateway_namespace
 
     labels = {
-      "doomberg/role"        = "data-gateway"
-      "doomberg/environment" = var.environment
+      "ithaca/role"        = "data-gateway"
+      "ithaca/environment" = var.environment
     }
   }
 }
@@ -61,7 +61,7 @@ resource "kubernetes_network_policy" "workers_allow_gateway" {
     # Apply only to the worker pods (backtest + paper tick).
     pod_selector {
       match_labels = {
-        "doomberg/component" = "worker"
+        "ithaca/component" = "worker"
       }
     }
 
@@ -72,14 +72,14 @@ resource "kubernetes_network_policy" "workers_allow_gateway" {
       to {
         namespace_selector {
           match_labels = {
-            "doomberg/role"        = "data-gateway"
-            "doomberg/environment" = var.environment
+            "ithaca/role"        = "data-gateway"
+            "ithaca/environment" = var.environment
           }
         }
 
         pod_selector {
           match_labels = {
-            "doomberg/component" = "app"
+            "ithaca/component" = "app"
           }
         }
       }

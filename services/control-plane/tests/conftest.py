@@ -1,6 +1,6 @@
 """Test fixtures + import-path fallback for the control plane.
 
-In the integrated workspace, ``doomberg_core`` / ``doomberg_contracts`` / ``doomberg_platform``
+In the integrated workspace, ``ithaca_core`` / ``ithaca_contracts`` / ``ithaca_platform``
 and this package are installed editable, so the path-insertion below is a no-op. When running
 in isolation we add the package source roots so imports resolve.
 
@@ -22,7 +22,7 @@ def _ensure_importable() -> None:
     candidates = [
         _TEST_ROOT,
         _REPO_ROOT / "packages" / "contracts" / "py",
-        _REPO_ROOT / "doomberg-core" / "src",
+        _REPO_ROOT / "ithaca-core" / "src",
         _REPO_ROOT / "services" / "platform" / "src",
         _REPO_ROOT / "services" / "control-plane" / "src",
     ]
@@ -37,14 +37,14 @@ _ensure_importable()
 from fastapi.testclient import TestClient  # noqa: E402
 
 from control_helpers import valid_spec  # noqa: E402
-from doomberg_control.app import create_app  # noqa: E402
-from doomberg_control.deps import Platform, get_core, get_platform  # noqa: E402
-from doomberg_core import Core  # noqa: E402
+from ithaca_control.app import create_app  # noqa: E402
+from ithaca_control.deps import Platform, get_core, get_platform  # noqa: E402
+from ithaca_core import Core  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
 def _local_env(monkeypatch):
-    monkeypatch.setenv("DOOMBERG_ENV", "test")
+    monkeypatch.setenv("ITHACA_ENV", "test")
 
 
 @pytest.fixture()

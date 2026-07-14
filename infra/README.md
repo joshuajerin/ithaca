@@ -1,4 +1,4 @@
-# infra — Doomberg v2 DigitalOcean topology (Terraform)
+# infra — Ithaca v2 DigitalOcean topology (Terraform)
 
 Declarative IaC for the deploy layer (MASTER-PLAN §5.7). **Nothing here is applied
 by the build, and no credentials are committed.** This directory describes the
@@ -50,10 +50,10 @@ Build/deploy tooling lives in [`deploy/`](../deploy/): `build_and_push.sh`
   │         gateways (2+ replicas each) + calendar scheduler +  │
   │         paper-tick CronJobs                                 │
   │                                                             │
-  │   namespace doomberg-workers:                               │
+  │   namespace ithaca-workers:                               │
   │     NetworkPolicy default-deny (ingress+egress)             │
-  │     + single allow → Data Gateway (doomberg-gateway ns)     │
-  │   namespace doomberg-gateway: gateways                         │
+  │     + single allow → Data Gateway (ithaca-gateway ns)     │
+  │   namespace ithaca-gateway: gateways                         │
   │                                                             │
   │  Managed Postgres 16  (primary + standby HA, private host,  │
   │                        daily backups + WAL/PITR)            │
@@ -82,7 +82,7 @@ Build/deploy tooling lives in [`deploy/`](../deploy/): `build_and_push.sh`
   LB targets it.
 - **Managed Postgres 16** — RLS-enforced system of record, **`node_count = 2`
   (primary + standby, automatic failover)**, daily automated backups + WAL for
-  point-in-time restore, storage autoscale. A non-owner app role (`doomberg_app`)
+  point-in-time restore, storage autoscale. A non-owner app role (`ithaca_app`)
   is provisioned here; `FORCE ROW LEVEL SECURITY` + `SET LOCAL app.tenant_id` are
   applied by the schema migration (out of band).
 - **Container Registry (DOCR)** — holds the single multi-service image every
@@ -180,21 +180,21 @@ terraform validate                # type + schema validation, no network/credent
 
 - The control plane must render `manifests/backtest-job.yaml` per `run_id`
   (substitute `${RUN_ID}`, `${TENANT_ID}`, `${ACTIVE_DEADLINE_SECONDS}`,
-  `${WORKER_IMAGE}`) and create it in namespace `doomberg-workers`.
+  `${WORKER_IMAGE}`) and create it in namespace `ithaca-workers`.
 - The scheduler renders `manifests/paper-tick-cronjob.yaml` per paper deployment.
-- Worker pods MUST carry label `doomberg/component=worker` or the egress
+- Worker pods MUST carry label `ithaca/component=worker` or the egress
   NetworkPolicy will (correctly) deny all traffic.
-- The Data Gateway Service must run in namespace `doomberg-gateway` with label
-  `doomberg/role=data-gateway` on the namespace and
-  `doomberg/component=data-gateway` on the pods, listening on `data_gateway_port`
+- The Data Gateway Service must run in namespace `ithaca-gateway` with label
+  `ithaca/role=data-gateway` on the namespace and
+  `ithaca/component=data-gateway` on the pods, listening on `data_gateway_port`
   (default 8080).
 - Apply the RLS schema migration against the `postgres_app_uri` (sensitive
-  output) using the `doomberg_app` non-owner role.
-- The worker container entrypoints (`python -m doomberg_runtime.backtest_runner`
-  / `live_runner`) match the `doomberg_runtime` interface in INTERFACES.md, and
+  output) using the `ithaca_app` non-owner role.
+- The worker container entrypoints (`python -m ithaca_runtime.backtest_runner`
+  / `live_runner`) match the `ithaca_runtime` interface in INTERFACES.md, and
   are also reachable as roles of the single image via `deploy/entrypoint.sh`.
 - **Gateways:** deploy mcp-gateway / rest-gateway / control-plane to
-  `doomberg-gateway` with **2+ replicas each** on the `paper` pool; publish
+  `ithaca-gateway` with **2+ replicas each** on the `paper` pool; publish
   NodePorts `30080` (rest) + `30808` (mcp) for the `loadbalancer.tf` forwarding
   rules + `/healthz` healthcheck. Point DNS at the `load_balancer_ip` output.
 - **Image:** build + push with `deploy/build_and_push.sh` to the DOCR

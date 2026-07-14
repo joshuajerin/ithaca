@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://doomberg.dev/contracts/skill_manifest.schema.json",
+  "$id": "https://ithaca.dev/contracts/skill_manifest.schema.json",
   "title": "SkillManifest",
   "type": "object",
   "additionalProperties": false,
@@ -12,7 +12,7 @@
     "description": { "type": "string", "minLength": 1 },
     "source_classes": {
       "type": "array",
-      "items": { "type": "string", "enum": ["community", "connected_account", "doomberg_licensed", "computed"] },
+      "items": { "type": "string", "enum": ["community", "connected_account", "ithaca_licensed", "computed"] },
       "default": []
     },
     "runtime": {

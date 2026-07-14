@@ -1,4 +1,4 @@
-# @doomberg/web — observability surface
+# @ithaca/web — observability surface
 
 React + Vite + TS. NO chat console — the "conversation" is the agent trace. Speaks the thin
 rest-gateway REST/SSE only (never MCP directly).
@@ -31,14 +31,14 @@ everything else -> the generic JSON/table `JsonPanel`.
 
 `src/timeline.ts` — pure `applyEvent` / `reduceEvents` / `reduceUpTo`. The SSE hook accumulates
 raw ordered events; both live view and the replay scrubber derive the three lanes from the same
-list. Tested in `src/timeline.test.ts` (`pnpm --filter @doomberg/web test`).
+list. Tested in `src/timeline.test.ts` (`pnpm --filter @ithaca/web test`).
 
 ## Run it
 
 ```bash
-pnpm --filter @doomberg/web dev      # http://localhost:5173, proxies /api -> :8000
-pnpm --filter @doomberg/web build    # tsc -b && vite build (typecheck + bundle)
-pnpm --filter @doomberg/web test     # vitest
+pnpm --filter @ithaca/web dev      # http://localhost:5173, proxies /api -> :8000
+pnpm --filter @ithaca/web build    # tsc -b && vite build (typecheck + bundle)
+pnpm --filter @ithaca/web test     # vitest
 ```
 
 ### Config (`src/config.ts`, env overrides)

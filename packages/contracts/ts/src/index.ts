@@ -1,2 +1,2 @@
-// Public entry for @doomberg/contracts (TS). Re-exports the generated zod schemas.
+// Public entry for @ithaca/contracts (TS). Re-exports the generated zod schemas.
 export * from "./generated/index";

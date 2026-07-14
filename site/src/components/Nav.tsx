@@ -13,14 +13,14 @@ const LINKS = [
 
 function Logo() {
   return (
-    <a href="/" data-nav-logo className="flex items-center gap-2.5" aria-label="Doomberg home">
+    <a href="/" data-nav-logo className="flex items-center gap-2.5" aria-label="Ithaca home">
       {/* CSS-drawn mark: stacked layers = tools, execution, records */}
       <span className="relative grid h-7 w-7 place-items-center">
         <span className="absolute h-7 w-7 rotate-45 rounded-[7px] bg-olive" />
         <span className="absolute h-3.5 w-3.5 rotate-45 rounded-[3px] bg-leaf" />
       </span>
       <span className="text-[1.25rem] font-600 tracking-tight text-ink">
-        Doomberg
+        Ithaca
       </span>
     </a>
   );

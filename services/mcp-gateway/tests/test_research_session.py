@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 
-from doomberg_mcp import InMemoryTrace, PlatformTraceSink, Toolset
+from ithaca_mcp import InMemoryTrace, PlatformTraceSink, Toolset
 
 TENANT = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 

@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 
-from doomberg_platform import (
+from ithaca_platform import (
     CompliancePolicyConflict,
     ExecutionControlConflict,
     LeaseConflict,
@@ -69,7 +69,7 @@ def test_job_store_terminal_writes_require_lease_owner(platform):
         profiles=("backtest",), kinds=("backtest",), worker_id="worker-1", limit=1
     )
 
-    from doomberg_platform.job_store import JobConflict
+    from ithaca_platform.job_store import JobConflict
 
     with pytest.raises(JobConflict):
         platform.jobs.complete(tenant, job["job_id"], worker_id="worker-2", result={"ok": True})
@@ -296,7 +296,7 @@ def test_artifacts_approvals_providers_and_execution(platform):
         tenant,
         run_id,
         kind="summary",
-        uri="spaces://doomberg-artifacts/runs/r1/summary.json",
+        uri="spaces://ithaca-artifacts/runs/r1/summary.json",
         metadata={"sha256": "abc"},
     )
     assert platform.artifacts.get(tenant, artifact["artifact_id"])["metadata"]["sha256"] == "abc"
@@ -362,7 +362,7 @@ def test_artifacts_approvals_providers_and_execution(platform):
         tenant,
         intent["intent_id"],
         broker="paper",
-        client_order_id="dmbg-test-1",
+        client_order_id="ith-test-1",
         payload={"symbol": "AAPL", "quantity": 1},
         state="filled",
         broker_order_id="paper-1",
@@ -371,7 +371,7 @@ def test_artifacts_approvals_providers_and_execution(platform):
         tenant,
         intent["intent_id"],
         broker="paper",
-        client_order_id="dmbg-test-1",
+        client_order_id="ith-test-1",
         payload={"symbol": "MSFT", "quantity": 2},
     )
     assert same_order["order_id"] == order["order_id"]
@@ -394,7 +394,7 @@ def test_artifacts_approvals_providers_and_execution(platform):
         tenant,
         intent["intent_id"],
         broker="paper",
-        client_order_id="dmbg-test-2",
+        client_order_id="ith-test-2",
         payload={"symbol": "MSFT", "quantity": 1},
     )
     with pytest.raises(ValueError, match="another order"):

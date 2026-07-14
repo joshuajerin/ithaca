@@ -17,7 +17,7 @@ export interface SessionUser {
   name: string;
   email: string;
   avatarUrl?: string;
-  provider: "doomberg";
+  provider: "ithaca";
 }
 
 export type Integrations = Record<Provider, boolean>;
@@ -51,10 +51,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const email = clerkUser.primaryEmailAddress?.emailAddress ?? "";
     return {
       id: clerkUser.id,
-      name: clerkUser.fullName || clerkUser.username || email || "Doomberg user",
+      name: clerkUser.fullName || clerkUser.username || email || "Ithaca user",
       email,
       avatarUrl: clerkUser.imageUrl || undefined,
-      provider: "doomberg",
+      provider: "ithaca",
     };
   }, [clerkUser]);
 

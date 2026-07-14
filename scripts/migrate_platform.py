@@ -5,14 +5,14 @@ from __future__ import annotations
 
 import os
 
-from doomberg_platform import open_db
+from ithaca_platform import open_db
 
 
 def main() -> int:
-    dsn = os.environ.get("DOOMBERG_DB", "")
+    dsn = os.environ.get("ITHACA_DB", "")
     if not dsn:
-        raise SystemExit("DOOMBERG_DB must be set")
-    os.environ["DOOMBERG_DB_MIGRATION_MODE"] = "apply"
+        raise SystemExit("ITHACA_DB must be set")
+    os.environ["ITHACA_DB_MIGRATION_MODE"] = "apply"
     db = open_db(dsn)
     status = getattr(db, "migration_status", None)
     db.close()

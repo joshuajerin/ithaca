@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and push the dedicated Doomberg IBKR engine image to DOCR.
+# Build and push the dedicated Ithaca IBKR engine image to DOCR.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -10,9 +10,9 @@ if [[ "${LOAD_LOCAL_ENV:-1}" != "0" && -f infra/terraform/.env ]]; then
   set -a; source infra/terraform/.env; set +a
 fi
 
-REGISTRY_NAME="${REGISTRY_NAME:-doomberg}"
+REGISTRY_NAME="${REGISTRY_NAME:-ithaca}"
 REGISTRY_HOST="registry.digitalocean.com/${REGISTRY_NAME}"
-IMAGE_NAME="${IBKR_IMAGE_NAME:-doomberg-ibkr-engine}"
+IMAGE_NAME="${IBKR_IMAGE_NAME:-ithaca-ibkr-engine}"
 
 IMAGE_TAG="${IMAGE_TAG:-${1:-}}"
 if [[ -z "${IMAGE_TAG}" ]]; then
@@ -35,7 +35,7 @@ if [[ -n "${IBKR_GATEWAY_ZIP_URL:-}" ]]; then
   BUILD_ARGS+=(--build-arg "IBKR_GATEWAY_ZIP_URL=${IBKR_GATEWAY_ZIP_URL}")
 fi
 
-echo "==> Building ${REMOTE_REF} (linux/amd64, IBKR Client Portal Gateway + Doomberg wrapper)"
+echo "==> Building ${REMOTE_REF} (linux/amd64, IBKR Client Portal Gateway + Ithaca wrapper)"
 DOCKER_BUILDKIT=1 docker build \
   --platform linux/amd64 \
   "${BUILD_TAGS[@]}" \

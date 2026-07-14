@@ -1,6 +1,6 @@
 # services
 
-Thin deployables over `doomberg-core`. All Python.
+Thin deployables over `ithaca-core`. All Python.
 
 - `mcp-gateway/`   — primary product surface; MCP tools the BYO agent calls. Token→principal, per-call deadline, one trace event per call. Agent may read + `propose_strategy` only (never promote).
 - `rest-gateway/`  — feeds the web UI (REST reads + SSE fan-out + human control actions: accept/promote/pause/halt).

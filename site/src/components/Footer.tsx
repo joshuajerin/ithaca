@@ -6,7 +6,7 @@ export default function Footer() {
       <div className="mx-auto max-w-[1200px] px-5 py-6">
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
           <Link to="/" className="text-[1.1rem] font-600 tracking-tight text-ink hover:text-olive">
-            Doomberg
+            Ithaca
           </Link>
           <nav aria-label="Legal" className="flex items-center gap-4 text-[0.82rem] text-ink-soft">
             <Link to="/terms" className="transition-colors hover:text-olive">
@@ -20,7 +20,7 @@ export default function Footer() {
 
         <div className="mt-4 border-t border-line pt-4">
           <p className="text-[0.82rem] text-faint">
-            © 2026 Doomberg. Research &amp; paper-trading platform, not investment advice.
+            © 2026 Ithaca. Research &amp; paper-trading platform, not investment advice.
           </p>
         </div>
       </div>
