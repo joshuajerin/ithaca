@@ -322,6 +322,35 @@ jobs:
             exit 1
           fi
 
+          # Clerk publishable keys encode their Frontend API host. Refuse to build
+          # a browser bundle when that host, the backend issuer, or the allowed
+          # app origin drift apart. Environment-level secrets override repository
+          # secrets, so this catches a stale prod environment before deployment.
+          if [[ "${DEPLOY_ENV}" == "prod" && "${DEPLOY_MODE}" != "dry-run" ]]; then
+            clerk_key_payload="${CLERK_PUBLISHABLE_KEY#pk_live_}"
+            if [[ "${clerk_key_payload}" == "${CLERK_PUBLISHABLE_KEY}" ]]; then
+              clerk_key_payload="${CLERK_PUBLISHABLE_KEY#pk_test_}"
+            fi
+            clerk_key_host="$(printf '%s' "${clerk_key_payload}" | tr '_-' '/+' | base64 --decode 2>/dev/null || true)"
+            clerk_key_host="${clerk_key_host%\$}"
+            clerk_issuer_host="${CLERK_ISSUER#https://}"
+            clerk_issuer_host="${clerk_issuer_host%%/*}"
+            expected_app_origin="https://${APP_HOST}"
+
+            if [[ -z "${clerk_key_host}" || "${clerk_key_host}" != "${clerk_issuer_host}" ]]; then
+              echo "ERROR: CLERK_PUBLISHABLE_KEY host does not match CLERK_ISSUER for prod." >&2
+              exit 1
+            fi
+            if [[ "${CLERK_ALLOWED_ORIGINS}" != *"${expected_app_origin}"* ]]; then
+              echo "ERROR: CLERK_ALLOWED_ORIGINS does not include ${expected_app_origin}." >&2
+              exit 1
+            fi
+            if [[ "${APP_HOST}" == *doomberg.me || "${MCP_HOST}" == *doomberg.me || "${CLERK_ISSUER}" == *doomberg.me || "${CLERK_JWKS_URL}" == *doomberg.me ]]; then
+              echo "ERROR: prod public host configuration still contains a legacy Doomberg domain." >&2
+              exit 1
+            fi
+          fi
+
           echo "Deploy config preflight passed for ${DEPLOY_ENV}."
 
   build-push:
