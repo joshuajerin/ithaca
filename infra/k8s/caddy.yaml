@@ -23,7 +23,7 @@ data:
 
     # Production MCP endpoint for remote BYO agents: https://mcp.tradeithaca.com/mcp
     mcp.tradeithaca.com {
-      reverse_proxy ithaca-app.ithaca-gateway.svc.cluster.local:8080 {
+      reverse_proxy ithaca-app.${K8S_GATEWAY_NAMESPACE}.svc.cluster.local:8080 {
         # MCP streamable-HTTP is long-lived SSE; don't buffer or cut it short.
         flush_interval -1
         transport http {
@@ -35,7 +35,7 @@ data:
 
     # The UI / REST API: https://app.tradeithaca.com
     app.tradeithaca.com {
-      reverse_proxy ithaca-app.ithaca-gateway.svc.cluster.local:8000
+      reverse_proxy ithaca-app.${K8S_GATEWAY_NAMESPACE}.svc.cluster.local:8000
     }
 
     # Temporary compatibility hosts. The legacy root is injected at deploy time
@@ -53,7 +53,7 @@ data:
     }
 
     mcp.${ITHACA_LEGACY_ROOT_DOMAIN} {
-      reverse_proxy ithaca-app.ithaca-gateway.svc.cluster.local:8080 {
+      reverse_proxy ithaca-app.${K8S_GATEWAY_NAMESPACE}.svc.cluster.local:8080 {
         flush_interval -1
         transport http {
           read_timeout 1h

@@ -552,11 +552,20 @@ caddy_checksum() {
 if [[ "${APPLY_CADDY:-1}" == "1" ]]; then
   echo "==> caddy public ingress"
   before="$(caddy_checksum || true)"
+  caddy_manifest="infra/k8s/caddy.yaml"
   if [[ "${IBKR_SIGNIN_PUBLIC}" == "1" ]]; then
     echo "WARN: applying temporary public IBKR sign-in route host=${IBKR_SIGNIN_HOST} remote_ip=${IBKR_SIGNIN_REMOTE_IPS}" >&2
-    render_manifest infra/k8s/caddy-ibkr-signin.yaml | apply_manifest
+    caddy_manifest="infra/k8s/caddy-ibkr-signin.yaml"
+  fi
+  # During the Doomberg-to-Ithaca migration, Caddy itself remains in the
+  # legacy gateway namespace. Its existing Deployment selector is immutable,
+  # so update just the ConfigMap rather than attempting to replace the Caddy
+  # Deployment, Service, and PVC. Fresh installations still receive all of
+  # those resources from the full manifest.
+  if kubectl -n "${CADDY_NAMESPACE}" get deployment caddy >/dev/null 2>&1; then
+    render_manifest "${caddy_manifest}" | sed '/^---$/,$d' | apply_manifest
   else
-    apply_manifest < infra/k8s/caddy.yaml
+    render_manifest "${caddy_manifest}" | apply_manifest
   fi
   after="$(caddy_checksum || true)"
   if [[ "${FORCE_CADDY_RESTART:-0}" == "1" || "${before}" != "${after}" ]]; then

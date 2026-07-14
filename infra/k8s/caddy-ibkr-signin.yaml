@@ -5,7 +5,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: caddy-config
-  namespace: ithaca-gateway
+  namespace: ${CADDY_NAMESPACE}
 data:
   Caddyfile: |
     {
@@ -15,7 +15,7 @@ data:
     }
 
     mcp.tradeithaca.com {
-      reverse_proxy ithaca-app.ithaca-gateway.svc.cluster.local:8080 {
+      reverse_proxy ithaca-app.${K8S_GATEWAY_NAMESPACE}.svc.cluster.local:8080 {
         flush_interval -1
         transport http {
           read_timeout 1h
@@ -25,7 +25,7 @@ data:
     }
 
     app.tradeithaca.com {
-      reverse_proxy ithaca-app.ithaca-gateway.svc.cluster.local:8000
+      reverse_proxy ithaca-app.${K8S_GATEWAY_NAMESPACE}.svc.cluster.local:8000
     }
 
     ${IBKR_SIGNIN_HOST} {
@@ -61,7 +61,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: caddy-data
-  namespace: ithaca-gateway
+  namespace: ${CADDY_NAMESPACE}
 spec:
   accessModes: [ReadWriteOnce]
   storageClassName: do-block-storage
@@ -73,7 +73,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: caddy
-  namespace: ithaca-gateway
+  namespace: ${CADDY_NAMESPACE}
   labels:
     ithaca/component: caddy
 spec:
@@ -124,7 +124,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: caddy
-  namespace: ithaca-gateway
+  namespace: ${CADDY_NAMESPACE}
   labels:
     ithaca/component: caddy
   annotations:
