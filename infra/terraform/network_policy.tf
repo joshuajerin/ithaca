@@ -14,8 +14,8 @@ resource "kubernetes_namespace" "workers" {
     name = var.worker_namespace
 
     labels = {
-      "ithaca/role"                      = "workers"
-      "ithaca/environment"               = var.environment
+      "ithaca/role"                        = "workers"
+      "ithaca/environment"                 = var.environment
       "pod-security.kubernetes.io/enforce" = "restricted"
     }
   }
