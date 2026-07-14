@@ -16,9 +16,11 @@ const embeddedClerkAppearance = {
 } as const;
 
 export function AuthPage() {
-  const { pathname } = useLocation();
+  const { pathname, search, hash } = useLocation();
   const isSignUp = pathname.startsWith("/sign-up");
   const isWaitlist = pathname.startsWith("/waitlist");
+  const isAgentLink = pathname.startsWith("/agent-link");
+  const redirectUrl = `${pathname}${search}${hash}`;
 
   return (
     <div className="auth">
@@ -33,24 +35,43 @@ export function AuthPage() {
 
         {isWaitlist ? (
           <Waitlist appearance={embeddedClerkAppearance} />
+        ) : isAgentLink ? (
+          <>
+            <header>
+              <h1 className="auth-title">Sign in to approve the agent</h1>
+              <p className="auth-sub">
+                Once you’re signed in, you’ll return here to approve Doomberg MCP access.
+              </p>
+            </header>
+            <SignIn
+              appearance={embeddedClerkAppearance}
+              path="/agent-link"
+              routing="path"
+              forceRedirectUrl={redirectUrl}
+              fallbackRedirectUrl={redirectUrl}
+              withSignUp={false}
+            />
+          </>
         ) : isSignUp ? (
           <SignUp appearance={embeddedClerkAppearance} path="/sign-up" routing="path" />
         ) : (
           <SignIn appearance={embeddedClerkAppearance} path="/" routing="path" />
         )}
 
-        <div className="auth-mode-row">
-          <span>
-            {isWaitlist || isSignUp ? "Already approved?" : "New to Doomberg?"}
-          </span>
-          <Link
-            className="link-btn auth-mode-link"
-            data-auth-switch
-            to={isWaitlist || isSignUp ? "/" : "/waitlist"}
-          >
-            {isWaitlist || isSignUp ? "Sign in" : "Join the waitlist"}
-          </Link>
-        </div>
+        {!isAgentLink && (
+          <div className="auth-mode-row">
+            <span>
+              {isWaitlist || isSignUp ? "Already approved?" : "New to Doomberg?"}
+            </span>
+            <Link
+              className="link-btn auth-mode-link"
+              data-auth-switch
+              to={isWaitlist || isSignUp ? "/" : "/waitlist"}
+            >
+              {isWaitlist || isSignUp ? "Sign in" : "Join the waitlist"}
+            </Link>
+          </div>
+        )}
 
         <p className="auth-consent">
           By continuing you agree to our{" "}
