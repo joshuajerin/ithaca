@@ -18,12 +18,15 @@ export function GithubIcon() {
   );
 }
 
-// The Ithaca diamond mark, matching the marketing site.
+// The canonical Ithaca mark is a transparent SVG shared with the marketing site.
 export function IthacaMark({ size = 28 }: { size?: number }) {
   return (
-    <span className="db-mark" style={{ width: size, height: size }}>
-      <span className="db-mark-outer" />
-      <span className="db-mark-inner" />
-    </span>
+    <img
+      className="ithaca-mark"
+      src="/ithaca-mark.svg"
+      width={size}
+      height={size}
+      alt="Ithaca"
+    />
   );
 }
