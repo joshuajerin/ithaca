@@ -36,6 +36,7 @@ function MissingClerkConfig() {
       <div className="auth-bg" />
       <div className="auth-card auth-callback">
         <div className="auth-brand">
+          <img className="ithaca-mark" src="/ithaca-mark.svg" width="30" height="30" alt="Ithaca" />
           <div>
             Ithaca
           </div>
