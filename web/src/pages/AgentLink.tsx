@@ -54,7 +54,8 @@ export function AgentLink() {
     const mcpUrl = param("mcp_url") || MCP_BASE;
     const name = param("name") || "doomberg";
     const client = param("client") || "codex";
-    return { callback, state, mcpUrl, name, client };
+    const auth = param("auth") || "";
+    return { callback, state, mcpUrl, name, client, auth };
   }, []);
 
   async function approve() {
@@ -99,7 +100,7 @@ export function AgentLink() {
           body: JSON.stringify({
             state: config.state,
             denied: true,
-            error: "User denied Doomberg MCP access.",
+            error: "User denied Ithaca compatibility-key access.",
             mcp_url: config.mcpUrl,
           }),
         }).catch(() => undefined);
@@ -112,20 +113,26 @@ export function AgentLink() {
   }
 
   if (!user) return null;
+  const nativeClient = ["codex", "claude-code", "cursor"].includes(config.client);
+  const compatibilityRequested = config.auth === "api-key";
 
   return (
     <div className="agent-consent-page">
       <main className="agent-consent-card" aria-labelledby="agent-consent-title">
         <header className="agent-consent-header">
           <h1 id="agent-consent-title">
-            Your agent wants access to Doomberg MCP
+            Create an Ithaca compatibility key
           </h1>
           <p>
-            Approving creates a scoped key for <strong>{config.name}</strong>.
+            This creates a scoped automation key for <strong>{config.name}</strong>.
           </p>
         </header>
 
-        <section className="agent-consent-access" aria-label="Requested access">
+        {nativeClient && !compatibilityRequested ? (
+          <div className="agent-consent-message">
+            Codex, Claude Code, and Cursor use Clerk OAuth. Return to Settings and add the MCP URL instead of creating an API key.
+          </div>
+        ) : <section className="agent-consent-access" aria-label="Requested access">
           <div className="agent-consent-eyebrow">Your account will be used to</div>
           <div className="agent-consent-list">
             {ACCESS_ITEMS.map((item) => (
@@ -138,7 +145,7 @@ export function AgentLink() {
               </div>
             ))}
           </div>
-        </section>
+        </section>}
 
         <div className="agent-consent-meta">
           <span>Account</span>
@@ -148,12 +155,12 @@ export function AgentLink() {
         {error && <div className="agent-consent-message err">{error}</div>}
         {status === "done" && (
           <div className="agent-consent-message ok">
-            Doomberg MCP is installed. You can close this tab and return to the coding agent.
+            Compatibility key created. You can close this tab and return to the agent.
           </div>
         )}
         {status === "denied" && (
           <div className="agent-consent-message">
-            Access denied. No Doomberg MCP key was created for this agent.
+            Access denied. No Ithaca MCP key was created for this agent.
           </div>
         )}
 
@@ -161,7 +168,7 @@ export function AgentLink() {
           <button
             className="agent-consent-button deny"
             onClick={deny}
-            disabled={status === "working" || status === "done" || status === "denied"}
+            disabled={nativeClient && !compatibilityRequested || status === "working" || status === "done" || status === "denied"}
           >
             Deny
           </button>
@@ -170,7 +177,7 @@ export function AgentLink() {
             onClick={approve}
             disabled={status === "working" || status === "done" || status === "denied"}
           >
-            {status === "working" ? "Connecting..." : status === "done" ? "Connected" : "Approve"}
+            {status === "working" ? "Creating..." : status === "done" ? "Created" : "Create compatibility key"}
           </button>
         </div>
       </main>

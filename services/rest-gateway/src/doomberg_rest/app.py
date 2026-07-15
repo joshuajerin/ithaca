@@ -33,11 +33,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from jwt import InvalidTokenError, PyJWKClient
 from pydantic import BaseModel, Field
 
 from doomberg_control import actions
@@ -58,6 +56,10 @@ from doomberg_platform import (
     AdaptiveDashboardProfileStore,
     ClerkApiError,
     ClerkApiUnavailable,
+    ClerkAuthConfigurationError,
+    ClerkIdentityService,
+    ClerkIdentityUnavailable,
+    ClerkTokenInvalid,
     AuthStore,
     ApprovalStore,
     ArtifactStore,
@@ -262,132 +264,24 @@ def _csv_env(name: str) -> list[str]:
     return [part.strip() for part in os.environ.get(name, "").split(",") if part.strip()]
 
 
-def _clerk_public_key() -> str | None:
-    raw = os.environ.get("CLERK_PEM_PUBLIC_KEY") or os.environ.get("CLERK_JWT_PUBLIC_KEY")
-    if not raw:
-        return None
-    raw = raw.replace("\\n", "\n").strip()
-    if "BEGIN PUBLIC KEY" in raw:
-        return raw
-    return f"-----BEGIN PUBLIC KEY-----\n{raw}\n-----END PUBLIC KEY-----"
-
-
-def _clerk_jwks_url() -> str | None:
-    explicit = os.environ.get("CLERK_JWKS_URL", "").strip()
-    if explicit:
-        return explicit
-    frontend_api = os.environ.get("CLERK_FRONTEND_API_URL", "").strip().rstrip("/")
-    if frontend_api:
-        return f"{frontend_api}/.well-known/jwks.json"
-    return None
-
-
-def _clerk_configured() -> bool:
-    return bool(_clerk_public_key() or _clerk_jwks_url())
-
-
 def _strict_clerk_claim_checks_required() -> bool:
     return not _allow_dev_tenant_header()
 
 
-_CLERK_JWKS_CLIENTS: dict[str, PyJWKClient] = {}
-
-
-def _decode_clerk_token(token: str) -> dict[str, Any] | None:
-    if not _clerk_configured():
-        return None
-
-    try:
-        public_key = _clerk_public_key()
-        if public_key:
-            claims = jwt.decode(
-                token,
-                public_key,
-                algorithms=["RS256"],
-                options={"verify_aud": False},
-            )
-        else:
-            jwks_url = _clerk_jwks_url()
-            if not jwks_url:
-                return None
-            client = _CLERK_JWKS_CLIENTS.setdefault(jwks_url, PyJWKClient(jwks_url))
-            signing_key = client.get_signing_key_from_jwt(token)
-            claims = jwt.decode(
-                token,
-                signing_key.key,
-                algorithms=["RS256"],
-                options={"verify_aud": False},
-            )
-    except InvalidTokenError as exc:
-        raise HTTPException(status_code=401, detail="invalid Clerk token") from exc
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail="could not verify Clerk token") from exc
-
-    strict_claims = _strict_clerk_claim_checks_required()
-    issuer = os.environ.get("CLERK_ISSUER", "").strip()
-    if strict_claims and not issuer:
-        raise HTTPException(status_code=503, detail="CLERK_ISSUER is required")
-    if issuer and claims.get("iss") != issuer:
-        raise HTTPException(status_code=401, detail="invalid Clerk issuer")
-
-    allowed_origins = set(_csv_env("CLERK_ALLOWED_ORIGINS"))
-    if strict_claims and not allowed_origins:
-        raise HTTPException(status_code=503, detail="CLERK_ALLOWED_ORIGINS is required")
-    azp = claims.get("azp")
-    if allowed_origins and azp not in allowed_origins:
-        raise HTTPException(status_code=401, detail="invalid Clerk authorized party")
-
-    if claims.get("sts") == "pending":
-        raise HTTPException(status_code=401, detail="Clerk session is pending")
-
-    if not claims.get("sub"):
-        raise HTTPException(status_code=401, detail="Clerk token missing subject")
-
-    return claims
-
-
-def _upsert_clerk_user(stores: "Stores", claims: dict[str, Any]) -> dict[str, Any]:
-    sub = str(claims["sub"])
-    email = (
-        claims.get("email")
-        or claims.get("email_address")
-        or claims.get("primary_email_address")
-        or f"{sub}@clerk.doomberg.local"
+def _clerk_service(stores: "Stores") -> ClerkIdentityService:
+    """One cached verifier per app process/configuration, shared by all REST routes."""
+    signature = (
+        os.environ.get("CLERK_ISSUER", ""),
+        os.environ.get("CLERK_PEM_PUBLIC_KEY", "") or os.environ.get("CLERK_JWT_PUBLIC_KEY", ""),
+        os.environ.get("CLERK_JWKS_URL", "") or os.environ.get("CLERK_FRONTEND_API_URL", ""),
     )
-    email = str(email).strip().lower()
-    name = (
-        claims.get("name")
-        or claims.get("full_name")
-        or claims.get("username")
-        or claims.get("first_name")
-        or email
-    )
-    avatar_url = claims.get("picture") or claims.get("image_url")
-
-    with stores.db.system_scope():
-        existing_link = stores.db.conn.execute(
-            "SELECT user_id FROM oauth_accounts WHERE provider=? AND provider_id=?",
-            ("clerk", sub),
-        ).fetchone()
-        if existing_link:
-            existing_user = stores.users.get_by_id(existing_link["user_id"])
-            tenant_id = (
-                existing_user["tenant_id"]
-                if existing_user
-                else stores.auth.create_tenant(str(name))
-            )
-        else:
-            existing_by_email = stores.db.conn.execute(
-                "SELECT id, tenant_id FROM users WHERE email=?",
-                (email,),
-            ).fetchone()
-            tenant_id = (
-                existing_by_email["tenant_id"]
-                if existing_by_email
-                else stores.auth.create_tenant(str(name or email))
-            )
-
-        return stores.users.oauth_upsert("clerk", sub, email, str(name), avatar_url, tenant_id)
+    cached = getattr(stores, "_clerk_identity", None)
+    if cached and getattr(stores, "_clerk_identity_signature", None) == signature:
+        return cached
+    service = ClerkIdentityService.from_environment(db=stores.db, users=stores.users, auth=stores.auth)
+    stores._clerk_identity = service
+    stores._clerk_identity_signature = signature
+    return service
 
 
 def _human_scopes() -> list[str]:
@@ -419,10 +313,31 @@ def _principal_from_user(user: dict[str, Any]) -> dict[str, Any]:
 
 
 def _user_from_human_token(stores: "Stores", token: str) -> dict[str, Any] | None:
-    claims = _decode_clerk_token(token)
-    if claims is None:
+    service = _clerk_service(stores)
+    if _strict_clerk_claim_checks_required() and not service.issuer:
+        raise HTTPException(status_code=503, detail="CLERK_ISSUER is required")
+    allowed_origins = _csv_env("CLERK_ALLOWED_ORIGINS")
+    if _strict_clerk_claim_checks_required() and not allowed_origins:
+        raise HTTPException(status_code=503, detail="CLERK_ALLOWED_ORIGINS is required")
+    try:
+        identity = service.verify_session_token(token, allowed_origins=allowed_origins)
+        resolved = service.resolve_user_and_tenant(identity)
+    except ClerkAuthConfigurationError as exc:
+        # In local development no Clerk verifier means a bearer is simply not a Clerk token;
+        # production configuration failures were handled above and remain retryable.
+        if _allow_dev_tenant_header():
+            return None
+        raise HTTPException(status_code=503, detail="Clerk authentication unavailable") from exc
+    except ClerkIdentityUnavailable as exc:
+        raise HTTPException(status_code=503, detail="Clerk authentication unavailable") from exc
+    except ClerkTokenInvalid as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    if not resolved:
         return None
-    return {**_upsert_clerk_user(stores, claims), "clerk_subject": str(claims["sub"])}
+    user = stores.users.get_by_id(resolved.user_id)
+    if user is None:
+        raise HTTPException(status_code=503, detail="Clerk identity could not be resolved")
+    return {**user, "clerk_subject": identity.subject}
 
 
 def _verify_bearer(request: Request, authorization: str | None) -> dict[str, Any] | None:

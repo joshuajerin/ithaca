@@ -14,7 +14,7 @@ data:
       email admin@doomberg.me
     }
 
-    mcp.doomberg.me {
+    mcp.tradeithaca.com {
       reverse_proxy doomberg-app.doomberg-gateway.svc.cluster.local:8080 {
         flush_interval -1
         transport http {
@@ -24,7 +24,7 @@ data:
       }
     }
 
-    app.doomberg.me {
+    app.tradeithaca.com {
       reverse_proxy doomberg-app.doomberg-gateway.svc.cluster.local:8000
     }
 

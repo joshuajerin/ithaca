@@ -1,349 +1,159 @@
-"""HTTP transport + per-tenant bearer auth for the Doomberg MCP server.
+"""Standards-based dual-auth HTTP transport for the Ithaca MCP server.
 
-STDIO (the default) is a locally-launched, locally-trusted agent: no auth, the existing
-dev behavior. This module adds the **hosted** path so a REMOTE bring-your-own agent can
-connect over the network, using the MCP SDK's streamable-HTTP transport
-(``FastMCP.streamable_http_app()`` → a Starlette ASGI app served by uvicorn).
-
-Auth is a thin ASGI middleware in front of that app rather than the SDK's ``TokenVerifier``
-hook: the SDK hook is an OAuth *resource-server* facility — it refuses to start without full
-``AuthSettings`` (issuer URLs, RFC 9728 protected-resource metadata) and changes the wire
-protocol. Our credential is a Clerk-managed opaque API key, with legacy ``dmbg_``
-verification during migration, so middleware remains the simplest supported integration.
-
-The middleware:
-
-* requires ``Authorization: Bearer <api-key>`` on every MCP request → **401** on
-  missing/invalid/revoked keys;
-* requires scope ``data:read`` for any ``tools/call`` or MCP resource read/list request,
-  and additionally ``strategy:author`` for the ``propose_strategy`` tool → **403** if
-  missing;
-* stashes the verified principal (``tenant_id`` + scopes) in a request-scoped
-  :class:`contextvars.ContextVar` so the tool wrappers can pass it into the Toolset as
-  ``_ctx`` — every hosted call is then tenant-scoped and traced under that tenant (the
-  Toolset's ``_tracer`` keys research sessions off ``_ctx['tenant_id']``).
-
-No new dependencies: ``mcp``, ``starlette`` and ``uvicorn`` are already in the workspace.
+Interactive clients authenticate through Clerk OAuth; automation clients retain Clerk and
+legacy API-key support.  Authentication is delegated to the MCP SDK so protected-resource
+metadata and Bearer challenges remain protocol-correct.
 """
 from __future__ import annotations
 
-import contextvars
-import json
 import os
-from dataclasses import dataclass, field
+from typing import Any
 
-# The per-request authenticated principal. Set by the auth middleware before the MCP
-# request is dispatched to a tool; read by the tool wrappers to build ``_ctx``. A
-# ContextVar (not a plain global) keeps it correct under concurrent requests — each ASGI
-# task gets its own value.
-_PRINCIPAL: contextvars.ContextVar["Principal | None"] = contextvars.ContextVar(
-    "doomberg_mcp_principal", default=None
+import anyio
+from mcp.server.auth.provider import AccessToken, TokenVerifier
+from mcp.server.auth.settings import AuthSettings
+
+from doomberg_platform import (
+    ClerkApiError,
+    ClerkApiUnavailable,
+    ClerkAuthConfigurationError,
+    ClerkIdentityService,
+    ClerkIdentityUnavailable,
+    ClerkTokenInvalid,
+    Platform,
+    build_agent_key_store,
+    open_db,
 )
 
-# Scope policy (kept here, next to enforcement, so it reads as one unit).
-SCOPE_TOOL_CALL = "data:read"  # required for any tools/call
-RESOURCE_READ_METHODS = {
-    "resources/read",
-    "resources/list",
-    "resources/templates/list",
-}
-SCOPE_BY_TOOL = {
-    "propose_strategy": "strategy:author",
-    "run_skill": "runs:write",
-    "cancel_run": "runs:cancel",
-    "list_approvals": "approvals:read",
-    "decide_approval": "approvals:decide",
-    "get_artifact": "artifacts:read",
-    "triggers_create": "triggers:write",
-    "triggers_dry_run": "triggers:write",
-    "triggers_list": "triggers:read",
-    "triggers_set_state": "triggers:write",
-    "trigger_firings_list": "triggers:read",
-    "alerts_list": "alerts:read",
-    "alerts_subscribe": "alerts:read",
-    "alerts_ack": "alerts:ack",
-}  # extra scope per tool name
-SCOPE_BY_RESOURCE_PREFIX = {
-    "doomberg://alerts": "alerts:read",
-    "doomberg://triggers": "triggers:read",
-    "doomberg://trigger-firings": "triggers:read",
-}
+MCP_RESOURCE_URL_ENV = "ITHACA_MCP_RESOURCE_URL"
+DEFAULT_MCP_RESOURCE_URL = "https://mcp.tradeithaca.com/mcp"
+MCP_OAUTH_SCOPE_ENV = "ITHACA_MCP_OAUTH_SCOPE"
+DEFAULT_MCP_OAUTH_SCOPE = "ithaca:agent"
+
+# OAuth is intentionally read-oriented. It never inherits privileged deployment, execution,
+# credential-administration, approval-decision, or trigger-write capabilities.
+SAFE_OAUTH_SCOPES = frozenset({
+    "agent:read", "data:read", "artifacts:read", "approvals:read",
+    "triggers:read", "alerts:read", "runs:write", "runs:cancel",
+})
 
 
-@dataclass(frozen=True)
-class Principal:
-    """The verified caller behind one HTTP MCP request."""
-
-    tenant_id: str
-    scopes: frozenset[str] = field(default_factory=frozenset)
-    key_id: str | None = None
-
-    def has(self, scope: str) -> bool:
-        return scope in self.scopes
-
-    def ctx(self) -> dict:
-        """The ``_ctx`` the Toolset expects (tenant-scopes the trace + research session)."""
-        return {
-            "tenant_id": self.tenant_id,
-            "agent_id": self.key_id,
-            "actor_kind": "agent",
-            "scopes": set(self.scopes),
-        }
+def resource_url() -> str:
+    return (os.environ.get(MCP_RESOURCE_URL_ENV) or DEFAULT_MCP_RESOURCE_URL).strip()
 
 
-def current_principal() -> Principal | None:
-    """The principal for the in-flight HTTP request, or None (e.g. stdio mode)."""
-    return _PRINCIPAL.get()
+def oauth_scope() -> str:
+    return (os.environ.get(MCP_OAUTH_SCOPE_ENV) or DEFAULT_MCP_OAUTH_SCOPE).strip()
 
 
-def _bearer(headers) -> str | None:
-    """Extract the bearer token from a raw ASGI headers list (bytes pairs)."""
-    for name, value in headers:
-        if name.lower() == b"authorization":
-            raw = value.decode("latin-1").strip()
-            if raw.lower().startswith("bearer "):
-                return raw[7:].strip()
+def looks_like_agent_api_key(token: str) -> bool:
+    return token.startswith(("ak_", "dmbg_", "ith_"))
+
+
+class CompositeTokenVerifier(TokenVerifier):
+    """Accept Clerk OAuth access tokens and existing scoped API keys as Bearer tokens."""
+
+    def __init__(self, *, agent_keys: Any, identity: ClerkIdentityService) -> None:
+        self._agent_keys = agent_keys
+        self._identity = identity
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        if looks_like_agent_api_key(token):
+            return await self._verify_api_key(token)
+        return await self._verify_oauth_token(token)
+
+    async def _verify_api_key(self, token: str) -> AccessToken | None:
+        try:
+            info = await anyio.to_thread.run_sync(self._agent_keys.verify, token)
+        except (ClerkApiUnavailable, ClerkApiError):
+            # Fail closed.  The SDK will issue the normal 401 challenge without leaking the
+            # operational detail or credential value.
             return None
-    return None
-
-
-def _scope_needed(body: bytes) -> set[str] | None:
-    """Extra scopes a JSON-RPC body needs, or None when it cannot be inspected.
-
-    Best-effort parse of the JSON-RPC body: tool-specific calls add all scopes required by
-    every call in the body. A batch request therefore gets the union of required scopes
-    instead of the first arbitrary set member. Base ``data:read`` gating for tools and
-    resources is handled by :func:`_requires_data_read`.
-    """
-    try:
-        msg = json.loads(body)
-    except Exception:
-        return None
-    # A batch is a list; if any element is a tools/call we still gate it. Keep it simple:
-    # treat a list by checking each element.
-    msgs = msg if isinstance(msg, list) else [msg]
-    needs: set[str] = set()
-    is_tool_call = False
-    for m in msgs:
-        if not isinstance(m, dict):
-            continue
-        if m.get("method") == "tools/call":
-            is_tool_call = True
-            name = (m.get("params") or {}).get("name")
-            if name in SCOPE_BY_TOOL:
-                needs.add(SCOPE_BY_TOOL[name])
-        if m.get("method") == "resources/read":
-            uri = str((m.get("params") or {}).get("uri") or "")
-            for prefix, scope in SCOPE_BY_RESOURCE_PREFIX.items():
-                if uri.startswith(prefix):
-                    needs.add(scope)
-    if not is_tool_call:
-        return needs
-    return needs
-
-
-def _requires_data_read(body: bytes) -> bool:
-    """Whether a JSON-RPC request reads tool/resource data and needs ``data:read``."""
-    try:
-        msg = json.loads(body)
-    except Exception:
-        return False
-    msgs = msg if isinstance(msg, list) else [msg]
-    for m in msgs:
-        if not isinstance(m, dict):
-            continue
-        method = m.get("method")
-        if method == "tools/call" or method in RESOURCE_READ_METHODS:
-            return True
-    return False
-
-
-def _json_error(status: int, message: str):
-    """A tiny ASGI app that emits a JSON error response and ends the request."""
-
-    async def app(scope, receive, send):
-        payload = json.dumps({"error": message}).encode("utf-8")
-        await send(
-            {
-                "type": "http.response.start",
-                "status": status,
-                "headers": [
-                    (b"content-type", b"application/json"),
-                    (b"content-length", str(len(payload)).encode("ascii")),
-                    # Advertise the scheme so a client knows to present a bearer token.
-                    (b"www-authenticate", b'Bearer realm="doomberg-mcp"'),
-                ],
-            }
+        if not info or not info.get("tenant_id"):
+            return None
+        principal_scopes = [str(scope) for scope in (info.get("scopes") or [])]
+        # SDK gateway admission has one coarse required scope.  Preserve API-key capability
+        # scopes separately and add only the admission marker to the SDK-facing token.
+        scopes = sorted(set(principal_scopes) | {oauth_scope()})
+        key_id = str(info.get("key_id") or "") or None
+        return AccessToken(
+            token="<api-key>", client_id=key_id or "api-key", subject=key_id,
+            scopes=scopes, resource=resource_url(),
+            claims={
+                "credential_kind": "api_key", "tenant_id": str(info["tenant_id"]),
+                "principal_scopes": principal_scopes, "key_id": key_id,
+            },
         )
-        await send({"type": "http.response.body", "body": payload})
 
-    return app
-
-
-class TenantAuthMiddleware:
-    """Pure-ASGI middleware enforcing per-tenant bearer auth + scopes on the MCP app.
-
-    Pure ASGI (not ``BaseHTTPMiddleware``) so it can short-circuit with 401/403 *before* the
-    streamable-HTTP handler touches the request, and so buffering the JSON-RPC body (needed to
-    read the tool name for scope enforcement) and replaying it downstream is explicit and
-    correct under streaming.
-    """
-
-    def __init__(self, app, verifier) -> None:
-        self.app = app
-        # ``verifier`` is anything with ``verify(key) -> {tenant_id, scopes, key_id} | None``
-        # (the platform AuthStore). Duck-typed so tests can pass a fake/in-memory store.
-        self.verifier = verifier
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http":
-            # Lifespan / websocket: pass straight through (the SDK app's lifespan runs the
-            # streamable-HTTP session manager).
-            await self.app(scope, receive, send)
-            return
-
-        token = _bearer(scope.get("headers") or [])
+    async def _verify_oauth_token(self, token: str) -> AccessToken | None:
         try:
-            principal = self._resolve(token)
-        except Exception as exc:
-            from doomberg_platform import ClerkApiError, ClerkApiUnavailable
-
-            if isinstance(exc, ClerkApiUnavailable):
-                await _json_error(503, "API key verification unavailable")(scope, receive, send)
-                return
-            if isinstance(exc, ClerkApiError):
-                await _json_error(401, "missing or invalid API key")(scope, receive, send)
-                return
-            raise
-        if principal is None:
-            await _json_error(401, "missing or invalid API key")(scope, receive, send)
-            return
-
-        # Buffer the body once so we can both inspect it (scope policy) and replay it to the
-        # downstream app. MCP requests are small JSON-RPC envelopes.
-        body, more = await _read_body(receive)
-        extra_scopes = _scope_needed(body)
-        if extra_scopes is not None:
-            if _requires_data_read(body) and not principal.has(SCOPE_TOOL_CALL):
-                await _json_error(403, f"missing scope: {SCOPE_TOOL_CALL}")(scope, receive, send)
-                return
-            for extra in sorted(extra_scopes):
-                if not principal.has(extra):
-                    await _json_error(403, f"missing scope: {extra}")(scope, receive, send)
-                    return
-
-        token_ctx = _PRINCIPAL.set(principal)
-        try:
-            await self.app(scope, _replay(body, more, receive), send)
-        finally:
-            _PRINCIPAL.reset(token_ctx)
-
-    def _resolve(self, token: str | None) -> Principal | None:
-        if not token:
+            identity = await anyio.to_thread.run_sync(
+                lambda: self._identity.verify_oauth_token(
+                    token, audience=resource_url(), required_scopes=[oauth_scope()]
+                )
+            )
+            principal = await anyio.to_thread.run_sync(self._identity.resolve_user_and_tenant, identity)
+        except (ClerkTokenInvalid, ClerkAuthConfigurationError, ClerkIdentityUnavailable):
             return None
-        info = self.verifier.verify(token)
-        if not info:
-            return None
-        return Principal(
-            tenant_id=info["tenant_id"],
-            scopes=frozenset(info.get("scopes") or []),
-            key_id=info.get("key_id"),
+        scopes = sorted(SAFE_OAUTH_SCOPES)
+        return AccessToken(
+            token="<oauth>", client_id=identity.client_id or "clerk-oauth",
+            subject=identity.subject, scopes=sorted(identity.scopes),
+            expires_at=identity.expires_at, resource=resource_url(),
+            claims={
+                "credential_kind": "oauth", "tenant_id": principal.tenant_id,
+                "principal_scopes": scopes, "clerk_subject": identity.subject,
+            },
         )
 
 
-def _is_tool_call(body: bytes) -> bool:
-    try:
-        msg = json.loads(body)
-    except Exception:
-        return False
-    msgs = msg if isinstance(msg, list) else [msg]
-    return any(isinstance(m, dict) and m.get("method") == "tools/call" for m in msgs)
+def _auth_settings(identity: ClerkIdentityService) -> AuthSettings:
+    identity.validate_configuration(require_issuer=True)
+    resource = resource_url()
+    if not resource.startswith("https://"):
+        raise ClerkAuthConfigurationError(f"{MCP_RESOURCE_URL_ENV} must be canonical HTTPS")
+    return AuthSettings(
+        issuer_url=identity.issuer,  # validated above
+        resource_server_url=resource,
+        required_scopes=[oauth_scope()],
+        service_documentation_url=os.environ.get(
+            "ITHACA_MCP_SERVICE_DOCUMENTATION_URL", "https://app.tradeithaca.com/settings"
+        ),
+    )
 
 
-async def _read_body(receive) -> tuple[bytes, bool]:
-    """Drain the request body from the ASGI receive channel into a single bytes buffer."""
-    chunks: list[bytes] = []
-    more = True
-    while more:
-        message = await receive()
-        if message["type"] == "http.disconnect":
-            return b"".join(chunks), False
-        chunks.append(message.get("body", b""))
-        more = message.get("more_body", False)
-    return b"".join(chunks), False
-
-
-def _replay(body: bytes, more: bool, original_receive):
-    """A receive() that yields the buffered body once, then defers to the original channel."""
-    sent = False
-
-    async def receive():
-        nonlocal sent
-        if not sent:
-            sent = True
-            return {"type": "http.request", "body": body, "more_body": False}
-        # After the body, anything further (disconnects) comes from the real channel.
-        return await original_receive()
-
-    return receive
-
-
-def build_auth_store(db_url: str | None = None):
-    """Build the migration-safe agent key verifier from ``DOOMBERG_DB`` (or ``:memory:``).
-
-    Imported lazily so unit tests that construct their own AuthStore don't force the import,
-    and a missing/unset DB falls back to ``:memory:`` (an empty store → every key 401s, which
-    is the safe default for a misconfigured deploy).
-    """
-    from doomberg_platform import build_agent_key_store, open_db
-
-    url = db_url or os.environ.get("DOOMBERG_DB", ":memory:")
-    return build_agent_key_store(open_db(url))
-
-
-def build_http_app(toolset=None, verifier=None, *, host: str | None = None,
+def build_http_app(toolset=None, verifier: Any | None = None, *, host: str | None = None,
                    port: int | None = None):
-    """Build the auth-wrapped streamable-HTTP ASGI app for the Doomberg MCP server.
+    """Build an SDK-authenticated Streamable HTTP app.
 
-    ``toolset`` defaults to the platform-backed Toolset (shared trace store). ``verifier``
-    defaults to the configured agent key store over ``DOOMBERG_DB``. Returns
-    ``(app, mcp, toolset)`` so callers
-    (and tests) can introspect. The tool wrappers pull the per-request principal from the
-    ContextVar and pass ``_ctx`` into the Toolset, so every hosted call is tenant-scoped.
+    ``verifier`` remains injectable for compatibility tests.  Production builds a shared
+    Clerk identity service and refuses startup when OAuth verification cannot be configured.
     """
     from .server import create_server
 
-    mcp, ts = create_server(toolset, http=True)
+    db = open_db(os.environ.get("DOOMBERG_DB", ":memory:"))
+    platform = Platform(db)
+    identity = ClerkIdentityService.from_environment(db=db, users=platform.users, auth=platform.auth)
+    token_verifier: TokenVerifier
+    if verifier is None:
+        token_verifier = CompositeTokenVerifier(agent_keys=build_agent_key_store(db), identity=identity)
+    elif hasattr(verifier, "verify_token"):
+        token_verifier = verifier
+    else:
+        # The old injectable AuthStore shape is useful in local tests; wrap it without
+        # changing production's SDK authentication path.
+        token_verifier = CompositeTokenVerifier(agent_keys=verifier, identity=identity)
+    mcp, ts = create_server(
+        toolset, http=True, token_verifier=token_verifier, auth_settings=_auth_settings(identity)
+    )
     if host is not None:
         mcp.settings.host = host
     if port is not None:
         mcp.settings.port = port
-
-    app = mcp.streamable_http_app()  # Starlette app; carries the session-manager lifespan
-    verifier = verifier or build_auth_store()
-    app.add_middleware(_AsgiAdapter, inner=TenantAuthMiddleware, verifier=verifier)
-    return app, mcp, ts
+    return mcp.streamable_http_app(), mcp, ts
 
 
-class _AsgiAdapter:
-    """Adapt our pure-ASGI :class:`TenantAuthMiddleware` to Starlette's ``add_middleware``.
-
-    Starlette instantiates a middleware as ``cls(app, **options)``; it then expects the
-    instance to be the ASGI callable. We wrap so the options name our real middleware class
-    and its verifier, keeping ``TenantAuthMiddleware`` independently testable as ``cls(app,
-    verifier)``.
-    """
-
-    def __init__(self, app, inner, verifier) -> None:
-        self._mw = inner(app, verifier)
-
-    async def __call__(self, scope, receive, send):
-        await self._mw(scope, receive, send)
-
-
-def serve_http(toolset=None, verifier=None, host: str = "0.0.0.0",
-               port: int = 8080) -> None:
-    """Serve the auth-wrapped streamable-HTTP MCP app with uvicorn (blocking)."""
+def serve_http(toolset=None, verifier=None, host: str = "0.0.0.0", port: int = 8080) -> None:
     import uvicorn
 
     app, _mcp, _ts = build_http_app(toolset, verifier, host=host, port=port)

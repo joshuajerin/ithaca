@@ -1,23 +1,20 @@
 #!/usr/bin/env python3
-"""Interactive Doomberg MCP installer for local coding agents.
+"""Install Ithaca MCP using native OAuth, with scoped API keys as an explicit fallback.
 
-The installer opens the Doomberg web app, receives a one-time key from the signed-in
-browser session on a localhost callback, then registers the hosted MCP endpoint with
-the selected local agent clients.
+The normal path never writes a global environment variable and never mints a key.  It records
+only the hosted MCP URL, then lets the client complete Clerk's OAuth browser flow.
 """
-from __future__ import annotations
-
 import argparse
 import json
 import os
-import platform
 import secrets
-import shlex
 import shutil
 import subprocess
 import threading
 import time
 import webbrowser
+from dataclasses import dataclass
+from enum import Enum
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -25,23 +22,44 @@ from urllib import error as urlerror
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-DEFAULT_APP_URL = "https://app.doomberg.me"
-DEFAULT_MCP_URL = "https://mcp.doomberg.me/mcp"
-CONFIG_DIR = Path.home() / ".config" / "doomberg"
-ENV_FILE = CONFIG_DIR / "mcp.env"
-TOOLS_GUIDE_FILE = CONFIG_DIR / "TOOLS.md"
-SHELL_MARKER = "# Doomberg MCP environment"
-CLIENT_ALIASES = {
-    "all": "all",
-    "cursor": "cursor",
-    "claude": "claude-code",
-    "claude-code": "claude-code",
-    "claudecode": "claude-code",
-    "codex": "codex",
-    "openclaw": "openclaw",
-    "hermes": "hermes",
+DEFAULT_APP_URL = "https://app.tradeithaca.com"
+DEFAULT_MCP_URL = "https://mcp.tradeithaca.com/mcp"
+SHELL_MARKER = "# Ithaca MCP environment"
+
+
+@dataclass(frozen=True)
+class ClientSpec:
+    id: str
+    label: str
+    native_oauth: bool
+    supports_cli_login: bool
+    supports_headless_login: bool
+    config_kind: str
+
+
+CLIENT_SPECS: dict[str, ClientSpec] = {
+    "codex": ClientSpec("codex", "Codex", True, True, True, "cli"),
+    "claude-code": ClientSpec("claude-code", "Claude Code", True, True, True, "cli"),
+    "cursor": ClientSpec("cursor", "Cursor", True, False, False, "cursor-json"),
+    "openclaw": ClientSpec("openclaw", "OpenClaw", False, False, False, "json"),
+    "hermes": ClientSpec("hermes", "Hermes", False, False, False, "json"),
 }
-DEFAULT_CLIENTS = ("cursor", "claude-code", "codex", "openclaw", "hermes")
+CLIENT_ALIASES = {"all": "all", "claude": "claude-code", "claudecode": "claude-code", **{k: k for k in CLIENT_SPECS}}
+
+
+class SetupStatus(str, Enum):
+    CONFIGURED = "configured"
+    AUTHENTICATION_REQUIRED = "authentication_required"
+    AUTHENTICATED = "authenticated"
+    VERIFIED = "verified"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class SetupResult:
+    client: str
+    status: SetupStatus
+    detail: str
 
 
 class CallbackState:
@@ -77,21 +95,23 @@ def _handler(state: CallbackState):
                 _json_response(self, 404, {"error": "not found"})
                 return
             try:
-                length = int(self.headers.get("content-length", "0"))
-                raw = self.rfile.read(length)
-                payload = json.loads(raw.decode("utf-8"))
-            except Exception as exc:
-                _json_response(self, 400, {"error": f"invalid json: {exc}"})
+                payload = json.loads(self.rfile.read(int(self.headers.get("content-length", "0"))).decode())
+            except Exception:
+                _json_response(self, 400, {"error": "invalid json"})
                 return
-
             if payload.get("state") != state.expected_state:
                 state.error = "state mismatch"
                 state.event.set()
-                _json_response(self, 403, {"error": "state mismatch"})
+                _json_response(self, 403, {"error": state.error})
                 return
-            api_key = str(payload.get("api_key") or "")
-            if not api_key.startswith("dmbg_"):
-                state.error = "approval did not return a Doomberg API key"
+            if payload.get("denied") or payload.get("error"):
+                state.error = str(payload.get("error") or "User denied compatibility key creation")
+                state.event.set()
+                _json_response(self, 200, {"ok": True})
+                return
+            key = str(payload.get("api_key") or "")
+            if not key.startswith(("ak_", "dmbg_", "ith_")):
+                state.error = "approval did not return an API key"
                 state.event.set()
                 _json_response(self, 400, {"error": state.error})
                 return
@@ -102,692 +122,275 @@ def _handler(state: CallbackState):
     return Handler
 
 
-def _agent_link_url(app_url: str, callback_url: str, state: str, mcp_url: str,
-                    name: str, client: str) -> str:
-    parts = urlsplit(app_url)
-    base = urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/") or "", "", ""))
-    params = urlencode(
-        {
-            "callback": callback_url,
-            "state": state,
-            "mcp_url": mcp_url,
-            "name": name,
-            "client": client,
-        },
-        quote_via=quote,
-    )
-    return f"{base}/#/agent-link?{params}"
-
-
-def _write_env_file(api_key: str, mcp_url: str) -> None:
-    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
-    lines = [
-        "# Written by Doomberg MCP installer. Keep this file private.",
-        f"export DOOMBERG_MCP_API_KEY={shlex.quote(api_key)}",
-        f"export DOOMBERG_MCP_URL={shlex.quote(mcp_url)}",
-        "",
-    ]
-    ENV_FILE.write_text("\n".join(lines), encoding="utf-8")
-    os.chmod(ENV_FILE, 0o600)
-
-
 def _read_json_file(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        backup = path.with_suffix(path.suffix + f".bak.{int(time.time())}")
-        path.rename(backup)
-        print(f"Could not parse {path}; moved it to {backup}: {exc}")
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return data
+        raise RuntimeError(f"could not parse {path}: {exc}") from exc
+    return value if isinstance(value, dict) else {}
+
+
+def _backup(path: Path) -> Path | None:
+    if not path.exists():
+        return None
+    backup = path.with_suffix(path.suffix + f".doomberg-backup.{int(time.time())}")
+    shutil.copy2(path, backup)
+    return backup
 
 
 def _write_json_file(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, sort_keys=False) + "\n", encoding="utf-8")
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    temporary.replace(path)
 
 
-def _http_mcp_config(mcp_url: str, api_key: str) -> dict[str, Any]:
-    return {
-        "type": "http",
-        "url": mcp_url,
-        "headers": {
-            "Authorization": f"Bearer {api_key}",
-        },
-    }
+def _oauth_config(mcp_url: str) -> dict[str, Any]:
+    return {"type": "http", "url": mcp_url}
 
 
-def _http_mcp_env_config(mcp_url: str) -> dict[str, Any]:
-    return {
-        "type": "http",
-        "url": mcp_url,
-        "headers": {
-            "Authorization": "Bearer ${DOOMBERG_MCP_API_KEY}",
-        },
-    }
+def _api_key_config(mcp_url: str, api_key: str) -> dict[str, Any]:
+    return {"type": "http", "url": mcp_url, "headers": {"Authorization": f"Bearer {api_key}"}}
 
 
-def _merge_mcp_json(path: Path, name: str, config: dict[str, Any]) -> None:
+def _merge_mcp_json(path: Path, name: str, config: dict[str, Any]) -> Path | None:
+    backup = _backup(path)
     data = _read_json_file(path)
     servers = data.get("mcpServers")
     if not isinstance(servers, dict):
         servers = {}
     servers[name] = config
     data["mcpServers"] = servers
-    _write_json_file(path, data)
+    try:
+        _write_json_file(path, data)
+    except Exception:
+        if backup:
+            shutil.copy2(backup, path)
+        raise
+    return backup
 
 
-def _install_cursor_mcp(name: str, mcp_url: str, api_key: str) -> str:
-    path = Path.home() / ".cursor" / "mcp.json"
-    _merge_mcp_json(path, name, _http_mcp_config(mcp_url, api_key))
-    return f"Cursor: wrote {path}"
+def _protected_resource_url(mcp_url: str) -> str:
+    parts = urlsplit(mcp_url)
+    path = parts.path.lstrip("/")
+    return urlunsplit((parts.scheme, parts.netloc, f"/.well-known/oauth-protected-resource/{path}", "", ""))
 
 
-def _ensure_shell_sources_env() -> None:
-    source_line = f'{SHELL_MARKER}\n[ -f "{ENV_FILE}" ] && . "{ENV_FILE}"\n'
-    candidates = [Path.home() / ".zshrc", Path.home() / ".bashrc"]
-    shell = os.environ.get("SHELL", "")
-    preferred = Path.home() / (".zshrc" if shell.endswith("zsh") else ".bashrc")
-    if preferred not in candidates:
-        candidates.insert(0, preferred)
-    for rc in candidates:
-        if rc.exists() or rc == preferred:
-            current = rc.read_text(encoding="utf-8") if rc.exists() else ""
-            if str(ENV_FILE) not in current:
-                with rc.open("a", encoding="utf-8") as fh:
-                    if current and not current.endswith("\n"):
-                        fh.write("\n")
-                    fh.write("\n" + source_line)
-            return
+def _discover_oauth(mcp_url: str, timeout: int = 15) -> dict[str, Any]:
+    metadata_url = _protected_resource_url(mcp_url)
+    try:
+        with urlopen(Request(metadata_url, headers={"Accept": "application/json"}), timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (urlerror.URLError, urlerror.HTTPError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"OAuth discovery failed at {metadata_url}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("OAuth discovery returned an invalid document")
+    resource = str(payload.get("resource") or "").rstrip("/")
+    expected = mcp_url.rstrip("/")
+    if resource != expected or not resource.startswith("https://"):
+        raise RuntimeError("OAuth metadata does not advertise this canonical HTTPS MCP URL")
+    servers = payload.get("authorization_servers")
+    if not isinstance(servers, list) or not all(isinstance(item, str) and item.startswith("https://") for item in servers):
+        raise RuntimeError("OAuth metadata does not advertise an HTTPS authorization server")
+    scopes = payload.get("scopes_supported") or []
+    if "ithaca:agent" not in scopes:
+        raise RuntimeError("OAuth metadata does not advertise the required ithaca:agent scope")
+    return payload
 
 
-def _set_launchctl_env(api_key: str, mcp_url: str) -> None:
-    if platform.system() != "Darwin" or shutil.which("launchctl") is None:
+def _remove_shell_marker() -> None:
+    for path in (Path.home() / ".zshrc", Path.home() / ".bashrc"):
+        if not path.exists():
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        output: list[str] = []
+        skip = False
+        for line in lines:
+            if line.rstrip("\n") == SHELL_MARKER:
+                skip = True
+                continue
+            if skip and "doomberg/mcp.env" in line:
+                skip = False
+                continue
+            skip = False
+            output.append(line)
+        if output != lines:
+            path.write_text("".join(output), encoding="utf-8")
+
+
+def _remove_owned_legacy_env() -> None:
+    path = Path.home() / ".config" / "ithaca" / "mcp.env"
+    if not path.exists():
         return
-    subprocess.run(["launchctl", "setenv", "DOOMBERG_MCP_API_KEY", api_key], check=False)
-    subprocess.run(["launchctl", "setenv", "DOOMBERG_MCP_URL", mcp_url], check=False)
+    content = path.read_text(encoding="utf-8")
+    if content.startswith("# Written by Ithaca MCP installer.") and "ITHACA_MCP_API_KEY" in content:
+        path.unlink()
 
 
-def _install_codex_mcp(name: str, mcp_url: str) -> str:
+def _cleanup_legacy_install() -> None:
+    _remove_shell_marker()
+    _remove_owned_legacy_env()
+    if shutil.which("launchctl"):
+        subprocess.run(["launchctl", "unsetenv", "ITHACA_MCP_API_KEY"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _codex_install(name: str, mcp_url: str, login: bool, headless: bool) -> SetupResult:
     codex = shutil.which("codex")
-    if codex is None:
-        return (
-            "Codex: codex CLI not found; run manually: "
-            f"codex mcp add {name} --url {mcp_url} "
-            "--bearer-token-env-var DOOMBERG_MCP_API_KEY"
-        )
-    subprocess.run([codex, "mcp", "remove", name], stdout=subprocess.DEVNULL,
-                   stderr=subprocess.DEVNULL, check=False)
-    subprocess.run(
-        [
-            codex,
-            "mcp",
-            "add",
-            name,
-            "--url",
-            mcp_url,
-            "--bearer-token-env-var",
-            "DOOMBERG_MCP_API_KEY",
-        ],
-        check=True,
-        timeout=30,
-    )
-    return "Codex: registered with `codex mcp add --url`"
+    if not codex:
+        return SetupResult("codex", SetupStatus.CONFIGURED, f"Run: codex mcp add {name} --url {mcp_url}")
+    subprocess.run([codex, "mcp", "remove", name], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run([codex, "mcp", "add", name, "--url", mcp_url], check=True, timeout=30)
+    if not login:
+        return SetupResult("codex", SetupStatus.AUTHENTICATION_REQUIRED, f"Run: codex mcp login {name} --scopes ithaca:agent")
+    command = [codex, "mcp", "login", name, "--scopes", "ithaca:agent"]
+    if headless:
+        command.append("--headless")
+    subprocess.run(command, check=True, timeout=180)
+    return SetupResult("codex", SetupStatus.AUTHENTICATED, "Clerk login completed; restart Codex if it is running.")
 
 
-def _install_claude_code_mcp(name: str, mcp_url: str, _api_key: str) -> str:
+def _claude_install(name: str, mcp_url: str, login: bool, headless: bool) -> SetupResult:
     claude = shutil.which("claude")
-    if claude is None:
+    if not claude:
         path = Path.home() / ".claude" / "mcp.json"
-        _merge_mcp_json(path, name, _http_mcp_env_config(mcp_url))
-        return f"Claude Code: claude CLI not found; wrote {path} with DOOMBERG_MCP_API_KEY env reference"
-    subprocess.run([claude, "mcp", "remove", "--scope", "user", name],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-    subprocess.run(
-        [
-            claude,
-            "mcp",
-            "add",
-            "--transport",
-            "http",
-            "--scope",
-            "user",
-            "--header",
-            "Authorization: Bearer ${DOOMBERG_MCP_API_KEY}",
-            name,
-            mcp_url,
-        ],
-        check=True,
-        timeout=30,
-    )
-    return "Claude Code: registered with `claude mcp add --transport http` using DOOMBERG_MCP_API_KEY"
+        _merge_mcp_json(path, name, _oauth_config(mcp_url))
+        return SetupResult("claude-code", SetupStatus.AUTHENTICATION_REQUIRED, f"Wrote {path}; use Claude Code Connect/Login.")
+    subprocess.run([claude, "mcp", "remove", "--scope", "user", name], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run([claude, "mcp", "add", "--transport", "http", "--scope", "user", name, mcp_url], check=True, timeout=30)
+    if not login:
+        return SetupResult("claude-code", SetupStatus.AUTHENTICATION_REQUIRED, "Run Claude Code's MCP login for Ithaca.")
+    command = [claude, "mcp", "login", name, "--scopes", "ithaca:agent"]
+    if headless:
+        command.append("--headless")
+    subprocess.run(command, check=True, timeout=180)
+    return SetupResult("claude-code", SetupStatus.AUTHENTICATED, "Clerk login completed; restart Claude Code if it is running.")
 
 
-def _install_openclaw_mcp(name: str, mcp_url: str, api_key: str) -> str:
-    path = Path.home() / ".openclaw" / "mcp.json"
-    _merge_mcp_json(path, name, _http_mcp_config(mcp_url, api_key))
-    return f"OpenClaw: wrote {path}"
+def _cursor_install(name: str, mcp_url: str) -> SetupResult:
+    path = Path.home() / ".cursor" / "mcp.json"
+    _merge_mcp_json(path, name, _oauth_config(mcp_url))
+    return SetupResult("cursor", SetupStatus.AUTHENTICATION_REQUIRED, "Open Cursor and choose Connect/Login for Ithaca MCP.")
 
 
-def _install_hermes_mcp(name: str, mcp_url: str, api_key: str) -> str:
-    path = Path.home() / ".hermes" / "mcp.json"
-    _merge_mcp_json(path, name, _http_mcp_config(mcp_url, api_key))
-    return f"Hermes: wrote {path}"
+def _compat_install(client: str, name: str, mcp_url: str, api_key: str) -> SetupResult:
+    paths = {"openclaw": Path.home() / ".openclaw" / "mcp.json", "hermes": Path.home() / ".hermes" / "mcp.json"}
+    path = paths[client]
+    _merge_mcp_json(path, name, _api_key_config(mcp_url, api_key))
+    return SetupResult(client, SetupStatus.CONFIGURED, f"Wrote protected configuration {path}")
 
 
-def _normalize_client(raw: str) -> str:
-    key = raw.strip().lower().replace("_", "-").replace(" ", "-")
-    normalized = CLIENT_ALIASES.get(key)
-    if normalized is None:
-        valid = ", ".join(sorted(CLIENT_ALIASES))
-        raise argparse.ArgumentTypeError(f"unsupported client '{raw}'. Expected one of: {valid}")
-    return normalized
-
-
-def _clients_for(client: str) -> tuple[str, ...]:
-    return DEFAULT_CLIENTS if client == "all" else (client,)
-
-
-def _install_client(client: str, name: str, mcp_url: str, api_key: str) -> str:
-    if client == "cursor":
-        return _install_cursor_mcp(name, mcp_url, api_key)
-    if client == "claude-code":
-        return _install_claude_code_mcp(name, mcp_url, api_key)
-    if client == "codex":
-        return _install_codex_mcp(name, mcp_url)
-    if client == "openclaw":
-        return _install_openclaw_mcp(name, mcp_url, api_key)
-    if client == "hermes":
-        return _install_hermes_mcp(name, mcp_url, api_key)
-    raise SystemExit(f"Unsupported client: {client}")
+def _agent_link_url(app_url: str, callback_url: str, state: str, mcp_url: str, name: str, client: str) -> str:
+    parts = urlsplit(app_url)
+    params = urlencode({"callback": callback_url, "state": state, "mcp_url": mcp_url, "name": name, "client": client, "auth": "api-key"}, quote_via=quote)
+    return f"{urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip('/'), '', ''))}/#/agent-link?{params}"
 
 
 def _wait_for_payload(state: CallbackState, timeout: int) -> dict[str, Any]:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        remaining = max(0.0, deadline - time.monotonic())
-        if state.event.wait(min(1.0, remaining)):
-            if state.error:
-                raise SystemExit(state.error)
-            if state.payload:
-                return state.payload
-    raise SystemExit("Timed out waiting for browser approval.")
+    if not state.event.wait(timeout):
+        raise RuntimeError("Timed out waiting for compatibility-key approval.")
+    if state.error:
+        raise RuntimeError(state.error)
+    if not state.payload:
+        raise RuntimeError("compatibility-key approval returned no credential")
+    return state.payload
 
 
-def _mcp_json_from_text(text: str) -> dict[str, Any] | None:
-    try:
-        parsed = json.loads(text)
-        return parsed if isinstance(parsed, dict) else None
-    except json.JSONDecodeError:
-        pass
-    data_lines: list[str] = []
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line.startswith("data:"):
-            continue
-        data = line.removeprefix("data:").strip()
-        if not data or data == "[DONE]":
-            continue
-        data_lines.append(data)
-    for data in ["\n".join(data_lines), *data_lines]:
-        if not data:
-            continue
-        try:
-            parsed = json.loads(data)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict):
-            return parsed
-    return None
+def _native_clients_detected() -> tuple[str, ...]:
+    clients: list[str] = []
+    if shutil.which("codex"):
+        clients.append("codex")
+    if shutil.which("claude"):
+        clients.append("claude-code")
+    if (Path.home() / ".cursor").exists():
+        clients.append("cursor")
+    return tuple(clients)
 
 
-def _mcp_post(mcp_url: str, api_key: str, body: dict[str, Any],
-              session_id: str | None = None, timeout: int = 20):
-    headers = {
-        "Accept": "application/json, text/event-stream",
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
-    }
-    if session_id:
-        headers["mcp-session-id"] = session_id
-    request = Request(
-        mcp_url,
-        data=json.dumps(body).encode("utf-8"),
-        method="POST",
-        headers=headers,
-    )
-    return urlopen(request, timeout=timeout)
-
-
-def _header(headers: dict[str, str], name: str) -> str | None:
-    expected = name.lower()
-    for key, value in headers.items():
-        if key.lower() == expected:
-            return value
-    return None
-
-
-def _mcp_exchange(mcp_url: str, api_key: str, body: dict[str, Any],
-                  session_id: str | None = None, timeout: int = 20) -> tuple[dict[str, Any], dict[str, str]]:
-    try:
-        with _mcp_post(mcp_url, api_key, body, session_id=session_id, timeout=timeout) as response:
-            text = response.read().decode("utf-8", errors="replace")
-            headers = dict(response.headers.items())
-    except urlerror.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        method = body.get("method", "request")
-        raise RuntimeError(f"MCP {method} returned HTTP {exc.code}: {detail}") from exc
-    parsed = _mcp_json_from_text(text)
-    if parsed is None:
-        method = body.get("method", "request")
-        raise RuntimeError(f"MCP {method} response was not parseable JSON")
-    if parsed.get("error"):
-        method = body.get("method", "request")
-        raise RuntimeError(f"MCP {method} error: {parsed['error']}")
-    return parsed, headers
-
-
-def _verify_mcp_initialize(mcp_url: str, api_key: str) -> dict[str, Any]:
-    try:
-        body, headers = _mcp_exchange(
-            mcp_url,
-            api_key,
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-06-18",
-                    "capabilities": {},
-                    "clientInfo": {"name": "doomberg-installer", "version": "1"},
-                },
-            },
-        )
-    except Exception as exc:
-        return {"ok": False, "error": f"MCP initialize failed: {exc}"}
-
-    session_id = _header(headers, "mcp-session-id")
-    if not session_id:
-        return {"ok": False, "error": "MCP initialize did not return mcp-session-id"}
-
-    try:
-        with _mcp_post(
-            mcp_url,
-            api_key,
-            {"jsonrpc": "2.0", "method": "notifications/initialized"},
-            session_id=session_id,
-        ) as response:
-            response.read()
-    except urlerror.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        return {"ok": False, "error": f"MCP initialized notification returned HTTP {exc.code}: {detail}"}
-    except Exception as exc:
-        return {"ok": False, "error": f"MCP initialized notification failed: {exc}"}
-    return {"ok": True, "session_id": session_id}
-
-
-def _mcp_tool_json(body: dict[str, Any]) -> dict[str, Any] | None:
-    result = body.get("result") or {}
-    structured = result.get("structuredContent")
-    if isinstance(structured, dict):
-        return structured
-    contents = result.get("content") or []
-    if not contents:
-        return None
-    text = contents[0].get("text")
-    if not isinstance(text, str):
-        return None
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
-def _mcp_content_json(body: dict[str, Any]) -> dict[str, Any] | None:
-    contents = ((body.get("result") or {}).get("contents") or [])
-    if not contents:
-        return None
-    text = contents[0].get("text")
-    if not isinstance(text, str):
-        return None
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
-def _call_mcp_tool(mcp_url: str, api_key: str, session_id: str, tool_name: str,
-                   arguments: dict[str, Any] | None = None, mid: int = 10) -> dict[str, Any]:
-    body, _headers = _mcp_exchange(
-        mcp_url,
-        api_key,
-        {
-            "jsonrpc": "2.0",
-            "id": mid,
-            "method": "tools/call",
-            "params": {"name": tool_name, "arguments": arguments or {}},
-        },
-        session_id=session_id,
-    )
-    result = body.get("result") or {}
-    if result.get("isError"):
-        raise RuntimeError(f"MCP tool {tool_name} returned an error: {body}")
-    parsed = _mcp_tool_json(body)
-    if parsed is None:
-        raise RuntimeError(f"MCP tool {tool_name} response was not parseable JSON")
-    return parsed
-
-
-def _read_mcp_resource(mcp_url: str, api_key: str, session_id: str, uri: str,
-                       mid: int = 20) -> dict[str, Any]:
-    body, _headers = _mcp_exchange(
-        mcp_url,
-        api_key,
-        {
-            "jsonrpc": "2.0",
-            "id": mid,
-            "method": "resources/read",
-            "params": {"uri": uri},
-        },
-        session_id=session_id,
-    )
-    parsed = _mcp_content_json(body)
-    if parsed is None:
-        raise RuntimeError(f"MCP resource {uri} response was not parseable JSON")
-    return parsed
-
-
-def _list_mcp_tools(mcp_url: str, api_key: str, session_id: str) -> list[dict[str, Any]]:
-    body, _headers = _mcp_exchange(
-        mcp_url,
-        api_key,
-        {"jsonrpc": "2.0", "id": 30, "method": "tools/list"},
-        session_id=session_id,
-    )
-    tools = (body.get("result") or {}).get("tools") or []
-    return [tool for tool in tools if isinstance(tool, dict)]
-
-
-def _run_agent_init_smoke(mcp_url: str, api_key: str, session_id: str, goal: str) -> dict[str, Any]:
-    result = _call_mcp_tool(
-        mcp_url,
-        api_key,
-        session_id,
-        "doomberg_init",
-        {"goal": goal},
-        mid=40,
-    )
-    if result.get("status") != "ready" or not result.get("session_id"):
-        raise RuntimeError(f"doomberg_init did not return a ready session: {result}")
-    return result
-
-
-def _md_cell(value: Any) -> str:
-    text = str(value or "").replace("\n", " ").replace("|", "\\|").strip()
-    return text or "-"
-
-
-def _build_tools_markdown(
-    *,
-    mcp_url: str,
-    init_result: dict[str, Any],
-    tools: list[dict[str, Any]],
-    toolkits: list[dict[str, Any]],
-    skills_catalog: dict[str, Any],
-) -> str:
-    generated_at = time.strftime("%Y-%m-%d %H:%M:%S %Z")
-    lines = [
-        "# Doomberg MCP Tools",
-        "",
-        f"Generated by the Doomberg installer at {generated_at}.",
-        f"Endpoint: `{mcp_url}`",
-        "",
-        "This file intentionally does not contain bearer tokens. The installer stores the token in `~/.config/doomberg/mcp.env`.",
-        "",
-        "## First-call workflow",
-        "",
-        "1. Call `doomberg_init(goal=\"<user goal>\")` first. The installer has already smoke-tested this call.",
-        "2. Use `list_toolkits` or `search_skills` to pick the smallest relevant surface.",
-        "3. Use `describe_toolkit` or `describe_skill` before uncertain calls.",
-        "4. Use direct tools for interactive answers and `run_skill` for durable backtests or longer work.",
-        "",
-        f"Installer init session: `{init_result.get('session_id', '-')}`",
-        "",
-        "## Toolkits",
-        "",
-    ]
-    if toolkits:
-        for toolkit in toolkits:
-            direct_tools = toolkit.get("direct_tools") or []
-            skills = toolkit.get("skills") or []
-            lines.extend(
-                [
-                    f"### {toolkit.get('name') or toolkit.get('toolkit_id')}",
-                    "",
-                    _md_cell(toolkit.get("description")),
-                    "",
-                    f"- Toolkit id: `{toolkit.get('toolkit_id')}`",
-                    f"- Required first tool: `{toolkit.get('required_first_tool')}`",
-                    "- Direct tools: "
-                    + (", ".join(f"`{tool}`" for tool in direct_tools) if direct_tools else "-"),
-                    "- Related skills: "
-                    + (
-                        ", ".join(f"`{skill.get('skill_id')}`" for skill in skills[:12])
-                        if skills
-                        else "-"
-                    ),
-                    "",
-                ]
-            )
-    else:
-        lines.extend(["No toolkits were returned by the server.", ""])
-
-    lines.extend(
-        [
-            "## Direct MCP tools",
-            "",
-            "| Tool | Description |",
-            "| --- | --- |",
-        ]
-    )
-    for tool in sorted(tools, key=lambda t: str(t.get("name") or "")):
-        lines.append(f"| `{_md_cell(tool.get('name'))}` | {_md_cell(tool.get('description'))} |")
-
-    skills = skills_catalog.get("skills") or []
-    lines.extend(
-        [
-            "",
-            "## Skill catalog",
-            "",
-            f"The server catalog currently reports {skills_catalog.get('count', len(skills))} skills.",
-            "",
-            "| Skill | Runtime | Description |",
-            "| --- | --- | --- |",
-        ]
-    )
-    for skill in skills:
-        if not isinstance(skill, dict):
-            continue
-        lines.append(
-            f"| `{_md_cell(skill.get('skill_id'))}` | {_md_cell(skill.get('runtime_profile'))} | "
-            f"{_md_cell(skill.get('description'))} |"
-        )
-
-    lines.extend(
-        [
-            "",
-            "## Operating boundaries",
-            "",
-        ]
-    )
-    boundaries = init_result.get("boundaries") or {}
-    for key in ("can", "cannot"):
-        values = boundaries.get(key) or []
-        lines.append(f"- {key}: " + (", ".join(str(value) for value in values) if values else "-"))
-    lines.append("")
-    return "\n".join(lines)
-
-
-def _write_tools_guide(mcp_url: str, api_key: str, session_id: str,
-                       init_result: dict[str, Any]) -> Path:
-    tools = _list_mcp_tools(mcp_url, api_key, session_id)
-    catalog = _read_mcp_resource(mcp_url, api_key, session_id, "doomberg://toolkits/catalog", mid=31)
-    toolkit_entries = catalog.get("toolkits") or []
-    toolkits: list[dict[str, Any]] = []
-    for index, entry in enumerate(toolkit_entries):
-        if not isinstance(entry, dict) or not entry.get("toolkit_id"):
-            continue
-        toolkits.append(
-            _call_mcp_tool(
-                mcp_url,
-                api_key,
-                session_id,
-                "describe_toolkit",
-                {"toolkit_id": str(entry["toolkit_id"])},
-                mid=32 + index,
-            )
-        )
-    skills_catalog = _read_mcp_resource(mcp_url, api_key, session_id, "doomberg://skills/catalog", mid=50)
-    markdown = _build_tools_markdown(
-        mcp_url=mcp_url,
-        init_result=init_result,
-        tools=tools,
-        toolkits=toolkits,
-        skills_catalog=skills_catalog,
-    )
-    TOOLS_GUIDE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    TOOLS_GUIDE_FILE.write_text(markdown, encoding="utf-8")
-    try:
-        os.chmod(TOOLS_GUIDE_FILE, 0o600)
-    except OSError:
-        pass
-    return TOOLS_GUIDE_FILE
-
-
-def _agent_bootstrap_prompt(name: str) -> str:
-    return (
-        "After your agent reloads MCP config, call the Doomberg init tool first. "
-        "It opens the visible research session with the user's prompt:\n"
-        f"  {name}.doomberg_init(goal=\"<what you want Doomberg to research or build>\")\n"
-        "Then call direct tools or search_skills/describe_skill/run_skill inside that session. "
-        "Every MCP request is still authenticated with the installed key."
-    )
+def _normalize_client(raw: str) -> str:
+    value = raw.strip().lower().replace("_", "-").replace(" ", "-")
+    if value not in CLIENT_ALIASES:
+        raise argparse.ArgumentTypeError(f"unsupported client '{raw}'")
+    return CLIENT_ALIASES[value]
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Install Doomberg MCP into a local agent.")
-    parser.add_argument("--app-url", default=os.environ.get("DOOMBERG_APP_URL", DEFAULT_APP_URL))
-    parser.add_argument("--mcp-url", default=os.environ.get("DOOMBERG_MCP_URL", DEFAULT_MCP_URL))
-    parser.add_argument("--name", default="doomberg")
-    parser.add_argument(
-        "--client",
-        type=_normalize_client,
-        default="all",
-        help="Agent client to configure: all, cursor, claude-code, codex, openclaw, or hermes.",
-    )
+    parser = argparse.ArgumentParser(description="Install Ithaca MCP into a local agent.")
+    parser.add_argument("--app-url", default=os.environ.get("ITHACA_APP_URL", DEFAULT_APP_URL))
+    parser.add_argument("--mcp-url", default=os.environ.get("ITHACA_MCP_URL", DEFAULT_MCP_URL))
+    parser.add_argument("--name", default="ithaca")
+    parser.add_argument("--client", type=_normalize_client, help="codex, claude-code, cursor, openclaw, hermes, or all")
+    parser.add_argument("--auth", choices=("oauth", "api-key"), default="oauth")
+    parser.add_argument("--login", action="store_true", help="Run the client native OAuth login after registration.")
+    parser.add_argument("--headless", action="store_true", help="Ask supported client CLIs for a no-browser login flow.")
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--no-open", action="store_true")
-    parser.add_argument(
-        "--agent-init",
-        action="store_true",
-        help="Agent-driven onboarding: print the approval URL, wait, install, and verify MCP initialize.",
-    )
-    parser.add_argument(
-        "--init-goal",
-        default="Initialize Doomberg MCP after install and show the first-call workflow.",
-        help="Goal passed to doomberg_init during the post-auth MCP smoke.",
-    )
+    parser.add_argument("--agent-init", action="store_true", help="Complete supported native login and then invoke ithaca_init from the agent.")
     args = parser.parse_args(argv)
 
-    state_token = secrets.token_urlsafe(24)
-    callback_state = CallbackState(state_token)
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _handler(callback_state))
+    if args.client == "all":
+        clients = tuple(CLIENT_SPECS) if args.auth == "api-key" else tuple(
+            spec.id for spec in CLIENT_SPECS.values() if spec.native_oauth
+        )
+    else:
+        clients = (args.client,) if args.client else _native_clients_detected()
+    if not clients:
+        print("No supported native OAuth client detected. Add this URL manually:")
+        print(args.mcp_url)
+        return 0
+    if args.auth == "oauth" and any(not CLIENT_SPECS[client].native_oauth for client in clients):
+        parser.error("OpenClaw and Hermes require --auth api-key for compatibility setup")
+
+    if args.auth == "oauth":
+        # Do this before a single configuration file is touched.
+        _discover_oauth(args.mcp_url)
+        results: list[SetupResult] = []
+        for client in clients:
+            spec = CLIENT_SPECS[client]
+            try:
+                if client == "codex":
+                    results.append(_codex_install(args.name, args.mcp_url, args.login or args.agent_init, args.headless))
+                elif client == "claude-code":
+                    results.append(_claude_install(args.name, args.mcp_url, args.login or args.agent_init, args.headless))
+                else:
+                    results.append(_cursor_install(args.name, args.mcp_url))
+            except Exception as exc:
+                results.append(SetupResult(client, SetupStatus.FAILED, str(exc)))
+        if any(result.status != SetupStatus.FAILED for result in results):
+            _cleanup_legacy_install()
+        for result in results:
+            print(f"{result.client}: {result.status.value} — {result.detail}")
+        if args.agent_init:
+            print("After the agent reloads, invoke ithaca_init with the user’s research goal.")
+        return 1 if any(result.status == SetupStatus.FAILED for result in results) else 0
+
+    # Explicit legacy compatibility mode.  It is intentionally the only code path that mints
+    # a long-lived key and only writes that key into the selected client config.
+    state = CallbackState(secrets.token_urlsafe(24))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _handler(state))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-
-    callback_url = f"http://127.0.0.1:{server.server_port}/callback"
-    link = _agent_link_url(args.app_url, callback_url, state_token, args.mcp_url,
-                           args.name, args.client)
-    if args.agent_init:
-        print("Send this URL to the user so they can sign in or create an account and approve Doomberg MCP:")
-    else:
-        print("Open this URL to sign in and approve Doomberg MCP:")
+    link = _agent_link_url(args.app_url, f"http://127.0.0.1:{server.server_port}/callback", state.expected_state, args.mcp_url, args.name, args.client or "all")
+    print("Open this URL to create a scoped compatibility key:")
     print(link)
-    if not args.no_open and not args.agent_init:
+    if not args.no_open:
         webbrowser.open(link)
-
     try:
-        payload = _wait_for_payload(callback_state, args.timeout)
+        payload = _wait_for_payload(state, args.timeout)
     finally:
         server.shutdown()
         server.server_close()
-
-    api_key = str(payload["api_key"])
+    key = str(payload["api_key"])
     mcp_url = str(payload.get("mcp_url") or args.mcp_url)
-    _write_env_file(api_key, mcp_url)
-    _ensure_shell_sources_env()
-    _set_launchctl_env(api_key, mcp_url)
-    results: list[str] = []
-    failures: list[str] = []
-    for client in _clients_for(args.client):
+    for client in clients:
         try:
-            results.append(_install_client(client, args.name, mcp_url, api_key))
+            print(f"{_compat_install(client, args.name, mcp_url, key).client}: configured")
         except Exception as exc:
-            failure = f"{client}: failed: {exc}"
-            failures.append(failure)
-            results.append(failure)
-
-    key_id = payload.get("key_id", "")
-    print(f"Doomberg MCP installed as '{args.name}'.")
-    for result in results:
-        print(f"- {result}")
-    if key_id:
-        print(f"Key id: {key_id}")
-    print(f"Token env: {ENV_FILE}")
-    print("Each MCP request is authenticated with this key automatically.")
-    print("Agent flow: call doomberg_init with the user prompt; it opens the visible session.")
-    print("Then use list_toolkits/search_skills, describe the relevant surface, and call direct tools or run_skill.")
-
-    init = _verify_mcp_initialize(mcp_url, api_key)
-    init_result: dict[str, Any] | None = None
-    if init.get("ok"):
-        session_id = str(init["session_id"])
-        print(f"MCP initialize: ok (session {session_id})")
-        try:
-            init_result = _run_agent_init_smoke(mcp_url, api_key, session_id, str(args.init_goal))
-            print(f"doomberg_init: ok (research session {init_result['session_id']})")
-        except Exception as exc:
-            print(f"doomberg_init: {exc}")
-            failures.append(str(exc))
-        if init_result is not None:
-            try:
-                guide = _write_tools_guide(mcp_url, api_key, session_id, init_result)
-                print(f"Generated tools guide: {guide}")
-            except Exception as exc:
-                print(f"Generated tools guide: failed: {exc}")
-                if args.agent_init:
-                    failures.append(str(exc))
-    else:
-        print(f"MCP initialize: {init.get('error')}")
-        if args.agent_init:
-            failures.append(str(init.get("error")))
-
-    print("Direct tools include: market_tide, sentiment_get, market_news, vix_term_structure, backtest_run.")
-    if args.agent_init:
-        print(_agent_bootstrap_prompt(args.name))
-    print("Restart any already-open agent app so it picks up the new MCP config/env.")
-    if failures and (args.client != "all" or args.agent_init):
-        return 1
+            print(f"{client}: failed — {exc}")
+    key_id = str(payload.get("key_id") or "")
+    print(f"Compatibility key stored in client configuration{f' ({key_id})' if key_id else ''}. Revoke it in Settings when no longer needed.")
     return 0
 
 

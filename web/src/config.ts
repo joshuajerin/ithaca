@@ -31,4 +31,4 @@ export const USE_CLERK_API_AUTH = shouldUseClerkApiToken(
 
 // Hosted MCP target for external agents.
 export const MCP_BASE: string =
-  (import.meta.env.VITE_MCP_BASE as string | undefined) || "https://mcp.doomberg.me/mcp";
+  (import.meta.env.VITE_MCP_BASE as string | undefined) || "https://mcp.tradeithaca.com/mcp";

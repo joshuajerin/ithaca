@@ -205,7 +205,7 @@ def test_market_news_does_not_fall_back_to_archive_when_live_news_is_configured(
             _ctx={"run_id": R, "tenant_id": R, "agent_id": AGENT},
         )
 
-    assert out["data"]["items"][0]["headline"] == "NVDA active in Doomberg live market scan"
+    assert out["data"]["items"][0]["headline"] == "NVDA active in Ithaca live market scan"
     assert out["data"]["items"][0]["kind"] == "market_activity"
     assert out["provenance"]["source"] == "doomberg-live-data"
     assert out["warnings"] == []

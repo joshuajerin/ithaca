@@ -74,8 +74,8 @@ case "${DEPLOY_ENV}" in
   prod)
     K8S_GATEWAY_NAMESPACE="${K8S_GATEWAY_NAMESPACE:-doomberg-gateway}"
     K8S_WORKER_NAMESPACE="${K8S_WORKER_NAMESPACE:-doomberg-workers}"
-    APP_HOST="${APP_HOST:-app.doomberg.me}"
-    MCP_HOST="${MCP_HOST:-mcp.doomberg.me}"
+    APP_HOST="${APP_HOST:-app.tradeithaca.com}"
+    MCP_HOST="${MCP_HOST:-mcp.tradeithaca.com}"
     REST_NODE_PORT="${REST_NODE_PORT:-30080}"
     MCP_NODE_PORT="${MCP_NODE_PORT:-30808}"
     APP_NODE_WORKLOAD="${APP_NODE_WORKLOAD:-paper}"
@@ -120,6 +120,8 @@ fi
 
 MCP_ALLOWED_HOSTS="${MCP_ALLOWED_HOSTS:-${MCP_HOST},${MCP_HOST}:443}"
 CLERK_ALLOWED_ORIGINS="${CLERK_ALLOWED_ORIGINS:-https://${APP_HOST}}"
+ITHACA_MCP_RESOURCE_URL="${ITHACA_MCP_RESOURCE_URL:-https://mcp.tradeithaca.com/mcp}"
+ITHACA_MCP_OAUTH_SCOPE="${ITHACA_MCP_OAUTH_SCOPE:-ithaca:agent}"
 if [[ -z "${APPLY_CADDY+x}" ]]; then
   if [[ "${DEPLOY_ENV}" == "${CADDY_APPLY_ENV:-prod}" ]]; then
     APPLY_CADDY="1"
@@ -279,6 +281,14 @@ if [[ -z "${CLERK_PEM_PUBLIC_KEY:-}" && -z "${CLERK_JWKS_URL:-}" ]]; then
   echo "ERROR: CLERK_PEM_PUBLIC_KEY or CLERK_JWKS_URL must be set for ${DEPLOY_ENV}" >&2
   exit 2
 fi
+if [[ "${ITHACA_MCP_RESOURCE_URL}" != "https://mcp.tradeithaca.com/mcp" ]]; then
+  echo "ERROR: ITHACA_MCP_RESOURCE_URL must be https://mcp.tradeithaca.com/mcp" >&2
+  exit 2
+fi
+if [[ "${ITHACA_MCP_OAUTH_SCOPE}" != "ithaca:agent" ]]; then
+  echo "ERROR: ITHACA_MCP_OAUTH_SCOPE must be ithaca:agent" >&2
+  exit 2
+fi
 if [[ -z "${DOOMBERG_IBKR_ENGINE_URL:-}" ]]; then
   echo "WARN: DOOMBERG_IBKR_ENGINE_URL is unset; trigger-engine worker will stay up, but active live-data trigger policies will report provider errors until configured." >&2
 fi
@@ -340,6 +350,7 @@ render_manifest() {
     -e "s|\${WORKER_MAX_SURGE}|${WORKER_MAX_SURGE}|g" \
     -e "s|\${WORKER_MAX_UNAVAILABLE}|${WORKER_MAX_UNAVAILABLE}|g" \
     -e "s|\${MCP_ALLOWED_HOSTS}|${MCP_ALLOWED_HOSTS}|g" \
+    -e "s|\${MCP_HOST}|${MCP_HOST}|g" \
     "${file}"
 }
 

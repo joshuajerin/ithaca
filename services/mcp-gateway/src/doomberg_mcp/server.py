@@ -1,4 +1,4 @@
-"""The Doomberg MCP server — Data Layer tools the BYO agent discovers and calls.
+"""The Ithaca MCP server — Data Layer tools the BYO agent discovers and calls.
 
 The agent can READ (market.get_ohlcv, backtest.run) and PROPOSE (propose_strategy) only —
 it can never promote or move money (that's a human action in the web UI). Every call wraps
@@ -22,6 +22,7 @@ from doomberg_core import ALL_SKILL_MANIFESTS, SKILLS, Core, SkillSet
 from doomberg_core.providers import PUBLIC_DATA_SOURCE, PUBLIC_ENTITLEMENT_CLASS, IbkrEngineClient, IbkrEngineError
 from doomberg_platform import TransitionConflict
 
+from .authorization import Principal, RESOURCE_SCOPES, TOOL_SCOPES, require_scope
 from .trace import InMemoryTrace, PlatformTraceSink, Tracer
 
 _DEFAULT_TENANT = "00000000-0000-0000-0000-000000000000"
@@ -60,7 +61,7 @@ _PUBLIC_SKILL_IDS = {
 _TOOLKITS: dict[str, dict] = {
     "session": {
         "name": "Research Session",
-        "description": "Start a visible Doomberg session, follow durable runs, cancel work, and fetch artifacts.",
+        "description": "Start a visible Ithaca session, follow durable runs, cancel work, and fetch artifacts.",
         "direct_tools": [
             "start_research_session",
             "get_run",
@@ -73,7 +74,7 @@ _TOOLKITS: dict[str, dict] = {
     },
     "market-research": {
         "name": "Market Research",
-        "description": "Doomberg live-data quotes, history, news, movers, screeners, and volatility context.",
+        "description": "Ithaca live-data quotes, history, news, movers, screeners, and volatility context.",
         "direct_tools": [
             "market_quote",
             "market_get_ohlcv",
@@ -256,10 +257,10 @@ def _market_activity_news_items(rows: list[dict], *, as_of: str, limit: int) -> 
             bits.append(f"last price {price}")
         if change_pct is not None:
             bits.append(f"change {change_pct}%")
-        summary = "; ".join(bits) or "Recent live market-activity signal from Doomberg live data."
+        summary = "; ".join(bits) or "Recent live market-activity signal from Ithaca live data."
         items.append({
             "id": f"market-activity-{symbol}-{rank}",
-            "headline": f"{symbol} active in Doomberg live market scan",
+            "headline": f"{symbol} active in Ithaca live market scan",
             "source": PUBLIC_DATA_SOURCE,
             "summary": summary,
             "url": None,
@@ -291,7 +292,7 @@ def _sanitize_live_data(value):
                 out[key] = PUBLIC_ENTITLEMENT_CLASS
             elif isinstance(item, str):
                 out[key] = (
-                    item.replace("IBKR", "Doomberg")
+                    item.replace("IBKR", "Ithaca")
                     .replace("ibkr-engine", PUBLIC_DATA_SOURCE)
                     .replace("ibkr-client-portal", "private-market-data")
                 )
@@ -398,7 +399,7 @@ class Toolset:
     def _session_context_required(self) -> dict:
         return self._typed_error(
             "SESSION_CONTEXT_REQUIRED",
-            "start a Doomberg research session before calling data or workflow tools",
+            "start an Ithaca research session before calling data or workflow tools",
             "Call start_research_session with the user's prompt, then call direct tools.",
         )
 
@@ -526,16 +527,16 @@ class Toolset:
             _ctx=_ctx,
         )
 
-    def doomberg_init(self, goal: str | None = None, _ctx: dict | None = None) -> dict:
-        """First tool call after an agent installs Doomberg MCP.
+    def ithaca_init(self, goal: str | None = None, _ctx: dict | None = None) -> dict:
+        """First tool call after an agent installs Ithaca MCP.
 
         This gives the agent a small, explicit bootstrap contract instead of forcing it to infer
         the workflow from the full tool list.
         """
-        visible_prompt = str(goal or "").strip() or "Initialize Doomberg MCP session"
+        visible_prompt = str(goal or "").strip() or "Initialize Ithaca MCP session"
         session = self.session_context(
             prompt=visible_prompt,
-            title="Doomberg onboarding",
+            title="Ithaca onboarding",
             _ctx=_ctx,
         )
         direct_tools = self._direct_tool_catalog()
@@ -545,7 +546,7 @@ class Toolset:
             "session": {
                 "session_id": session["session_id"],
                 "prompt": visible_prompt,
-                "title": "Doomberg onboarding",
+                "title": "Ithaca onboarding",
                 "required": True,
                 "context": "All subsequent direct tools are attached to this authenticated research session.",
             },
@@ -553,7 +554,7 @@ class Toolset:
             "start_here": [
                 {
                     "tool": "start_research_session",
-                    "status": "already_started_by_doomberg_init",
+                    "status": "already_started_by_ithaca_init",
                     "when": "Use only if the user changes tasks or you need to attach a web-created session_id.",
                 },
                 {
@@ -584,7 +585,7 @@ class Toolset:
                 "can": ["read market data", "run backtests", "draft strategy proposals", "paper-trading research"],
                 "cannot": ["deploy live strategies", "move money", "read raw broker credentials"],
             },
-            "dashboard_url": "https://app.doomberg.me/dashboard",
+            "dashboard_url": "https://app.tradeithaca.com/dashboard",
         }
 
     def market_get_ohlcv(self, symbol: str, range: str = "6mo", interval: str = "1d",
@@ -601,7 +602,7 @@ class Toolset:
         if not client.configured():
             out = self._typed_error(
                 "BROKER_CONNECTION_REQUIRED",
-                "live history requires the Doomberg live-data engine",
+                "live history requires the Ithaca live-data engine",
                 "Configure DOOMBERG_IBKR_ENGINE_URL and rerun market_get_ohlcv.",
             )
             tr.tool_result("market.get_ohlcv", span, {"source": PUBLIC_DATA_SOURCE, "ok": False,
@@ -627,7 +628,7 @@ class Toolset:
             out = self._typed_error(
                 "PROVIDER_DEGRADED",
                 f"live history unavailable: {exc}",
-                "Check the Doomberg live-data engine history route and IBKR session entitlements.",
+                "Check the Ithaca live-data engine history route and IBKR session entitlements.",
             )
         tr.tool_result("market.get_ohlcv", span, _provenance_summary(out))
         return out
@@ -815,7 +816,7 @@ class Toolset:
             return self._typed_error(
                 "POLICY_DENIED",
                 f"{tool} is not available in the live-data-only MCP",
-                "Use Doomberg live-data market tools or pure computed tools.",
+                "Use Ithaca live-data market tools or pure computed tools.",
             )
         tr = self._tracer(_ctx)
         span = tr.tool_call(tool, params)
@@ -839,7 +840,7 @@ class Toolset:
                 out = self._typed_error(
                     "PROVIDER_DEGRADED" if IbkrEngineClient().configured() else "BROKER_CONNECTION_REQUIRED",
                     f"live data unavailable: {exc}",
-                    "Check the Doomberg live-data engine route and session entitlements.",
+                    "Check the Ithaca live-data engine route and session entitlements.",
                 )
                 tr.tool_result(tool, span, {"source": PUBLIC_DATA_SOURCE, "ok": False,
                                             "code": out["error"]["code"]})
@@ -1182,7 +1183,7 @@ class Toolset:
 
     def run_skill(self, skill_id: str, input: dict | None = None, mode: str = "auto",
                   idempotency_key: str | None = None, _ctx: dict | None = None) -> dict:
-        """Create a durable Doomberg run for a skill.
+        """Create a durable Ithaca run for a skill.
 
         Long work (`backtest.run`) is queued and returns immediately. Interactive skills run
         to completion inside a short-lived run so the caller still receives a run_id, trace,
@@ -1443,7 +1444,7 @@ class Toolset:
             return self._typed_error(
                 "APPROVAL_REQUIRED",
                 "approval decisions require a human actor",
-                "Open the Doomberg dashboard and approve or deny the request there.",
+                "Open the Ithaca dashboard and approve or deny the request there.",
             )
         try:
             return self.platform.approvals.decide(
@@ -1962,7 +1963,10 @@ def _transport_security():
     )
 
 
-def create_server(toolset: Toolset | None = None, *, http: bool = False):
+def create_server(
+    toolset: Toolset | None = None, *, http: bool = False,
+    token_verifier=None, auth_settings=None,
+):
     """Build the FastMCP server. Imported lazily so the toolset is testable without the SDK.
 
     ``http=True`` (the hosted path) makes every tool wrapper resolve the per-request
@@ -1973,234 +1977,264 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     from mcp.server.fastmcp import FastMCP
 
     ts = toolset or _platform_backed_toolset()
-    mcp = FastMCP("doomberg", transport_security=_transport_security() if http else None)
+    mcp = FastMCP(
+        "ithaca", transport_security=_transport_security() if http else None,
+        token_verifier=token_verifier, auth=auth_settings,
+    )
 
-    def _ctx() -> dict | None:
-        """The per-request tenant ``_ctx`` in HTTP mode; None in stdio mode."""
+    def _ctx(required_scope: str | None = None) -> dict | None:
+        """Build tenant context from the MCP SDK access token, never request middleware."""
         if not http:
             return None
-        from .http import current_principal
+        from mcp.server.auth.middleware.auth_context import get_access_token
 
-        principal = current_principal()
-        return principal.ctx() if principal is not None else None
+        token = get_access_token()
+        claims = token.claims if token else None
+        if token is None or not isinstance(claims, dict) or not claims.get("tenant_id"):
+            # SDK admission normally prevents this.  This remains fail-closed if a wrapper is
+            # called from an unexpected MCP execution path.
+            from .authorization import InsufficientScopeError
+            raise InsufficientScopeError()
+        principal = Principal(
+            tenant_id=str(claims["tenant_id"]),
+            credential_kind=str(claims.get("credential_kind") or "unknown"),
+            scopes=frozenset(str(scope) for scope in claims.get("principal_scopes", ())),
+            subject=token.subject,
+        )
+        if required_scope is not None:
+            require_scope(principal, required_scope)
+        return {
+            "tenant_id": principal.tenant_id,
+            "agent_id": principal.subject,
+            "actor_kind": "agent",
+            "scopes": set(principal.scopes),
+        }
 
-    def call_skill(tool: str, params: dict) -> dict:
+    def call_skill(tool: str, params: dict, required_scope: str = "data:read") -> dict:
         """Skill-catalog dispatch that injects the per-request tenant ``_ctx`` (HTTP mode)."""
-        return ts.call_skill(tool, params, _ctx=_ctx())
+        return ts.call_skill(tool, params, _ctx=_ctx(required_scope))
 
     @mcp.resource(
-        "doomberg://skills/catalog",
+        "ithaca://skills/catalog",
         name="skills_catalog",
-        description="Compact Doomberg skill catalog for progressive discovery.",
+        description="Compact Ithaca skill catalog for progressive discovery.",
         mime_type="application/json",
     )
     def skills_catalog_resource() -> str:
+        _ctx(RESOURCE_SCOPES["ithaca://skills/catalog"])
         return _json_resource(ts.skills_catalog_resource())
 
     @mcp.resource(
-        "doomberg://toolkits/catalog",
+        "ithaca://toolkits/catalog",
         name="toolkits_catalog",
-        description="Task-oriented Doomberg toolkits for direct MCP tool calls.",
+        description="Task-oriented Ithaca toolkits for direct MCP tool calls.",
         mime_type="application/json",
     )
     def toolkits_catalog_resource() -> str:
+        _ctx(RESOURCE_SCOPES["ithaca://toolkits/catalog"])
         return _json_resource(ts.toolkits_catalog_resource())
 
     @mcp.resource(
-        "doomberg://toolkits/{toolkit_id}",
+        "ithaca://toolkits/{toolkit_id}",
         name="toolkit_manifest",
-        description="One task-oriented Doomberg toolkit with direct tools and related skills.",
+        description="One task-oriented Ithaca toolkit with direct tools and related skills.",
         mime_type="application/json",
     )
     def toolkit_resource(toolkit_id: str) -> str:
+        _ctx(RESOURCE_SCOPES["ithaca://toolkits/{toolkit_id}"])
         return _json_resource(ts.toolkit_resource(toolkit_id))
 
     @mcp.resource(
-        "doomberg://skills/{skill_id}/{version}",
+        "ithaca://skills/{skill_id}/{version}",
         name="skill_manifest",
-        description="One versioned Doomberg skill manifest.",
+        description="One versioned Ithaca skill manifest.",
         mime_type="application/json",
     )
     def skill_manifest_resource(skill_id: str, version: str) -> str:
+        _ctx(RESOURCE_SCOPES["ithaca://skills/{skill_id}/{version}"])
         return _json_resource(ts.skill_resource(skill_id, version))
 
     @mcp.resource(
-        "doomberg://runs/{run_id}",
+        "ithaca://runs/{run_id}",
         name="run",
         description="Durable run with jobs, artifacts and replayable trace events.",
         mime_type="application/json",
     )
     def run_resource(run_id: str) -> str:
-        return _json_resource(ts.run_resource(run_id, _ctx=_ctx()))
+        return _json_resource(ts.run_resource(run_id, _ctx=_ctx(RESOURCE_SCOPES["ithaca://runs/{run_id}"])))
 
     @mcp.resource(
-        "doomberg://policies/current",
+        "ithaca://policies/current",
         name="policies_current",
-        description="Current deterministic Doomberg control-plane policies.",
+        description="Current deterministic Ithaca control-plane policies.",
         mime_type="application/json",
     )
     def policies_current_resource() -> str:
-        return _json_resource(ts.policies_resource(_ctx=_ctx()))
+        return _json_resource(ts.policies_resource(_ctx=_ctx(RESOURCE_SCOPES["ithaca://policies/current"])))
 
     @mcp.resource(
-        "doomberg://accounts",
+        "ithaca://accounts",
         name="accounts",
         description="Tenant-scoped account and provider connection summary with credentials redacted.",
         mime_type="application/json",
     )
     def accounts_resource() -> str:
-        return _json_resource(ts.accounts_resource(_ctx=_ctx()))
+        return _json_resource(ts.accounts_resource(_ctx=_ctx(RESOURCE_SCOPES["ithaca://accounts"])))
 
     @mcp.resource(
-        "doomberg://data/providers",
+        "ithaca://data/providers",
         name="data_providers",
         description="Tenant-scoped data provider and dataset snapshot summary.",
         mime_type="application/json",
     )
     def data_providers_resource() -> str:
-        return _json_resource(ts.data_providers_resource(_ctx=_ctx()))
+        return _json_resource(ts.data_providers_resource(_ctx=_ctx(RESOURCE_SCOPES["ithaca://data/providers"])))
 
     @mcp.resource(
-        "doomberg://triggers",
+        "ithaca://triggers",
         name="triggers",
         description="Tenant-scoped trigger policies.",
         mime_type="application/json",
     )
     def triggers_resource() -> str:
-        return _json_resource(ts.triggers_resource(_ctx=_ctx()))
+        return _json_resource(ts.triggers_resource(_ctx=_ctx(RESOURCE_SCOPES["ithaca://triggers"])))
 
     @mcp.resource(
-        "doomberg://triggers/{trigger_id}",
+        "ithaca://triggers/{trigger_id}",
         name="trigger",
         description="One tenant-scoped trigger policy.",
         mime_type="application/json",
     )
     def trigger_resource(trigger_id: str) -> str:
-        return _json_resource(ts.trigger_resource(trigger_id, _ctx=_ctx()))
+        return _json_resource(ts.trigger_resource(trigger_id, _ctx=_ctx(RESOURCE_SCOPES["ithaca://triggers/{trigger_id}"])))
 
     @mcp.resource(
-        "doomberg://alerts/open",
+        "ithaca://alerts/open",
         name="alerts_open",
-        description="Open durable Doomberg alerts.",
+        description="Open durable Ithaca alerts.",
         mime_type="application/json",
     )
     def alerts_open_resource() -> str:
-        return _json_resource(ts.alerts_resource(_ctx=_ctx()))
+        return _json_resource(ts.alerts_resource(_ctx=_ctx(RESOURCE_SCOPES["ithaca://alerts/open"])))
 
     @mcp.resource(
-        "doomberg://alerts/{notification_id}",
+        "ithaca://alerts/{notification_id}",
         name="alert",
-        description="One durable Doomberg alert and delivery attempts.",
+        description="One durable Ithaca alert and delivery attempts.",
         mime_type="application/json",
     )
     def alert_resource(notification_id: str) -> str:
-        return _json_resource(ts.alert_resource(notification_id, _ctx=_ctx()))
+        return _json_resource(ts.alert_resource(notification_id, _ctx=_ctx(RESOURCE_SCOPES["ithaca://alerts/{notification_id}"])))
 
     @mcp.resource(
-        "doomberg://trigger-firings/recent",
+        "ithaca://trigger-firings/recent",
         name="trigger_firings_recent",
         description="Recent tenant-scoped trigger firings.",
         mime_type="application/json",
     )
     def trigger_firings_recent_resource() -> str:
-        return _json_resource(ts.trigger_firings_resource(_ctx=_ctx()))
+        return _json_resource(ts.trigger_firings_resource(_ctx=_ctx(RESOURCE_SCOPES["ithaca://trigger-firings/recent"])))
 
-    @mcp.tool(description="Optional helper only: search Doomberg skills when no direct named tool fits.")
+    @mcp.tool(description="Optional helper only: search Ithaca skills when no direct named tool fits.")
     def search_skills(query: str = "", asset_class: str | None = None,
                       intent: str | None = None) -> dict:
+        _ctx(TOOL_SCOPES["search_skills"])
         return ts.search_skills(query=query, asset_class=asset_class, intent=intent)
 
-    @mcp.tool(description="List task-oriented Doomberg toolkits for direct calls after start_research_session.")
+    @mcp.tool(description="List task-oriented Ithaca toolkits for direct calls after start_research_session.")
     def list_toolkits(query: str = "") -> dict:
+        _ctx(TOOL_SCOPES["list_toolkits"])
         return ts.list_toolkits(query=query)
 
-    @mcp.tool(description="Describe one Doomberg toolkit: direct tools, related skills, and required workflow.")
+    @mcp.tool(description="Describe one Ithaca toolkit: direct tools, related skills, and required workflow.")
     def describe_toolkit(toolkit_id: str) -> dict:
+        _ctx(TOOL_SCOPES["describe_toolkit"])
         return ts.describe_toolkit(toolkit_id=toolkit_id)
 
     @mcp.tool(description="Optional helper only: inspect one skill schema when a direct tool's inputs are unclear.")
     def describe_skill(skill_id: str, version: str | None = None) -> dict:
+        _ctx(TOOL_SCOPES["describe_skill"])
         return ts.describe_skill(skill_id, version=version)
 
-    @mcp.tool(description="Create a durable Doomberg run for a skill after start_research_session. Backtests are queued and return a run id.")
+    @mcp.tool(description="Create a durable Ithaca run for a skill after start_research_session. Backtests are queued and return a run id.")
     def run_skill(skill_id: str, input: dict | None = None, mode: str = "auto",
                   idempotency_key: str | None = None) -> dict:
         return ts.run_skill(skill_id, input=input, mode=mode,
-                            idempotency_key=idempotency_key, _ctx=_ctx())
+                            idempotency_key=idempotency_key, _ctx=_ctx(TOOL_SCOPES["run_skill"]))
 
     @mcp.tool(description="Get a durable run with jobs, artifacts and replayable trace events.")
     def get_run(run_id: str) -> dict:
-        return ts.get_run(run_id, _ctx=_ctx())
+        return ts.get_run(run_id, _ctx=_ctx(TOOL_SCOPES["get_run"]))
 
     @mcp.tool(description="Poll run events after a sequence cursor. Use repeatedly to follow progress.")
     def subscribe_run(run_id: str, cursor: int = -1) -> dict:
-        return ts.subscribe_run(run_id, cursor=cursor, _ctx=_ctx())
+        return ts.subscribe_run(run_id, cursor=cursor, _ctx=_ctx(TOOL_SCOPES["subscribe_run"]))
 
     @mcp.tool(description="Cancel a queued or running durable run and its outstanding worker jobs.")
     def cancel_run(run_id: str, reason: str | None = None) -> dict:
-        return ts.cancel_run(run_id, reason=reason, _ctx=_ctx())
+        return ts.cancel_run(run_id, reason=reason, _ctx=_ctx(TOOL_SCOPES["cancel_run"]))
 
-    @mcp.tool(description="List pending Doomberg approvals for this tenant.")
+    @mcp.tool(description="List pending Ithaca approvals for this tenant.")
     def list_approvals() -> dict:
-        return ts.list_approvals(_ctx=_ctx())
+        return ts.list_approvals(_ctx=_ctx(TOOL_SCOPES["list_approvals"]))
 
     @mcp.tool(description="Approve or deny a pending approval request.")
     def decide_approval(approval_id: str, decision: str, reason: str | None = None) -> dict:
-        return ts.decide_approval(approval_id, decision, reason=reason, _ctx=_ctx())
+        return ts.decide_approval(approval_id, decision, reason=reason, _ctx=_ctx(TOOL_SCOPES["decide_approval"]))
 
     @mcp.tool(description="Create a durable trigger policy as draft or active.")
     def triggers_create(name: str, policy: dict, state: str = "draft") -> dict:
-        return ts.triggers_create(name, policy, state=state, _ctx=_ctx())
+        return ts.triggers_create(name, policy, state=state, _ctx=_ctx(TOOL_SCOPES["triggers_create"]))
 
     @mcp.tool(description="Evaluate a trigger policy without creating runs, firings, jobs, approvals, or alerts.")
     def triggers_dry_run(name: str, policy: dict, quote: dict | None = None) -> dict:
-        return ts.triggers_dry_run(name, policy, quote=quote, _ctx=_ctx())
+        return ts.triggers_dry_run(name, policy, quote=quote, _ctx=_ctx(TOOL_SCOPES["triggers_dry_run"]))
 
     @mcp.tool(description="List tenant trigger policies.")
     def triggers_list(state: str | None = None, limit: int = 100) -> dict:
-        return ts.triggers_list(state=state, limit=limit, _ctx=_ctx())
+        return ts.triggers_list(state=state, limit=limit, _ctx=_ctx(TOOL_SCOPES["triggers_list"]))
 
     @mcp.tool(description="Set a trigger state to draft, active, paused, or retired.")
     def triggers_set_state(trigger_id: str, state: str) -> dict:
-        return ts.triggers_set_state(trigger_id, state, _ctx=_ctx())
+        return ts.triggers_set_state(trigger_id, state, _ctx=_ctx(TOOL_SCOPES["triggers_set_state"]))
 
     @mcp.tool(description="List recent trigger firings.")
     def trigger_firings_list(trigger_id: str | None = None, limit: int = 100) -> dict:
-        return ts.trigger_firings_list(trigger_id=trigger_id, limit=limit, _ctx=_ctx())
+        return ts.trigger_firings_list(trigger_id=trigger_id, limit=limit, _ctx=_ctx(TOOL_SCOPES["trigger_firings_list"]))
 
-    @mcp.tool(description="List durable Doomberg alerts for this tenant.")
+    @mcp.tool(description="List durable Ithaca alerts for this tenant.")
     def alerts_list(state: str | None = "open", limit: int = 100) -> dict:
-        return ts.alerts_list(state=state, limit=limit, _ctx=_ctx())
+        return ts.alerts_list(state=state, limit=limit, _ctx=_ctx(TOOL_SCOPES["alerts_list"]))
 
     @mcp.tool(description="Poll tenant alerts after a cursor. Use repeatedly to catch trigger alerts.")
     def alerts_subscribe(cursor: str = "-1", limit: int = 50) -> dict:
-        return ts.alerts_subscribe(cursor=cursor, limit=limit, _ctx=_ctx())
+        return ts.alerts_subscribe(cursor=cursor, limit=limit, _ctx=_ctx(TOOL_SCOPES["alerts_subscribe"]))
 
-    @mcp.tool(description="Acknowledge one durable Doomberg alert.")
+    @mcp.tool(description="Acknowledge one durable Ithaca alert.")
     def alerts_ack(notification_id: str) -> dict:
-        return ts.alerts_ack(notification_id, _ctx=_ctx())
+        return ts.alerts_ack(notification_id, _ctx=_ctx(TOOL_SCOPES["alerts_ack"]))
 
     @mcp.tool(description="Fetch artifact metadata by id. Artifact content is addressed by returned URI.")
     def get_artifact(artifact_id: str) -> dict:
-        return ts.get_artifact(artifact_id, _ctx=_ctx())
+        return ts.get_artifact(artifact_id, _ctx=_ctx(TOOL_SCOPES["get_artifact"]))
 
-    @mcp.tool(description="Required first step: start a visible Doomberg research session with the user's prompt before direct tool calls.")
+    @mcp.tool(description="Required first step: start a visible Ithaca research session with the user's prompt before direct tool calls.")
     def start_research_session(prompt: str, title: str | None = None,
                                session_id: str | None = None) -> dict:
-        return ts.start_research_session(prompt=prompt, title=title, session_id=session_id, _ctx=_ctx())
+        return ts.start_research_session(prompt=prompt, title=title, session_id=session_id, _ctx=_ctx(TOOL_SCOPES["start_research_session"]))
 
     @mcp.tool(description="Compatibility alias for start_research_session. Prefer start_research_session.")
     def session_context(prompt: str | None = None, title: str | None = None,
                         session_id: str | None = None) -> dict:
-        return ts.session_context(prompt=prompt, title=title, session_id=session_id, _ctx=_ctx())
+        return ts.session_context(prompt=prompt, title=title, session_id=session_id, _ctx=_ctx(TOOL_SCOPES["session_context"]))
 
-    @mcp.tool(description="Initialize Doomberg for this agent session and return the first-call workflow.")
-    def doomberg_init(goal: str | None = None) -> dict:
-        return ts.doomberg_init(goal=goal, _ctx=_ctx())
+    @mcp.tool(description="Initialize Ithaca for this agent session and return the first-call workflow.")
+    def ithaca_init(goal: str | None = None) -> dict:
+        return ts.ithaca_init(goal=goal, _ctx=_ctx(TOOL_SCOPES["ithaca_init"]))
 
     @mcp.tool(description="Direct tool after start_research_session: fetch OHLCV price history for one symbol, with provenance.")
     def market_get_ohlcv(symbol: str, range: str = "6mo", interval: str = "1d") -> dict:
-        return ts.market_get_ohlcv(symbol, range, interval, _ctx=_ctx())
+        return ts.market_get_ohlcv(symbol, range, interval, _ctx=_ctx(TOOL_SCOPES["market_get_ohlcv"]))
 
     @mcp.tool(description="Direct tool after start_research_session: fetch the current live quote for one symbol. Set include_extended_hours=true for pre/post-market capable routes.")
     def market_quote(symbol: str, max_freshness_ms: int | None = None,
@@ -2209,32 +2243,32 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
             symbol,
             max_freshness_ms=max_freshness_ms,
             include_extended_hours=include_extended_hours,
-            _ctx=_ctx(),
+            _ctx=_ctx(TOOL_SCOPES["market_quote"]),
         )
 
     @mcp.tool(description="Direct tool after start_research_session: run a price/technical backtest from a declarative StrategySpec.")
     def backtest_run(spec: dict, range: str = "1y") -> dict:
-        return ts.backtest_run(spec, range, _ctx=_ctx())
+        return ts.backtest_run(spec, range, _ctx=_ctx(TOOL_SCOPES["backtest_run"]))
 
     @mcp.tool(description="Direct tool after start_research_session: validate and register a StrategySpec draft. No deploy, no money.")
     def propose_strategy(spec: dict) -> dict:
-        return ts.propose_strategy(spec, _ctx=_ctx())
+        return ts.propose_strategy(spec, _ctx=_ctx(TOOL_SCOPES["propose_strategy"]))
 
     # ---- direct live-data and Skill catalog (declarative args only) ----
     @mcp.tool(name="market_news",
-              description="Direct tool after start_research_session: live market news from the Doomberg live-data engine. Never falls back to archive news.")
+              description="Direct tool after start_research_session: live market news from the Ithaca live-data engine. Never falls back to archive news.")
     def market_news(ticker: str | None = None, sector: str | None = None, limit: int = 50) -> dict:
-        return ts.market_news(ticker=ticker, sector=sector, limit=limit, _ctx=_ctx())
+        return ts.market_news(ticker=ticker, sector=sector, limit=limit, _ctx=_ctx(TOOL_SCOPES["market_news"]))
 
     @mcp.tool(name="market_screener",
-              description="Direct tool after start_research_session: live most-active screener from the Doomberg live-data engine.")
+              description="Direct tool after start_research_session: live most-active screener from the Ithaca live-data engine.")
     def market_screener(sector: str | None = None, limit: int = 100) -> dict:
-        return call_skill("market.screener", {"sector": sector, "limit": limit})
+        return call_skill("market.screener", {"sector": sector, "limit": limit}, TOOL_SCOPES["market_screener"])
 
     @mcp.tool(name="market_movers",
-              description="Direct tool after start_research_session: live gainers, losers, and active movers from the Doomberg live-data engine.")
+              description="Direct tool after start_research_session: live gainers, losers, and active movers from the Ithaca live-data engine.")
     def market_movers(sector: str | None = None, limit: int = 100) -> dict:
-        return call_skill("market.movers", {"sector": sector, "limit": limit})
+        return call_skill("market.movers", {"sector": sector, "limit": limit}, TOOL_SCOPES["market_movers"])
 
     # ---- COMPUTED skills (source="computed"): pure math on agent inputs ----
     @mcp.tool(name="options_greeks",
@@ -2243,7 +2277,7 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     def options_greeks(S: float, K: float, T: float, sigma: float, r: float = 0.0,
                        type: str = "call") -> dict:
         return call_skill("options.greeks",
-                             {"S": S, "K": K, "T": T, "r": r, "sigma": sigma, "type": type})
+                             {"S": S, "K": K, "T": T, "r": r, "sigma": sigma, "type": type}, TOOL_SCOPES["options_greeks"])
 
     @mcp.tool(name="options_implied_vol",
               description="Black-Scholes implied volatility from an observed option price "
@@ -2251,7 +2285,7 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     def options_implied_vol(price: float, S: float, K: float, T: float, r: float = 0.0,
                            type: str = "call") -> dict:
         return call_skill("options.implied_vol",
-                             {"price": price, "S": S, "K": K, "T": T, "r": r, "type": type})
+                             {"price": price, "S": S, "K": K, "T": T, "r": r, "type": type}, TOOL_SCOPES["options_implied_vol"])
 
     @mcp.tool(name="risk_stress",
               description="Estimate book P&L under agent-supplied shocks: factor shocks "
@@ -2259,11 +2293,11 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     def risk_stress(shocks: dict, exposures: dict | None = None,
                    weights: dict | None = None) -> dict:
         return call_skill("risk.stress",
-                             {"shocks": shocks, "exposures": exposures, "weights": weights})
+                             {"shocks": shocks, "exposures": exposures, "weights": weights}, TOOL_SCOPES["risk_stress"])
 
     @mcp.tool(name="vix_term_structure", description="VIX spot and futures term structure — contango/backwardation signals market fear regime.")
     def vix_term_structure() -> dict:
-        return call_skill("vix.term_structure", {})
+        return call_skill("vix.term_structure", {}, TOOL_SCOPES["vix_term_structure"])
 
     return mcp, ts
 
