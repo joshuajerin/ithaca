@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -142,15 +143,19 @@ class ClerkManagedApiKeyStore:
         subject: str,
         tenant_id: str,
         scopes: list[str],
-        name: str = "Ithaca agent key",
+        name: str | None = None,
     ) -> tuple[str, str]:
         self._require_subject_tenant(subject, tenant_id)
         scope_list = _validate_scopes(scopes)
+        # Clerk requires names to be unique per subject.  An MCP approval needs
+        # a fresh plaintext secret for its local callback, so default names
+        # must be distinct for each approval.
+        key_name = name or f"Ithaca agent key {secrets.token_hex(8)}"
         result = self._request(
             "POST",
             "/api_keys",
             body={
-                "name": name,
+                "name": key_name,
                 "description": "Ithaca MCP and agent access",
                 "subject": subject,
                 "created_by": subject,

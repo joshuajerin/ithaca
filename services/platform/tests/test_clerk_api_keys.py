@@ -70,6 +70,37 @@ def test_clerk_creates_and_verifies_tenant_bound_key(db):
     }
 
 
+def test_clerk_default_key_names_are_unique_for_consecutive_approvals(db):
+    subject, tenant_id = _linked_identity(db)
+    create_bodies = []
+
+    def urlopen(request, timeout):
+        body = json.loads(request.data)
+        create_bodies.append(body)
+        sequence = len(create_bodies)
+        return _Response(
+            {
+                "id": f"ak_{sequence}",
+                "secret": f"ak_live_secret_{sequence}",
+                "subject": subject,
+                "name": body["name"],
+                "claims": {"ithaca_managed": True, "ithaca_tenant_id": tenant_id},
+                "scopes": ["data:read"],
+                "revoked": False,
+                "expired": False,
+            }
+        )
+
+    store = ClerkManagedApiKeyStore(db, "sk_test_secret", urlopen=urlopen)
+    store.create_key(subject=subject, tenant_id=tenant_id, scopes=["data:read"])
+    store.create_key(subject=subject, tenant_id=tenant_id, scopes=["data:read"])
+
+    names = [body["name"] for body in create_bodies]
+    assert len(names) == 2
+    assert all(name.startswith("Ithaca agent key ") for name in names)
+    assert names[0] != names[1]
+
+
 def test_clerk_rejects_unmanaged_or_cross_tenant_key(db):
     subject, tenant_id = _linked_identity(db)
 
