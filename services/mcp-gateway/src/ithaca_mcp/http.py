@@ -107,13 +107,20 @@ class CompositeTokenVerifier(TokenVerifier):
         )
 
 
-def _auth_settings(identity: ClerkIdentityService) -> AuthSettings:
-    identity.validate_configuration(require_issuer=True)
+def _auth_settings(identity: ClerkIdentityService, *, strict: bool = True) -> AuthSettings:
+    """Return production metadata, with a deterministic local-test fallback.
+
+    Production always constructs its own verifier and must have real Clerk configuration.
+    Tests that deliberately inject an in-memory legacy-key verifier do not exercise OAuth
+    verification and therefore use an inert metadata issuer instead of reaching Clerk.
+    """
+    if strict:
+        identity.validate_configuration(require_issuer=True)
     resource = resource_url()
     if not resource.startswith("https://"):
         raise ClerkAuthConfigurationError(f"{MCP_RESOURCE_URL_ENV} must be canonical HTTPS")
     return AuthSettings(
-        issuer_url=identity.issuer,  # validated above
+        issuer_url=identity.issuer or "https://clerk.invalid",
         resource_server_url=resource,
         required_scopes=[oauth_scope()],
         service_documentation_url=os.environ.get(
@@ -144,7 +151,10 @@ def build_http_app(toolset=None, verifier: Any | None = None, *, host: str | Non
         # changing production's SDK authentication path.
         token_verifier = CompositeTokenVerifier(agent_keys=verifier, identity=identity)
     mcp, ts = create_server(
-        toolset, http=True, token_verifier=token_verifier, auth_settings=_auth_settings(identity)
+        toolset,
+        http=True,
+        token_verifier=token_verifier,
+        auth_settings=_auth_settings(identity, strict=verifier is None),
     )
     if host is not None:
         mcp.settings.host = host
