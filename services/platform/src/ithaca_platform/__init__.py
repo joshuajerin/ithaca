@@ -29,6 +29,15 @@ from .clerk_api_keys import (
     ClerkWaitlistService,
     build_agent_key_store,
 )
+from .clerk_identity import (
+    ClerkAuthConfigurationError,
+    ClerkAuthError,
+    ClerkIdentityService,
+    ClerkIdentityUnavailable,
+    ClerkTokenInvalid,
+    ResolvedClerkPrincipal,
+    VerifiedClerkIdentity,
+)
 from .control_store import (
     ApprovalStore,
     ArtifactStore,
@@ -86,6 +95,13 @@ __all__ = [
     "ClerkManagedApiKeyStore",
     "ClerkWaitlistService",
     "build_agent_key_store",
+    "ClerkIdentityService",
+    "VerifiedClerkIdentity",
+    "ResolvedClerkPrincipal",
+    "ClerkAuthError",
+    "ClerkAuthConfigurationError",
+    "ClerkTokenInvalid",
+    "ClerkIdentityUnavailable",
     "AdaptiveDashboardProfileStore",
     "ADAPTIVE_WIDGET_IDS",
     "DEFAULT_ADAPTIVE_DASHBOARD_SPEC",

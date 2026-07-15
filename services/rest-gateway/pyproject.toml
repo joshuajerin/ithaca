@@ -11,7 +11,6 @@ dependencies = [
     "ithaca-runtime",
     "fastapi>=0.110",
     "uvicorn>=0.27",
-    "pyjwt[crypto]>=2.10",
 ]
 
 [project.optional-dependencies]

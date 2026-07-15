@@ -57,7 +57,6 @@ const ADAPTIVE_WIDGET_IDS = new Set([
   "live_data_status",
 ]);
 
-const INSTALL_COMMAND = "curl -fsSL https://app.tradeithaca.com/install.py | python3";
 
 function SearchIcon() {
   return (
@@ -77,46 +76,14 @@ function FCardPanel({ title, children, minHeight = 280 }: { title: string; child
 }
 
 function AdaptiveDashboardEmptyState() {
-  const [copied, setCopied] = useState(false);
-
-  async function copyInstallCommand() {
-    try {
-      await navigator.clipboard.writeText(INSTALL_COMMAND);
-    } catch {
-      const textarea = document.createElement("textarea");
-      textarea.value = INSTALL_COMMAND;
-      textarea.setAttribute("readonly", "");
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textarea);
-    }
-
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1400);
-  }
-
   return (
     <div className="adaptive-empty-state" aria-label="No adaptive dashboard history">
       <DotWaveCanvas />
       <div className="adaptive-empty-card">
         <p className="adaptive-empty-message">
-          Install the Ithaca MCP and start a research session to have a personalized dashboard.
+          Connect your agent to Ithaca MCP, then start a research session to have a personalized dashboard.
         </p>
-        <div className="adaptive-install-command">
-          <span className="adaptive-install-prompt">$</span>
-          <code>{INSTALL_COMMAND}</code>
-          <button
-            type="button"
-            className="adaptive-install-copy"
-            onClick={copyInstallCommand}
-            aria-label="Copy install command"
-          >
-            {copied ? "Copied" : "Copy"}
-          </button>
-        </div>
+        <a className="settings-btn primary" href="/settings#connect-agent" style={{ textDecoration: "none", alignSelf: "center" }}>Connect your agent</a>
       </div>
     </div>
   );

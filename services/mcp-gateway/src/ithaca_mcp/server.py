@@ -22,6 +22,7 @@ from ithaca_core import ALL_SKILL_MANIFESTS, SKILLS, Core, SkillSet
 from ithaca_core.providers import PUBLIC_DATA_SOURCE, PUBLIC_ENTITLEMENT_CLASS, IbkrEngineClient, IbkrEngineError
 from ithaca_platform import TransitionConflict
 
+from .authorization import Principal, RESOURCE_SCOPES, TOOL_SCOPES, require_scope
 from .trace import InMemoryTrace, PlatformTraceSink, Tracer
 
 _DEFAULT_TENANT = "00000000-0000-0000-0000-000000000000"
@@ -398,7 +399,7 @@ class Toolset:
     def _session_context_required(self) -> dict:
         return self._typed_error(
             "SESSION_CONTEXT_REQUIRED",
-            "start a Ithaca research session before calling data or workflow tools",
+            "start an Ithaca research session before calling data or workflow tools",
             "Call start_research_session with the user's prompt, then call direct tools.",
         )
 
@@ -627,7 +628,7 @@ class Toolset:
             out = self._typed_error(
                 "PROVIDER_DEGRADED",
                 f"live history unavailable: {exc}",
-                "Check the Ithaca live-data engine history route and connected-account entitlements.",
+                "Check the Ithaca live-data engine history route and IBKR session entitlements.",
             )
         tr.tool_result("market.get_ohlcv", span, _provenance_summary(out))
         return out
@@ -1809,7 +1810,7 @@ class Toolset:
         max_freshness_ms: int | None = None,
         _ctx: dict | None = None,
     ) -> dict:
-        """Read-only smoke for the connected-account live-data quote route."""
+        """Read-only smoke for the connected-account IBKR engine quote route."""
 
         ctx = dict(_ctx or {})
         tenant_id = ctx.get("tenant_id") or _DEFAULT_TENANT
@@ -1939,7 +1940,7 @@ def _transport_security():
     so we make the allowlist explicit:
 
     * ``ITHACA_MCP_ALLOWED_HOSTS`` unset → protection OFF (trust the proxy + bearer auth).
-    * set (comma-separated, e.g. ``mcp.ithaca.ai,mcp.ithaca.ai:443``) → protection ON,
+    * set (comma-separated, e.g. ``mcp.Ithaca.ai,mcp.Ithaca.ai:443``) → protection ON,
       restricted to exactly those hosts (``host:*`` wildcard-port patterns supported by the SDK).
 
     Falls back to ``None`` when the SDK version does not expose
@@ -1962,7 +1963,10 @@ def _transport_security():
     )
 
 
-def create_server(toolset: Toolset | None = None, *, http: bool = False):
+def create_server(
+    toolset: Toolset | None = None, *, http: bool = False,
+    token_verifier=None, auth_settings=None,
+):
     """Build the FastMCP server. Imported lazily so the toolset is testable without the SDK.
 
     ``http=True`` (the hosted path) makes every tool wrapper resolve the per-request
@@ -1973,20 +1977,42 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     from mcp.server.fastmcp import FastMCP
 
     ts = toolset or _platform_backed_toolset()
-    mcp = FastMCP("ithaca", transport_security=_transport_security() if http else None)
+    mcp = FastMCP(
+        "ithaca", transport_security=_transport_security() if http else None,
+        token_verifier=token_verifier, auth=auth_settings,
+    )
 
-    def _ctx() -> dict | None:
-        """The per-request tenant ``_ctx`` in HTTP mode; None in stdio mode."""
+    def _ctx(required_scope: str | None = None) -> dict | None:
+        """Build tenant context from the MCP SDK access token, never request middleware."""
         if not http:
             return None
-        from .http import current_principal
+        from mcp.server.auth.middleware.auth_context import get_access_token
 
-        principal = current_principal()
-        return principal.ctx() if principal is not None else None
+        token = get_access_token()
+        claims = token.claims if token else None
+        if token is None or not isinstance(claims, dict) or not claims.get("tenant_id"):
+            # SDK admission normally prevents this.  This remains fail-closed if a wrapper is
+            # called from an unexpected MCP execution path.
+            from .authorization import InsufficientScopeError
+            raise InsufficientScopeError()
+        principal = Principal(
+            tenant_id=str(claims["tenant_id"]),
+            credential_kind=str(claims.get("credential_kind") or "unknown"),
+            scopes=frozenset(str(scope) for scope in claims.get("principal_scopes", ())),
+            subject=token.subject,
+        )
+        if required_scope is not None:
+            require_scope(principal, required_scope)
+        return {
+            "tenant_id": principal.tenant_id,
+            "agent_id": principal.subject,
+            "actor_kind": "agent",
+            "scopes": set(principal.scopes),
+        }
 
-    def call_skill(tool: str, params: dict) -> dict:
+    def call_skill(tool: str, params: dict, required_scope: str = "data:read") -> dict:
         """Skill-catalog dispatch that injects the per-request tenant ``_ctx`` (HTTP mode)."""
-        return ts.call_skill(tool, params, _ctx=_ctx())
+        return ts.call_skill(tool, params, _ctx=_ctx(required_scope))
 
     @mcp.resource(
         "ithaca://skills/catalog",
@@ -1995,6 +2021,7 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
         mime_type="application/json",
     )
     def skills_catalog_resource() -> str:
+        _ctx(RESOURCE_SCOPES["ithaca://skills/catalog"])
         return _json_resource(ts.skills_catalog_resource())
 
     @mcp.resource(
@@ -2004,6 +2031,7 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
         mime_type="application/json",
     )
     def toolkits_catalog_resource() -> str:
+        _ctx(RESOURCE_SCOPES["ithaca://toolkits/catalog"])
         return _json_resource(ts.toolkits_catalog_resource())
 
     @mcp.resource(
@@ -2013,6 +2041,7 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
         mime_type="application/json",
     )
     def toolkit_resource(toolkit_id: str) -> str:
+        _ctx(RESOURCE_SCOPES["ithaca://toolkits/{toolkit_id}"])
         return _json_resource(ts.toolkit_resource(toolkit_id))
 
     @mcp.resource(
@@ -2022,6 +2051,7 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
         mime_type="application/json",
     )
     def skill_manifest_resource(skill_id: str, version: str) -> str:
+        _ctx(RESOURCE_SCOPES["ithaca://skills/{skill_id}/{version}"])
         return _json_resource(ts.skill_resource(skill_id, version))
 
     @mcp.resource(
@@ -2031,7 +2061,7 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
         mime_type="application/json",
     )
     def run_resource(run_id: str) -> str:
-        return _json_resource(ts.run_resource(run_id, _ctx=_ctx()))
+        return _json_resource(ts.run_resource(run_id, _ctx=_ctx(RESOURCE_SCOPES["ithaca://runs/{run_id}"])))
 
     @mcp.resource(
         "ithaca://policies/current",
@@ -2040,7 +2070,7 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
         mime_type="application/json",
     )
     def policies_current_resource() -> str:
-        return _json_resource(ts.policies_resource(_ctx=_ctx()))
+        return _json_resource(ts.policies_resource(_ctx=_ctx(RESOURCE_SCOPES["ithaca://policies/current"])))
 
     @mcp.resource(
         "ithaca://accounts",
@@ -2049,7 +2079,7 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
         mime_type="application/json",
     )
     def accounts_resource() -> str:
-        return _json_resource(ts.accounts_resource(_ctx=_ctx()))
+        return _json_resource(ts.accounts_resource(_ctx=_ctx(RESOURCE_SCOPES["ithaca://accounts"])))
 
     @mcp.resource(
         "ithaca://data/providers",
@@ -2058,7 +2088,7 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
         mime_type="application/json",
     )
     def data_providers_resource() -> str:
-        return _json_resource(ts.data_providers_resource(_ctx=_ctx()))
+        return _json_resource(ts.data_providers_resource(_ctx=_ctx(RESOURCE_SCOPES["ithaca://data/providers"])))
 
     @mcp.resource(
         "ithaca://triggers",
@@ -2067,7 +2097,7 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
         mime_type="application/json",
     )
     def triggers_resource() -> str:
-        return _json_resource(ts.triggers_resource(_ctx=_ctx()))
+        return _json_resource(ts.triggers_resource(_ctx=_ctx(RESOURCE_SCOPES["ithaca://triggers"])))
 
     @mcp.resource(
         "ithaca://triggers/{trigger_id}",
@@ -2076,7 +2106,7 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
         mime_type="application/json",
     )
     def trigger_resource(trigger_id: str) -> str:
-        return _json_resource(ts.trigger_resource(trigger_id, _ctx=_ctx()))
+        return _json_resource(ts.trigger_resource(trigger_id, _ctx=_ctx(RESOURCE_SCOPES["ithaca://triggers/{trigger_id}"])))
 
     @mcp.resource(
         "ithaca://alerts/open",
@@ -2085,7 +2115,7 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
         mime_type="application/json",
     )
     def alerts_open_resource() -> str:
-        return _json_resource(ts.alerts_resource(_ctx=_ctx()))
+        return _json_resource(ts.alerts_resource(_ctx=_ctx(RESOURCE_SCOPES["ithaca://alerts/open"])))
 
     @mcp.resource(
         "ithaca://alerts/{notification_id}",
@@ -2094,7 +2124,7 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
         mime_type="application/json",
     )
     def alert_resource(notification_id: str) -> str:
-        return _json_resource(ts.alert_resource(notification_id, _ctx=_ctx()))
+        return _json_resource(ts.alert_resource(notification_id, _ctx=_ctx(RESOURCE_SCOPES["ithaca://alerts/{notification_id}"])))
 
     @mcp.resource(
         "ithaca://trigger-firings/recent",
@@ -2103,104 +2133,108 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
         mime_type="application/json",
     )
     def trigger_firings_recent_resource() -> str:
-        return _json_resource(ts.trigger_firings_resource(_ctx=_ctx()))
+        return _json_resource(ts.trigger_firings_resource(_ctx=_ctx(RESOURCE_SCOPES["ithaca://trigger-firings/recent"])))
 
     @mcp.tool(description="Optional helper only: search Ithaca skills when no direct named tool fits.")
     def search_skills(query: str = "", asset_class: str | None = None,
                       intent: str | None = None) -> dict:
+        _ctx(TOOL_SCOPES["search_skills"])
         return ts.search_skills(query=query, asset_class=asset_class, intent=intent)
 
     @mcp.tool(description="List task-oriented Ithaca toolkits for direct calls after start_research_session.")
     def list_toolkits(query: str = "") -> dict:
+        _ctx(TOOL_SCOPES["list_toolkits"])
         return ts.list_toolkits(query=query)
 
     @mcp.tool(description="Describe one Ithaca toolkit: direct tools, related skills, and required workflow.")
     def describe_toolkit(toolkit_id: str) -> dict:
+        _ctx(TOOL_SCOPES["describe_toolkit"])
         return ts.describe_toolkit(toolkit_id=toolkit_id)
 
     @mcp.tool(description="Optional helper only: inspect one skill schema when a direct tool's inputs are unclear.")
     def describe_skill(skill_id: str, version: str | None = None) -> dict:
+        _ctx(TOOL_SCOPES["describe_skill"])
         return ts.describe_skill(skill_id, version=version)
 
     @mcp.tool(description="Create a durable Ithaca run for a skill after start_research_session. Backtests are queued and return a run id.")
     def run_skill(skill_id: str, input: dict | None = None, mode: str = "auto",
                   idempotency_key: str | None = None) -> dict:
         return ts.run_skill(skill_id, input=input, mode=mode,
-                            idempotency_key=idempotency_key, _ctx=_ctx())
+                            idempotency_key=idempotency_key, _ctx=_ctx(TOOL_SCOPES["run_skill"]))
 
     @mcp.tool(description="Get a durable run with jobs, artifacts and replayable trace events.")
     def get_run(run_id: str) -> dict:
-        return ts.get_run(run_id, _ctx=_ctx())
+        return ts.get_run(run_id, _ctx=_ctx(TOOL_SCOPES["get_run"]))
 
     @mcp.tool(description="Poll run events after a sequence cursor. Use repeatedly to follow progress.")
     def subscribe_run(run_id: str, cursor: int = -1) -> dict:
-        return ts.subscribe_run(run_id, cursor=cursor, _ctx=_ctx())
+        return ts.subscribe_run(run_id, cursor=cursor, _ctx=_ctx(TOOL_SCOPES["subscribe_run"]))
 
     @mcp.tool(description="Cancel a queued or running durable run and its outstanding worker jobs.")
     def cancel_run(run_id: str, reason: str | None = None) -> dict:
-        return ts.cancel_run(run_id, reason=reason, _ctx=_ctx())
+        return ts.cancel_run(run_id, reason=reason, _ctx=_ctx(TOOL_SCOPES["cancel_run"]))
 
     @mcp.tool(description="List pending Ithaca approvals for this tenant.")
     def list_approvals() -> dict:
-        return ts.list_approvals(_ctx=_ctx())
+        return ts.list_approvals(_ctx=_ctx(TOOL_SCOPES["list_approvals"]))
 
     @mcp.tool(description="Approve or deny a pending approval request.")
     def decide_approval(approval_id: str, decision: str, reason: str | None = None) -> dict:
-        return ts.decide_approval(approval_id, decision, reason=reason, _ctx=_ctx())
+        return ts.decide_approval(approval_id, decision, reason=reason, _ctx=_ctx(TOOL_SCOPES["decide_approval"]))
 
     @mcp.tool(description="Create a durable trigger policy as draft or active.")
     def triggers_create(name: str, policy: dict, state: str = "draft") -> dict:
-        return ts.triggers_create(name, policy, state=state, _ctx=_ctx())
+        return ts.triggers_create(name, policy, state=state, _ctx=_ctx(TOOL_SCOPES["triggers_create"]))
 
     @mcp.tool(description="Evaluate a trigger policy without creating runs, firings, jobs, approvals, or alerts.")
     def triggers_dry_run(name: str, policy: dict, quote: dict | None = None) -> dict:
-        return ts.triggers_dry_run(name, policy, quote=quote, _ctx=_ctx())
+        return ts.triggers_dry_run(name, policy, quote=quote, _ctx=_ctx(TOOL_SCOPES["triggers_dry_run"]))
 
     @mcp.tool(description="List tenant trigger policies.")
     def triggers_list(state: str | None = None, limit: int = 100) -> dict:
-        return ts.triggers_list(state=state, limit=limit, _ctx=_ctx())
+        return ts.triggers_list(state=state, limit=limit, _ctx=_ctx(TOOL_SCOPES["triggers_list"]))
 
     @mcp.tool(description="Set a trigger state to draft, active, paused, or retired.")
     def triggers_set_state(trigger_id: str, state: str) -> dict:
-        return ts.triggers_set_state(trigger_id, state, _ctx=_ctx())
+        return ts.triggers_set_state(trigger_id, state, _ctx=_ctx(TOOL_SCOPES["triggers_set_state"]))
 
     @mcp.tool(description="List recent trigger firings.")
     def trigger_firings_list(trigger_id: str | None = None, limit: int = 100) -> dict:
-        return ts.trigger_firings_list(trigger_id=trigger_id, limit=limit, _ctx=_ctx())
+        return ts.trigger_firings_list(trigger_id=trigger_id, limit=limit, _ctx=_ctx(TOOL_SCOPES["trigger_firings_list"]))
 
     @mcp.tool(description="List durable Ithaca alerts for this tenant.")
     def alerts_list(state: str | None = "open", limit: int = 100) -> dict:
-        return ts.alerts_list(state=state, limit=limit, _ctx=_ctx())
+        return ts.alerts_list(state=state, limit=limit, _ctx=_ctx(TOOL_SCOPES["alerts_list"]))
 
     @mcp.tool(description="Poll tenant alerts after a cursor. Use repeatedly to catch trigger alerts.")
     def alerts_subscribe(cursor: str = "-1", limit: int = 50) -> dict:
-        return ts.alerts_subscribe(cursor=cursor, limit=limit, _ctx=_ctx())
+        return ts.alerts_subscribe(cursor=cursor, limit=limit, _ctx=_ctx(TOOL_SCOPES["alerts_subscribe"]))
 
     @mcp.tool(description="Acknowledge one durable Ithaca alert.")
     def alerts_ack(notification_id: str) -> dict:
-        return ts.alerts_ack(notification_id, _ctx=_ctx())
+        return ts.alerts_ack(notification_id, _ctx=_ctx(TOOL_SCOPES["alerts_ack"]))
 
     @mcp.tool(description="Fetch artifact metadata by id. Artifact content is addressed by returned URI.")
     def get_artifact(artifact_id: str) -> dict:
-        return ts.get_artifact(artifact_id, _ctx=_ctx())
+        return ts.get_artifact(artifact_id, _ctx=_ctx(TOOL_SCOPES["get_artifact"]))
 
     @mcp.tool(description="Required first step: start a visible Ithaca research session with the user's prompt before direct tool calls.")
     def start_research_session(prompt: str, title: str | None = None,
                                session_id: str | None = None) -> dict:
-        return ts.start_research_session(prompt=prompt, title=title, session_id=session_id, _ctx=_ctx())
+        return ts.start_research_session(prompt=prompt, title=title, session_id=session_id, _ctx=_ctx(TOOL_SCOPES["start_research_session"]))
 
     @mcp.tool(description="Compatibility alias for start_research_session. Prefer start_research_session.")
     def session_context(prompt: str | None = None, title: str | None = None,
                         session_id: str | None = None) -> dict:
-        return ts.session_context(prompt=prompt, title=title, session_id=session_id, _ctx=_ctx())
+        return ts.session_context(prompt=prompt, title=title, session_id=session_id, _ctx=_ctx(TOOL_SCOPES["session_context"]))
 
     @mcp.tool(description="Initialize Ithaca for this agent session and return the first-call workflow.")
     def ithaca_init(goal: str | None = None) -> dict:
-        return ts.ithaca_init(goal=goal, _ctx=_ctx())
+        return ts.ithaca_init(goal=goal, _ctx=_ctx(TOOL_SCOPES["ithaca_init"]))
 
     @mcp.tool(description="Direct tool after start_research_session: fetch OHLCV price history for one symbol, with provenance.")
     def market_get_ohlcv(symbol: str, range: str = "6mo", interval: str = "1d") -> dict:
-        return ts.market_get_ohlcv(symbol, range, interval, _ctx=_ctx())
+        return ts.market_get_ohlcv(symbol, range, interval, _ctx=_ctx(TOOL_SCOPES["market_get_ohlcv"]))
 
     @mcp.tool(description="Direct tool after start_research_session: fetch the current live quote for one symbol. Set include_extended_hours=true for pre/post-market capable routes.")
     def market_quote(symbol: str, max_freshness_ms: int | None = None,
@@ -2209,32 +2243,32 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
             symbol,
             max_freshness_ms=max_freshness_ms,
             include_extended_hours=include_extended_hours,
-            _ctx=_ctx(),
+            _ctx=_ctx(TOOL_SCOPES["market_quote"]),
         )
 
     @mcp.tool(description="Direct tool after start_research_session: run a price/technical backtest from a declarative StrategySpec.")
     def backtest_run(spec: dict, range: str = "1y") -> dict:
-        return ts.backtest_run(spec, range, _ctx=_ctx())
+        return ts.backtest_run(spec, range, _ctx=_ctx(TOOL_SCOPES["backtest_run"]))
 
     @mcp.tool(description="Direct tool after start_research_session: validate and register a StrategySpec draft. No deploy, no money.")
     def propose_strategy(spec: dict) -> dict:
-        return ts.propose_strategy(spec, _ctx=_ctx())
+        return ts.propose_strategy(spec, _ctx=_ctx(TOOL_SCOPES["propose_strategy"]))
 
     # ---- direct live-data and Skill catalog (declarative args only) ----
     @mcp.tool(name="market_news",
               description="Direct tool after start_research_session: live market news from the Ithaca live-data engine. Never falls back to archive news.")
     def market_news(ticker: str | None = None, sector: str | None = None, limit: int = 50) -> dict:
-        return ts.market_news(ticker=ticker, sector=sector, limit=limit, _ctx=_ctx())
+        return ts.market_news(ticker=ticker, sector=sector, limit=limit, _ctx=_ctx(TOOL_SCOPES["market_news"]))
 
     @mcp.tool(name="market_screener",
               description="Direct tool after start_research_session: live most-active screener from the Ithaca live-data engine.")
     def market_screener(sector: str | None = None, limit: int = 100) -> dict:
-        return call_skill("market.screener", {"sector": sector, "limit": limit})
+        return call_skill("market.screener", {"sector": sector, "limit": limit}, TOOL_SCOPES["market_screener"])
 
     @mcp.tool(name="market_movers",
               description="Direct tool after start_research_session: live gainers, losers, and active movers from the Ithaca live-data engine.")
     def market_movers(sector: str | None = None, limit: int = 100) -> dict:
-        return call_skill("market.movers", {"sector": sector, "limit": limit})
+        return call_skill("market.movers", {"sector": sector, "limit": limit}, TOOL_SCOPES["market_movers"])
 
     # ---- COMPUTED skills (source="computed"): pure math on agent inputs ----
     @mcp.tool(name="options_greeks",
@@ -2243,7 +2277,7 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     def options_greeks(S: float, K: float, T: float, sigma: float, r: float = 0.0,
                        type: str = "call") -> dict:
         return call_skill("options.greeks",
-                             {"S": S, "K": K, "T": T, "r": r, "sigma": sigma, "type": type})
+                             {"S": S, "K": K, "T": T, "r": r, "sigma": sigma, "type": type}, TOOL_SCOPES["options_greeks"])
 
     @mcp.tool(name="options_implied_vol",
               description="Black-Scholes implied volatility from an observed option price "
@@ -2251,7 +2285,7 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     def options_implied_vol(price: float, S: float, K: float, T: float, r: float = 0.0,
                            type: str = "call") -> dict:
         return call_skill("options.implied_vol",
-                             {"price": price, "S": S, "K": K, "T": T, "r": r, "type": type})
+                             {"price": price, "S": S, "K": K, "T": T, "r": r, "type": type}, TOOL_SCOPES["options_implied_vol"])
 
     @mcp.tool(name="risk_stress",
               description="Estimate book P&L under agent-supplied shocks: factor shocks "
@@ -2259,11 +2293,11 @@ def create_server(toolset: Toolset | None = None, *, http: bool = False):
     def risk_stress(shocks: dict, exposures: dict | None = None,
                    weights: dict | None = None) -> dict:
         return call_skill("risk.stress",
-                             {"shocks": shocks, "exposures": exposures, "weights": weights})
+                             {"shocks": shocks, "exposures": exposures, "weights": weights}, TOOL_SCOPES["risk_stress"])
 
     @mcp.tool(name="vix_term_structure", description="VIX spot and futures term structure — contango/backwardation signals market fear regime.")
     def vix_term_structure() -> dict:
-        return call_skill("vix.term_structure", {})
+        return call_skill("vix.term_structure", {}, TOOL_SCOPES["vix_term_structure"])
 
     return mcp, ts
 
