@@ -71,24 +71,6 @@ export function DeploymentDetail() {
   const runName = (activeRun ?? requestedSummary)?.spec?.name;
   const displayName = strategy?.name ?? (typeof runName === "string" && runName.trim() ? runName : `Agent backtest ${shortId(activeRunId)}`);
 
-  async function runAgain() {
-    if (!id) return;
-    setActing(true);
-    setActionError(null);
-    try {
-      const created = await api.createRun(id, "backtest", "1y", undefined, crypto.randomUUID());
-      const runId = created.run_id ?? created.id;
-      setSelectedRunId(runId);
-      setSearchParams({ run: runId });
-      reload();
-      reloadDetail();
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setActing(false);
-    }
-  }
-
   async function cancelActive() {
     if (!activeRun) return;
     setActing(true);
@@ -138,7 +120,6 @@ export function DeploymentDetail() {
         <div aria-hidden="true" />
         <div className="topbar-right">
           {!terminal && <button className="btn" onClick={cancelActive} disabled={acting}>Cancel</button>}
-          <button className="btn primary" onClick={runAgain} disabled={acting || !strategy}>Run again</button>
           {activeRun && (
             <span className={`badge ${stateClass(activeRun.state)}`} style={{ fontSize: 10 }}>{activeRun.state}</span>
           )}

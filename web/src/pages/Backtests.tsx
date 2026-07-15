@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { StrategySpec as StrategySpecSchema } from "@ithaca/contracts";
 import { api } from "../api";
 import { useAsync } from "../hooks/useAsync";
 import type { BacktestResult, RunRow, StrategyRow } from "../types";
@@ -29,25 +28,6 @@ export interface BacktestBuilderState {
   rebalance: Rebalance;
   seed: number;
 }
-
-const DEFAULT_BUILDER: BacktestBuilderState = {
-  name: "Momentum research",
-  symbols: "AAPL, MSFT, NVDA, AMZN",
-  primitive: "momentum",
-  scheme: "rank_weight",
-  range: "1y",
-  lookback: 90,
-  fast: 20,
-  slow: 50,
-  threshold: 1,
-  top: 3,
-  gross: 1,
-  maxName: 0.5,
-  costBps: 5,
-  slippageBps: 2,
-  rebalance: "monthly@close",
-  seed: 42,
-};
 
 export function normalizeSymbols(raw: string): string[] {
   return Array.from(
@@ -120,12 +100,8 @@ export function buildBacktestCards(strategies: StrategyRow[], runs: RunRow[]): B
 export function Backtests() {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
-  const [builderOpen, setBuilderOpen] = useState(false);
-  const [builder, setBuilder] = useState(DEFAULT_BUILDER);
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const { data: strategies, loading: strategiesLoading, reload: reloadStrategies } = useAsync<StrategyRow[]>((s) => api.listStrategies(s), []);
-  const { data: runs, loading: runsLoading, reload: reloadRuns } = useAsync<RunRow[]>((s) => api.listRuns("backtest", s), []);
+  const { data: strategies, loading: strategiesLoading } = useAsync<StrategyRow[]>((s) => api.listStrategies(s), []);
+  const { data: runs, loading: runsLoading } = useAsync<RunRow[]>((s) => api.listRuns("backtest", s), []);
 
   const cards = useMemo(() => buildBacktestCards(strategies ?? [], runs ?? []), [strategies, runs]);
 
@@ -135,42 +111,6 @@ export function Backtests() {
   });
 
   const loading = strategiesLoading || runsLoading;
-
-  async function submitBuilder() {
-    setSubmitError(null);
-    if (builder.primitive === "ma_cross" && builder.fast >= builder.slow) {
-      setSubmitError("Fast moving average must be smaller than slow moving average.");
-      return;
-    }
-    const parsed = StrategySpecSchema.safeParse(buildStrategySpec(builder));
-    if (!parsed.success) {
-      setSubmitError(parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join(" · "));
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const strategy = await api.proposeStrategy(parsed.data as unknown as Record<string, unknown>);
-      const run = await api.createRun(strategy.id, "backtest", builder.range, undefined, crypto.randomUUID());
-      reloadStrategies();
-      reloadRuns();
-      setBuilderOpen(false);
-      navigate(`/backtests/${strategy.id}?run=${encodeURIComponent(run.run_id ?? run.id)}`);
-    } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function quickRun(strategyId: string) {
-    setSubmitError(null);
-    try {
-      const run = await api.createRun(strategyId, "backtest", "1y", undefined, crypto.randomUUID());
-      navigate(`/backtests/${strategyId}?run=${encodeURIComponent(run.run_id ?? run.id)}`);
-    } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : String(error));
-    }
-  }
 
   return (
     <div className="page deploy-screen" style={{ padding: 0, overflow: "auto" }}>
@@ -182,16 +122,13 @@ export function Backtests() {
         <div className="searchbar-wrap">
           <input className="searchbar" type="search" placeholder="Search strategies" value={query} onChange={(event) => setQuery(event.target.value)} />
         </div>
-        <div className="topbar-right"><button className="btn primary" onClick={() => setBuilderOpen(true)}>New backtest</button></div>
       </div>
 
-      {submitError && !builderOpen && <div className="banner" style={{ margin: "0 22px 12px" }}>{submitError}</div>}
       {loading && <div className="empty" style={{ margin: 22 }}>Loading backtests…</div>}
       {!loading && filtered.length === 0 && (
         <div className="backtest-empty">
           <strong>No backtests yet.</strong>
-          <span>Create a technical strategy here or ask your connected agent to propose one.</span>
-          <button className="btn primary" onClick={() => setBuilderOpen(true)}>Create first backtest</button>
+          <span>Ask your connected agent to propose and deploy a strategy.</span>
         </div>
       )}
 
@@ -217,50 +154,11 @@ export function Backtests() {
               </button>
               <div className="backtest-card-actions">
                 <button className="btn" onClick={() => navigate(href)}>History</button>
-                {strategy && <button className="btn primary" onClick={() => quickRun(strategy.id)}>Run again</button>}
               </div>
             </article>
           );
         })}
       </div>
-
-      {builderOpen && (
-        <div className="backtest-modal-backdrop" onMouseDown={() => !submitting && setBuilderOpen(false)}>
-          <section className="backtest-modal" role="dialog" aria-modal="true" aria-label="Create backtest" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="backtest-modal-head">
-              <div><h2>New backtest</h2><p>Price-only, deterministic, and no free-form code.</p></div>
-              <button className="btn" onClick={() => setBuilderOpen(false)} disabled={submitting}>Close</button>
-            </div>
-            <div className="backtest-form-grid">
-              <Field label="Name"><input value={builder.name} onChange={(e) => setBuilder({ ...builder, name: e.target.value })} /></Field>
-              <Field label="Symbols"><input value={builder.symbols} onChange={(e) => setBuilder({ ...builder, symbols: e.target.value })} placeholder="AAPL, MSFT" /></Field>
-              <Field label="Strategy"><select value={builder.primitive} onChange={(e) => setBuilder({ ...builder, primitive: e.target.value as Primitive })}><option value="momentum">Momentum</option><option value="ma_cross">MA crossover</option><option value="mean_reversion">Mean reversion</option><option value="rank_returns">Rank returns</option></select></Field>
-              <Field label="History"><select value={builder.range} onChange={(e) => setBuilder({ ...builder, range: e.target.value })}><option value="3mo">3 months</option><option value="6mo">6 months</option><option value="1y">1 year</option><option value="2y">2 years</option><option value="5y">5 years</option></select></Field>
-              {builder.primitive !== "ma_cross" && <NumberField label="Lookback" value={builder.lookback} min={2} max={252} set={(lookback) => setBuilder({ ...builder, lookback })} />}
-              {builder.primitive === "ma_cross" && <><NumberField label="Fast MA" value={builder.fast} min={2} max={200} set={(fast) => setBuilder({ ...builder, fast })} /><NumberField label="Slow MA" value={builder.slow} min={3} max={400} set={(slow) => setBuilder({ ...builder, slow })} /></>}
-              {builder.primitive === "mean_reversion" && <NumberField label="Z threshold" value={builder.threshold} min={0.1} max={4} step={0.1} set={(threshold) => setBuilder({ ...builder, threshold })} />}
-              {builder.primitive === "rank_returns" && <NumberField label="Top names" value={builder.top} min={1} max={500} set={(top) => setBuilder({ ...builder, top })} />}
-              <Field label="Weighting"><select value={builder.scheme} onChange={(e) => setBuilder({ ...builder, scheme: e.target.value as Scheme })}><option value="rank_weight">Rank weighted</option><option value="equal_weight">Equal weighted</option><option value="vol_weight">Volatility weighted</option></select></Field>
-              <NumberField label="Gross exposure" value={builder.gross} min={0.1} max={4} step={0.1} set={(gross) => setBuilder({ ...builder, gross })} />
-              <NumberField label="Max name" value={builder.maxName} min={0.01} max={1} step={0.01} set={(maxName) => setBuilder({ ...builder, maxName })} />
-              <NumberField label="Commission (bps)" value={builder.costBps} min={0} max={1000} step={0.5} set={(costBps) => setBuilder({ ...builder, costBps })} />
-              <NumberField label="Slippage (bps)" value={builder.slippageBps} min={0} max={1000} step={0.5} set={(slippageBps) => setBuilder({ ...builder, slippageBps })} />
-              <Field label="Rebalance"><select value={builder.rebalance} onChange={(e) => setBuilder({ ...builder, rebalance: e.target.value as Rebalance })}><option value="daily@close">Daily close</option><option value="weekly@close">Weekly close</option><option value="monthly@close">Monthly close</option></select></Field>
-              <NumberField label="Seed" value={builder.seed} min={0} max={2147483647} set={(seed) => setBuilder({ ...builder, seed })} />
-            </div>
-            {submitError && <div className="banner">{submitError}</div>}
-            <div className="backtest-modal-actions"><span>{normalizeSymbols(builder.symbols).length} symbols</span><button className="btn primary" onClick={submitBuilder} disabled={submitting}>{submitting ? "Creating…" : "Create and run"}</button></div>
-          </section>
-        </div>
-      )}
     </div>
   );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="backtest-field"><span>{label}</span>{children}</label>;
-}
-
-function NumberField({ label, value, min, max, step = 1, set }: { label: string; value: number; min: number; max: number; step?: number; set: (value: number) => void }) {
-  return <Field label={label}><input type="number" value={value} min={min} max={max} step={step} onChange={(event) => set(Number(event.target.value))} /></Field>;
 }

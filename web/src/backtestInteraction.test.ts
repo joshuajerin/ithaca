@@ -10,14 +10,17 @@ function read(rel: string): string {
 }
 
 describe("interactive backtest workspace contract", () => {
-  it("lets signed-in users create and rerun backtests from the web app", () => {
+  it("keeps backtest creation out of the web app", () => {
     const backtests = read("pages/Backtests.tsx");
+    const detail = read("pages/DeploymentDetail.tsx");
 
-    expect(backtests).toContain("New backtest");
-    expect(backtests).toContain("Create first backtest");
-    expect(backtests).toContain("Run again");
-    expect(backtests).toContain("api.proposeStrategy");
-    expect(backtests).toContain("api.createRun");
+    expect(backtests).not.toContain("New backtest");
+    expect(backtests).not.toContain("Create first backtest");
+    expect(backtests).not.toContain("Run again");
+    expect(backtests).not.toContain("api.proposeStrategy");
+    expect(backtests).not.toContain("api.createRun");
+    expect(detail).not.toContain("Run again");
+    expect(detail).not.toContain("api.createRun");
     expect(backtests).toContain("buildStrategySpec");
   });
 });
