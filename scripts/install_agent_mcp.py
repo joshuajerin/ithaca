@@ -42,6 +42,7 @@ CLIENT_ALIASES = {
     "hermes": "hermes",
 }
 DEFAULT_CLIENTS = ("cursor", "claude-code", "codex", "openclaw", "hermes")
+_SUPPORTED_API_KEY_PREFIXES = ("ak_", "ith_", "dmbg_")
 
 
 class CallbackState:
@@ -90,8 +91,8 @@ def _handler(state: CallbackState):
                 _json_response(self, 403, {"error": "state mismatch"})
                 return
             api_key = str(payload.get("api_key") or "")
-            if not api_key.startswith("ith_"):
-                state.error = "approval did not return a Ithaca API key"
+            if not api_key.startswith(_SUPPORTED_API_KEY_PREFIXES):
+                state.error = "approval did not return a Clerk or Ithaca API key"
                 state.event.set()
                 _json_response(self, 400, {"error": state.error})
                 return

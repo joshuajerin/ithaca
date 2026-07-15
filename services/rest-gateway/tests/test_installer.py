@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+from http.client import HTTPConnection
+from http.server import ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 
 
 def test_install_script_is_served(client):
@@ -79,6 +82,31 @@ def test_installer_uses_path_based_agent_approval_url():
     assert "/#/agent-link" not in link
     assert "callback=http%3A%2F%2F127.0.0.1%3A4242%2Fcallback" in link
     assert "state=approval-state" in link
+
+
+def test_installer_callback_accepts_clerk_managed_api_key():
+    installer = _installer_module()
+    state = installer.CallbackState("approval-state")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), installer._handler(state))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        connection = HTTPConnection("127.0.0.1", port, timeout=2)
+        connection.request(
+            "POST",
+            "/callback",
+            body=json.dumps({"state": "approval-state", "api_key": "ak_live_secret"}),
+            headers={"Content-Type": "application/json"},
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        assert json.loads(response.read()) == {"ok": True}
+        assert state.payload == {"state": "approval-state", "api_key": "ak_live_secret"}
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def test_installer_agent_bootstrap_prompt():
