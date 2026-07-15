@@ -1,11 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs>
-    <linearGradient id="ithaca-mark" x1="16" y1="16" x2="48" y2="48" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#c1e45a"/>
-      <stop offset="1" stop-color="#6f8f1a"/>
-    </linearGradient>
-  </defs>
-  <rect width="64" height="64" rx="14" fill="#0d0d0c"/>
-  <rect x="17" y="17" width="30" height="30" rx="4" transform="rotate(45 32 32)" fill="url(#ithaca-mark)"/>
-  <rect x="26" y="26" width="12" height="12" rx="2" transform="rotate(45 32 32)" fill="#181816"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1254 1254">
+  <g fill="#7C8D33">
+    <path d="M166 394 612 103v162L166 570Z"/>
+    <path d="m643 103 445 291v176L643 265Z"/>
+    <path d="m365 492 525 0-139 97v460l150 101H353l150-101V589Z"/>
+  </g>
 </svg>

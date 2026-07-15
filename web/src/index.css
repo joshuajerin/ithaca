@@ -271,11 +271,7 @@ input, select, textarea { font-family: inherit; }
 .auth-input:focus { border-color: var(--accent); }
 .auth-input::placeholder { color: var(--muted-dim); }
 
-/* Ithaca diamond mark */
-.db-mark { position: relative; display: inline-grid; place-items: center; flex-shrink: 0; }
-.db-mark-outer { position: absolute; width: 72%; height: 72%; transform: rotate(45deg); border-radius: 4px;
-  background: linear-gradient(135deg, var(--warn), #6f8f1a); }
-.db-mark-inner { position: absolute; width: 28%; height: 28%; transform: rotate(45deg); border-radius: 2px; background: var(--panel); }
+.ithaca-mark { display: block; flex: 0 0 auto; }
 
 /* ===== Rail user chip ==================================================== */
 .rail-user { display: flex; align-items: center; gap: 8px; padding: 12px; border-top: 1px solid var(--border); }
