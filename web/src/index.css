@@ -240,8 +240,9 @@ input, select, textarea { font-family: inherit; }
 .clerk-auth-card [data-clerk-element="card"] {
   width: min(520px, calc(100vw - 32px));
 }
-.clerk-auth-card [data-clerk-element="footerAction"] {
-  display: none;
+.clerk-auth-card [data-clerk-element="footerAction"],
+.clerk-auth-card .cl-footerAction {
+  display: none !important;
 }
 .auth-mode-row {
   display: flex;

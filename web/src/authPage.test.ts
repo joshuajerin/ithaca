@@ -9,12 +9,13 @@ const authPageSource = readFileSync(
 );
 
 describe("auth approval entry page", () => {
-  it("keeps the agent-link route on a sign-in-then-approve flow", () => {
+  it("keeps the waitlist first and exposes the approved-user sign-in route", () => {
     expect(authPageSource).toContain('pathname.startsWith("/agent-link")');
-    expect(authPageSource).toContain('path="/agent-link"');
-    expect(authPageSource).toContain("forceRedirectUrl={redirectUrl}");
-    expect(authPageSource).toContain("fallbackRedirectUrl={redirectUrl}");
-    expect(authPageSource).toContain("withSignUp={false}");
-    expect(authPageSource).toContain("Sign in to approve the agent");
+    expect(authPageSource).toContain("If approved,");
+    expect(authPageSource).toContain('to={signInUrl}');
+    expect(authPageSource).toContain('signInUrl={signInUrl}');
+    expect(authPageSource).toContain('path="/access"');
+    expect(authPageSource).toContain("forceRedirectUrl={redirectAfterSignIn}");
+    expect(authPageSource).toContain("fallbackRedirectUrl={redirectAfterSignIn}");
   });
 });

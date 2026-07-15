@@ -1,6 +1,6 @@
 
 import { SignIn, Waitlist } from "@clerk/react";
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { IthacaMark } from "../auth/icons";
 import { legalUrl } from "../lib/legal";
 
@@ -20,11 +20,25 @@ export function shouldShowWaitlist(pathname: string) {
   return !pathname.startsWith("/access");
 }
 
+export function signInUrlFor(pathname: string, search = "", hash = "") {
+  if (!pathname.startsWith("/agent-link")) return "/access";
+
+  return `/access?redirect_url=${encodeURIComponent(`${pathname}${search}${hash}`)}`;
+}
+
+export function safeRedirectUrl(search: string) {
+  const redirectUrl = new URLSearchParams(search).get("redirect_url");
+
+  return redirectUrl?.startsWith("/") && !redirectUrl.startsWith("//")
+    ? redirectUrl
+    : "/dashboard";
+}
+
 export function AuthPage() {
   const { pathname, search, hash } = useLocation();
-  const isAgentLink = pathname.startsWith("/agent-link");
-  const isWaitlist = !isAgentLink && shouldShowWaitlist(pathname);
-  const redirectUrl = `${pathname}${search}${hash}`;
+  const isWaitlist = shouldShowWaitlist(pathname);
+  const signInUrl = signInUrlFor(pathname, search, hash);
+  const redirectAfterSignIn = safeRedirectUrl(search);
 
   return (
     <div className="auth">
@@ -38,26 +52,20 @@ export function AuthPage() {
         </div>
 
         {isWaitlist ? (
-          <Waitlist appearance={embeddedClerkAppearance} signInUrl="/access" />
-        ) : isAgentLink ? (
           <>
-            <header>
-              <h1 className="auth-title">Sign in to approve the agent</h1>
-              <p className="auth-sub">
-                Once you’re signed in, you’ll return here to approve Ithaca MCP access.
-              </p>
-            </header>
-            <SignIn
-              appearance={embeddedClerkAppearance}
-              path="/agent-link"
-              routing="path"
-              forceRedirectUrl={redirectUrl}
-              fallbackRedirectUrl={redirectUrl}
-              withSignUp={false}
-            />
+            <Waitlist appearance={embeddedClerkAppearance} signInUrl={signInUrl} />
+            <p className="auth-mode-row">
+              If approved, <Link className="auth-mode-link" to={signInUrl}>sign in</Link>
+            </p>
           </>
         ) : (
-          <SignIn appearance={embeddedClerkAppearance} path="/access" routing="path" />
+          <SignIn
+            appearance={embeddedClerkAppearance}
+            path="/access"
+            routing="path"
+            forceRedirectUrl={redirectAfterSignIn}
+            fallbackRedirectUrl={redirectAfterSignIn}
+          />
         )}
         <p className="auth-consent">
           By continuing you agree to our{" "}
