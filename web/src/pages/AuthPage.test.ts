@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { safeRedirectUrl, shouldShowWaitlist, signInUrlFor } from "./AuthPage";
+import { isAgentLinkLocation, safeRedirectUrl, shouldShowWaitlist, signInUrlFor } from "./AuthPage";
 
 describe("shouldShowWaitlist", () => {
   it("renders the waitlist for public routes", () => {
@@ -18,6 +18,17 @@ describe("shouldShowWaitlist", () => {
     );
     expect(safeRedirectUrl("?redirect_url=%2Fagent-link%3Ftoken%3Dabc%23approve")).toBe(
       "/agent-link?token=abc#approve",
+    );
+  });
+
+  it("keeps legacy hash-based installer links on the approval route", () => {
+    const hash = "#/agent-link?callback=http%3A%2F%2F127.0.0.1%3A4242%2Fcallback&state=abc";
+    expect(isAgentLinkLocation("/", hash)).toBe(true);
+    expect(signInUrlFor("/", "", hash)).toBe(
+      "/access?redirect_url=%2F%23%2Fagent-link%3Fcallback%3Dhttp%253A%252F%252F127.0.0.1%253A4242%252Fcallback%26state%3Dabc",
+    );
+    expect(safeRedirectUrl("?redirect_url=%2F%23%2Fagent-link%3Fcallback%3Dhttp%253A%252F%252F127.0.0.1%253A4242%252Fcallback%26state%3Dabc")).toBe(
+      "/#/agent-link?callback=http%3A%2F%2F127.0.0.1%3A4242%2Fcallback&state=abc",
     );
   });
 

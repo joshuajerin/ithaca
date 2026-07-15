@@ -37,6 +37,16 @@ const ACCESS_ITEMS = [
   },
 ];
 
+function clientLabel(client: string) {
+  return client === "claude-code"
+    ? "Claude Code"
+    : client === "codex"
+      ? "Codex"
+      : client === "cursor"
+        ? "Cursor"
+        : client;
+}
+
 function param(name: string): string {
   const searchValue = new URLSearchParams(window.location.search).get(name);
   if (searchValue) return searchValue;
@@ -54,7 +64,7 @@ export function AgentLink() {
     const mcpUrl = param("mcp_url") || MCP_BASE;
     const name = param("name") || "ithaca";
     const client = param("client") || "codex";
-    return { callback, state, mcpUrl, name, client };
+    return { callback, state, mcpUrl, name, client, clientLabel: clientLabel(client) };
   }, []);
 
   async function approve() {
@@ -118,10 +128,10 @@ export function AgentLink() {
       <main className="agent-consent-card" aria-labelledby="agent-consent-title">
         <header className="agent-consent-header">
           <h1 id="agent-consent-title">
-            Your agent wants access to Ithaca MCP
+            Approve this MCP session
           </h1>
           <p>
-            Approving creates a scoped key for <strong>{config.name}</strong>.
+            <strong>{config.clientLabel}</strong> wants to connect to Ithaca MCP as <strong>{config.name}</strong>.
           </p>
         </header>
 
@@ -170,7 +180,7 @@ export function AgentLink() {
             onClick={approve}
             disabled={status === "working" || status === "done" || status === "denied"}
           >
-            {status === "working" ? "Connecting..." : status === "done" ? "Connected" : "Approve"}
+            {status === "working" ? "Connecting..." : status === "done" ? "Connected" : "Approve this session"}
           </button>
         </div>
       </main>

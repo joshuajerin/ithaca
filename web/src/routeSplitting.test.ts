@@ -23,7 +23,8 @@ describe("route-level code splitting", () => {
   });
 
   it("keeps the authentication entry screen eager", () => {
-    expect(appSource).toContain('import { AuthPage } from "./pages/AuthPage"');
+    expect(appSource).toContain('import { AuthPage, isAgentLinkLocation } from "./pages/AuthPage"');
+    expect(appSource).toContain("isAgentLinkLocation(location.pathname, location.hash)");
   });
 
   it("loads expensive dashboard panels only when evidence exists", () => {

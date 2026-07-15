@@ -3,7 +3,7 @@ import { lazy, Suspense } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useState, type FormEvent } from "react";
 import { api } from "./api";
-import { AuthPage } from "./pages/AuthPage";
+import { AuthPage, isAgentLinkLocation } from "./pages/AuthPage";
 import { useAuth } from "./auth/AuthContext";
 import { IthacaMark } from "./auth/icons";
 
@@ -62,13 +62,10 @@ export function App() {
 
   if (!user) return <AuthPage />;
 
-  if (location.pathname === "/agent-link") {
+  if (isAgentLinkLocation(location.pathname, location.hash)) {
     return (
       <Suspense fallback={<RouteLoading />}>
-        <Routes>
-          <Route path="/agent-link" element={<AgentLink />} />
-          <Route path="*" element={<Navigate to="/agent-link" replace />} />
-        </Routes>
+        <AgentLink />
       </Suspense>
     );
   }

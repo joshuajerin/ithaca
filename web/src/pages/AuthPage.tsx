@@ -20,8 +20,12 @@ export function shouldShowWaitlist(pathname: string) {
   return !pathname.startsWith("/access");
 }
 
+export function isAgentLinkLocation(pathname: string, hash = "") {
+  return pathname.startsWith("/agent-link") || hash.startsWith("#/agent-link");
+}
+
 export function signInUrlFor(pathname: string, search = "", hash = "") {
-  if (!pathname.startsWith("/agent-link")) return "/access";
+  if (!isAgentLinkLocation(pathname, hash)) return "/access";
 
   return `/access?redirect_url=${encodeURIComponent(`${pathname}${search}${hash}`)}`;
 }

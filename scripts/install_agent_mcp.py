@@ -116,7 +116,7 @@ def _agent_link_url(app_url: str, callback_url: str, state: str, mcp_url: str,
         },
         quote_via=quote,
     )
-    return f"{base}/#/agent-link?{params}"
+    return f"{base}/agent-link?{params}"
 
 
 def _write_env_file(api_key: str, mcp_url: str) -> None:

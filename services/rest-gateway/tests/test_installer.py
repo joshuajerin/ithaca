@@ -63,6 +63,24 @@ def test_installer_client_aliases():
     )
 
 
+def test_installer_uses_path_based_agent_approval_url():
+    installer = _installer_module()
+
+    link = installer._agent_link_url(
+        "https://app.tradeithaca.com",
+        "http://127.0.0.1:4242/callback",
+        "approval-state",
+        "https://mcp.tradeithaca.com/mcp",
+        "ithaca",
+        "claude-code",
+    )
+
+    assert link.startswith("https://app.tradeithaca.com/agent-link?")
+    assert "/#/agent-link" not in link
+    assert "callback=http%3A%2F%2F127.0.0.1%3A4242%2Fcallback" in link
+    assert "state=approval-state" in link
+
+
 def test_installer_agent_bootstrap_prompt():
     installer = _installer_module()
     prompt = installer._agent_bootstrap_prompt("ithaca")
