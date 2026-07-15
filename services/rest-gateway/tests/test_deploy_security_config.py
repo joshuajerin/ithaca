@@ -79,3 +79,13 @@ def test_dedicated_backtest_workers_are_opt_in_for_production() -> None:
     assert 'if [[ "${DEPLOY_ENV}" == "prod" && "${BACKTEST_WORKER_ENABLED}" == "1" ]]' in deploy_script
     assert 'if [[ "${BACKTEST_WORKER_ENABLED:-0}" == "1" ]]; then' in workflow
     assert 'value: "${ITHACA_ENABLE_BACKTEST_LOOP}"' in worker_manifest
+
+
+def test_app_rollout_does_not_require_surge_capacity() -> None:
+    deploy_script = (REPO_ROOT / "deploy" / "deploy_services.sh").read_text()
+    app_manifest = (REPO_ROOT / "infra" / "k8s" / "app-deployment.yaml").read_text()
+
+    assert 'APP_MAX_SURGE="${APP_MAX_SURGE:-0}"' in deploy_script
+    assert 'APP_MAX_UNAVAILABLE="${APP_MAX_UNAVAILABLE:-1}"' in deploy_script
+    assert "maxSurge: ${APP_MAX_SURGE}" in app_manifest
+    assert "maxUnavailable: ${APP_MAX_UNAVAILABLE}" in app_manifest

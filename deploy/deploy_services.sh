@@ -208,8 +208,12 @@ if [[ "${DEPLOY_ENV}" == "prod" ]]; then
   fi
 fi
 
-APP_MAX_SURGE="${APP_MAX_SURGE:-1}"
-APP_MAX_UNAVAILABLE="${APP_MAX_UNAVAILABLE:-0}"
+# The app is intentionally constrained to the paper pool.  Do not require a
+# third, temporary pod to be schedulable during a two-replica rollout: that
+# pool can legitimately be full.  The app PDB keeps one healthy pod available
+# while Kubernetes replaces the other one.
+APP_MAX_SURGE="${APP_MAX_SURGE:-0}"
+APP_MAX_UNAVAILABLE="${APP_MAX_UNAVAILABLE:-1}"
 WORKER_MAX_SURGE="${WORKER_MAX_SURGE:-1}"
 WORKER_MAX_UNAVAILABLE="${WORKER_MAX_UNAVAILABLE:-1}"
 BACKTEST_MIN_REPLICAS="${BACKTEST_MIN_REPLICAS:-${BACKTEST_REPLICAS}}"
