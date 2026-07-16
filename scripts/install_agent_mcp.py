@@ -38,11 +38,12 @@ class ClientSpec:
 
 
 CLIENT_SPECS: dict[str, ClientSpec] = {
-    "codex": ClientSpec("codex", "Codex", True, True, True, "cli"),
+    "codex": ClientSpec("codex", "Codex", True, True, False, "cli"),
     "claude-code": ClientSpec("claude-code", "Claude Code", True, True, True, "cli"),
     "cursor": ClientSpec("cursor", "Cursor", True, False, False, "cursor-json"),
     "openclaw": ClientSpec("openclaw", "OpenClaw", False, False, False, "json"),
     "hermes": ClientSpec("hermes", "Hermes", False, False, False, "json"),
+    "generic": ClientSpec("generic", "Any MCP client", True, False, False, "explicit-json"),
 }
 CLIENT_ALIASES = {"all": "all", "claude": "claude-code", "claudecode": "claude-code", **{k: k for k in CLIENT_SPECS}}
 
@@ -196,8 +197,11 @@ def _discover_oauth(mcp_url: str, timeout: int = 15) -> dict[str, Any]:
     if not isinstance(servers, list) or not all(isinstance(item, str) and item.startswith("https://") for item in servers):
         raise RuntimeError("OAuth metadata does not advertise an HTTPS authorization server")
     scopes = payload.get("scopes_supported") or []
-    if "openid" not in scopes:
-        raise RuntimeError("OAuth metadata does not advertise the required openid scope")
+    required_scopes = {"openid", "offline_access"}
+    if not isinstance(scopes, list) or not required_scopes.issubset(scopes):
+        raise RuntimeError(
+            "OAuth metadata must advertise openid and offline_access for persistent login"
+        )
     return payload
 
 
@@ -237,19 +241,47 @@ def _cleanup_legacy_install() -> None:
         subprocess.run(["launchctl", "unsetenv", "ITHACA_MCP_API_KEY"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def _cli_registration_matches(command: list[str], mcp_url: str) -> bool:
+    result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=30)
+    output = f"{result.stdout}\n{result.stderr}"
+    return result.returncode == 0 and mcp_url.rstrip("/") in output
+
+
+def _open_app_before_login(app_url: str) -> None:
+    settings_url = f"{app_url.rstrip('/')}/settings#connect-agent"
+    webbrowser.open(settings_url)
+    # Let the app tab become visible before the client opens Clerk's approval UI.
+    time.sleep(1)
+
+
 def _codex_install(name: str, mcp_url: str, login: bool, headless: bool) -> SetupResult:
     codex = shutil.which("codex")
     if not codex:
-        return SetupResult("codex", SetupStatus.CONFIGURED, f"Run: codex mcp add {name} --url {mcp_url}")
-    subprocess.run([codex, "mcp", "remove", name], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run([codex, "mcp", "add", name, "--url", mcp_url], check=True, timeout=30)
+        return SetupResult(
+            "codex", SetupStatus.CONFIGURED,
+            f"Run: codex mcp add {name} --url {mcp_url}",
+        )
+    if not _cli_registration_matches([codex, "mcp", "get", name], mcp_url):
+        subprocess.run(
+            [codex, "mcp", "remove", name],
+            check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        subprocess.run([codex, "mcp", "add", name, "--url", mcp_url], check=True, timeout=30)
     if not login:
-        return SetupResult("codex", SetupStatus.AUTHENTICATION_REQUIRED, f"Run: codex mcp login {name} --scopes openid offline_access")
-    command = [codex, "mcp", "login", name, "--scopes", "openid", "offline_access"]
+        return SetupResult(
+            "codex", SetupStatus.AUTHENTICATION_REQUIRED,
+            f"Run: codex mcp login {name} --scopes openid,offline_access",
+        )
     if headless:
-        command.append("--headless")
-    subprocess.run(command, check=True, timeout=180)
-    return SetupResult("codex", SetupStatus.AUTHENTICATED, "Clerk login completed; restart Codex if it is running.")
+        raise RuntimeError("This Codex version does not support headless MCP OAuth login.")
+    subprocess.run(
+        [codex, "mcp", "login", name, "--scopes", "openid,offline_access"],
+        check=True, timeout=180,
+    )
+    return SetupResult(
+        "codex", SetupStatus.AUTHENTICATED,
+        "Clerk login completed and can refresh for at least 30 days.",
+    )
 
 
 def _claude_install(name: str, mcp_url: str, login: bool, headless: bool) -> SetupResult:
@@ -258,15 +290,25 @@ def _claude_install(name: str, mcp_url: str, login: bool, headless: bool) -> Set
         path = Path.home() / ".claude" / "mcp.json"
         _merge_mcp_json(path, name, _oauth_config(mcp_url))
         return SetupResult("claude-code", SetupStatus.AUTHENTICATION_REQUIRED, f"Wrote {path}; use Claude Code Connect/Login.")
-    subprocess.run([claude, "mcp", "remove", "--scope", "user", name], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run([claude, "mcp", "add", "--transport", "http", "--scope", "user", name, mcp_url], check=True, timeout=30)
+    if not _cli_registration_matches([claude, "mcp", "get", name], mcp_url):
+        subprocess.run(
+            [claude, "mcp", "remove", "--scope", "user", name],
+            check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        subprocess.run(
+            [claude, "mcp", "add", "--transport", "http", "--scope", "user", name, mcp_url],
+            check=True, timeout=30,
+        )
     if not login:
         return SetupResult("claude-code", SetupStatus.AUTHENTICATION_REQUIRED, "Run Claude Code's MCP login for Ithaca.")
-    command = [claude, "mcp", "login", name, "--scopes", "openid", "offline_access"]
+    command = [claude, "mcp", "login", name]
     if headless:
-        command.append("--headless")
+        command.append("--no-browser")
     subprocess.run(command, check=True, timeout=180)
-    return SetupResult("claude-code", SetupStatus.AUTHENTICATED, "Clerk login completed; restart Claude Code if it is running.")
+    return SetupResult(
+        "claude-code", SetupStatus.AUTHENTICATED,
+        "Clerk login completed and can refresh for at least 30 days.",
+    )
 
 
 def _cursor_install(name: str, mcp_url: str) -> SetupResult:
@@ -275,9 +317,25 @@ def _cursor_install(name: str, mcp_url: str) -> SetupResult:
     return SetupResult("cursor", SetupStatus.AUTHENTICATION_REQUIRED, "Open Cursor and choose Connect/Login for Ithaca MCP.")
 
 
-def _compat_install(client: str, name: str, mcp_url: str, api_key: str) -> SetupResult:
-    paths = {"openclaw": Path.home() / ".openclaw" / "mcp.json", "hermes": Path.home() / ".hermes" / "mcp.json"}
-    path = paths[client]
+def _generic_install(name: str, mcp_url: str, config_path: Path) -> SetupResult:
+    _merge_mcp_json(config_path, name, _oauth_config(mcp_url))
+    return SetupResult(
+        "generic", SetupStatus.AUTHENTICATION_REQUIRED,
+        f"Wrote {config_path}; use the client's Connect/Login action.",
+    )
+
+
+def _compat_install(
+    client: str, name: str, mcp_url: str, api_key: str, config_path: Path | None = None
+) -> SetupResult:
+    paths = {
+        "cursor": Path.home() / ".cursor" / "mcp.json",
+        "openclaw": Path.home() / ".openclaw" / "mcp.json",
+        "hermes": Path.home() / ".hermes" / "mcp.json",
+    }
+    path = config_path if client == "generic" else paths[client]
+    if path is None:
+        raise RuntimeError("--client generic requires --config /path/to/mcp.json")
     _merge_mcp_json(path, name, _api_key_config(mcp_url, api_key))
     return SetupResult(client, SetupStatus.CONFIGURED, f"Wrote protected configuration {path}")
 
@@ -321,7 +379,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--app-url", default=os.environ.get("ITHACA_APP_URL", DEFAULT_APP_URL))
     parser.add_argument("--mcp-url", default=os.environ.get("ITHACA_MCP_URL", DEFAULT_MCP_URL))
     parser.add_argument("--name", default="ithaca")
-    parser.add_argument("--client", type=_normalize_client, help="codex, claude-code, cursor, openclaw, hermes, or all")
+    parser.add_argument(
+        "--client", type=_normalize_client,
+        help="codex, claude-code, generic, or all (legacy client aliases remain supported)",
+    )
+    parser.add_argument(
+        "--config", type=Path,
+        help="MCP JSON path for --client generic, preserving every other configured server.",
+    )
     parser.add_argument("--auth", choices=("oauth", "api-key"), default="oauth")
     parser.add_argument("--login", action="store_true", help="Run the client native OAuth login after registration.")
     parser.add_argument("--headless", action="store_true", help="Ask supported client CLIs for a no-browser login flow.")
@@ -330,9 +395,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--agent-init", action="store_true", help="Complete supported native login and then invoke ithaca_init from the agent.")
     args = parser.parse_args(argv)
 
+    if args.client == "generic" and args.config is None:
+        parser.error("--client generic requires --config /path/to/mcp.json")
     if args.client == "all":
-        clients = tuple(CLIENT_SPECS) if args.auth == "api-key" else tuple(
-            spec.id for spec in CLIENT_SPECS.values() if spec.native_oauth
+        clients = ("cursor", "openclaw", "hermes") if args.auth == "api-key" else tuple(
+            spec.id for spec in CLIENT_SPECS.values()
+            if spec.native_oauth and spec.id != "generic"
         )
     else:
         clients = (args.client,) if args.client else _native_clients_detected()
@@ -341,19 +409,23 @@ def main(argv: list[str] | None = None) -> int:
         print(args.mcp_url)
         return 0
     if args.auth == "oauth" and any(not CLIENT_SPECS[client].native_oauth for client in clients):
-        parser.error("OpenClaw and Hermes require --auth api-key for compatibility setup")
+        parser.error("This client requires --auth api-key for compatibility setup")
 
     if args.auth == "oauth":
         # Do this before a single configuration file is touched.
         _discover_oauth(args.mcp_url)
+        should_login = args.login or args.agent_init
+        if should_login and not args.no_open:
+            _open_app_before_login(args.app_url)
         results: list[SetupResult] = []
         for client in clients:
-            spec = CLIENT_SPECS[client]
             try:
                 if client == "codex":
-                    results.append(_codex_install(args.name, args.mcp_url, args.login or args.agent_init, args.headless))
+                    results.append(_codex_install(args.name, args.mcp_url, should_login, args.headless))
                 elif client == "claude-code":
-                    results.append(_claude_install(args.name, args.mcp_url, args.login or args.agent_init, args.headless))
+                    results.append(_claude_install(args.name, args.mcp_url, should_login, args.headless))
+                elif client == "generic":
+                    results.append(_generic_install(args.name, args.mcp_url, args.config))
                 else:
                     results.append(_cursor_install(args.name, args.mcp_url))
             except Exception as exc:
@@ -386,7 +458,9 @@ def main(argv: list[str] | None = None) -> int:
     mcp_url = str(payload.get("mcp_url") or args.mcp_url)
     for client in clients:
         try:
-            print(f"{_compat_install(client, args.name, mcp_url, key).client}: configured")
+            print(
+                f"{_compat_install(client, args.name, mcp_url, key, args.config).client}: configured"
+            )
         except Exception as exc:
             print(f"{client}: failed — {exc}")
     key_id = str(payload.get("key_id") or "")

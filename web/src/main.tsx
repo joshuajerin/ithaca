@@ -12,7 +12,7 @@ const clerkLocalization = {
   signIn: {
     start: {
       title: "Sign in",
-      subtitle: "Welcome back.",
+      subtitle: "Agent approvals stay connected for at least 30 days unless revoked.",
     },
   },
   signUp: {

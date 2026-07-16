@@ -22,6 +22,7 @@ describe("auth approval entry page", () => {
     expect(authPageSource).toContain('path="/access"');
     expect(authPageSource).toContain("forceRedirectUrl={redirectAfterSignIn}");
     expect(authPageSource).toContain("fallbackRedirectUrl={redirectAfterSignIn}");
+    expect(authPageSource).toContain("at least 30 days");
     expect(agentLinkSource).toContain("Create an Ithaca compatibility key");
     expect(agentLinkSource).toContain("Create compatibility key");
   });

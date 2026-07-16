@@ -115,22 +115,26 @@ pnpm --filter @Ithaca/web dev
 
 ### Install Ithaca MCP in local agents
 
-Add `https://mcp.tradeithaca.com/mcp` to Codex, Claude Code, or Cursor and complete the
-Clerk OAuth login. The normal setup needs no copied key or environment variable:
+Add `https://mcp.tradeithaca.com/mcp` to Codex, Claude Code, or any standard MCP client and
+complete Clerk OAuth. OAuth requests `offline_access`, so the client can refresh the
+connection for at least 30 days unless the user revokes it or clears local credentials.
+The normal setup needs no copied key or environment variable:
 
 ```bash
 codex mcp add ithaca --url https://mcp.tradeithaca.com/mcp
-codex mcp login ithaca --scopes openid offline_access
+codex mcp login ithaca --scopes openid,offline_access
 ```
 
-The Ithaca installer performs OAuth metadata discovery before changing a local config:
+The recommended installer performs OAuth metadata discovery, preserves an existing correct
+registration, opens `app.tradeithaca.com` first, and then starts the Clerk approval flow:
 
 ```bash
-curl -fsSL https://app.tradeithaca.com/install.py | python3
+curl -fsSL https://app.tradeithaca.com/install.py | python3 - --login
 ```
 
-OpenClaw, Hermes, CI, and custom clients can explicitly use the scoped API-key compatibility
-path with `--auth api-key`. See [Agent Client Setup](docs/AGENT_CLIENT_SETUP.md).
+CI and clients unable to complete standard MCP OAuth can explicitly use the scoped API-key
+compatibility path with `--auth api-key`. See
+[Agent Client Setup](docs/AGENT_CLIENT_SETUP.md).
 
 See [Agent Client Setup](docs/AGENT_CLIENT_SETUP.md) for per-client behavior.
 

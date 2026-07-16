@@ -123,7 +123,7 @@ fi
 MCP_ALLOWED_HOSTS="${MCP_ALLOWED_HOSTS:-${MCP_HOST},${MCP_HOST}:443,mcp.${ITHACA_LEGACY_ROOT_DOMAIN},mcp.${ITHACA_LEGACY_ROOT_DOMAIN}:443}"
 CLERK_ALLOWED_ORIGINS="${CLERK_ALLOWED_ORIGINS:-https://${APP_HOST}}"
 ITHACA_MCP_RESOURCE_URL="${ITHACA_MCP_RESOURCE_URL:-https://mcp.tradeithaca.com/mcp}"
-ITHACA_MCP_OAUTH_SCOPE="${ITHACA_MCP_OAUTH_SCOPE:-openid}"
+ITHACA_MCP_OAUTH_SCOPES="${ITHACA_MCP_OAUTH_SCOPES:-openid offline_access}"
 if [[ -z "${APPLY_CADDY+x}" ]]; then
   if [[ "${DEPLOY_ENV}" == "${CADDY_APPLY_ENV:-prod}" ]]; then
     APPLY_CADDY="1"
@@ -291,8 +291,8 @@ if [[ "${DEPLOY_ENV}" == "prod" && "${ITHACA_MCP_RESOURCE_URL}" != "https://mcp.
   echo "ERROR: ITHACA_MCP_RESOURCE_URL must be https://mcp.tradeithaca.com/mcp in production" >&2
   exit 2
 fi
-if [[ "${ITHACA_MCP_OAUTH_SCOPE}" != "openid" ]]; then
-  echo "ERROR: ITHACA_MCP_OAUTH_SCOPE must be openid for Clerk OAuth/DCR" >&2
+if [[ "${ITHACA_MCP_OAUTH_SCOPES}" != "openid offline_access" ]]; then
+  echo "ERROR: ITHACA_MCP_OAUTH_SCOPES must be 'openid offline_access' for persistent Clerk OAuth/DCR" >&2
   exit 2
 fi
 if [[ -z "${ITHACA_IBKR_ENGINE_URL:-}" ]]; then

@@ -14,5 +14,5 @@ ithaca.ithaca_init(goal="<user goal>")
 ```
 
 OAuth is the normal path. API-key compatibility mode is explicit (`--auth api-key`) and is
-intended for automation-only clients; do not use it for Codex, Claude Code, or Cursor unless
-OAuth is unavailable.
+intended for automation-only clients; do not use it when the agent supports standard MCP
+OAuth.
