@@ -60,6 +60,7 @@ def is_agent_key(value: str | None) -> bool:
 # minting it raises so the contract cannot be violated through this store.
 VALID_SCOPES: frozenset[str] = frozenset(
     {
+        "agent:read",
         "data:read",
         "strategy:author",
         "runs:write",
