@@ -114,7 +114,7 @@ export function AgentLink() {
   }
 
   if (!user) return null;
-  const nativeClient = ["codex", "claude-code", "cursor"].includes(config.client);
+  const nativeClient = ["codex", "claude-code", "cursor", "generic"].includes(config.client);
   const compatibilityRequested = config.auth === "api-key";
 
   return (
@@ -131,7 +131,8 @@ export function AgentLink() {
 
         {nativeClient && !compatibilityRequested ? (
           <div className="agent-consent-message">
-            Codex, Claude Code, and Cursor use Clerk OAuth. Return to Settings and add the MCP URL instead of creating an API key.
+            Standard MCP clients use Clerk OAuth. Return to Settings and add the MCP URL
+            instead of creating an API key.
           </div>
         ) : <section className="agent-consent-access" aria-label="Requested access">
           <div className="agent-consent-eyebrow">Your account will be used to</div>

@@ -27,11 +27,13 @@ from ithaca_platform import (
 
 MCP_RESOURCE_URL_ENV = "ITHACA_MCP_RESOURCE_URL"
 DEFAULT_MCP_RESOURCE_URL = "https://mcp.tradeithaca.com/mcp"
-MCP_OAUTH_SCOPE_ENV = "ITHACA_MCP_OAUTH_SCOPE"
-# Clerk's OAuth/DCR implementation permits standard OpenID Connect scopes, not
-# arbitrary resource scopes.  `openid` is therefore the coarse admission scope;
-# the Ithaca capability set remains enforced from server-side token claims.
-DEFAULT_MCP_OAUTH_SCOPE = "openid"
+MCP_OAUTH_SCOPES_ENV = "ITHACA_MCP_OAUTH_SCOPES"
+LEGACY_MCP_OAUTH_SCOPE_ENV = "ITHACA_MCP_OAUTH_SCOPE"
+# Clerk accepts standard OpenID Connect scopes, not custom resource scopes.
+# `openid` is the coarse admission scope while capability enforcement remains
+# server-side. `offline_access` gives clients refresh tokens so authorization
+# persists across fresh agent sessions.
+DEFAULT_MCP_OAUTH_SCOPES = ("openid", "offline_access")
 
 # OAuth is intentionally read-oriented. It never inherits privileged deployment, execution,
 # credential-administration, approval-decision, or trigger-write capabilities.
@@ -45,8 +47,14 @@ def resource_url() -> str:
     return (os.environ.get(MCP_RESOURCE_URL_ENV) or DEFAULT_MCP_RESOURCE_URL).strip()
 
 
-def oauth_scope() -> str:
-    return (os.environ.get(MCP_OAUTH_SCOPE_ENV) or DEFAULT_MCP_OAUTH_SCOPE).strip()
+def oauth_scopes() -> list[str]:
+    configured = (
+        os.environ.get(MCP_OAUTH_SCOPES_ENV)
+        or os.environ.get(LEGACY_MCP_OAUTH_SCOPE_ENV)
+        or " ".join(DEFAULT_MCP_OAUTH_SCOPES)
+    )
+    scopes = [scope for scope in configured.replace(",", " ").split() if scope]
+    return list(dict.fromkeys(scopes))
 
 
 def looks_like_agent_api_key(token: str) -> bool:
@@ -75,9 +83,9 @@ class CompositeTokenVerifier(TokenVerifier):
         if not info or not info.get("tenant_id"):
             return None
         principal_scopes = [str(scope) for scope in (info.get("scopes") or [])]
-        # SDK gateway admission has one coarse required scope.  Preserve API-key capability
-        # scopes separately and add only the admission marker to the SDK-facing token.
-        scopes = sorted(set(principal_scopes) | {oauth_scope()})
+        # Preserve API-key capability scopes separately and add only OAuth admission
+        # markers to the SDK-facing token.
+        scopes = sorted(set(principal_scopes) | set(oauth_scopes()))
         key_id = str(info.get("key_id") or "") or None
         return AccessToken(
             token="<api-key>", client_id=key_id or "api-key", subject=key_id,
@@ -92,7 +100,7 @@ class CompositeTokenVerifier(TokenVerifier):
         try:
             identity = await anyio.to_thread.run_sync(
                 lambda: self._identity.verify_oauth_token(
-                    token, required_scopes=[oauth_scope()]
+                    token, required_scopes=oauth_scopes()
                 )
             )
             principal = await anyio.to_thread.run_sync(self._identity.resolve_user_and_tenant, identity)
@@ -125,7 +133,7 @@ def _auth_settings(identity: ClerkIdentityService, *, strict: bool = True) -> Au
     return AuthSettings(
         issuer_url=identity.issuer or "https://clerk.invalid",
         resource_server_url=resource,
-        required_scopes=[oauth_scope()],
+        required_scopes=oauth_scopes(),
         service_documentation_url=os.environ.get(
             "ITHACA_MCP_SERVICE_DOCUMENTATION_URL", "https://app.tradeithaca.com/settings"
         ),

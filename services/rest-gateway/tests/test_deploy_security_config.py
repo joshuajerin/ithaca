@@ -17,6 +17,28 @@ def test_deploy_workflow_preflight_requires_clerk_issuer() -> None:
     assert "require_env CLERK_ISSUER" in workflow
 
 
+def test_application_image_cannot_build_without_clerk_browser_config() -> None:
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text()
+    build_script = (REPO_ROOT / "deploy" / "build_and_push.sh").read_text()
+    checks_workflow = (
+        REPO_ROOT / ".github" / "workflows" / "deploy-checks.yml"
+    ).read_text()
+    parity_workflow = (
+        REPO_ROOT / ".github" / "workflows" / "prod-parity.yml"
+    ).read_text()
+    deploy_workflow = (
+        REPO_ROOT / ".github" / "workflows" / "deploy-do.yml"
+    ).read_text()
+
+    assert "CLERK_PUBLISHABLE_VALUE must be a Clerk pk_test_ or pk_live_" in dockerfile
+    assert 'grep -R -F "${CLERK_PUBLISHABLE_VALUE}" /app/web/dist/assets' in dockerfile
+    assert '! grep -R -i -F "Doomberg" /app/web/dist' in dockerfile
+    assert "CLERK_PUBLISHABLE_KEY before building Ithaca" in build_script
+    assert "CLERK_PUBLISHABLE_VALUE=pk_test_Y2kuZXhhbXBsZS5jb20k" in checks_workflow
+    assert "CLERK_PUBLISHABLE_VALUE=pk_test_Y2kuZXhhbXBsZS5jb20k" in parity_workflow
+    assert "CLERK_PUBLISHABLE_KEY must start with pk_test_ or pk_live_" in deploy_workflow
+
+
 def test_deploy_workflow_uses_platform_db_secret() -> None:
     workflow = (REPO_ROOT / ".github" / "workflows" / "deploy-do.yml").read_text()
 
@@ -67,6 +89,16 @@ def test_deploy_requires_and_injects_clerk_secret_for_managed_api_keys() -> None
     assert "require_env CLERK_SECRET_KEY" in workflow
     assert "CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}" in workflow
     assert manifest.count("name: CLERK_SECRET_KEY") == 3
+
+
+def test_mcp_gateway_receives_the_platform_database_secret() -> None:
+    manifest = (REPO_ROOT / "infra" / "k8s" / "app-deployment.yaml").read_text()
+
+    mcp_gateway = manifest.split('name: mcp-gateway', 1)[1]
+    ithaca_db = mcp_gateway.split('- name: ITHACA_DB', 1)[1].split('- name: DOOMBERG_DB', 1)[0]
+    assert 'secretKeyRef:' in ithaca_db
+    assert 'name: ithaca-db' in ithaca_db
+    assert 'key: platform_url' in ithaca_db
 
 
 def test_dedicated_backtest_workers_are_opt_in_for_production() -> None:

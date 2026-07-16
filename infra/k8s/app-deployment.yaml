@@ -340,12 +340,16 @@ spec:
               value: "${MCP_ALLOWED_HOSTS}"
             - name: ITHACA_MCP_RESOURCE_URL
               value: "https://mcp.tradeithaca.com/mcp"
-            - name: ITHACA_MCP_OAUTH_SCOPE
-              value: "openid"
+            - name: ITHACA_MCP_OAUTH_SCOPES
+              value: "openid offline_access"
             - name: ITHACA_LEGACY_KEY_PREFIX
               valueFrom:
                 secretKeyRef: { name: ithaca-db, key: legacy_key_prefix, optional: true }
             - name: ITHACA_DB
+              valueFrom:
+                secretKeyRef:
+                  name: ithaca-db
+                  key: platform_url
             - name: DOOMBERG_DB
               valueFrom:
                 secretKeyRef:

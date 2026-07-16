@@ -142,6 +142,10 @@ jobs:
           require_env ITHACA_PLATFORM_DB_URL
           require_env ITHACA_SESSION_SECRET
           require_env CLERK_PUBLISHABLE_KEY
+          case "${CLERK_PUBLISHABLE_KEY}" in
+            pk_test_*|pk_live_*) ;;
+            *) echo "CLERK_PUBLISHABLE_KEY must start with pk_test_ or pk_live_" >&2; exit 1 ;;
+          esac
           require_env CLERK_SECRET_KEY
           require_env CLERK_ALLOWED_ORIGINS
           require_env CLERK_ISSUER

@@ -42,8 +42,9 @@ async def test_composite_verifier_preserves_api_key_scopes() -> None:
     assert result.claims["credential_kind"] == "api_key"
     assert result.claims["tenant_id"] == "tenant-a"
     assert result.claims["principal_scopes"] == ["data:read"]
-    # Gateway admission scope is not confused with the key's capabilities.
+    # Gateway admission scopes are not confused with the key's capabilities.
     assert "openid" in result.scopes
+    assert "offline_access" in result.scopes
 
 
 @pytest.mark.asyncio
@@ -53,6 +54,7 @@ async def test_composite_verifier_builds_safe_oauth_principal() -> None:
     assert result is not None
     assert result.claims["credential_kind"] == "oauth"
     assert result.claims["tenant_id"] == "tenant-a"
+    assert result.scopes == ["offline_access", "openid"]
     assert "deploy:live" not in result.claims["principal_scopes"]
     assert "approvals:decide" not in result.claims["principal_scopes"]
 

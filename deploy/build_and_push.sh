@@ -45,12 +45,21 @@ if [[ -n "${EXTRA_IMAGE_TAGS:-}" ]]; then
   done
 fi
 
-BUILD_ARGS=()
-if [[ -n "${CLERK_PUBLISHABLE_VALUE:-}" ]]; then
-  BUILD_ARGS+=(--build-arg "CLERK_PUBLISHABLE_VALUE=${CLERK_PUBLISHABLE_VALUE}")
-elif [[ -n "${VITE_CLERK_PUBLISHABLE_KEY:-}" ]]; then
-  BUILD_ARGS+=(--build-arg "CLERK_PUBLISHABLE_VALUE=${VITE_CLERK_PUBLISHABLE_KEY}")
+CLERK_BUILD_VALUE="${CLERK_PUBLISHABLE_VALUE:-${VITE_CLERK_PUBLISHABLE_KEY:-${CLERK_PUBLISHABLE_KEY:-}}}"
+if [[ -z "${CLERK_BUILD_VALUE}" ]]; then
+  echo "ERROR: set CLERK_PUBLISHABLE_VALUE, VITE_CLERK_PUBLISHABLE_KEY, or CLERK_PUBLISHABLE_KEY before building Ithaca." >&2
+  echo "The value is required at build time and is compiled into the Vite bundle." >&2
+  exit 1
 fi
+case "${CLERK_BUILD_VALUE}" in
+  pk_test_*|pk_live_*) ;;
+  *)
+    echo "ERROR: Clerk publishable value must start with pk_test_ or pk_live_." >&2
+    exit 1
+    ;;
+esac
+
+BUILD_ARGS=(--build-arg "CLERK_PUBLISHABLE_VALUE=${CLERK_BUILD_VALUE}")
 if [[ -n "${VITE_API_BASE:-}" ]]; then
   BUILD_ARGS+=(--build-arg "VITE_API_BASE=${VITE_API_BASE}")
 fi

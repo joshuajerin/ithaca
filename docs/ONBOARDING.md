@@ -1,5 +1,11 @@
 # Onboarding to Ithaca v2
 
+> This is the platform-operator guide for local tenants, keys, and paper
+> deployments. To connect Codex, Claude Code, Hermes, OpenClaw, or another
+> external agent to the hosted product, use
+> [Ithaca MCP client setup](AGENT_CLIENT_SETUP.md). Normal interactive agent
+> setup uses OAuth and does not require a copied API key.
+
 Ithaca v2 is a multi-tenant platform for **bring-your-own (BYO) agents**: an external agent
 (or a human in the web UI) authors strategies, requests backtests and paper deployments, and
 watches the whole thing happen on a gap-free, tenant-isolated trace. This guide takes you from

@@ -31,6 +31,9 @@ jobs:
           push: false
           load: true
           tags: ithaca:ci
+          build-args: |
+            CLERK_PUBLISHABLE_VALUE=pk_test_Y2kuZXhhbXBsZS5jb20k
+            VITE_API_BASE=/api
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
       - name: Build the IBKR engine image (CPU-only, no push)

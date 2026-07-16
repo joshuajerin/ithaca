@@ -28,6 +28,12 @@ Each GitHub environment owns its own secrets and variables. Required secrets are
 `CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, and either `CLERK_PEM_PUBLIC_KEY` or the
 `CLERK_JWKS_URL` variable. Required variables include `CLERK_ALLOWED_ORIGINS`.
 
+`CLERK_PUBLISHABLE_KEY` is a Vite build-time value. A runtime Kubernetes
+environment variable cannot repair a web bundle that was built without it. The
+Dockerfile, PR image build, GitHub deploy preflight, and local build script all
+fail closed when the value is missing or does not start with `pk_test_` or
+`pk_live_`.
+
 ### Clerk waitlist access
 
 Enable **Waitlist** mode in the Clerk Dashboard and keep email authentication enabled.
@@ -101,6 +107,7 @@ $EDITOR infra/terraform/.env        # set DIGITALOCEAN_TOKEN + SPACES_* keys
 One lean multi-service image (`python:3.12-slim`, CPU-only) serves every role.
 
 ```bash
+export CLERK_PUBLISHABLE_VALUE='pk_live_...'
 deploy/build_and_push.sh                 # tags with the git short SHA + :latest
 # or pin a tag:
 deploy/build_and_push.sh v2025-06-17
@@ -109,6 +116,20 @@ deploy/build_and_push.sh v2025-06-17
 This builds `linux/amd64` (DOKS nodes are amd64), logs in with `doctl registry
 login`, and pushes to `registry.digitalocean.com/ithaca/ithaca:<tag>`.
 It uses only registry storage — no compute spend.
+
+The build verifies that the generated JavaScript contains the supplied Clerk
+publishable value and that the public bundle contains no `Doomberg` branding.
+Do not use an ad hoc `docker build` or manually override the Kubernetes image
+with a tag that did not pass these checks.
+
+After every rollout:
+
+```bash
+curl -fsSL https://app.tradeithaca.com/install.py | python3 - --doctor
+```
+
+This is required even when `/healthz` is green because a static app bundle can
+be misconfigured while the backend remains healthy.
 
 > If you pinned a non-`latest` tag, set `worker_image` / `archive_loader_image`
 > in `infra/terraform/.env`-sourced vars or a `terraform.auto.tfvars` to that tag.

@@ -63,13 +63,18 @@ export function AuthPage() {
             </p>
           </>
         ) : (
-          <SignIn
-            appearance={embeddedClerkAppearance}
-            path="/access"
-            routing="path"
-            forceRedirectUrl={redirectAfterSignIn}
-            fallbackRedirectUrl={redirectAfterSignIn}
-          />
+          <>
+            <SignIn
+              appearance={embeddedClerkAppearance}
+              path="/access"
+              routing="path"
+              forceRedirectUrl={redirectAfterSignIn}
+              fallbackRedirectUrl={redirectAfterSignIn}
+            />
+            <p className="auth-mode-row">
+              Agent approvals stay connected for at least 30 days unless revoked.
+            </p>
+          </>
         )}
         <p className="auth-consent">
           By continuing you agree to our{" "}

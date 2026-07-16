@@ -160,12 +160,29 @@ export function Settings() {
           <div className="settings-section-label">Connect an agent</div>
           <div className="fcard" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <p style={{ margin: 0, color: "var(--muted)", fontSize: 12 }}>
-              Add the Ithaca MCP endpoint, then your agent will open Clerk to sign in. No API key or shell environment variable is needed.
+              Setup opens app.tradeithaca.com first, then Clerk’s approve/deny screen.
+              Your agent can refresh the connection for at least 30 days unless you revoke
+              access or clear its local credentials.
             </p>
             {[
-              { id: "codex", label: "Codex", command: `codex mcp add ithaca --url ${MCP_BASE}\ncodex mcp login ithaca --scopes openid offline_access` },
-              { id: "claude", label: "Claude Code", command: `claude mcp add --transport http --scope user ithaca ${MCP_BASE}` },
-              { id: "cursor", label: "Cursor", command: JSON.stringify({ mcpServers: { ithaca: { type: "http", url: MCP_BASE } } }, null, 2) },
+              {
+                id: "codex",
+                label: "Codex",
+                command: "curl -fsSL https://app.tradeithaca.com/install.py | python3 - --client codex --login",
+                detail: "Preserves an existing valid connection, then signs in.",
+              },
+              {
+                id: "claude",
+                label: "Claude Code",
+                command: "curl -fsSL https://app.tradeithaca.com/install.py | python3 - --client claude-code --login",
+                detail: "Preserves an existing valid connection, then signs in.",
+              },
+              {
+                id: "generic",
+                label: "Any MCP client",
+                command: JSON.stringify({ mcpServers: { ithaca: { type: "http", url: MCP_BASE } } }, null, 2),
+                detail: "Protocol path for Hermes, OpenClaw, and other agents. Use native OAuth when the client supports it; use a scoped compatibility key only when it does not.",
+              },
             ].map((client) => (
               <div key={client.id} style={{ borderTop: "1px solid var(--border-soft)", paddingTop: 12 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
@@ -176,13 +193,16 @@ export function Settings() {
                 </div>
                 <code style={{ display: "block", marginTop: 8, whiteSpace: "pre-wrap", fontSize: 11, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>{client.command}</code>
                 <div style={{ marginTop: 6, fontSize: 11, color: "var(--muted-dim)" }}>
-                  {client.id === "cursor" ? "Open Cursor and choose Connect/Login after saving the configuration." : "Your agent will open Clerk to sign in."}
+                  {client.detail}
                 </div>
               </div>
             ))}
             <a href="https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization" target="_blank" rel="noreferrer" style={{ fontSize: 11, color: "var(--accent)" }}>
               Troubleshooting OAuth discovery or login ↗
             </a>
+            <code style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
+              curl -fsSL https://app.tradeithaca.com/install.py | python3 - --doctor
+            </code>
           </div>
         </div>
 
@@ -191,7 +211,7 @@ export function Settings() {
           <div className="settings-section-label">Automation &amp; compatibility keys</div>
           <div className="fcard" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
             <p style={{ margin: 0, fontSize: 12, color: "var(--muted)" }}>
-              Use scoped keys for CI, custom agents, OpenClaw, Hermes, or clients that cannot complete standard MCP OAuth.
+              Use scoped keys only for CI or agents that cannot complete standard MCP OAuth.
             </p>
 
             {/* Scope picker */}
