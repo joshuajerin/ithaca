@@ -132,11 +132,26 @@ registration, opens `app.tradeithaca.com` first, and then starts the Clerk appro
 curl -fsSL https://app.tradeithaca.com/install.py | python3 - --login
 ```
 
-CI and clients unable to complete standard MCP OAuth can explicitly use the scoped API-key
-compatibility path with `--auth api-key`. See
-[Agent Client Setup](docs/AGENT_CLIENT_SETUP.md).
+Hermes uses native MCP OAuth too:
 
-See [Agent Client Setup](docs/AGENT_CLIENT_SETUP.md) for per-client behavior.
+```bash
+curl -fsSL https://app.tradeithaca.com/install.py | python3 - \
+  --client hermes --login
+```
+
+CI and clients unable to complete standard MCP OAuth can explicitly use the scoped API-key
+compatibility path with `--auth api-key`.
+
+Before setup, an agent or operator can verify the live app bundle and OAuth metadata:
+
+```bash
+curl -fsSL https://app.tradeithaca.com/install.py | python3 - --doctor
+```
+
+See [Agent Client Setup](docs/AGENT_CLIENT_SETUP.md) for exact Codex, Claude Code,
+Hermes, OpenClaw, and generic-agent behavior. See
+[Always-on Agent Operations](docs/AGENT_OPERATIONS.md) for persistence, monitoring,
+the E2E client matrix, and incident recovery.
 
 For agent-driven setup, ask the agent to run:
 

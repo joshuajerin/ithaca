@@ -74,6 +74,14 @@ FROM node:24-slim AS web-builder
 ARG CLERK_PUBLISHABLE_VALUE=""
 ARG VITE_API_BASE="/api"
 
+# Production images must never contain the unauthenticated fallback shell.
+# Clerk publishable keys are public browser configuration, but they still have
+# to be present while Vite builds because VITE_* values are compiled into JS.
+RUN case "${CLERK_PUBLISHABLE_VALUE}" in \
+      pk_test_*|pk_live_*) ;; \
+      *) echo "CLERK_PUBLISHABLE_VALUE must be a Clerk pk_test_ or pk_live_ publishable key" >&2; exit 1 ;; \
+    esac
+
 # Install pnpm
 RUN corepack enable && corepack prepare pnpm@10.30.1 --activate
 
@@ -99,7 +107,9 @@ COPY web/ web/
 
 RUN VITE_CLERK_PUBLISHABLE_KEY="${CLERK_PUBLISHABLE_VALUE}" \
     VITE_API_BASE="${VITE_API_BASE}" \
-    pnpm --filter @ithaca/web run build
+    pnpm --filter @ithaca/web run build && \
+    grep -R -F "${CLERK_PUBLISHABLE_VALUE}" /app/web/dist/assets >/dev/null && \
+    ! grep -R -i -F "Doomberg" /app/web/dist
 
 # ---------------------------------------------------------------------------
 # Stage 3 — runtime: copy the venv + the app source onto a clean slim base.

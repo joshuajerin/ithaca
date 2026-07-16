@@ -41,9 +41,9 @@ function MissingClerkConfig() {
             Ithaca
           </div>
         </div>
-        <h1 className="auth-title">Authentication is not configured</h1>
+        <h1 className="auth-title">Ithaca is temporarily unavailable</h1>
         <div className="banner">
-          Set <code>VITE_CLERK_PUBLISHABLE_KEY</code> for this environment.
+          The sign-in service did not load. Please retry shortly.
         </div>
       </div>
     </div>

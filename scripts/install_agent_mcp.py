@@ -7,6 +7,7 @@ only the hosted MCP URL, then lets the client complete Clerk's OAuth browser flo
 import argparse
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -19,11 +20,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib import error as urlerror
-from urllib.parse import quote, urlencode, urlsplit, urlunsplit
+from urllib.parse import quote, urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 DEFAULT_APP_URL = "https://app.tradeithaca.com"
 DEFAULT_MCP_URL = "https://mcp.tradeithaca.com/mcp"
+LEGACY_MCP_URL = "https://mcp.doomberg.me/mcp"
 SHELL_MARKER = "# Ithaca MCP environment"
 
 
@@ -42,7 +44,7 @@ CLIENT_SPECS: dict[str, ClientSpec] = {
     "claude-code": ClientSpec("claude-code", "Claude Code", True, True, True, "cli"),
     "cursor": ClientSpec("cursor", "Cursor", True, False, False, "cursor-json"),
     "openclaw": ClientSpec("openclaw", "OpenClaw", False, False, False, "json"),
-    "hermes": ClientSpec("hermes", "Hermes", False, False, False, "json"),
+    "hermes": ClientSpec("hermes", "Hermes", True, True, True, "cli"),
     "generic": ClientSpec("generic", "Any MCP client", True, False, False, "explicit-json"),
 }
 CLIENT_ALIASES = {"all": "all", "claude": "claude-code", "claudecode": "claude-code", **{k: k for k in CLIENT_SPECS}}
@@ -174,6 +176,20 @@ def _merge_mcp_json(path: Path, name: str, config: dict[str, Any]) -> Path | Non
     return backup
 
 
+def _remove_legacy_json_entry(path: Path) -> bool:
+    data = _read_json_file(path)
+    servers = data.get("mcpServers")
+    if not isinstance(servers, dict):
+        return False
+    legacy = servers.get("doomberg")
+    if not isinstance(legacy, dict) or str(legacy.get("url") or "").rstrip("/") != LEGACY_MCP_URL:
+        return False
+    del servers["doomberg"]
+    data["mcpServers"] = servers
+    _write_json_file(path, data)
+    return True
+
+
 def _protected_resource_url(mcp_url: str) -> str:
     parts = urlsplit(mcp_url)
     path = parts.path.lstrip("/")
@@ -203,6 +219,41 @@ def _discover_oauth(mcp_url: str, timeout: int = 15) -> dict[str, Any]:
             "OAuth metadata must advertise openid and offline_access for persistent login"
         )
     return payload
+
+
+def _read_url_text(url: str, timeout: int = 15) -> str:
+    try:
+        with urlopen(
+            Request(url, headers={"Accept": "text/html,application/javascript"}),
+            timeout=timeout,
+        ) as response:
+            return response.read().decode("utf-8")
+    except (urlerror.URLError, urlerror.HTTPError, UnicodeDecodeError) as exc:
+        raise RuntimeError(f"Could not read {url}: {exc}") from exc
+
+
+def _validate_app_documents(index_html: str, javascript: str) -> None:
+    if re.search(r"\bdoomberg\b", index_html, re.IGNORECASE) or re.search(
+        r"\bdoomberg\b", javascript, re.IGNORECASE
+    ):
+        raise RuntimeError("Ithaca app bundle still contains legacy Doomberg branding")
+    if not re.search(r"pk_(?:test|live)_", javascript):
+        raise RuntimeError(
+            "Ithaca app bundle does not contain Clerk browser configuration; "
+            "this is a server deployment error, not a local agent setup error"
+        )
+
+
+def _validate_app_bundle(app_url: str, timeout: int = 15) -> None:
+    root_url = f"{app_url.rstrip('/')}/"
+    index_html = _read_url_text(root_url, timeout)
+    scripts = re.findall(r'<script[^>]+src=["\']([^"\']+\.js[^"\']*)["\']', index_html)
+    if not scripts:
+        raise RuntimeError("Ithaca app page does not reference a JavaScript bundle")
+    javascript = "\n".join(
+        _read_url_text(urljoin(root_url, script), timeout) for script in scripts
+    )
+    _validate_app_documents(index_html, javascript)
 
 
 def _remove_shell_marker() -> None:
@@ -261,6 +312,13 @@ def _codex_install(name: str, mcp_url: str, login: bool, headless: bool) -> Setu
             "codex", SetupStatus.CONFIGURED,
             f"Run: codex mcp add {name} --url {mcp_url}",
         )
+    if _cli_registration_matches([codex, "mcp", "get", "doomberg"], LEGACY_MCP_URL):
+        subprocess.run(
+            [codex, "mcp", "remove", "doomberg"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
     if not _cli_registration_matches([codex, "mcp", "get", name], mcp_url):
         subprocess.run(
             [codex, "mcp", "remove", name],
@@ -288,8 +346,16 @@ def _claude_install(name: str, mcp_url: str, login: bool, headless: bool) -> Set
     claude = shutil.which("claude")
     if not claude:
         path = Path.home() / ".claude" / "mcp.json"
+        _remove_legacy_json_entry(path)
         _merge_mcp_json(path, name, _oauth_config(mcp_url))
         return SetupResult("claude-code", SetupStatus.AUTHENTICATION_REQUIRED, f"Wrote {path}; use Claude Code Connect/Login.")
+    if _cli_registration_matches([claude, "mcp", "get", "doomberg"], LEGACY_MCP_URL):
+        subprocess.run(
+            [claude, "mcp", "remove", "--scope", "user", "doomberg"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
     if not _cli_registration_matches([claude, "mcp", "get", name], mcp_url):
         subprocess.run(
             [claude, "mcp", "remove", "--scope", "user", name],
@@ -311,13 +377,62 @@ def _claude_install(name: str, mcp_url: str, login: bool, headless: bool) -> Set
     )
 
 
+def _hermes_install(name: str, mcp_url: str, login: bool, headless: bool) -> SetupResult:
+    del headless  # Hermes supports paste-back OAuth without a separate CLI flag.
+    obsolete_json = Path.home() / ".hermes" / "mcp.json"
+    _remove_legacy_json_entry(obsolete_json)
+    hermes = shutil.which("hermes")
+    if not hermes:
+        return SetupResult(
+            "hermes",
+            SetupStatus.AUTHENTICATION_REQUIRED,
+            (
+                f"Run: hermes mcp add {name} --url {mcp_url} --auth oauth; "
+                f"then: hermes mcp login {name}"
+            ),
+        )
+    if _cli_registration_matches([hermes, "mcp", "list"], LEGACY_MCP_URL):
+        subprocess.run(
+            [hermes, "mcp", "remove", "doomberg"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    if not _cli_registration_matches([hermes, "mcp", "list"], mcp_url):
+        subprocess.run(
+            [hermes, "mcp", "remove", name],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        subprocess.run(
+            [hermes, "mcp", "add", name, "--url", mcp_url, "--auth", "oauth"],
+            check=True,
+            timeout=60,
+        )
+    if not login:
+        return SetupResult(
+            "hermes",
+            SetupStatus.AUTHENTICATION_REQUIRED,
+            f"Run: hermes mcp login {name}",
+        )
+    subprocess.run([hermes, "mcp", "login", name], check=True, timeout=300)
+    return SetupResult(
+        "hermes",
+        SetupStatus.AUTHENTICATED,
+        "OAuth tokens are protected locally and can refresh for at least 30 days.",
+    )
+
+
 def _cursor_install(name: str, mcp_url: str) -> SetupResult:
     path = Path.home() / ".cursor" / "mcp.json"
+    _remove_legacy_json_entry(path)
     _merge_mcp_json(path, name, _oauth_config(mcp_url))
     return SetupResult("cursor", SetupStatus.AUTHENTICATION_REQUIRED, "Open Cursor and choose Connect/Login for Ithaca MCP.")
 
 
 def _generic_install(name: str, mcp_url: str, config_path: Path) -> SetupResult:
+    _remove_legacy_json_entry(config_path)
     _merge_mcp_json(config_path, name, _oauth_config(mcp_url))
     return SetupResult(
         "generic", SetupStatus.AUTHENTICATION_REQUIRED,
@@ -331,11 +446,11 @@ def _compat_install(
     paths = {
         "cursor": Path.home() / ".cursor" / "mcp.json",
         "openclaw": Path.home() / ".openclaw" / "mcp.json",
-        "hermes": Path.home() / ".hermes" / "mcp.json",
     }
     path = config_path if client == "generic" else paths[client]
     if path is None:
         raise RuntimeError("--client generic requires --config /path/to/mcp.json")
+    _remove_legacy_json_entry(path)
     _merge_mcp_json(path, name, _api_key_config(mcp_url, api_key))
     return SetupResult(client, SetupStatus.CONFIGURED, f"Wrote protected configuration {path}")
 
@@ -343,7 +458,7 @@ def _compat_install(
 def _agent_link_url(app_url: str, callback_url: str, state: str, mcp_url: str, name: str, client: str) -> str:
     parts = urlsplit(app_url)
     params = urlencode({"callback": callback_url, "state": state, "mcp_url": mcp_url, "name": name, "client": client, "auth": "api-key"}, quote_via=quote)
-    return f"{urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip('/'), '', ''))}/#/agent-link?{params}"
+    return f"{urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip('/'), '', ''))}/agent-link?{params}"
 
 
 def _wait_for_payload(state: CallbackState, timeout: int) -> dict[str, Any]:
@@ -362,6 +477,8 @@ def _native_clients_detected() -> tuple[str, ...]:
         clients.append("codex")
     if shutil.which("claude"):
         clients.append("claude-code")
+    if shutil.which("hermes"):
+        clients.append("hermes")
     if (Path.home() / ".cursor").exists():
         clients.append("cursor")
     return tuple(clients)
@@ -381,7 +498,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--name", default="ithaca")
     parser.add_argument(
         "--client", type=_normalize_client,
-        help="codex, claude-code, generic, or all (legacy client aliases remain supported)",
+        help="codex, claude-code, hermes, generic, or all (legacy aliases remain supported)",
     )
     parser.add_argument(
         "--config", type=Path,
@@ -393,12 +510,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument("--agent-init", action="store_true", help="Complete supported native login and then invoke ithaca_init from the agent.")
+    parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help="Verify the Ithaca app bundle and MCP OAuth metadata without changing client state.",
+    )
     args = parser.parse_args(argv)
 
+    if args.doctor:
+        try:
+            _validate_app_bundle(args.app_url)
+            _discover_oauth(args.mcp_url)
+        except RuntimeError as exc:
+            print(f"doctor: failed — {exc}")
+            return 1
+        print("doctor: verified — Ithaca app, Clerk browser config, and MCP OAuth metadata")
+        return 0
     if args.client == "generic" and args.config is None:
         parser.error("--client generic requires --config /path/to/mcp.json")
     if args.client == "all":
-        clients = ("cursor", "openclaw", "hermes") if args.auth == "api-key" else tuple(
+        clients = ("cursor", "openclaw") if args.auth == "api-key" else tuple(
             spec.id for spec in CLIENT_SPECS.values()
             if spec.native_oauth and spec.id != "generic"
         )
@@ -410,10 +541,20 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.auth == "oauth" and any(not CLIENT_SPECS[client].native_oauth for client in clients):
         parser.error("This client requires --auth api-key for compatibility setup")
+    if args.auth == "api-key" and "hermes" in clients:
+        parser.error(
+            "Hermes supports native MCP OAuth. Use --client hermes --login without "
+            "--auth api-key."
+        )
 
     if args.auth == "oauth":
         # Do this before a single configuration file is touched.
-        _discover_oauth(args.mcp_url)
+        try:
+            _validate_app_bundle(args.app_url)
+            _discover_oauth(args.mcp_url)
+        except RuntimeError as exc:
+            print(f"preflight: failed — {exc}")
+            return 1
         should_login = args.login or args.agent_init
         if should_login and not args.no_open:
             _open_app_before_login(args.app_url)
@@ -424,6 +565,8 @@ def main(argv: list[str] | None = None) -> int:
                     results.append(_codex_install(args.name, args.mcp_url, should_login, args.headless))
                 elif client == "claude-code":
                     results.append(_claude_install(args.name, args.mcp_url, should_login, args.headless))
+                elif client == "hermes":
+                    results.append(_hermes_install(args.name, args.mcp_url, should_login, args.headless))
                 elif client == "generic":
                     results.append(_generic_install(args.name, args.mcp_url, args.config))
                 else:
@@ -440,6 +583,11 @@ def main(argv: list[str] | None = None) -> int:
 
     # Explicit legacy compatibility mode.  It is intentionally the only code path that mints
     # a long-lived key and only writes that key into the selected client config.
+    try:
+        _validate_app_bundle(args.app_url)
+    except RuntimeError as exc:
+        print(f"preflight: failed — {exc}")
+        return 1
     state = CallbackState(secrets.token_urlsafe(24))
     server = ThreadingHTTPServer(("127.0.0.1", 0), _handler(state))
     thread = threading.Thread(target=server.serve_forever, daemon=True)

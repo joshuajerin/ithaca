@@ -181,7 +181,7 @@ export function Settings() {
                 id: "generic",
                 label: "Any MCP client",
                 command: JSON.stringify({ mcpServers: { ithaca: { type: "http", url: MCP_BASE } } }, null, 2),
-                detail: "Works with any agent that supports standard remote MCP and OAuth.",
+                detail: "Protocol path for Hermes, OpenClaw, and other agents. Use native OAuth when the client supports it; use a scoped compatibility key only when it does not.",
               },
             ].map((client) => (
               <div key={client.id} style={{ borderTop: "1px solid var(--border-soft)", paddingTop: 12 }}>
@@ -200,6 +200,9 @@ export function Settings() {
             <a href="https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization" target="_blank" rel="noreferrer" style={{ fontSize: 11, color: "var(--accent)" }}>
               Troubleshooting OAuth discovery or login ↗
             </a>
+            <code style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
+              curl -fsSL https://app.tradeithaca.com/install.py | python3 - --doctor
+            </code>
           </div>
         </div>
 

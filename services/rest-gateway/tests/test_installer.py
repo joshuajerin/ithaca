@@ -38,6 +38,7 @@ def test_installer_client_aliases_and_statuses():
     assert installer.SetupStatus.AUTHENTICATION_REQUIRED.value == "authentication_required"
     assert installer.CLIENT_SPECS["codex"].native_oauth
     assert installer.CLIENT_SPECS["generic"].native_oauth
+    assert installer.CLIENT_SPECS["hermes"].native_oauth
     assert not installer.CLIENT_SPECS["openclaw"].native_oauth
 
 
@@ -85,7 +86,10 @@ def test_codex_existing_registration_is_not_recreated(monkeypatch):
     result = installer._codex_install("ithaca", mcp_url, login=False, headless=False)
 
     assert result.status == installer.SetupStatus.AUTHENTICATION_REQUIRED
-    assert calls == [["/usr/bin/codex", "mcp", "get", "ithaca"]]
+    assert calls == [
+        ["/usr/bin/codex", "mcp", "get", "doomberg"],
+        ["/usr/bin/codex", "mcp", "get", "ithaca"],
+    ]
 
 
 def test_claude_login_uses_supported_no_browser_flag(monkeypatch):
@@ -125,6 +129,146 @@ def test_generic_client_preserves_other_mcp_servers(tmp_path):
         "type": "http",
         "url": "https://mcp.tradeithaca.com/mcp",
     }
+
+
+def test_generic_client_removes_only_the_legacy_doomberg_server(tmp_path):
+    installer = _installer_module()
+    path = tmp_path / "agent-mcp.json"
+    path.write_text(
+        """{
+  "mcpServers": {
+    "doomberg": {
+      "type": "http",
+      "url": "https://mcp.doomberg.me/mcp",
+      "headers": {"Authorization": "Bearer old"}
+    },
+    "other": {"url": "https://other"}
+  }
+}"""
+    )
+
+    installer._generic_install("ithaca", "https://mcp.tradeithaca.com/mcp", path)
+    value = installer._read_json_file(path)
+
+    assert "doomberg" not in value["mcpServers"]
+    assert value["mcpServers"]["other"]["url"] == "https://other"
+    assert value["mcpServers"]["ithaca"]["url"] == "https://mcp.tradeithaca.com/mcp"
+    for candidate in tmp_path.iterdir():
+        assert "https://mcp.doomberg.me/mcp" not in candidate.read_text()
+
+
+def test_hermes_uses_native_oauth_cli_and_login(monkeypatch, tmp_path):
+    installer = _installer_module()
+    calls: list[list[str]] = []
+    monkeypatch.setattr(installer.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(installer.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        if command[1:3] == ["mcp", "list"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(installer.subprocess, "run", fake_run)
+    result = installer._hermes_install(
+        "ithaca", "https://mcp.tradeithaca.com/mcp", login=True, headless=True
+    )
+
+    assert result.status == installer.SetupStatus.AUTHENTICATED
+    assert [
+        "/usr/bin/hermes",
+        "mcp",
+        "add",
+        "ithaca",
+        "--url",
+        "https://mcp.tradeithaca.com/mcp",
+        "--auth",
+        "oauth",
+    ] in calls
+    assert calls[-1] == ["/usr/bin/hermes", "mcp", "login", "ithaca"]
+
+
+def test_hermes_existing_oauth_registration_is_not_recreated(monkeypatch, tmp_path):
+    installer = _installer_module()
+    calls: list[list[str]] = []
+    mcp_url = "https://mcp.tradeithaca.com/mcp"
+    monkeypatch.setattr(installer.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(installer.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, f"ithaca {mcp_url}", "")
+
+    monkeypatch.setattr(installer.subprocess, "run", fake_run)
+    result = installer._hermes_install(
+        "ithaca", mcp_url, login=False, headless=False
+    )
+
+    assert result.status == installer.SetupStatus.AUTHENTICATION_REQUIRED
+    assert calls == [
+        ["/usr/bin/hermes", "mcp", "list"],
+        ["/usr/bin/hermes", "mcp", "list"],
+    ]
+
+
+def test_app_bundle_validation_catches_the_reported_production_failure():
+    installer = _installer_module()
+
+    installer._validate_app_documents(
+        "<!doctype html><title>Ithaca</title>",
+        'window.__clerk="pk_live_public";',
+    )
+
+    try:
+        installer._validate_app_documents(
+            "<!doctype html><title>Doomberg — Observability</title>",
+            'console.log("Authentication is not configured")',
+        )
+    except RuntimeError as exc:
+        assert "Doomberg" in str(exc)
+    else:
+        raise AssertionError("legacy branded bundle must fail validation")
+
+    try:
+        installer._validate_app_documents(
+            "<!doctype html><title>Ithaca</title>",
+            'console.log("Authentication is not configured")',
+        )
+    except RuntimeError as exc:
+        assert "server deployment error" in str(exc)
+    else:
+        raise AssertionError("bundle without Clerk configuration must fail validation")
+
+
+def test_compatibility_link_uses_the_browser_router_path():
+    installer = _installer_module()
+    url = installer._agent_link_url(
+        "https://app.tradeithaca.com",
+        "https://callback.example/callback",
+        "one-time-state",
+        "https://mcp.tradeithaca.com/mcp",
+        "ithaca",
+        "openclaw",
+    )
+
+    assert url.startswith("https://app.tradeithaca.com/agent-link?")
+    assert "/#/agent-link" not in url
+    assert "client=openclaw" in url
+    assert "auth=api-key" in url
+
+
+def test_doctor_reports_a_concise_server_side_failure(monkeypatch, capsys):
+    installer = _installer_module()
+
+    def fail(_app_url):
+        raise RuntimeError("app bundle does not contain Clerk browser configuration")
+
+    monkeypatch.setattr(installer, "_validate_app_bundle", fail)
+
+    assert installer.main(["--doctor"]) == 1
+    assert capsys.readouterr().out.strip() == (
+        "doctor: failed — app bundle does not contain Clerk browser configuration"
+    )
 
 
 def test_app_opens_before_native_oauth(monkeypatch):

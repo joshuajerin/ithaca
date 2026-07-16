@@ -17,6 +17,28 @@ def test_deploy_workflow_preflight_requires_clerk_issuer() -> None:
     assert "require_env CLERK_ISSUER" in workflow
 
 
+def test_application_image_cannot_build_without_clerk_browser_config() -> None:
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text()
+    build_script = (REPO_ROOT / "deploy" / "build_and_push.sh").read_text()
+    checks_workflow = (
+        REPO_ROOT / ".github" / "workflows" / "deploy-checks.yml"
+    ).read_text()
+    parity_workflow = (
+        REPO_ROOT / ".github" / "workflows" / "prod-parity.yml"
+    ).read_text()
+    deploy_workflow = (
+        REPO_ROOT / ".github" / "workflows" / "deploy-do.yml"
+    ).read_text()
+
+    assert "CLERK_PUBLISHABLE_VALUE must be a Clerk pk_test_ or pk_live_" in dockerfile
+    assert 'grep -R -F "${CLERK_PUBLISHABLE_VALUE}" /app/web/dist/assets' in dockerfile
+    assert '! grep -R -i -F "Doomberg" /app/web/dist' in dockerfile
+    assert "CLERK_PUBLISHABLE_KEY before building Ithaca" in build_script
+    assert "CLERK_PUBLISHABLE_VALUE=pk_test_Y2kuZXhhbXBsZS5jb20k" in checks_workflow
+    assert "CLERK_PUBLISHABLE_VALUE=pk_test_Y2kuZXhhbXBsZS5jb20k" in parity_workflow
+    assert "CLERK_PUBLISHABLE_KEY must start with pk_test_ or pk_live_" in deploy_workflow
+
+
 def test_deploy_workflow_uses_platform_db_secret() -> None:
     workflow = (REPO_ROOT / ".github" / "workflows" / "deploy-do.yml").read_text()
 

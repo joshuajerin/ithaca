@@ -12,6 +12,7 @@ function read(rel: string): string {
 describe("customer-facing UI cleanup guards", () => {
   it("uses Ithaca product copy in auth and agent-link surfaces", () => {
     const text = [
+      read("../index.html"),
       read("main.tsx"),
       read("pages/AuthPage.tsx"),
       read("pages/AgentLink.tsx"),
@@ -24,6 +25,10 @@ describe("customer-facing UI cleanup guards", () => {
     expect(text).toContain("Ithaca user");
     expect(text).toContain("docs.tradeithaca.com");
     expect(text).not.toContain("ithaca.mintlify.app");
+    expect(text).not.toMatch(/\bDoomberg\b/i);
+    expect(read("main.tsx")).not.toContain(
+      "Set <code>VITE_CLERK_PUBLISHABLE_KEY</code>",
+    );
   });
 
   it("does not ship the old sliding sessions detail pane", () => {
