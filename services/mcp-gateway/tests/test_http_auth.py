@@ -5,7 +5,13 @@ import pytest
 
 from doomberg_mcp.http import CompositeTokenVerifier, looks_like_agent_api_key
 from doomberg_mcp import create_server
-from doomberg_mcp.authorization import RESOURCE_SCOPES, TOOL_SCOPES
+from doomberg_mcp.authorization import (
+    RESOURCE_SCOPES,
+    TOOL_SCOPES,
+    InsufficientScopeError,
+    Principal,
+    require_scope,
+)
 
 
 class _Keys:
@@ -16,7 +22,7 @@ class _Keys:
 
 
 class _Identity:
-    def verify_oauth_token(self, token: str, *, audience: str, required_scopes: list[str]):
+    def verify_oauth_token(self, token: str, *, audience: str | None = None, required_scopes: list[str]):
         if token != "oauth-token":
             from doomberg_platform import ClerkTokenInvalid
             raise ClerkTokenInvalid("invalid")
@@ -37,7 +43,7 @@ async def test_composite_verifier_preserves_api_key_scopes() -> None:
     assert result.claims["tenant_id"] == "tenant-a"
     assert result.claims["principal_scopes"] == ["data:read"]
     # Gateway admission scope is not confused with the key's capabilities.
-    assert "ithaca:agent" in result.scopes
+    assert "openid" in result.scopes
 
 
 @pytest.mark.asyncio
@@ -56,6 +62,29 @@ def test_existing_and_legacy_api_key_prefixes_are_recognized() -> None:
     assert looks_like_agent_api_key("dmbg_x")
     assert looks_like_agent_api_key("ith_x")
     assert not looks_like_agent_api_key("eyJhbGciOiJSUzI1NiJ9")
+
+
+def test_data_read_implies_only_safe_agent_discovery_scope() -> None:
+    principal = Principal("tenant-a", "api_key", frozenset({"data:read"}), "key-a")
+
+    require_scope(principal, "agent:read")
+    with pytest.raises(InsufficientScopeError):
+        require_scope(principal, "runs:write")
+
+
+def test_ithaca_transport_environment_starts_http_server(monkeypatch) -> None:
+    from doomberg_mcp import server
+    import doomberg_mcp.http as http
+
+    started: dict[str, object] = {}
+    monkeypatch.setenv("ITHACA_MCP_TRANSPORT", "http")
+    monkeypatch.setenv("ITHACA_MCP_PORT", "9012")
+    monkeypatch.delenv("DOOMBERG_MCP_TRANSPORT", raising=False)
+    monkeypatch.setattr(http, "serve_http", lambda **kwargs: started.update(kwargs))
+
+    server.main()
+
+    assert started == {"host": "0.0.0.0", "port": 9012}
 
 
 @pytest.mark.asyncio

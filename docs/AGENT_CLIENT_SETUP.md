@@ -12,7 +12,7 @@ file, or `ITHACA_MCP_API_KEY` environment variable is required.
 
 ```bash
 codex mcp add ithaca --url https://mcp.tradeithaca.com/mcp
-codex mcp login ithaca --scopes ithaca:agent
+codex mcp login ithaca --scopes openid offline_access
 ```
 
 For Cursor, add this to `~/.cursor/mcp.json` and select Connect/Login in the app:
@@ -33,4 +33,4 @@ and other clients unable to use MCP OAuth; those keys are scoped, stored only in
 protected configuration, and can be revoked in Settings.
 
 If discovery fails, confirm that `/.well-known/oauth-protected-resource/mcp` is reachable on
-the MCP host and advertises `https://mcp.tradeithaca.com/mcp` with `ithaca:agent`.
+the MCP host and advertises `https://mcp.tradeithaca.com/mcp` with `openid`.

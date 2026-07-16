@@ -312,6 +312,7 @@ async def test_toolkit_resources_return_grouped_direct_tools(toolset):
     assert toolkit["required_first_tool"] == "start_research_session"
     assert "backtest_run" in toolkit["direct_tools"]
     assert "list_approvals" in toolkit["direct_tools"]
+    assert [skill["skill_id"] for skill in toolkit["skills"]] == ["backtest.run"]
 
     catalog_contents = await mcp.read_resource("ithaca://toolkits/catalog")
     catalog = json.loads(catalog_contents[0].content)

@@ -28,7 +28,10 @@ from doomberg_platform import (
 MCP_RESOURCE_URL_ENV = "ITHACA_MCP_RESOURCE_URL"
 DEFAULT_MCP_RESOURCE_URL = "https://mcp.tradeithaca.com/mcp"
 MCP_OAUTH_SCOPE_ENV = "ITHACA_MCP_OAUTH_SCOPE"
-DEFAULT_MCP_OAUTH_SCOPE = "ithaca:agent"
+# Clerk's OAuth/DCR implementation permits standard OpenID Connect scopes, not
+# arbitrary resource scopes.  `openid` is therefore the coarse admission scope;
+# the Ithaca capability set remains enforced from server-side token claims.
+DEFAULT_MCP_OAUTH_SCOPE = "openid"
 
 # OAuth is intentionally read-oriented. It never inherits privileged deployment, execution,
 # credential-administration, approval-decision, or trigger-write capabilities.
@@ -89,7 +92,7 @@ class CompositeTokenVerifier(TokenVerifier):
         try:
             identity = await anyio.to_thread.run_sync(
                 lambda: self._identity.verify_oauth_token(
-                    token, audience=resource_url(), required_scopes=[oauth_scope()]
+                    token, required_scopes=[oauth_scope()]
                 )
             )
             principal = await anyio.to_thread.run_sync(self._identity.resolve_user_and_tenant, identity)

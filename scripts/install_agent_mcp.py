@@ -196,8 +196,8 @@ def _discover_oauth(mcp_url: str, timeout: int = 15) -> dict[str, Any]:
     if not isinstance(servers, list) or not all(isinstance(item, str) and item.startswith("https://") for item in servers):
         raise RuntimeError("OAuth metadata does not advertise an HTTPS authorization server")
     scopes = payload.get("scopes_supported") or []
-    if "ithaca:agent" not in scopes:
-        raise RuntimeError("OAuth metadata does not advertise the required ithaca:agent scope")
+    if "openid" not in scopes:
+        raise RuntimeError("OAuth metadata does not advertise the required openid scope")
     return payload
 
 
@@ -244,8 +244,8 @@ def _codex_install(name: str, mcp_url: str, login: bool, headless: bool) -> Setu
     subprocess.run([codex, "mcp", "remove", name], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run([codex, "mcp", "add", name, "--url", mcp_url], check=True, timeout=30)
     if not login:
-        return SetupResult("codex", SetupStatus.AUTHENTICATION_REQUIRED, f"Run: codex mcp login {name} --scopes ithaca:agent")
-    command = [codex, "mcp", "login", name, "--scopes", "ithaca:agent"]
+        return SetupResult("codex", SetupStatus.AUTHENTICATION_REQUIRED, f"Run: codex mcp login {name} --scopes openid offline_access")
+    command = [codex, "mcp", "login", name, "--scopes", "openid", "offline_access"]
     if headless:
         command.append("--headless")
     subprocess.run(command, check=True, timeout=180)
@@ -262,7 +262,7 @@ def _claude_install(name: str, mcp_url: str, login: bool, headless: bool) -> Set
     subprocess.run([claude, "mcp", "add", "--transport", "http", "--scope", "user", name, mcp_url], check=True, timeout=30)
     if not login:
         return SetupResult("claude-code", SetupStatus.AUTHENTICATION_REQUIRED, "Run Claude Code's MCP login for Ithaca.")
-    command = [claude, "mcp", "login", name, "--scopes", "ithaca:agent"]
+    command = [claude, "mcp", "login", name, "--scopes", "openid", "offline_access"]
     if headless:
         command.append("--headless")
     subprocess.run(command, check=True, timeout=180)

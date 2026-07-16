@@ -33,16 +33,18 @@ def test_verifies_clerk_session_and_authorized_party(clerk_keys: tuple[str, str]
         service.verify_session_token(_token(private, azp="https://other.example"), allowed_origins=["https://app.tradeithaca.com"])
 
 
-def test_verifies_oauth_audience_and_normalizes_scopes(clerk_keys: tuple[str, str]) -> None:
+def test_verifies_clerk_dynamic_oauth_without_audience_and_normalizes_scopes(clerk_keys: tuple[str, str]) -> None:
     private, public = clerk_keys
     service = ClerkIdentityService(issuer="https://clerk.example", pem_public_key=public)
     identity = service.verify_oauth_token(
-        _token(private, aud="https://mcp.tradeithaca.com/mcp", scope="openid ithaca:agent"),
-        audience="https://mcp.tradeithaca.com/mcp", required_scopes=["ithaca:agent"],
+        _token(private, client_id="clerk-dcr-client", scope="openid offline_access"),
+        required_scopes=["openid"],
     )
-    assert identity.scopes == frozenset({"openid", "ithaca:agent"})
+    assert identity.scopes == frozenset({"openid", "offline_access"})
     with pytest.raises(ClerkTokenInvalid, match="scope"):
         service.verify_oauth_token(
-            _token(private, aud="https://mcp.tradeithaca.com/mcp", scopes=["openid"]),
-            audience="https://mcp.tradeithaca.com/mcp", required_scopes=["ithaca:agent"],
+            _token(private, client_id="clerk-dcr-client", scopes=["profile"]),
+            required_scopes=["openid"],
         )
+    with pytest.raises(ClerkTokenInvalid, match="client id"):
+        service.verify_oauth_token(_token(private, scope="openid"), required_scopes=["openid"])

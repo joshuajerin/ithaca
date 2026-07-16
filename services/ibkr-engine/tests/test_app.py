@@ -337,7 +337,7 @@ def test_quote_and_read_models(monkeypatch) -> None:
     assert quote.json()["data"]["quote"]["symbol"] == "AAPL"
     assert quote.json()["data"]["quote"]["price"] == 212.45
     assert quote.json()["data"]["quote"]["source"] == "doomberg-live-data"
-    assert quote.json()["data"]["quote"]["entitlement_class"] == "doomberg_live"
+    assert quote.json()["data"]["quote"]["entitlement_class"] == "ithaca_live"
     assert extended_quote.status_code == 200
     assert extended_quote.json()["data"]["quote"]["extended_hours_requested"] is True
     assert any("outsideRth=true" in request["path"] for request in gateway.requests)

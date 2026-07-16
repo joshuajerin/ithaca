@@ -338,7 +338,7 @@ spec:
             - name: ITHACA_MCP_RESOURCE_URL
               value: "https://mcp.tradeithaca.com/mcp"
             - name: ITHACA_MCP_OAUTH_SCOPE
-              value: "ithaca:agent"
+              value: "openid"
             - name: DOOMBERG_DB
               valueFrom:
                 secretKeyRef:

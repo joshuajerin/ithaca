@@ -7,6 +7,9 @@ from doomberg_core import ALL_SKILL_MANIFESTS, CORE_SKILL_MANIFESTS, SKILL_MANIF
 def test_every_implemented_skill_has_contract_manifest():
     assert set(SKILLS) == set(SKILL_MANIFESTS)
     assert {"market.get_ohlcv", "backtest.run"} <= set(CORE_SKILL_MANIFESTS)
+    spec_schema = CORE_SKILL_MANIFESTS["backtest.run"]["input_schema"]["properties"]["spec"]
+    assert spec_schema["title"] == "StrategySpec"
+    assert "universe" in spec_schema["properties"]
     for manifest in ALL_SKILL_MANIFESTS.values():
         SkillManifest.model_validate(manifest)
 

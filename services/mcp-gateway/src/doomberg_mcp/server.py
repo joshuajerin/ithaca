@@ -121,7 +121,9 @@ _TOOLKITS: dict[str, dict] = {
             "decide_approval",
             "get_artifact",
         ],
-        "skill_ids": ["tearsheet", "walkforward.run"],
+        # The hosted live-data MCP deliberately excludes archive-backed
+        # tearsheet/walkforward skills. Only advertise runnable public skills.
+        "skill_ids": ["backtest.run"],
         "required_first_tool": "start_research_session",
     },
 }
@@ -2315,11 +2317,15 @@ def main() -> None:
     """
     import os
 
-    transport = (os.environ.get("DOOMBERG_MCP_TRANSPORT") or "stdio").strip().lower()
+    transport = (
+        os.environ.get("ITHACA_MCP_TRANSPORT")
+        or os.environ.get("DOOMBERG_MCP_TRANSPORT")
+        or "stdio"
+    ).strip().lower()
     if transport == "http":
         from .http import serve_http
 
-        port = int(os.environ.get("DOOMBERG_MCP_PORT", "8080"))
+        port = int(os.environ.get("ITHACA_MCP_PORT") or os.environ.get("DOOMBERG_MCP_PORT", "8080"))
         serve_http(host="0.0.0.0", port=port)
         return
     mcp, _ = create_server()

@@ -120,7 +120,7 @@ Clerk OAuth login. The normal setup needs no copied key or environment variable:
 
 ```bash
 codex mcp add ithaca --url https://mcp.tradeithaca.com/mcp
-codex mcp login ithaca --scopes ithaca:agent
+codex mcp login ithaca --scopes openid offline_access
 ```
 
 The Ithaca installer performs OAuth metadata discovery before changing a local config:

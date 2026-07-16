@@ -16,7 +16,10 @@ from typing import Any
 
 
 PUBLIC_DATA_SOURCE = "doomberg-live-data"
-PUBLIC_ENTITLEMENT_CLASS = "doomberg_live"
+# The production MCP/control-plane image is Ithaca and validates this value as
+# part of the connected-account quote contract. Keep the wrapper aligned with
+# that consumer during the product rename.
+PUBLIC_ENTITLEMENT_CLASS = "ithaca_live"
 
 
 class ClientPortalError(RuntimeError):
