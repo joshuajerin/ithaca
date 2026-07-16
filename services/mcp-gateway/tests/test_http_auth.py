@@ -5,7 +5,13 @@ import pytest
 
 from ithaca_mcp.http import CompositeTokenVerifier, looks_like_agent_api_key
 from ithaca_mcp import create_server
-from ithaca_mcp.authorization import RESOURCE_SCOPES, TOOL_SCOPES
+from ithaca_mcp.authorization import (
+    RESOURCE_SCOPES,
+    TOOL_SCOPES,
+    InsufficientScopeError,
+    Principal,
+    require_scope,
+)
 
 
 class _Keys:
@@ -56,6 +62,29 @@ def test_existing_and_legacy_api_key_prefixes_are_recognized() -> None:
     assert looks_like_agent_api_key("dmbg_x")
     assert looks_like_agent_api_key("ith_x")
     assert not looks_like_agent_api_key("eyJhbGciOiJSUzI1NiJ9")
+
+
+def test_data_read_implies_only_safe_agent_discovery_scope() -> None:
+    principal = Principal("tenant-a", "api_key", frozenset({"data:read"}), "key-a")
+
+    require_scope(principal, "agent:read")
+    with pytest.raises(InsufficientScopeError):
+        require_scope(principal, "runs:write")
+
+
+def test_ithaca_transport_environment_starts_http_server(monkeypatch) -> None:
+    from ithaca_mcp import server
+    import ithaca_mcp.http as http
+
+    started: dict[str, object] = {}
+    monkeypatch.setenv("ITHACA_MCP_TRANSPORT", "http")
+    monkeypatch.setenv("ITHACA_MCP_PORT", "9012")
+    monkeypatch.delenv("DOOMBERG_MCP_TRANSPORT", raising=False)
+    monkeypatch.setattr(http, "serve_http", lambda **kwargs: started.update(kwargs))
+
+    server.main()
+
+    assert started == {"host": "0.0.0.0", "port": 9012}
 
 
 @pytest.mark.asyncio
