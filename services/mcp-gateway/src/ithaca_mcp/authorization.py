@@ -23,7 +23,12 @@ class Principal:
 
 
 def require_scope(principal: Principal, scope: str) -> None:
-    if scope not in principal.scopes:
+    # Clerk-managed keys issued before the MCP research workflow used data:read
+    # as their read capability. Discovery and research-session setup are safe
+    # read-only prerequisites for those keys; requiring a new agent:read grant
+    # stranded otherwise valid customers in SESSION_CONTEXT_REQUIRED.
+    implied = scope == "agent:read" and "data:read" in principal.scopes
+    if scope not in principal.scopes and not implied:
         raise InsufficientScopeError()
 
 

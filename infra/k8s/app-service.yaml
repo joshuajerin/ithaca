@@ -15,6 +15,13 @@ metadata:
     ithaca/environment: ${ITHACA_ENV}
 spec:
   type: NodePort
+  # Streamable HTTP associates each MCP session with an in-process transport.
+  # Keep follow-up requests on the pod that created the session; otherwise a
+  # second app replica returns "session expired" / 404 for a valid session id.
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
   selector:
     ithaca/component: app
   ports:

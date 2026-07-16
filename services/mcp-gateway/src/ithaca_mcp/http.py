@@ -30,8 +30,9 @@ DEFAULT_MCP_RESOURCE_URL = "https://mcp.tradeithaca.com/mcp"
 MCP_OAUTH_SCOPES_ENV = "ITHACA_MCP_OAUTH_SCOPES"
 LEGACY_MCP_OAUTH_SCOPE_ENV = "ITHACA_MCP_OAUTH_SCOPE"
 # Clerk accepts standard OpenID Connect scopes, not custom resource scopes.
-# `offline_access` gives clients refresh tokens so authorization persists
-# across fresh agent sessions.
+# `openid` is the coarse admission scope while capability enforcement remains
+# server-side. `offline_access` gives clients refresh tokens so authorization
+# persists across fresh agent sessions.
 DEFAULT_MCP_OAUTH_SCOPES = ("openid", "offline_access")
 
 # OAuth is intentionally read-oriented. It never inherits privileged deployment, execution,
