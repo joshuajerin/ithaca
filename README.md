@@ -61,14 +61,14 @@ for p in packages/contracts/py ithaca-core services/platform services/mcp-gatewa
 
 # contracts gate + UI
 pnpm run contracts:check                      # regen from schema, fail on drift
-pnpm --filter @ithaca/contracts run test    # zod round-trip
-pnpm --filter @ithaca/web run test && pnpm --filter @ithaca/web run build
+pnpm --filter @Ithaca/contracts run test    # zod round-trip
+pnpm --filter @Ithaca/web run test && pnpm --filter @Ithaca/web run build
 ```
 
 ### Run the services locally
 
 ```bash
-export ITHACA_DB=./ithaca.db              # local SQLite system-of-record (default :memory:)
+export ITHACA_DB=./Ithaca.db              # local SQLite system-of-record (default :memory:)
 export ITHACA_ENV=local                     # enables local X-Tenant-Id dev auth fallback
 # Production uses managed Postgres instead:
 # export ITHACA_DB=postgresql://user:pass@host:5432/dbname?sslmode=require
@@ -83,49 +83,54 @@ uv run --package ithaca-rest-gateway  uvicorn ithaca_rest.app:app   --port 8000
 # the deploy-layer conductor: pulls the backtest queue + ticks live paper deployments
 # Optional: persist worker-generated backtest artifacts as local files. If unset,
 # artifact records still carry deterministic memory:// URIs, byte counts, and SHA-256 hashes.
-# export ITHACA_ARTIFACT_DIR=/var/lib/ithaca/artifacts
+# export ITHACA_ARTIFACT_DIR=/var/lib/Ithaca/artifacts
 uv run python scripts/run_workers.py
 
 # trigger engine: polls active trigger policies and creates durable runs.
-# Connected live-data providers are configured by Ithaca operations.
+# For local live quotes, point it at an IBKR engine.
+export ITHACA_IBKR_ENGINE_URL=https://your-ibkr-engine.example.com
+export ITHACA_IBKR_ENGINE_TOKEN=replace-with-bearer-token   # optional if the VPS is otherwise private
+# Optional when the VPS does not expose GET /quote?symbol=NVDA.
+# export ITHACA_IBKR_QUOTE_PATH=/v1/market/quote/{symbol}
+# Optional hard freshness gate for read-only live-data handoff checks.
+# export ITHACA_IBKR_SMOKE_MAX_FRESHNESS_MS=60000
+uv run python scripts/ibkr_smoke.py --symbol AAPL --json
 uv run --package ithaca-runtime python -m ithaca_runtime.trigger_engine
 
-# execution gateway: paper fills are enabled by default. Live execution requires
-# an explicitly configured provider and human approval.
+# execution gateway: paper fills are enabled by default. Live IBKR submission is
+# blocked unless this is explicitly set and an IBKR order endpoint is configured.
+# export ITHACA_ENABLE_LIVE_EXECUTION=1
+# export ITHACA_IBKR_ORDER_PATH=/orders
+# export ITHACA_EXECUTION_MAX_NOTIONAL_USD=10000
 
 # customer-handoff launch gate: migrations, REST auth, sessions, SSE replay,
 # worker-generated hashed backtest artifact bundles, artifact reads,
 # trigger-to-run readiness, MCP auth/resource checks,
-# MCP run create/cancel, ops status, and live-data readiness.
-uv run python scripts/launch_gate.py --mode local --json
+# MCP run create/cancel, ops status, and optional IBKR smoke.
+uv run python scripts/launch_gate.py --mode local --skip-ibkr
 
 # observability UI (proxies /api -> :8000)
-pnpm --filter @ithaca/web dev
+pnpm --filter @Ithaca/web dev
 ```
 
 ### Install Ithaca MCP in local agents
 
-With the hosted app deployed, a user can link a coding agent in one command:
+Add `https://mcp.tradeithaca.com/mcp` to Codex, Claude Code, or Cursor and complete the
+Clerk OAuth login. The normal setup needs no copied key or environment variable:
+
+```bash
+codex mcp add ithaca --url https://mcp.tradeithaca.com/mcp
+codex mcp login ithaca --scopes openid offline_access
+```
+
+The Ithaca installer performs OAuth metadata discovery before changing a local config:
 
 ```bash
 curl -fsSL https://app.tradeithaca.com/install.py | python3
 ```
 
-The installer opens the Ithaca app, lets the user sign in or sign up with Clerk,
-then asks for approval to mint a scoped MCP key. After approval it stores the
-key in `~/.config/ithaca/mcp.env`, registers the hosted streamable-HTTP MCP
-server as `ithaca`, verifies a real MCP `initialize` handshake, calls
-`ithaca_init` to open a visible onboarding session, and writes the generated
-catalog guide to `~/.config/ithaca/TOOLS.md`.
-
-Cursor, Claude Code, Codex, OpenClaw, and Hermes are configured by default.
-Codex uses `codex mcp add --url ... --bearer-token-env-var ITHACA_MCP_API_KEY`.
-Claude Code uses `claude mcp add --transport http --scope user` with an
-`Authorization: Bearer ${ITHACA_MCP_API_KEY}` header reference, not a
-hardcoded token. Cursor, OpenClaw, and Hermes get merged `mcpServers` JSON
-config files without overwriting existing servers. To target one client, pass
-`--client cursor`, `--client claude-code`, `--client codex`, `--client openclaw`,
-or `--client hermes`.
+OpenClaw, Hermes, CI, and custom clients can explicitly use the scoped API-key compatibility
+path with `--auth api-key`. See [Agent Client Setup](docs/AGENT_CLIENT_SETUP.md).
 
 See [Agent Client Setup](docs/AGENT_CLIENT_SETUP.md) for per-client behavior.
 
@@ -135,40 +140,43 @@ For agent-driven setup, ask the agent to run:
 curl -fsSL https://app.tradeithaca.com/install.py | python3 - --agent-init
 ```
 
-The agent prints the sign-in/signup URL for the user, waits for approval, installs the MCP
-config, verifies a real MCP initialize handshake, calls `ithaca_init`, and generates
-`~/.config/ithaca/TOOLS.md` from the live MCP tool and toolkit catalogs. See
+The agent completes native OAuth where supported and then calls `ithaca_init` after reload.
+See
 [Agent-Driven Onboarding](docs/AGENT_DRIVEN_ONBOARDING.md).
 
 All six local processes share the same platform system-of-record via `ITHACA_DB`. The browser talks only to the
 rest-gateway (`:8000`); its human money-path actions (promote/activate/pause/resume/retire) call the same
 `ithaca_control.actions` the control plane exposes, so there is one money-path implementation, two transports.
-The trigger engine also shares `ITHACA_DB`, uses an approved connected-account data
+The trigger engine also shares `ITHACA_DB`, uses the IBKR engine only as a per-user connected-account data
 source, and never submits broker orders directly.
 Users can dry-run trigger policies through REST before activation; the dry-run reports the
 same condition/control decision without creating runs, firings, approvals, jobs, or broker
 actions. The launch gate dry-runs a synthetic quote-only trigger, then creates one active
-trigger, verifies it creates a durable run with connected-account provenance, and retires it.
-When an approved live-data provider is configured, the active trigger probe uses it instead
-of the static quote used in local/offline checks.
+trigger, verifies it creates a durable run with connected-account provenance, and retires it;
+when `--require-ibkr` is set and `ITHACA_IBKR_ENGINE_URL` is configured, the active trigger
+probe uses the live IBKR engine instead of the static IBKR-shaped quote used in local/offline
+checks.
 
 In Kubernetes, `deploy/deploy_services.sh` creates the same `ithaca-db` Secret in the gateway and worker
 namespaces. `ithaca-app` runs `rest-gateway`, `control-plane`, and hosted HTTP MCP; `ithaca-workers`
-runs the active queue/paper/trigger loops against the same Postgres store. Connected live-data
-providers remain internal services and are never exposed as customer sign-in routes.
+runs the active queue/paper/trigger loops against the same Postgres store. With `IBKR_ENGINE_ENABLED=1`, the
+deploy script also runs the managed IBKR Client Portal Gateway wrapper and points Ithaca at the internal
+`ibkr-engine` service. `IBKR_SIGNIN_PUBLIC=1` opens a temporary `https://ibkr.Ithaca.me/` sign-in route;
+set `IBKR_SIGNIN_HOST` to an `sslip.io` hostname if the `Ithaca.me` DNS record is not available. Deploy
+again with `IBKR_SIGNIN_PUBLIC=0` after authentication so only the cluster-internal service remains.
 
 The implemented skill catalog is contract-backed by `ithaca_core.skills.ALL_SKILL_MANIFESTS`.
 MCP `search_skills` and `describe_skill` read those manifests, while `run_skill` still only
 executes skills present in the runnable registry.
 MCP clients can also read the progressive-discovery resources
-`ithaca://skills/catalog`, `ithaca://skills/{skill_id}/{version}`,
-`ithaca://toolkits/catalog`, `ithaca://toolkits/{toolkit_id}`,
-`ithaca://runs/{run_id}`, `ithaca://policies/current`, `ithaca://accounts`,
-and `ithaca://data/providers`; hosted HTTP resource reads require `data:read` and
+`Ithaca://skills/catalog`, `Ithaca://skills/{skill_id}/{version}`,
+`Ithaca://toolkits/catalog`, `Ithaca://toolkits/{toolkit_id}`,
+`Ithaca://runs/{run_id}`, `Ithaca://policies/current`, `Ithaca://accounts`,
+and `Ithaca://data/providers`; hosted HTTP resource reads require `data:read` and
 return tenant-scoped, credential-redacted JSON. REST provider responses follow the
 same boundary: they expose `credential_configured`, never `credential_ref`. The
 customer-handoff launch gate also proves that hosted MCP can queue a durable
-`backtest.run`, read it back through `ithaca://runs/{run_id}`, cancel it, and
+`backtest.run`, read it back through `Ithaca://runs/{run_id}`, cancel it, and
 observe the cancelled run/job state.
 
 ### Contracts (the frozen source of truth)

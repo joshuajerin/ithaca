@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../api";
+import { MCP_BASE } from "../config";
 
 const SCOPES: { id: string; label: string; desc: string }[] = [
   { id: "data:read",       label: "Read market data",   desc: "Access live and historical price feeds" },
@@ -38,6 +39,7 @@ export function Settings() {
   const [minting, setMinting] = useState(false);
   const [freshKey, setFreshKey] = useState<{ api_key: string; key_id: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedSetup, setCopiedSetup] = useState<string | null>(null);
 
   async function loadKeys() {
     setLoadingKeys(true);
@@ -97,6 +99,13 @@ export function Settings() {
     });
   }
 
+  function copySetup(id: string, value: string) {
+    navigator.clipboard?.writeText(value).then(() => {
+      setCopiedSetup(id);
+      window.setTimeout(() => setCopiedSetup(null), 1500);
+    });
+  }
+
   if (!user) return null;
   const initials = user.name.split(" ").map((s: string) => s[0]).slice(0, 2).join("").toUpperCase();
   const activeKeys = keys.filter((k) => !k.revoked);
@@ -146,10 +155,44 @@ export function Settings() {
           </div>
         </div>
 
-        {/* ── Agent API Keys ────────────────────────────────────────────── */}
+        {/* ── Connect an agent ─────────────────────────────────────────── */}
+        <div className="settings-section" id="connect-agent">
+          <div className="settings-section-label">Connect an agent</div>
+          <div className="fcard" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <p style={{ margin: 0, color: "var(--muted)", fontSize: 12 }}>
+              Add the Ithaca MCP endpoint, then your agent will open Clerk to sign in. No API key or shell environment variable is needed.
+            </p>
+            {[
+              { id: "codex", label: "Codex", command: `codex mcp add ithaca --url ${MCP_BASE}\ncodex mcp login ithaca --scopes openid offline_access` },
+              { id: "claude", label: "Claude Code", command: `claude mcp add --transport http --scope user ithaca ${MCP_BASE}` },
+              { id: "cursor", label: "Cursor", command: JSON.stringify({ mcpServers: { ithaca: { type: "http", url: MCP_BASE } } }, null, 2) },
+            ].map((client) => (
+              <div key={client.id} style={{ borderTop: "1px solid var(--border-soft)", paddingTop: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                  <strong style={{ fontSize: 13 }}>{client.label}</strong>
+                  <button className="settings-btn" onClick={() => copySetup(client.id, client.command)}>
+                    {copiedSetup === client.id ? "Copied" : "Copy"}
+                  </button>
+                </div>
+                <code style={{ display: "block", marginTop: 8, whiteSpace: "pre-wrap", fontSize: 11, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>{client.command}</code>
+                <div style={{ marginTop: 6, fontSize: 11, color: "var(--muted-dim)" }}>
+                  {client.id === "cursor" ? "Open Cursor and choose Connect/Login after saving the configuration." : "Your agent will open Clerk to sign in."}
+                </div>
+              </div>
+            ))}
+            <a href="https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization" target="_blank" rel="noreferrer" style={{ fontSize: 11, color: "var(--accent)" }}>
+              Troubleshooting OAuth discovery or login ↗
+            </a>
+          </div>
+        </div>
+
+        {/* ── Automation & compatibility keys ───────────────────────────── */}
         <div className="settings-section">
-          <div className="settings-section-label">Agent API Keys</div>
+          <div className="settings-section-label">Automation &amp; compatibility keys</div>
           <div className="fcard" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            <p style={{ margin: 0, fontSize: 12, color: "var(--muted)" }}>
+              Use scoped keys for CI, custom agents, OpenClaw, Hermes, or clients that cannot complete standard MCP OAuth.
+            </p>
 
             {/* Scope picker */}
             <div>

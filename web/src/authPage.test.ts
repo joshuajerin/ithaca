@@ -22,7 +22,7 @@ describe("auth approval entry page", () => {
     expect(authPageSource).toContain('path="/access"');
     expect(authPageSource).toContain("forceRedirectUrl={redirectAfterSignIn}");
     expect(authPageSource).toContain("fallbackRedirectUrl={redirectAfterSignIn}");
-    expect(agentLinkSource).toContain("Approve this MCP session");
-    expect(agentLinkSource).toContain("Approve this session");
+    expect(agentLinkSource).toContain("Create an Ithaca compatibility key");
+    expect(agentLinkSource).toContain("Create compatibility key");
   });
 });

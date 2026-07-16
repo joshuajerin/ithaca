@@ -50,7 +50,7 @@ class _QuoteServer:
                         "scope": "AAPL",
                         "items": [{
                             "headline": "Apple moves higher after hours",
-                            "source": "Ithaca",
+                            "source": "Doomberg",
                             "publishedAt": now,
                         }],
                         "asOf": now,
@@ -271,11 +271,11 @@ async def test_server_registers_control_plane_resources(toolset):
     templates = await mcp.list_resource_templates()
     template_uris = {template.uriTemplate for template in templates}
     assert {
-        "ithaca://skills/{skill_id}/{version}",
-        "ithaca://toolkits/{toolkit_id}",
-        "ithaca://runs/{run_id}",
-        "ithaca://triggers/{trigger_id}",
-        "ithaca://alerts/{notification_id}",
+            "ithaca://skills/{skill_id}/{version}",
+            "ithaca://toolkits/{toolkit_id}",
+            "ithaca://runs/{run_id}",
+            "ithaca://triggers/{trigger_id}",
+            "ithaca://alerts/{notification_id}",
     } <= template_uris
 
 
