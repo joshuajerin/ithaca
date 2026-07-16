@@ -91,6 +91,16 @@ def test_deploy_requires_and_injects_clerk_secret_for_managed_api_keys() -> None
     assert manifest.count("name: CLERK_SECRET_KEY") == 3
 
 
+def test_mcp_gateway_receives_the_platform_database_secret() -> None:
+    manifest = (REPO_ROOT / "infra" / "k8s" / "app-deployment.yaml").read_text()
+
+    mcp_gateway = manifest.split('name: mcp-gateway', 1)[1]
+    ithaca_db = mcp_gateway.split('- name: ITHACA_DB', 1)[1].split('- name: DOOMBERG_DB', 1)[0]
+    assert 'secretKeyRef:' in ithaca_db
+    assert 'name: ithaca-db' in ithaca_db
+    assert 'key: platform_url' in ithaca_db
+
+
 def test_dedicated_backtest_workers_are_opt_in_for_production() -> None:
     deploy_script = (REPO_ROOT / "deploy" / "deploy_services.sh").read_text()
     workflow = (REPO_ROOT / ".github" / "workflows" / "deploy-do.yml").read_text()
