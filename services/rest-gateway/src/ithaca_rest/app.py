@@ -286,6 +286,7 @@ def _clerk_service(stores: "Stores") -> ClerkIdentityService:
 
 def _human_scopes() -> list[str]:
     return [
+        "agent:read",
         "data:read",
         "strategy:author",
         "runs:write",

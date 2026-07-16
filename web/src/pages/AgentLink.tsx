@@ -4,6 +4,7 @@ import { api } from "../api";
 import { MCP_BASE } from "../config";
 
 const DEFAULT_SCOPES = [
+  "agent:read",
   "data:read",
   "strategy:author",
   "runs:write",
