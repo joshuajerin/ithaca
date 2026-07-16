@@ -89,7 +89,7 @@ class CompositeTokenVerifier(TokenVerifier):
         try:
             identity = await anyio.to_thread.run_sync(
                 lambda: self._identity.verify_oauth_token(
-                    token, audience=resource_url(), required_scopes=[oauth_scope()]
+                    token, required_scopes=[oauth_scope()]
                 )
             )
             principal = await anyio.to_thread.run_sync(self._identity.resolve_user_and_tenant, identity)

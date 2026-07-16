@@ -16,7 +16,7 @@ class _Keys:
 
 
 class _Identity:
-    def verify_oauth_token(self, token: str, *, audience: str, required_scopes: list[str]):
+    def verify_oauth_token(self, token: str, *, audience: str | None = None, required_scopes: list[str]):
         if token != "oauth-token":
             from ithaca_platform import ClerkTokenInvalid
             raise ClerkTokenInvalid("invalid")
