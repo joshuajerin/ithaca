@@ -28,6 +28,9 @@ from ithaca_platform import (
 MCP_RESOURCE_URL_ENV = "ITHACA_MCP_RESOURCE_URL"
 DEFAULT_MCP_RESOURCE_URL = "https://mcp.tradeithaca.com/mcp"
 MCP_OAUTH_SCOPE_ENV = "ITHACA_MCP_OAUTH_SCOPE"
+# Clerk's OAuth/DCR implementation permits standard OpenID Connect scopes, not
+# arbitrary resource scopes.  `openid` is therefore the coarse admission scope;
+# the Ithaca capability set remains enforced from server-side token claims.
 DEFAULT_MCP_OAUTH_SCOPE = "openid"
 
 # OAuth is intentionally read-oriented. It never inherits privileged deployment, execution,

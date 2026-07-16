@@ -106,6 +106,12 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _ibkr_env(name: str) -> str | None:
+    """Read Ithaca deployment names first, retaining legacy Doomberg compatibility."""
+
+    return os.environ.get(f"ITHACA_{name}") or os.environ.get(f"DOOMBERG_{name}")
+
+
 def normalize_quote(raw: dict[str, Any], *, symbol: str, source: str = PUBLIC_DATA_SOURCE) -> dict[str, Any]:
     """Normalize common live quote shapes into the canonical trigger quote contract."""
 
@@ -242,25 +248,25 @@ class IbkrEngineClient:
         scanner_path: str | None = None,
         timeout_s: float = 5.0,
     ) -> None:
-        resolved_url = base_url if base_url is not None else os.environ.get("ITHACA_IBKR_ENGINE_URL")
+        resolved_url = base_url if base_url is not None else _ibkr_env("IBKR_ENGINE_URL")
         self.base_url = (resolved_url or "").rstrip("/")
-        self.token = token if token is not None else os.environ.get("ITHACA_IBKR_ENGINE_TOKEN")
-        self.quote_path = quote_path or os.environ.get("ITHACA_IBKR_QUOTE_PATH") or "/quote?symbol={symbol}"
-        self.order_path = order_path or os.environ.get("ITHACA_IBKR_ORDER_PATH") or "/orders"
+        self.token = token if token is not None else _ibkr_env("IBKR_ENGINE_TOKEN")
+        self.quote_path = quote_path or _ibkr_env("IBKR_QUOTE_PATH") or "/quote?symbol={symbol}"
+        self.order_path = order_path or _ibkr_env("IBKR_ORDER_PATH") or "/orders"
         self.accounts_path = (
-            accounts_path or os.environ.get("ITHACA_IBKR_ACCOUNTS_PATH") or "/accounts"
+            accounts_path or _ibkr_env("IBKR_ACCOUNTS_PATH") or "/accounts"
         )
         self.positions_path = (
-            positions_path or os.environ.get("ITHACA_IBKR_POSITIONS_PATH")
+            positions_path or _ibkr_env("IBKR_POSITIONS_PATH")
             or "/positions?account={account}"
         )
         self.orders_path = (
-            orders_path or os.environ.get("ITHACA_IBKR_ORDERS_PATH")
+            orders_path or _ibkr_env("IBKR_ORDERS_PATH")
             or "/orders?account={account}"
         )
-        self.history_path = history_path or os.environ.get("ITHACA_IBKR_HISTORY_PATH") or "/history?symbol={symbol}"
-        self.news_path = news_path or os.environ.get("ITHACA_IBKR_NEWS_PATH") or "/news"
-        self.scanner_path = scanner_path or os.environ.get("ITHACA_IBKR_SCANNER_PATH") or "/scanner"
+        self.history_path = history_path or _ibkr_env("IBKR_HISTORY_PATH") or "/history?symbol={symbol}"
+        self.news_path = news_path or _ibkr_env("IBKR_NEWS_PATH") or "/news"
+        self.scanner_path = scanner_path or _ibkr_env("IBKR_SCANNER_PATH") or "/scanner"
         self.timeout_s = float(timeout_s)
 
     @property

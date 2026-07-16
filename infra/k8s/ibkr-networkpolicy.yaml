@@ -16,6 +16,11 @@ spec:
     - from:
         - podSelector:
             matchLabels:
+              doomberg/component: app
+        # Ithaca is the renamed production app. Keep this explicit peer during
+        # the label migration so MCP live-data calls can reach the engine.
+        - podSelector:
+            matchLabels:
               ithaca/component: app
       ports:
         - protocol: TCP
@@ -26,6 +31,14 @@ spec:
             matchLabels:
               ithaca/role: workers
               ithaca/environment: ${ITHACA_ENV}
+          podSelector:
+            matchLabels:
+              doomberg/component: worker
+        # Ithaca workers run in the production worker namespace with the
+        # renamed labels, so permit only that exact workload class as well.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: doomberg-workers
           podSelector:
             matchLabels:
               ithaca/component: worker

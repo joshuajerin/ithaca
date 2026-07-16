@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ithaca_contracts import StrategySpec
+
 from .skillset import SKILLS
 
 SKILL_VERSION = "0.1.0"
@@ -193,7 +195,10 @@ def _input_schema(skill_id: str) -> dict[str, Any]:
             "additionalProperties": False,
             "required": ["spec"],
             "properties": {
-                "spec": {"type": "object"},
+                # The worker validates this payload against the frozen contract.
+                # Advertising an untyped object here caused MCP clients to submit
+                # structurally invalid specs that only failed after being queued.
+                "spec": StrategySpec.model_json_schema(),
                 "range": {"type": "string", "default": "1y"},
             },
         }

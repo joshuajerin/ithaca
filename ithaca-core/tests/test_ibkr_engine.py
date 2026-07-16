@@ -304,3 +304,17 @@ def test_ibkr_diagnose_reports_not_configured() -> None:
     assert result["ok"] is False
     assert result["status"] == "not_configured"
     assert result["code"] == "BROKER_CONNECTION_REQUIRED"
+
+
+def test_ithaca_ibkr_environment_aliases_configure_client(monkeypatch) -> None:
+    monkeypatch.delenv("DOOMBERG_IBKR_ENGINE_URL", raising=False)
+    monkeypatch.delenv("DOOMBERG_IBKR_ENGINE_TOKEN", raising=False)
+    monkeypatch.setenv("ITHACA_IBKR_ENGINE_URL", "http://engine.internal:8090")
+    monkeypatch.setenv("ITHACA_IBKR_ENGINE_TOKEN", "token")
+    monkeypatch.setenv("ITHACA_IBKR_QUOTE_PATH", "/prices/{symbol}")
+
+    client = IbkrEngineClient()
+
+    assert client.base_url == "http://engine.internal:8090"
+    assert client.token == "token"
+    assert client.quote_path == "/prices/{symbol}"
