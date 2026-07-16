@@ -174,10 +174,18 @@ class ClerkIdentityService:
         return self._identity(claims, "session")
 
     def verify_oauth_token(
-        self, token: str, *, audience: str, required_scopes: Collection[str]
+        self, token: str, *, audience: str | None = None, required_scopes: Collection[str]
     ) -> VerifiedClerkIdentity:
         self.validate_configuration(require_issuer=True)
         claims = self._decode(token, audience=audience)
+        # Clerk's dynamic-client OAuth access tokens do not include an ``aud`` claim even
+        # when the client sends the MCP Resource Indicator. Requiring one here rejects
+        # every credential that Codex and Claude Code correctly persisted. Keep the
+        # issuer/signature/expiry checks above, and require the OAuth-only client identifier
+        # plus the server's admission scope below so a browser session JWT cannot be used as
+        # an MCP bearer token.
+        if not str(claims.get("client_id") or "").strip():
+            raise ClerkTokenInvalid("Clerk OAuth token missing client id")
         identity = self._identity(claims, "oauth")
         missing = set(required_scopes).difference(identity.scopes)
         if missing:
