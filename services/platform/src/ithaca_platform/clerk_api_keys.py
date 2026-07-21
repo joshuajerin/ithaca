@@ -25,7 +25,6 @@ __all__ = [
     "ClerkApiError",
     "ClerkApiUnavailable",
     "ClerkManagedApiKeyStore",
-    "ClerkWaitlistService",
     "build_agent_key_store",
 ]
 
@@ -271,108 +270,6 @@ class ClerkManagedApiKeyStore:
             ("clerk", str(subject)),
         ).fetchone()
         return row is not None and str(row["tenant_id"]) == str(tenant_id)
-
-
-class ClerkWaitlistService:
-    """Approve Ithaca access through Clerk's managed waitlist."""
-
-    def __init__(
-        self,
-        secret_key: str,
-        *,
-        api_url: str = "https://api.clerk.com/v1",
-        api_version: str = "2026-05-12",
-        timeout_s: float = 5.0,
-        urlopen: Callable[..., Any] | None = None,
-    ) -> None:
-        if not secret_key.strip():
-            raise ValueError("Clerk secret key must be non-empty")
-        self._secret_key = secret_key.strip()
-        self._api_url = api_url.rstrip("/")
-        self._api_version = api_version.strip()
-        self._timeout_s = timeout_s
-        self._urlopen = urlopen or urllib.request.urlopen
-
-    def approve(self, email_address: str) -> dict[str, Any]:
-        """Create or reuse a waitlist entry, then invite it through Clerk."""
-
-        email = email_address.strip().lower()
-        if not email or "@" not in email:
-            raise ValueError("A valid email address is required")
-
-        entry = self._request(
-            "POST",
-            "/waitlist_entries",
-            body={"email_address": email, "notify": False},
-        )
-        entry_id = str(entry.get("id") or "")
-        status = str(entry.get("status") or "")
-        if not entry_id or not status:
-            raise ClerkApiUnavailable("Clerk returned an invalid waitlist entry")
-        if status in {"invited", "completed"}:
-            return self._result(entry, action="already_approved")
-        if status == "rejected":
-            raise ClerkApiError(
-                "This email was rejected in Clerk; re-invite it from the Clerk Dashboard",
-                status_code=409,
-            )
-        if status != "pending":
-            raise ClerkApiUnavailable(f"Clerk returned unknown waitlist status: {status}")
-
-        invited = self._request(
-            "POST",
-            f"/waitlist_entries/{urllib.parse.quote(entry_id, safe='')}/invite",
-            body={},
-        )
-        return self._result(invited, action="invited")
-
-    def _request(
-        self,
-        method: str,
-        path: str,
-        *,
-        body: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        payload = None if body is None else json.dumps(body).encode("utf-8")
-        headers = {
-            "Authorization": f"Bearer {self._secret_key}",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "User-Agent": "Ithaca/1.0 (Clerk waitlist)",
-        }
-        if self._api_version:
-            headers["Clerk-API-Version"] = self._api_version
-        request = urllib.request.Request(
-            f"{self._api_url}{path}", data=payload, headers=headers, method=method
-        )
-        try:
-            with self._urlopen(request, timeout=self._timeout_s) as response:
-                raw = response.read()
-        except urllib.error.HTTPError as exc:
-            raw = exc.read()
-            detail = ClerkManagedApiKeyStore._error_detail(raw)
-            detail = detail or f"Clerk API returned HTTP {exc.code}"
-            if exc.code >= 500:
-                raise ClerkApiUnavailable(detail, status_code=exc.code) from exc
-            raise ClerkApiError(detail, status_code=exc.code) from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise ClerkApiUnavailable("Clerk API is unavailable") from exc
-        try:
-            value = json.loads(raw or b"{}")
-        except json.JSONDecodeError as exc:
-            raise ClerkApiUnavailable("Clerk API returned invalid JSON") from exc
-        if not isinstance(value, dict):
-            raise ClerkApiUnavailable("Clerk API returned an invalid response")
-        return value
-
-    @staticmethod
-    def _result(entry: dict[str, Any], *, action: str) -> dict[str, Any]:
-        return {
-            "action": action,
-            "email_address": str(entry.get("email_address") or ""),
-            "status": str(entry.get("status") or ""),
-            "waitlist_entry_id": str(entry.get("id") or ""),
-        }
 
 
 class AgentKeyStore:

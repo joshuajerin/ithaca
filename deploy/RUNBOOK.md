@@ -34,21 +34,6 @@ Dockerfile, PR image build, GitHub deploy preflight, and local build script all
 fail closed when the value is missing or does not start with `pk_test_` or
 `pk_live_`.
 
-### Clerk waitlist access
-
-Enable **Waitlist** mode in the Clerk Dashboard and keep email authentication enabled.
-Existing users and invited waitlist users can sign in; everyone else is sent to the
-Clerk-managed waitlist at `/waitlist`.
-
-Approve one or more email addresses with Clerk's waitlist API:
-
-```bash
-CLERK_SECRET_KEY=... uv run --package ithaca-platform \
-  python scripts/clerk_waitlist.py approved@example.com another@example.com
-```
-
-The command is idempotent for already invited or completed entries. Clerk sends the
-invitation email and remains the source of truth for approval status.
 Production also requires `ITHACA_ADMIN_TOKEN`, `ITHACA_SMOKE_API_KEY`, and
 `ITHACA_SMOKE_NO_SCOPE_API_KEY`. Optional secrets include `FMP_API_KEY` and
 `DATABENTO_API_KEY`.

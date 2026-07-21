@@ -1,16 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { isAgentLinkLocation, safeRedirectUrl, shouldShowWaitlist, signInUrlFor } from "./AuthPage";
+import { isAgentLinkLocation, safeRedirectUrl, signInUrlFor } from "./AuthPage";
 
-describe("shouldShowWaitlist", () => {
-  it("renders the waitlist for public routes", () => {
-    expect(shouldShowWaitlist("/")).toBe(true);
-    expect(shouldShowWaitlist("/waitlist")).toBe(true);
-    expect(shouldShowWaitlist("/agent-link")).toBe(true);
-  });
-
-  it("reserves the access route for existing approved users", () => {
-    expect(shouldShowWaitlist("/access")).toBe(false);
-  });
+describe("auth routes", () => {
 
   it("returns an approved agent user to their pending approval link", () => {
     expect(signInUrlFor("/agent-link", "?token=abc", "#approve")).toBe(

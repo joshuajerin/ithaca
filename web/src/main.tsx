@@ -58,7 +58,7 @@ createRoot(document.getElementById("root")!).render(
         localization={clerkLocalization}
         appearance={clerkAppearance}
         signInUrl="/access"
-        waitlistUrl="/waitlist"
+        signUpUrl="/sign-up"
       >
         <AuthProvider>
           <BrowserRouter>

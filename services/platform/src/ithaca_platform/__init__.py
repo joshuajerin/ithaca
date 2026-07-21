@@ -26,7 +26,6 @@ from .clerk_api_keys import (
     ClerkApiError,
     ClerkApiUnavailable,
     ClerkManagedApiKeyStore,
-    ClerkWaitlistService,
     build_agent_key_store,
 )
 from .clerk_identity import (
@@ -93,7 +92,6 @@ __all__ = [
     "ClerkApiError",
     "ClerkApiUnavailable",
     "ClerkManagedApiKeyStore",
-    "ClerkWaitlistService",
     "build_agent_key_store",
     "ClerkIdentityService",
     "VerifiedClerkIdentity",

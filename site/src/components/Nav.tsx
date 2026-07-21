@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { useUser } from "@clerk/react";
 import type { AuthMode } from "../App";
 import { EASE } from "../lib/motion";
-import { DOCS_URL, WAITLIST_URL } from "../lib/links";
+import { DOCS_URL, SIGN_UP_URL } from "../lib/links";
 
 const LINKS = [
   { label: "Platform", href: "#platform" },
@@ -64,10 +64,10 @@ function NavShell({ isSignedIn }: { isSignedIn: boolean }) {
 
         <div className="flex items-center gap-2">
           <a
-            href={WAITLIST_URL}
+            href={SIGN_UP_URL}
             className="group inline-flex items-center gap-2 rounded-pill bg-amber px-4 py-2.5 text-[0.9rem] font-semibold text-ink shadow-[0_8px_24px_-12px_rgba(201,121,26,0.9)] transition-all duration-300 hover:-translate-y-0.5 hover:bg-amber-deep hover:text-cream"
           >
-            {isSignedIn ? "Dashboard" : "Join waitlist"}
+            {isSignedIn ? "Dashboard" : "Create account"}
             <span className="transition-transform duration-300 group-hover:translate-x-0.5">
               →
             </span>
