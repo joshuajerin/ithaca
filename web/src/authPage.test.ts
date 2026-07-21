@@ -17,4 +17,10 @@ describe("auth approval entry page", () => {
     expect(authPageSource).toContain("withSignUp={false}");
     expect(authPageSource).toContain("Sign in to approve the agent");
   });
+
+  it("offers direct account creation", () => {
+    expect(authPageSource).toContain('to={isSignUp ? "/" : "/sign-up"}');
+    expect(authPageSource).toContain('"Create account"');
+    expect(authPageSource).toContain('import { SignIn, SignUp } from "@clerk/react";');
+  });
 });

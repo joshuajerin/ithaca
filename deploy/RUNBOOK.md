@@ -28,21 +28,6 @@ Each GitHub environment owns its own secrets and variables. Required secrets are
 `CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, and either `CLERK_PEM_PUBLIC_KEY` or the
 `CLERK_JWKS_URL` variable. Required variables include `CLERK_ALLOWED_ORIGINS`.
 
-### Clerk waitlist access
-
-Enable **Waitlist** mode in the Clerk Dashboard and keep email authentication enabled.
-Existing users and invited waitlist users can sign in; everyone else is sent to the
-Clerk-managed waitlist at `/waitlist`.
-
-Approve one or more email addresses with Clerk's waitlist API:
-
-```bash
-CLERK_SECRET_KEY=... uv run --package doomberg-platform \
-  python scripts/clerk_waitlist.py approved@example.com another@example.com
-```
-
-The command is idempotent for already invited or completed entries. Clerk sends the
-invitation email and remains the source of truth for approval status.
 Production also requires `DOOMBERG_ADMIN_TOKEN`, `DOOMBERG_SMOKE_API_KEY`, and
 `DOOMBERG_SMOKE_NO_SCOPE_API_KEY`. Optional secrets include `FMP_API_KEY` and
 `DATABENTO_API_KEY`.

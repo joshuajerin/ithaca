@@ -1,4 +1,4 @@
-import { SignIn, SignUp, Waitlist } from "@clerk/react";
+import { SignIn, SignUp } from "@clerk/react";
 import { Link, useLocation } from "react-router-dom";
 import { DoombergMark } from "../auth/icons";
 import { legalUrl } from "../lib/legal";
@@ -18,7 +18,6 @@ const embeddedClerkAppearance = {
 export function AuthPage() {
   const { pathname, search, hash } = useLocation();
   const isSignUp = pathname.startsWith("/sign-up");
-  const isWaitlist = pathname.startsWith("/waitlist");
   const isAgentLink = pathname.startsWith("/agent-link");
   const redirectUrl = `${pathname}${search}${hash}`;
 
@@ -33,9 +32,7 @@ export function AuthPage() {
           </div>
         </div>
 
-        {isWaitlist ? (
-          <Waitlist appearance={embeddedClerkAppearance} />
-        ) : isAgentLink ? (
+        {isAgentLink ? (
           <>
             <header>
               <h1 className="auth-title">Sign in to approve the agent</h1>
@@ -61,14 +58,14 @@ export function AuthPage() {
         {!isAgentLink && (
           <div className="auth-mode-row">
             <span>
-              {isWaitlist || isSignUp ? "Already approved?" : "New to Doomberg?"}
+              {isSignUp ? "Already have an account?" : "New to Doomberg?"}
             </span>
             <Link
               className="link-btn auth-mode-link"
               data-auth-switch
-              to={isWaitlist || isSignUp ? "/" : "/waitlist"}
+              to={isSignUp ? "/" : "/sign-up"}
             >
-              {isWaitlist || isSignUp ? "Sign in" : "Join the waitlist"}
+              {isSignUp ? "Sign in" : "Create account"}
             </Link>
           </div>
         )}
